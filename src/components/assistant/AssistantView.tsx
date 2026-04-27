@@ -55,26 +55,48 @@ export function AssistantView() {
     setInput("");
     setThinking(true);
 
-    // Simulated reply
-    setTimeout(() => {
-      setThreads((prev) => {
-        const current = prev[activeId] || { id: activeId, turns: [] };
-        return {
-          ...prev,
-          [activeId]: {
-            ...current,
-            turns: [
-              ...current.turns,
-              {
-                role: "ai",
-                text: `I've analyzed your request: “${text}”. I'm fetching the latest updates from the relevant systems.`,
-              },
-            ],
-          },
-        };
+    const history = (threads[activeId]?.turns || []).map(t => ({
+      role: t.role === "user" ? "user" : "assistant",
+      content: t.text
+    }));
+
+    // Real API call to FastAPI backend
+    fetch("http://localhost:8000/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history })
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to fetch from backend");
+        return res.json();
+      })
+      .then(data => {
+        setThreads((prev) => {
+          const current = prev[activeId] || { id: activeId, turns: [] };
+          return {
+            ...prev,
+            [activeId]: {
+              ...current,
+              turns: [
+                ...current.turns,
+                {
+                  role: "ai",
+                  text: data.response,
+                },
+              ],
+            },
+          };
+        });
+      })
+      .catch(err => {
+        console.error("Backend Error:", err);
+        toast.error("Assistant is unavailable", {
+          description: "Check if the backend is running at http://localhost:8000"
+        });
+      })
+      .finally(() => {
+        setThinking(false);
       });
-      setThinking(false);
-    }, 1200);
   }, [activeId, input]);
 
   const handleNewChat = () => {
@@ -92,6 +114,20 @@ export function AssistantView() {
   const handleThreadSelect = (id: string) => {
     setActiveId(id);
     setIsSidebarOpen(false);
+  };
+
+  const handleFeedback = (rating: "up" | "down", index: number) => {
+    fetch("http://localhost:8000/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating, index, threadId: activeId })
+    })
+      .then(() => {
+        toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback", {
+          description: rating === "down" ? "I'll try to improve." : undefined
+        });
+      })
+      .catch(() => toast.error("Failed to save feedback"));
   };
 
   return (
@@ -158,11 +194,11 @@ export function AssistantView() {
               <section className="space-y-8 pb-4">
                 {activeThread.turns.map((t, i) =>
                   t.role === "user" ? (
-                    <UserMessage key={i} name="Ayesha · You" initials="AK">
+                    <UserMessage key={i} name="Shivam · You" initials="SS">
                       {t.text}
                     </UserMessage>
                   ) : (
-                    <AIMessage key={i}>
+                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
                       <div className="space-y-4">
                         <p className="text-[15px] leading-relaxed text-foreground/90">
                           {renderInline(t.text)}

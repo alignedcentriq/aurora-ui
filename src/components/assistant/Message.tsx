@@ -1,4 +1,4 @@
-import { Sparkles, CheckCircle2, ArrowRight } from "lucide-react";
+import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { ReactNode } from "react";
 
 export function UserMessage({ name, initials, children }: { name: string; initials: string; children: ReactNode }) {
@@ -17,7 +17,15 @@ export function UserMessage({ name, initials, children }: { name: string; initia
   );
 }
 
-export function AIMessage({ children, live }: { children: ReactNode; live?: boolean }) {
+export function AIMessage({ 
+  children, 
+  live, 
+  onFeedback 
+}: { 
+  children: ReactNode; 
+  live?: boolean;
+  onFeedback?: (rating: "up" | "down") => void;
+}) {
   return (
     <div className="mx-auto flex w-full max-w-[780px] gap-4 px-1 animate-[slide-up_.5s_cubic-bezier(0.22,1,0.36,1)_both]">
       <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
@@ -32,16 +40,36 @@ export function AIMessage({ children, live }: { children: ReactNode; live?: bool
         <Sparkles className="relative h-4 w-4 text-primary-foreground" strokeWidth={2.5} />
       </div>
       <div className="flex-1 space-y-3 pt-1">
-        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em]">
-          <span className="text-[color:var(--accent-cyan)]">Synapse</span>
-          {live && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--accent-cyan)]/30 bg-[color:var(--accent-cyan)]/10 px-1.5 py-[1px] text-[9px] text-[color:var(--accent-cyan)]">
-              <span className="h-1 w-1 rounded-full bg-[color:var(--accent-cyan)] animate-pulse" />
-              Answering
-            </span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em]">
+            <span className="text-[color:var(--accent-cyan)]">Synapse</span>
+            {live && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--accent-cyan)]/30 bg-[color:var(--accent-cyan)]/10 px-1.5 py-[1px] text-[9px] text-[color:var(--accent-cyan)]">
+                <span className="h-1 w-1 rounded-full bg-[color:var(--accent-cyan)] animate-pulse" />
+                Answering
+              </span>
+            )}
+          </div>
+          {!live && onFeedback && (
+            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+              <button 
+                onClick={() => onFeedback("up")}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface/60 hover:text-[color:var(--accent-cyan)] transition-all"
+              >
+                <ThumbsUp className="h-3.5 w-3.5" />
+              </button>
+              <button 
+                onClick={() => onFeedback("down")}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface/60 hover:text-destructive transition-all"
+              >
+                <ThumbsDown className="h-3.5 w-3.5" />
+              </button>
+            </div>
           )}
         </div>
-        {children}
+        <div className="group/msg relative">
+          {children}
+        </div>
       </div>
     </div>
   );

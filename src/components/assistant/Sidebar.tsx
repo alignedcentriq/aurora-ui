@@ -120,10 +120,10 @@ export function AssistantSidebar({ activeId, onSelect, onNewChat, className }: S
             className="flex h-9 w-9 items-center justify-center rounded-full font-mono text-xs font-semibold text-primary-foreground"
             style={{ background: "var(--gradient-primary)" }}
           >
-            AK
+            SS
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-medium">Ayesha Khan</div>
+            <div className="truncate text-[13px] font-medium">Shivam Sharma</div>
             <div className="truncate font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
               Product · Bengaluru
             </div>
