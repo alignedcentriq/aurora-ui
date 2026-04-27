@@ -16,20 +16,10 @@ interface ThreadData {
   turns: Turn[];
 }
 
-const initialTurns: Turn[] = [
-  { role: "user", text: "How many leave days do I have left this year, and can I apply for 2 days next Monday?" },
-  {
-    role: "ai",
-    text: "You currently have **12 earned leaves** remaining for 2026. Next Monday (May 4) is open on your calendar and clashes with no team OOO. I can file the request with your manager, Priya, in one click.",
-    card: true,
-  },
-];
-
 export function AssistantView() {
-  const [activeId, setActiveId] = useState("1");
+  const [activeId, setActiveId] = useState("default");
   const [threads, setThreads] = useState<Record<string, ThreadData>>({
-    "1": { id: "1", turns: initialTurns },
-    "2": { id: "2", turns: [{ role: "user", text: "Reset my VPN access" }, { role: "ai", text: "I've started the VPN reset process. You'll receive an OTP on your registered mobile number shortly." }] },
+    "default": { id: "default", turns: [] },
   });
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -245,7 +235,7 @@ export function AssistantView() {
         </div>
 
         {/* Composer */}
-        <div className="relative border-t border-[var(--color-border)] bg-gradient-to-t from-background via-background/85 to-background/0 px-4 pb-6 pt-4 sm:px-8">
+        <div className="relative border-t border-[var(--color-border)] bg-gradient-to-t from-background via-background/85 to-background/0 px-3 pb-4 pt-2 sm:px-8 sm:pb-6 sm:pt-4">
           <div className="mx-auto w-full max-w-[820px]">
             <Composer 
               value={input} 

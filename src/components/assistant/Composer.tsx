@@ -47,23 +47,24 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
           className="max-h-[220px] min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70"
         />
 
-        <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-1 px-1 pb-1 pt-1 sm:gap-2 sm:px-2">
+          <div className="flex items-center gap-0.5 sm:gap-1">
             <button
               type="button"
               onClick={onAttach}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-xs text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95"
+              className="flex h-8 items-center gap-1 rounded-lg border border-transparent px-2 text-xs text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95 sm:gap-1.5 sm:px-2.5"
             >
               <Paperclip className="h-3.5 w-3.5" />
-              Attach
+              <span className="hidden xs:inline">Attach</span>
             </button>
             <button
               type="button"
               onClick={onSuggest}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 font-mono text-[11px] text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95"
+              className="flex h-8 items-center gap-1 rounded-lg border border-transparent px-2 font-mono text-[10px] text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95 sm:gap-1.5 sm:px-2.5 sm:text-[11px]"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              /suggest
+              <span className="hidden xs:inline">/suggest</span>
+              <span className="xs:hidden">Suggest</span>
             </button>
           </div>
 
@@ -71,7 +72,7 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
             type="button"
             onClick={() => value.trim() && onSubmit()}
             disabled={disabled || !value.trim()}
-            className="group relative flex h-9 items-center gap-2 overflow-hidden rounded-xl px-4 text-sm font-semibold text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.97]"
+            className="group relative flex h-8 items-center gap-1.5 overflow-hidden rounded-xl px-3 text-xs font-semibold text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.97] sm:h-9 sm:gap-2 sm:px-4 sm:text-sm"
             style={{
               background: "var(--gradient-primary)",
               boxShadow:
@@ -79,12 +80,12 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
             }}
           >
             <span>Ask</span>
-            <ArrowUp className="h-4 w-4 transition-transform group-hover:-translate-y-0.5" strokeWidth={2.5} />
+            <ArrowUp className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 sm:h-4 sm:w-4" strokeWidth={2.5} />
           </button>
         </div>
       </div>
 
-      <div className="mt-3 text-center font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70">
+      <div className="mt-2 text-center font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground/70 sm:mt-3 sm:text-[10px] sm:tracking-[0.2em]">
         Synapse may make mistakes · Verify sensitive info with HR/IT
       </div>
     </div>

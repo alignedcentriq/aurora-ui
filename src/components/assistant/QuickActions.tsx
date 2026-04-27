@@ -76,18 +76,18 @@ export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
         return (
           <div
             key={d.key}
-            className="animate-[slide-up_.5s_cubic-bezier(0.22,1,0.36,1)_both]"
+            className="flex h-full animate-[slide-up_.5s_cubic-bezier(0.22,1,0.36,1)_both]"
             style={{ animationDelay: `${i * 60}ms` }}
           >
             <div
-              className={`group relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-card/60 p-4 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 ${s.border}`}
+              className={`group relative flex h-full w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-card/60 p-4 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 ${s.border}`}
               style={{ boxShadow: "var(--shadow-elevated)" }}
             >
               {/* ambient glow */}
               <div
                 className={`pointer-events-none absolute -top-16 -right-16 h-40 w-40 rounded-full bg-gradient-to-br ${s.glow} blur-2xl opacity-60 transition-opacity duration-500 group-hover:opacity-100`}
               />
-              <div className="relative">
+              <div className="relative flex flex-1 flex-col">
                 <div className="flex items-center justify-between">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border-strong)] bg-surface/70 ${s.icon}`}
@@ -99,7 +99,7 @@ export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
                   </span>
                 </div>
                 <div className="mt-3 text-sm font-semibold tracking-tight">{d.description}</div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-auto pt-4 flex flex-wrap gap-1.5">
                   {d.examples.map((ex) => (
                     <button
                       key={ex}
