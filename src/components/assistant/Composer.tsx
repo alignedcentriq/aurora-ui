@@ -5,10 +5,12 @@ type Props = {
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  onAttach?: () => void;
+  onSuggest?: () => void;
   disabled?: boolean;
 };
 
-export function Composer({ value, onChange, onSubmit, disabled }: Props) {
+export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disabled }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -49,14 +51,16 @@ export function Composer({ value, onChange, onSubmit, disabled }: Props) {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-xs text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground"
+              onClick={onAttach}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-xs text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95"
             >
               <Paperclip className="h-3.5 w-3.5" />
               Attach
             </button>
             <button
               type="button"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 font-mono text-[11px] text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground"
+              onClick={onSuggest}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-transparent px-2.5 font-mono text-[11px] text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95"
             >
               <Sparkles className="h-3.5 w-3.5" />
               /suggest
@@ -67,7 +71,7 @@ export function Composer({ value, onChange, onSubmit, disabled }: Props) {
             type="button"
             onClick={() => value.trim() && onSubmit()}
             disabled={disabled || !value.trim()}
-            className="group relative flex h-9 items-center gap-2 overflow-hidden rounded-xl px-4 text-sm font-semibold text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40"
+            className="group relative flex h-9 items-center gap-2 overflow-hidden rounded-xl px-4 text-sm font-semibold text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.97]"
             style={{
               background: "var(--gradient-primary)",
               boxShadow:

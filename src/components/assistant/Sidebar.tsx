@@ -1,10 +1,10 @@
 import { MessageSquareText, Sparkles, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Thread = { id: string; title: string; domain: string; time: string; active?: boolean };
+type Thread = { id: string; title: string; domain: string; time: string };
 
-const threads: Thread[] = [
-  { id: "1", title: "How many leave days do I have left?", domain: "HR", time: "Now", active: true },
+const initialThreads: Thread[] = [
+  { id: "1", title: "How many leave days do I have left?", domain: "HR", time: "Now" },
   { id: "2", title: "Reset my VPN access", domain: "IT", time: "2h" },
   { id: "3", title: "Request salary slip — October", domain: "HR", time: "Yesterday" },
   { id: "4", title: "Book a meeting room on 4F", domain: "Admin", time: "Mon" },
@@ -19,9 +19,16 @@ const domainColor: Record<string, string> = {
   Org: "text-[color:var(--accent-blue)]",
 };
 
-export function AssistantSidebar() {
+interface SidebarProps {
+  activeId?: string;
+  onSelect: (id: string) => void;
+  onNewChat: () => void;
+  className?: string;
+}
+
+export function AssistantSidebar({ activeId, onSelect, onNewChat, className }: SidebarProps) {
   return (
-    <aside className="glass-strong hidden h-full w-[300px] shrink-0 flex-col border-r lg:flex">
+    <aside className={cn("glass-strong hidden h-full w-[300px] shrink-0 flex-col border-r lg:flex", className)}>
       {/* Brand */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
         <div className="flex items-center gap-2.5">
@@ -47,7 +54,8 @@ export function AssistantSidebar() {
       {/* New chat */}
       <div className="px-4 pt-4">
         <button
-          className="group relative flex w-full items-center justify-between overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-surface-raised/60 px-3.5 py-2.5 text-sm font-medium transition-all hover:border-[color:var(--accent-cyan)]/40"
+          onClick={onNewChat}
+          className="group relative flex w-full items-center justify-between overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-surface-raised/60 px-3.5 py-2.5 text-sm font-medium transition-all hover:border-[color:var(--accent-cyan)]/40 active:scale-[0.98]"
         >
           <span className="flex items-center gap-2.5">
             <Plus className="h-4 w-4 text-[color:var(--accent-cyan)]" strokeWidth={2.5} />
@@ -67,12 +75,13 @@ export function AssistantSidebar() {
           Recent
         </div>
         <ul className="space-y-0.5">
-          {threads.map((t) => (
+          {initialThreads.map((t) => (
             <li key={t.id}>
               <button
+                onClick={() => onSelect(t.id)}
                 className={cn(
                   "group relative flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
-                  t.active
+                  activeId === t.id
                     ? "bg-[color:var(--accent-cyan)]/10 ring-1 ring-inset ring-[color:var(--accent-cyan)]/25"
                     : "hover:bg-surface-raised/60",
                 )}
@@ -80,14 +89,14 @@ export function AssistantSidebar() {
                 <MessageSquareText
                   className={cn(
                     "mt-0.5 h-3.5 w-3.5 shrink-0",
-                    t.active ? "text-[color:var(--accent-cyan)]" : "text-muted-foreground",
+                    activeId === t.id ? "text-[color:var(--accent-cyan)]" : "text-muted-foreground",
                   )}
                 />
                 <div className="min-w-0 flex-1">
                   <div
                     className={cn(
                       "truncate text-[13px] leading-snug",
-                      t.active ? "text-foreground" : "text-foreground/85",
+                      activeId === t.id ? "text-foreground" : "text-foreground/85",
                     )}
                   >
                     {t.title}
