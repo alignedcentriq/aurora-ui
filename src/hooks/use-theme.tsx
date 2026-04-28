@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 
 export type Theme = "light" | "dark" | "system";
 
-const STORAGE_KEY = "synapse-theme";
+const STORAGE_KEY = "nexus-theme";
 
 function applyTheme(theme: Theme) {
   if (typeof window === "undefined") return;

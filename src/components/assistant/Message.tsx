@@ -42,11 +42,11 @@ export function AIMessage({
       <div className="flex-1 space-y-3 pt-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em]">
-            <span className="text-[color:var(--accent-cyan)]">Synapse</span>
+            <span className="text-primary font-bold">Nexus AI</span>
             {live && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--accent-cyan)]/30 bg-[color:var(--accent-cyan)]/10 px-1.5 py-[1px] text-[9px] text-[color:var(--accent-cyan)]">
-                <span className="h-1 w-1 rounded-full bg-[color:var(--accent-cyan)] animate-pulse" />
-                Answering
+              <span className="inline-flex items-center gap-1 rounded-full border-primary/30 bg-primary/10 px-1.5 py-[1px] text-[9px] text-primary font-bold">
+                <span className="h-1 w-1 rounded-full bg-primary animate-pulse" />
+                Thinking
               </span>
             )}
           </div>
@@ -54,7 +54,7 @@ export function AIMessage({
             <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
               <button 
                 onClick={() => onFeedback("up")}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface/60 hover:text-[color:var(--accent-cyan)] transition-all"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface/60 hover:text-primary transition-all"
               >
                 <ThumbsUp className="h-3.5 w-3.5" />
               </button>
@@ -93,11 +93,7 @@ export function AnswerCard({
     >
       {/* top highlight line */}
       <div
-        className="absolute inset-x-0 top-0 h-px"
-        style={{
-          background:
-            "linear-gradient(to right, transparent, color-mix(in oklab, var(--accent-cyan) 70%, transparent), transparent)",
-        }}
+        className="absolute inset-x-0 top-0 h-px bg-[color:var(--accent-cyan)]/30"
       />
       {/* corner glow */}
       <div

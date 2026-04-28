@@ -40,7 +40,7 @@ export function ThemeToggle() {
                 style={{
                   background: "var(--gradient-primary)",
                   boxShadow:
-                    "0 0 0 1px color-mix(in oklab, var(--accent-cyan) 30%, transparent), 0 6px 20px -6px color-mix(in oklab, var(--accent-cyan) 55%, transparent)",
+                    "0 0 0 1px color-mix(in oklab, var(--accent-violet) 30%, transparent), 0 6px 20px -6px color-mix(in oklab, var(--accent-violet) 55%, transparent)",
                 }}
               />
             )}

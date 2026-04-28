@@ -5,17 +5,17 @@ import { AmbientBackground } from "@/components/AmbientBackground";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Synapse — One AI assistant for HR, IT, Admin & Org" },
+      { title: "Nexus — One AI assistant for HR, IT, Admin & Org" },
       {
         name: "description",
         content:
-          "Synapse replaces multi-system navigation with a single conversation. Apply leave, reset VPN, fetch payslips, find policies — all in one chat.",
+          "Nexus replaces multi-system navigation with a single conversation. Apply leave, reset VPN, fetch payslips, find policies — all in one chat.",
       },
-      { property: "og:title", content: "Synapse — Workplace AI Concierge" },
+      { property: "og:title", content: "Nexus — Workplace AI Concierge" },
       {
         property: "og:description",
         content:
-          "Skip the tabs. Ask once. Synapse unifies HR, IT, Admin and Org tools into a single conversational assistant.",
+          "Skip the tabs. Ask once. Nexus unifies HR, IT, Admin and Org tools into a single conversational assistant.",
       },
     ],
   }),

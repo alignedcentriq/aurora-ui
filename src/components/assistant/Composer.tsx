@@ -1,5 +1,6 @@
-import { ArrowUp, Paperclip, Sparkles } from "lucide-react";
+import { Send, Paperclip, Sparkles, Mic } from "lucide-react";
 import { useRef, useEffect } from "react";
+import { cn } from "@/lib/utils";
 
 type Props = {
   value: string;
@@ -17,21 +18,12 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
     const el = ref.current;
     if (!el) return;
     el.style.height = "0px";
-    el.style.height = Math.min(el.scrollHeight, 220) + "px";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, [value]);
 
   return (
-    <div className="relative">
-      {/* Outer glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -inset-1 rounded-[22px] opacity-60 blur-xl transition-opacity"
-        style={{ background: "var(--gradient-primary)", opacity: 0.18 }}
-      />
-
-      <div
-        className="glass-strong relative flex flex-col rounded-[20px] p-2 shadow-[var(--shadow-elevated)] focus-within:border-[color:var(--accent-cyan)]/50"
-      >
+    <div className="relative w-full max-w-4xl mx-auto">
+      <div className="relative flex flex-col rounded-2xl border border-[var(--border)] bg-card/60 backdrop-blur-xl shadow-lg transition-all focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/5 p-2">
         <textarea
           ref={ref}
           value={value}
@@ -42,29 +34,35 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
               if (value.trim()) onSubmit();
             }
           }}
-          placeholder="Ask anything — leaves, payslip, VPN, policies, forms…"
+          placeholder="Message Nexus AI..."
           rows={1}
-          className="max-h-[220px] min-h-[44px] w-full resize-none bg-transparent px-3 py-2.5 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/70"
+          className="max-h-[200px] min-h-[48px] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50"
         />
 
-        <div className="flex items-center justify-between gap-1 px-1 pb-1 pt-1 sm:gap-2 sm:px-2">
-          <div className="flex items-center gap-0.5 sm:gap-1">
+        <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={onAttach}
-              className="flex h-8 items-center gap-1 rounded-lg border border-transparent px-2 text-xs text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95 sm:gap-1.5 sm:px-2.5"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90"
+              title="Attach files"
             >
-              <Paperclip className="h-3.5 w-3.5" />
-              <span className="hidden xs:inline">Attach</span>
+              <Paperclip className="h-4 w-4" />
             </button>
             <button
               type="button"
               onClick={onSuggest}
-              className="flex h-8 items-center gap-1 rounded-lg border border-transparent px-2 font-mono text-[10px] text-muted-foreground transition-all hover:border-[var(--color-border-strong)] hover:bg-surface/60 hover:text-foreground active:scale-95 sm:gap-1.5 sm:px-2.5 sm:text-[11px]"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90"
+              title="Suggestions"
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span className="hidden xs:inline">/suggest</span>
-              <span className="xs:hidden">Suggest</span>
+              <Sparkles className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90"
+              title="Voice input"
+            >
+              <Mic className="h-4 w-4" />
             </button>
           </div>
 
@@ -72,21 +70,15 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
             type="button"
             onClick={() => value.trim() && onSubmit()}
             disabled={disabled || !value.trim()}
-            className="group relative flex h-8 items-center gap-1.5 overflow-hidden rounded-xl px-3 text-xs font-semibold text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.97] sm:h-9 sm:gap-2 sm:px-4 sm:text-sm"
-            style={{
-              background: "var(--gradient-primary)",
-              boxShadow:
-                "0 0 0 1px color-mix(in oklab, var(--accent-cyan) 30%, transparent), 0 8px 24px -8px color-mix(in oklab, var(--accent-cyan) 55%, transparent)",
-            }}
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90 disabled:opacity-30 disabled:grayscale disabled:cursor-not-allowed active:scale-95"
           >
-            <span>Ask</span>
-            <ArrowUp className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 sm:h-4 sm:w-4" strokeWidth={2.5} />
+            <Send className="h-5 w-5" />
           </button>
         </div>
       </div>
 
-      <div className="mt-2 text-center font-mono text-[9px] uppercase tracking-[0.15em] text-muted-foreground/70 sm:mt-3 sm:text-[10px] sm:tracking-[0.2em]">
-        Synapse may make mistakes · Verify sensitive info with HR/IT
+      <div className="mt-4 text-center text-[11px] font-medium text-muted-foreground/50 uppercase tracking-widest">
+        Nexus AI can make mistakes. Consider checking important information.
       </div>
     </div>
   );
