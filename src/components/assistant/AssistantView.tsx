@@ -26,11 +26,12 @@ const initialTurns: Turn[] = [
   },
 ];
 
+const initialId = "chat-" + Date.now();
+
 export function AssistantView() {
-  const [activeId, setActiveId] = useState("1");
+  const [activeId, setActiveId] = useState(initialId);
   const [threads, setThreads] = useState<Record<string, ThreadData>>({
-    "1": { id: "1", turns: initialTurns },
-    "2": { id: "2", turns: [{ role: "user", text: "Reset my VPN access" }, { role: "ai", text: "I've started the VPN reset process. You'll receive an OTP on your registered mobile number shortly." }] },
+    [initialId]: { id: initialId, turns: [] },
   });
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -137,13 +138,20 @@ export function AssistantView() {
   }, [activeId, input, threads]);
 
   const handleNewChat = () => {
-    const newId = Date.now().toString();
+    // If we're already in an empty conversation, just stay here
+    const current = threads[activeId];
+    if (current && current.turns.length === 0) {
+      setIsSidebarOpen(false); // Close sidebar on mobile
+      return;
+    }
+
+    const newId = "chat-" + Date.now();
     setThreads((prev) => ({
       ...prev,
       [newId]: { id: newId, turns: [] },
     }));
     setActiveId(newId);
-    toast.success("New conversation started");
+    setIsSidebarOpen(false);
   };
 
   const handleThreadSelect = (id: string) => {
@@ -163,9 +171,19 @@ export function AssistantView() {
       .catch(() => toast.error("Failed to save feedback"));
   };
 
+  const sidebarThreads = Object.values(threads)
+    .filter(t => t.turns.length > 0)
+    .map(t => ({
+      id: t.id,
+      title: t.turns[0].text,
+      domain: "Nexus",
+      time: "Now"
+    })).reverse();
+
   return (
     <div className="relative flex h-dvh w-full overflow-hidden bg-background">
       <AssistantSidebar
+        threads={sidebarThreads}
         activeId={activeId}
         onSelect={handleThreadSelect}
         onNewChat={handleNewChat}

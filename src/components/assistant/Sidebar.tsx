@@ -3,14 +3,7 @@ import { cn } from "@/lib/utils";
 
 type Thread = { id: string; title: string; domain: string; time: string };
 
-const initialThreads: Thread[] = [
-  { id: "1", title: "How many leave days do I have left?", domain: "HR", time: "Now" },
-  { id: "2", title: "Reset my VPN access", domain: "IT", time: "2h" },
-  { id: "3", title: "Request salary slip — October", domain: "HR", time: "Yesterday" },
-  { id: "4", title: "Book a meeting room on 4F", domain: "Admin", time: "Mon" },
-  { id: "5", title: "Q4 company-wide announcement", domain: "Org", time: "Mon" },
-  { id: "6", title: "Install Figma on my workstation", domain: "IT", time: "Last week" },
-];
+const initialThreads: Thread[] = [];
 
 const domainColor: Record<string, string> = {
   HR: "text-emerald-400",
@@ -20,6 +13,7 @@ const domainColor: Record<string, string> = {
 };
 
 interface SidebarProps {
+  threads: Thread[];
   activeId?: string;
   onSelect: (id: string) => void;
   onNewChat: () => void;
@@ -28,7 +22,7 @@ interface SidebarProps {
   className?: string;
 }
 
-export function AssistantSidebar({ activeId, onSelect, onNewChat, onSettings, onHelp, className }: SidebarProps) {
+export function AssistantSidebar({ threads, activeId, onSelect, onNewChat, onSettings, onHelp, className }: SidebarProps) {
   return (
     <aside className={cn("hidden h-full w-[280px] shrink-0 flex-col bg-[var(--sidebar-bg)] border-r border-[var(--border)] lg:flex", className)}>
       {/* Brand */}
@@ -75,7 +69,7 @@ export function AssistantSidebar({ activeId, onSelect, onNewChat, onSettings, on
           Recent Conversations
         </div>
         <ul className="space-y-1">
-          {initialThreads.map((t) => (
+          {threads.map((t) => (
             <li key={t.id}>
               <button
                 onClick={() => onSelect(t.id)}

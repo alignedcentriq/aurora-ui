@@ -44,7 +44,7 @@ export function ThemeToggle() {
                 }}
               />
             )}
-            <Icon className="relative h-3.5 w-3.5" strokeWidth={2.25} />
+            <Icon className="relative z-10 h-3.5 w-3.5" strokeWidth={2.25} />
           </button>
         );
       })}
