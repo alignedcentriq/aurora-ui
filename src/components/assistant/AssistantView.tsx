@@ -36,7 +36,7 @@ export function AssistantView() {
   const [thinking, setThinking] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
-  
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeThread = threads[activeId] || { id: activeId, turns: [] };
@@ -188,30 +188,29 @@ export function AssistantView() {
               <span className="text-sm font-bold text-foreground">Nexus AI</span>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
             <ThemeToggle />
           </div>
         </header>
 
         {/* Chat Content */}
-        <div 
+        <div
           ref={scrollRef}
           className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar"
         >
           <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-8">
             {activeThread.turns.length === 0 ? (
               <section className="flex flex-col items-center justify-center text-center py-10 animate-[fade-in_.6s_ease-out_both]">
-                <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-1.5 text-xs font-semibold text-gray-600 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-gray-400">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" strokeWidth={2.5} />
-                  AI-Powered Workplace Assistant
+                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary mb-8 shadow-xl shadow-primary/5">
+                  <Sparkles className="h-10 w-10" strokeWidth={1.5} />
                 </div>
-                
-                <h1 className="text-5xl font-black tracking-tight text-gray-900 dark:text-white sm:text-6xl mb-6 leading-tight">
+
+                <h1 className="text-4xl font-black tracking-tight text-foreground sm:text-5xl mb-4">
                   How can I help you today?
                 </h1>
-                <p className="text-lg text-gray-500 dark:text-gray-400 max-w-2xl mb-12 font-medium leading-relaxed">
-                  Get instant answers to HR, Admin, IT, and organizational questions. No waiting, no friction — just fast, reliable help.
+                <p className="text-lg text-muted-foreground max-w-2xl mb-12 font-medium">
+                  I'm your intelligent workplace assistant. Choose a category below to get started or ask me anything.
                 </p>
 
                 <div className="w-full">

@@ -1,4 +1,4 @@
-import { Sparkles, Users, Wrench, FileText, Megaphone } from "lucide-react";
+import { Sparkles, Users, Wrench, FileText, Megaphone, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type SuggestionCategory = "hr" | "it" | "admin" | "org" | "all";
@@ -60,11 +60,17 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
   const rolePriority = { employee: 1, manager: 2, admin: 3 };
   const userPriority = rolePriority[USER_CONTEXT.role as keyof typeof rolePriority];
 
-  const filtered = SUGGESTIONS.filter((s) => {
+  let filtered = SUGGESTIONS.filter((s) => {
     const categoryMatch = activeCategory === "all" || s.category === activeCategory;
     const roleMatch = !s.minRole || rolePriority[s.minRole] <= userPriority;
     return categoryMatch && roleMatch;
   });
+
+  // 2. Location-aware cabin suggestions (integrated into admin or all)
+  if (activeCategory === "admin" || activeCategory === "all") {
+    const localCabins = CABINS[USER_CONTEXT.location as keyof typeof CABINS] || [];
+    filtered = [...filtered, ...localCabins];
+  }
 
   const finalItems = filtered.slice(0, 4);
 
@@ -101,6 +107,7 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
             onClick={() => onSelect(s.text)}
             className="flex h-9 items-center rounded-xl border border-[var(--border)] bg-card/40 px-4 text-xs font-semibold text-foreground/70 transition-all hover:border-primary/40 hover:bg-card/80 hover:text-primary active:scale-95 shadow-sm whitespace-nowrap"
           >
+            {s.text.includes("Cabin") && <MapPin className="mr-1.5 h-3 w-3 text-emerald-500" />}
             {s.text}
           </button>
         ))}
