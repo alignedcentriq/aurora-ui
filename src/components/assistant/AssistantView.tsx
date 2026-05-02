@@ -98,14 +98,14 @@ export function AssistantView() {
       content: t.text
     }));
 
-    // Real API call to FastAPI backend
-    fetch("http://localhost:8000/api/chat", {
+    // Real API call to backend
+    fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, history })
     })
       .then(res => {
-        if (!res.ok) throw new Error("Failed to fetch from backend");
+        if (!res.ok) throw new Error("Failed to connect to the server");
         return res.json();
       })
       .then(data => {
@@ -129,7 +129,7 @@ export function AssistantView() {
       .catch(err => {
         console.error("Backend Error:", err);
         toast.error("Assistant is unavailable", {
-          description: "Check if the backend is running at http://localhost:8000"
+          description: "Please try again later.",
         });
       })
       .finally(() => {
@@ -160,7 +160,7 @@ export function AssistantView() {
   };
 
   const handleFeedback = (rating: "up" | "down", index: number) => {
-    fetch("http://localhost:8000/api/feedback", {
+    fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating, index, threadId: activeId })
