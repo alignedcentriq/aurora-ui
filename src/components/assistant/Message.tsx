@@ -1,6 +1,7 @@
 import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Logo } from "@/components/Logo";
 
 export function UserMessage({ children }: { name?: string; initials?: string; children: ReactNode }) {
   return (
@@ -24,9 +25,7 @@ export function AIMessage({
   return (
     <div className="flex w-full justify-start animate-[slide-up_.5s_cubic-bezier(0.16,1,0.3,1)_both]">
       <div className="flex max-w-[85%] gap-3">
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary shadow-sm mt-1">
-          <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
-        </div>
+        <Logo size="sm" className="mt-1 shadow-sm shrink-0" />
 
         <div className="flex-1 space-y-2">
           <div className="chat-bubble-assistant">
@@ -37,7 +36,7 @@ export function AIMessage({
 
           <div className="flex items-center justify-between px-1">
             <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
-              Nexus AI
+              Centriq AI
             </div>
             {!live && onFeedback && (
               <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">

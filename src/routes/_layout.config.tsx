@@ -23,7 +23,7 @@ function ConfigPage() {
     {
       id: 1,
       trigger: "How to reset VPN?",
-      response: "Please visit vpn.nexus.com and follow the automated reset wizard. If the issue persists, contact IT Support at ext. 4500.",
+      response: "Please visit vpn.centriq.ai and follow the automated reset wizard. If the issue persists, contact IT Support at ext. 4500.",
       category: "IT",
       active: true,
     },
@@ -37,7 +37,7 @@ function ConfigPage() {
     {
       id: 3,
       trigger: "How do I book a meeting room?",
-      response: "Use the Nexus Room Booking portal at rooms.nexus.com or ask me to check availability for a specific date and time.",
+      response: "Use the Centriq Room Booking portal at rooms.centriq.ai or ask me to check availability for a specific date and time.",
       category: "Admin",
       active: false,
     },

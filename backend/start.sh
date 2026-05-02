@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "🚀 Starting Nexus AI Backend..."
+echo "🚀 Starting Centriq AI Backend..."
 
 # Create virtual environment if not exists
 if [ ! -d "venv" ]; then

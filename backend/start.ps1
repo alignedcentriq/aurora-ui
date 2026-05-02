@@ -1,4 +1,4 @@
-Write-Host "🚀 Starting Nexus AI Backend..." -ForegroundColor Cyan
+Write-Host "🚀 Starting Centriq AI Backend..." -ForegroundColor Cyan
 
 if (-not (Test-Path "venv")) {
     Write-Host "📦 Creating virtual environment..." -ForegroundColor Yellow

@@ -15,6 +15,7 @@ import {
   UserCog,
   Zap,
 } from "lucide-react";
+import { Logo } from "./Logo";
 import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
@@ -68,11 +69,9 @@ export function Sidebar() {
     <aside className="relative flex h-screen w-[272px] flex-col border-r border-[var(--border)] bg-[var(--sidebar-bg)]">
       {/* Brand */}
       <div className="flex h-16 items-center gap-3 px-6 border-b border-white/[0.06]">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
-        </div>
+        <Logo size="md" />
         <span className="text-[15px] font-semibold text-[var(--sidebar-foreground)] tracking-tight">
-          Nexus AI
+          Centriq AI
         </span>
       </div>
 

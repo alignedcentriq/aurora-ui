@@ -34,7 +34,7 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
               if (value.trim()) onSubmit();
             }
           }}
-          placeholder="Message Nexus AI..."
+          placeholder="Message Centriq AI..."
           rows={1}
           className="max-h-[200px] min-h-[48px] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50"
         />
@@ -78,7 +78,7 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
       </div>
 
       <div className="mt-4 text-center text-[11px] font-medium text-muted-foreground/50 uppercase tracking-widest">
-        Nexus AI can make mistakes. Consider checking important information.
+        Centriq AI can make mistakes. Consider checking important information.
       </div>
     </div>
   );

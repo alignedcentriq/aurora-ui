@@ -25,7 +25,7 @@ def assistant(state: AgentState):
     # Add system message if it's the first turn
     if not any(isinstance(m, SystemMessage) for m in messages):
         system_prompt = SystemMessage(content="""
-        You are Synapse, the Workplace AI Assistant for HR, IT, Admin, and Org-level queries.
+        You are Centriq, the Workplace AI Assistant for HR, IT, Admin, and Org-level queries.
         You help employees with:
         - HR: Leaves, Payroll, Policies, Benefits.
         - IT: Tool Access, Reset VPN, Software installs.

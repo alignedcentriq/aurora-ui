@@ -5,6 +5,7 @@ import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sparkles } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import { toast } from "sonner";
 
 type Turn =
@@ -64,7 +65,7 @@ export function AssistantView() {
               { role: "user", text },
               {
                 role: "ai",
-                text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@nexus.ai)**. Once approved, you will receive an installation link via email.",
+                text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
                 card: false,
               }
             ],
@@ -175,7 +176,7 @@ export function AssistantView() {
     .map(t => ({
       id: t.id,
       title: t.turns[0].text,
-      domain: "Nexus",
+      domain: "Centriq",
       time: "Now"
     })).reverse();
 
@@ -186,7 +187,7 @@ export function AssistantView() {
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--border)] bg-background/80 px-4 backdrop-blur-md sm:px-8">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-foreground">Nexus AI Chat</span>
+              <span className="text-sm font-bold text-foreground">Centriq AI Chat</span>
             </div>
           </div>
 
@@ -203,9 +204,7 @@ export function AssistantView() {
           <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-8">
             {activeThread.turns.length === 0 ? (
               <section className="flex flex-col items-center justify-center text-center py-10 animate-[fade-in_.6s_ease-out_both]">
-                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10 text-primary mb-8 shadow-xl shadow-primary/5">
-                  <Sparkles className="h-10 w-10" strokeWidth={1.5} />
-                </div>
+                <Logo size="xl" className="mb-8 shadow-2xl shadow-primary/20" />
 
                 <h1 className="text-4xl font-black tracking-tight text-foreground sm:text-5xl mb-4">
                   How can I help you today?

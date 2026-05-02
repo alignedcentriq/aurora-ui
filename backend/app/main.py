@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.agent import app_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
-app = FastAPI(title="Nexus AI Backend")
+app = FastAPI(title="Centriq AI Backend")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Nexus AI Backend is running"}
+    return {"status": "online", "message": "Centriq AI Backend is running"}
 
 @app.post("/api/feedback")
 async def feedback(data: dict):

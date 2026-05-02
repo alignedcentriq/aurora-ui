@@ -1,5 +1,6 @@
 import { MessageSquareText, Sparkles, Plus, Search, Settings, HelpCircle, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Logo } from "@/components/Logo";
 
 type Thread = { id: string; title: string; domain: string; time: string };
 
@@ -28,11 +29,9 @@ export function AssistantSidebar({ threads, activeId, onSelect, onNewChat, onSet
       {/* Brand */}
       <div className="flex items-center justify-between px-6 py-8">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white shadow-lg shadow-primary/20">
-            <Sparkles className="h-5 w-5" strokeWidth={2.5} />
-          </div>
+          <Logo size="md" className="shadow-lg shadow-primary/20" />
           <div className="leading-tight">
-            <div className="text-lg font-bold tracking-tight text-[var(--sidebar-foreground)]">Nexus AI</div>
+            <div className="text-lg font-bold tracking-tight text-[var(--sidebar-foreground)]">Centriq AI</div>
             <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-[var(--sidebar-foreground)]/40">
               Assistant
             </div>

@@ -165,7 +165,7 @@ function SettingsPage() {
               </h3>
             </div>
             <div className="p-6 divide-y divide-[var(--border)]">
-              <SettingRow icon={MessageSquare} iconColor="text-emerald-500" title="Response Tone" description="How Nexus AI communicates with you">
+              <SettingRow icon={MessageSquare} iconColor="text-emerald-500" title="Response Tone" description="How Centriq AI communicates with you">
                 <select
                   value={aiTone}
                   onChange={(e) => setAiTone(e.target.value)}
@@ -177,7 +177,7 @@ function SettingsPage() {
                   <option value="detailed">Detailed</option>
                 </select>
               </SettingRow>
-              <SettingRow icon={Eye} iconColor="text-cyan-500" title="AI Memory" description="Allow Nexus to remember conversation context">
+              <SettingRow icon={Eye} iconColor="text-cyan-500" title="AI Memory" description="Allow Centriq to remember conversation context">
                 <Toggle enabled={aiMemory} onToggle={() => setAiMemory(!aiMemory)} />
               </SettingRow>
               <SettingRow icon={Keyboard} iconColor="text-amber-500" title="Auto Suggestions" description="Show smart suggestions as you type">
@@ -216,7 +216,7 @@ function SettingsPage() {
               </h3>
             </div>
             <div className="p-6">
-              <SettingRow icon={Globe} iconColor="text-cyan-500" title="Assistant Language" description="The language Nexus uses to reply">
+              <SettingRow icon={Globe} iconColor="text-cyan-500" title="Assistant Language" description="The language Centriq uses to reply">
                 <select
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
