@@ -65,9 +65,6 @@ export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
                 {d.description}
               </p>
             </div>
-
-            {/* Subtle Gradient Hover */}
-            <div className="absolute inset-0 -z-10 bg-gradient-to-br from-primary/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100 rounded-2xl" />
           </button>
         );
       })}

@@ -10,12 +10,7 @@ interface Suggestion {
   minRole?: "employee" | "manager" | "admin";
 }
 
-// Mock User Data
-export const USER_CONTEXT = {
-  name: "Shivam Sharma",
-  role: "employee", // Options: employee, manager, admin
-  location: "pune", // Options: pune, us
-};
+import { useAuth } from "@/lib/auth-store";
 
 const SUGGESTIONS: Suggestion[] = [
   { id: "1", text: "Apply for leave", category: "hr" },
@@ -30,7 +25,7 @@ const SUGGESTIONS: Suggestion[] = [
   { id: "12", text: "Financial reports", category: "org", minRole: "admin" },
 ];
 
-const CABINS = {
+const CABINS: Record<string, { id: string; text: string; category: SuggestionCategory }[]> = {
   pune: [
     { id: "c1", text: "Go to Cabin 402 (Pune)", category: "admin" },
     { id: "c2", text: "IT Lab Floor 2 (Pune)", category: "admin" },
@@ -56,9 +51,10 @@ interface Props {
 }
 
 export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: Props) {
+  const { user } = useAuth();
   // 1. Role-based filtering
-  const rolePriority = { employee: 1, manager: 2, admin: 3 };
-  const userPriority = rolePriority[USER_CONTEXT.role as keyof typeof rolePriority];
+  const rolePriority: Record<string, number> = { Employee: 1, HR: 2, IT: 2, PMO: 2, Admin: 3 };
+  const userPriority = user ? rolePriority[user.role] || 1 : 1;
 
   let filtered = SUGGESTIONS.filter((s) => {
     const categoryMatch = activeCategory === "all" || s.category === activeCategory;
@@ -68,7 +64,7 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
 
   // 2. Location-aware cabin suggestions (integrated into admin or all)
   if (activeCategory === "admin" || activeCategory === "all") {
-    const localCabins = CABINS[USER_CONTEXT.location as keyof typeof CABINS] || [];
+    const localCabins = CABINS["pune"] || []; // Defaulting to pune for now since user location isn't in AuthContext
     filtered = [...filtered, ...localCabins];
   }
 

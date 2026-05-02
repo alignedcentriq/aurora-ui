@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { AssistantSidebar } from "./Sidebar";
 import { QuickActions } from "./QuickActions";
 import { Composer } from "./Composer";
 import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Zap, Menu, Send, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 type Turn =
@@ -181,29 +180,13 @@ export function AssistantView() {
     })).reverse();
 
   return (
-    <div className="relative flex h-dvh w-full overflow-hidden bg-background">
-      <AssistantSidebar
-        threads={sidebarThreads}
-        activeId={activeId}
-        onSelect={handleThreadSelect}
-        onNewChat={handleNewChat}
-        onSettings={() => toast("Settings", { description: "Manage your preferences and model configurations." })}
-        onHelp={() => toast("Help Center", { description: "Explore documentation and guides for Nexus AI." })}
-        className={isSidebarOpen ? "flex fixed inset-0 z-50 lg:relative lg:z-auto" : ""}
-      />
-
+    <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--border)] bg-background/80 px-4 backdrop-blur-md sm:px-8">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-secondary/50 text-foreground lg:hidden"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
             <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-foreground">Nexus AI</span>
+              <span className="text-sm font-bold text-foreground">Nexus AI Chat</span>
             </div>
           </div>
 
@@ -316,14 +299,6 @@ export function AssistantView() {
           </div>
         </footer>
       </main>
-
-      {/* Mobile Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm lg:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
     </div>
   );
 }

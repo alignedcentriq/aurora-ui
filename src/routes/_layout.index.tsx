@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AssistantView } from "@/components/assistant/AssistantView";
-import { AmbientBackground } from "@/components/AmbientBackground";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_layout/")({
   head: () => ({
     meta: [
       { title: "Nexus — One AI assistant for HR, IT, Admin & Org" },
@@ -23,10 +22,5 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
-  return (
-    <>
-      <AmbientBackground />
-      <AssistantView />
-    </>
-  );
+  return <AssistantView />;
 }
