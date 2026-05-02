@@ -37,8 +37,14 @@ def assistant(state: AgentState):
         """)
         messages = [system_prompt] + messages
     
-    response = llm.invoke(messages)
-    return {"messages": [response]}
+    try:
+        response = llm.invoke(messages)
+        return {"messages": [response]}
+    except Exception as e:
+        print(f"LLM Connection Error: {e}")
+        # Fallback response for development when Ollama/LLM is down
+        fallback = AIMessage(content="I'm currently having trouble connecting to my brain (the LLM). Please make sure **Ollama** is running locally or check your connection.")
+        return {"messages": [fallback]}
 
 # Build the graph
 workflow = StateGraph(AgentState)

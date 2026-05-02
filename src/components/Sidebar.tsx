@@ -19,6 +19,7 @@ import { Logo } from "./Logo";
 import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
+import { useChatStore } from "@/lib/chat-store";
 
 const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string }> = {
   Employee: { icon: Briefcase, color: "text-blue-400", label: "Employee" },
@@ -30,6 +31,7 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
 };
 
 export function Sidebar() {
+  const { threads, activeId, setActiveId, createThread } = useChatStore();
   const { user, login, logout } = useAuth();
   const location = useLocation();
   const [isRoleDropdownOpen, setRoleDropdownOpen] = useState(false);
@@ -87,7 +89,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5 no-scrollbar">
         <div className="px-3 py-2">
           <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--sidebar-foreground)]/30">
             Navigation
@@ -115,6 +117,52 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Recent Chats Section */}
+        {isActive("/") && (
+          <>
+            <div className="px-3 py-4">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--sidebar-foreground)]/30">
+                Recent Chats
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {Object.values(threads)
+                .filter(t => t.turns.length > 0)
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .map((thread) => {
+                  const active = activeId === thread.id;
+                  const title = thread.turns[0]?.text || "New Chat";
+                  return (
+                    <button
+                      key={thread.id}
+                      onClick={() => setActiveId(thread.id)}
+                      className={cn(
+                        "group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all duration-150",
+                        active
+                          ? "bg-white/[0.06] text-[var(--sidebar-foreground)]"
+                          : "text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.03] hover:text-[var(--sidebar-foreground)]/70"
+                      )}
+                    >
+                      <MessageSquare className={cn("h-[16px] w-[16px] shrink-0", active ? "text-primary" : "opacity-40")} />
+                      <span className="truncate text-left">{title}</span>
+                      {active && (
+                        <div className="ml-auto h-1 w-1 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  );
+                })}
+              
+              <button
+                onClick={() => createThread()}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-primary hover:bg-primary/5 transition-colors mt-2"
+              >
+                <Zap className="h-4 w-4" />
+                <span>New Conversation</span>
+              </button>
+            </div>
+          </>
+        )}
       </nav>
 
       {/* User Switcher */}

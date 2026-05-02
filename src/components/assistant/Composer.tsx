@@ -35,8 +35,8 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
             }
           }}
           placeholder="Message Centriq AI..."
-          rows={1}
-          className="max-h-[200px] min-h-[48px] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50"
+          disabled={disabled}
+          className="max-h-[200px] min-h-[48px] w-full resize-none bg-transparent px-4 py-3 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50 disabled:opacity-50 disabled:cursor-not-allowed"
         />
 
         <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">

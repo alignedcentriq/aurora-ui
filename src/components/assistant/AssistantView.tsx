@@ -7,6 +7,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sparkles } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type Turn =
   | { role: "user"; text: string }
@@ -28,19 +29,24 @@ const initialTurns: Turn[] = [
 
 const initialId = "chat-" + Date.now();
 
+import { useChatStore } from "@/lib/chat-store";
+
 export function AssistantView() {
-  const [activeId, setActiveId] = useState(initialId);
-  const [threads, setThreads] = useState<Record<string, ThreadData>>({
-    [initialId]: { id: initialId, turns: [] },
-  });
+  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } = useChatStore();
   const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const activeThread = threads[activeId] || { id: activeId, turns: [] };
+  // Initialize first thread if none exists
+  useEffect(() => {
+    if (!activeId || !threads[activeId]) {
+      createThread();
+    }
+  }, [activeId, threads, createThread]);
+
+  const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -50,27 +56,15 @@ export function AssistantView() {
 
   const send = useCallback((override?: string) => {
     const text = (override ?? input).trim();
-    if (!text) return;
+    if (!text || !activeId) return;
 
     // 1. Intercept Software Install requests for approval workflow
     if (text.toLowerCase().includes("software install") || text.toLowerCase().includes("install figma")) {
-      setThreads((prev) => {
-        const current = prev[activeId] || { id: activeId, turns: [] };
-        return {
-          ...prev,
-          [activeId]: {
-            ...current,
-            turns: [
-              ...current.turns,
-              { role: "user", text },
-              {
-                role: "ai",
-                text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
-                card: false,
-              }
-            ],
-          },
-        };
+      addTurn(activeId, { role: "user", text });
+      addTurn(activeId, {
+        role: "ai",
+        text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
+        card: false,
       });
       setInput("");
       toast.success("IT Approval Request Sent", {
@@ -79,17 +73,7 @@ export function AssistantView() {
       return;
     }
 
-    setThreads((prev) => {
-      const current = prev[activeId] || { id: activeId, turns: [] };
-      return {
-        ...prev,
-        [activeId]: {
-          ...current,
-          turns: [...current.turns, { role: "user", text }],
-        },
-      };
-    });
-
+    addTurn(activeId, { role: "user", text });
     setInput("");
     setThinking(true);
 
@@ -109,21 +93,10 @@ export function AssistantView() {
         return res.json();
       })
       .then(data => {
-        setThreads((prev) => {
-          const current = prev[activeId] || { id: activeId, turns: [] };
-          return {
-            ...prev,
-            [activeId]: {
-              ...current,
-              turns: [
-                ...current.turns,
-                {
-                  role: "ai",
-                  text: data.response,
-                },
-              ],
-            },
-          };
+        const responseText = data.response || "Sorry, I received an empty response from the server.";
+        addTurn(activeId, {
+          role: "ai",
+          text: responseText,
         });
       })
       .catch(err => {
@@ -135,22 +108,10 @@ export function AssistantView() {
       .finally(() => {
         setThinking(false);
       });
-  }, [activeId, input, threads]);
+  }, [activeId, input, threads, addTurn, setThinking]);
 
   const handleNewChat = () => {
-    // If we're already in an empty conversation, just stay here
-    const current = threads[activeId];
-    if (current && current.turns.length === 0) {
-      setIsSidebarOpen(false); // Close sidebar on mobile
-      return;
-    }
-
-    const newId = "chat-" + Date.now();
-    setThreads((prev) => ({
-      ...prev,
-      [newId]: { id: newId, turns: [] },
-    }));
-    setActiveId(newId);
+    createThread();
     setIsSidebarOpen(false);
   };
 
@@ -213,8 +174,8 @@ export function AssistantView() {
                   I'm your intelligent workplace assistant. Choose a category below to get started or ask me anything.
                 </p>
 
-                <div className="w-full">
-                  <QuickActions onPick={(p) => send(p)} />
+                <div className={cn("w-full transition-opacity", thinking && "opacity-50 pointer-events-none")}>
+                  <QuickActions onPick={(p) => !thinking && send(p)} />
                 </div>
               </section>
             ) : (
@@ -302,7 +263,8 @@ export function AssistantView() {
   );
 }
 
-function renderInline(text: string) {
+function renderInline(text: string | undefined) {
+  if (!text) return null;
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((p, i) =>
     p.startsWith("**") && p.endsWith("**") ? (
