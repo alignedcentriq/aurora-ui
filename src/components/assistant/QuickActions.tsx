@@ -52,7 +52,12 @@ export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
             className="group relative flex flex-col items-start gap-4 rounded-2xl border border-[var(--border)] bg-card/50 p-6 text-left transition-all duration-300 hover:border-primary/30 hover:bg-card/80 hover:shadow-lg animate-[slide-up_.5s_ease-out_both] backdrop-blur-sm"
             style={{ animationDelay: `${i * 100}ms` }}
           >
-            <div className={cn("flex h-12 w-12 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110", d.color)}>
+            <div
+              className={cn(
+                "flex h-12 w-12 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110",
+                d.color,
+              )}
+            >
               <Icon className="h-6 w-6" strokeWidth={2} />
             </div>
 
@@ -61,9 +66,7 @@ export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
                 <h3 className="text-base font-bold text-foreground">{d.label}</h3>
                 <ArrowRight className="h-4 w-4 opacity-0 -translate-x-2 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-primary" />
               </div>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                {d.description}
-              </p>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{d.description}</p>
             </div>
           </button>
         );

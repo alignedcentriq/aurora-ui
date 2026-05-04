@@ -2,13 +2,32 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip as RechartsTooltip, ResponsiveContainer,
-  BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import {
-  Users, Zap, Clock, TrendingUp, ArrowUpRight,
-  ArrowDownRight, Activity, Server, Shield, Eye,
+  Users,
+  Zap,
+  Clock,
+  TrendingUp,
+  ArrowUpRight,
+  ArrowDownRight,
+  Activity,
+  Server,
+  Shield,
+  Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -61,12 +80,14 @@ function StatCard({ title, value, change, trend, icon: Icon, iconColor }: StatCa
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--muted)]">
           <Icon className={cn("h-5 w-5", iconColor)} />
         </div>
-        <div className={cn(
-          "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
-          trend === "up" && "bg-emerald-500/10 text-emerald-500",
-          trend === "down" && "bg-rose-500/10 text-rose-500",
-          trend === "neutral" && "bg-[var(--muted)] text-muted-foreground",
-        )}>
+        <div
+          className={cn(
+            "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+            trend === "up" && "bg-emerald-500/10 text-emerald-500",
+            trend === "down" && "bg-rose-500/10 text-rose-500",
+            trend === "neutral" && "bg-[var(--muted)] text-muted-foreground",
+          )}
+        >
           {trend === "up" && <ArrowUpRight className="h-3 w-3" />}
           {trend === "down" && <ArrowDownRight className="h-3 w-3" />}
           {change}
@@ -91,15 +112,17 @@ function AdminDashboard() {
         <div className="text-center">
           <Shield className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">This dashboard is available to Administrators only.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            This dashboard is available to Administrators only.
+          </p>
         </div>
       </div>
     );
   }
 
   const toggleAccess = (role: string) => {
-    setViewerAccess(prev =>
-      prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]
+    setViewerAccess((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
     );
   };
 
@@ -119,7 +142,9 @@ function AdminDashboard() {
       <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">Analytics Dashboard</h1>
+            <h1 className="text-xl font-semibold text-foreground tracking-tight">
+              Analytics Dashboard
+            </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
               Real-time system performance and usage metrics
             </p>
@@ -136,10 +161,38 @@ function AdminDashboard() {
       <div className="flex-1 p-8 space-y-8">
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <StatCard title="Active Users" value="2,405" change="+12.5%" trend="up" icon={Users} iconColor="text-blue-500" />
-          <StatCard title="Resolution Rate" value="94.2%" change="+2.4%" trend="up" icon={Zap} iconColor="text-emerald-500" />
-          <StatCard title="Avg Response Time" value="1.2s" change="-0.3s" trend="up" icon={Clock} iconColor="text-amber-500" />
-          <StatCard title="Total Queries Today" value="3,847" change="+8.1%" trend="up" icon={TrendingUp} iconColor="text-violet-500" />
+          <StatCard
+            title="Active Users"
+            value="2,405"
+            change="+12.5%"
+            trend="up"
+            icon={Users}
+            iconColor="text-blue-500"
+          />
+          <StatCard
+            title="Resolution Rate"
+            value="94.2%"
+            change="+2.4%"
+            trend="up"
+            icon={Zap}
+            iconColor="text-emerald-500"
+          />
+          <StatCard
+            title="Avg Response Time"
+            value="1.2s"
+            change="-0.3s"
+            trend="up"
+            icon={Clock}
+            iconColor="text-amber-500"
+          />
+          <StatCard
+            title="Total Queries Today"
+            value="3,847"
+            change="+8.1%"
+            trend="up"
+            icon={TrendingUp}
+            iconColor="text-violet-500"
+          />
         </div>
 
         {/* Charts Row */}
@@ -149,7 +202,9 @@ function AdminDashboard() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="text-[15px] font-semibold text-foreground">User Traffic</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Hourly active users and query volume</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Hourly active users and query volume
+                </p>
               </div>
               <div className="flex items-center gap-4 text-xs">
                 <div className="flex items-center gap-1.5">
@@ -172,11 +227,36 @@ function AdminDashboard() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
-                  <XAxis dataKey="time" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
-                  <YAxis stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                  <XAxis
+                    dataKey="time"
+                    stroke="var(--muted-foreground)"
+                    fontSize={11}
+                    opacity={0.6}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    stroke="var(--muted-foreground)"
+                    fontSize={11}
+                    opacity={0.6}
+                    tickLine={false}
+                    axisLine={false}
+                  />
                   <RechartsTooltip contentStyle={tooltipStyle} />
-                  <Area type="monotone" dataKey="users" stroke="var(--primary)" strokeWidth={2} fill="url(#usersFill)" />
-                  <Line type="monotone" dataKey="queries" stroke="#10b981" strokeWidth={2} dot={false} />
+                  <Area
+                    type="monotone"
+                    dataKey="users"
+                    stroke="var(--primary)"
+                    strokeWidth={2}
+                    fill="url(#usersFill)"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="queries"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={false}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -211,7 +291,10 @@ function AdminDashboard() {
               {deptData.map((d) => (
                 <div key={d.name} className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
-                    <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: d.color }} />
+                    <div
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: d.color }}
+                    />
                     <span className="text-muted-foreground font-medium">{d.name}</span>
                   </div>
                   <span className="font-semibold text-foreground">{d.value}</span>
@@ -235,10 +318,28 @@ function AdminDashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={weeklyData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
-                  <XAxis dataKey="day" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
-                  <YAxis stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                  <XAxis
+                    dataKey="day"
+                    stroke="var(--muted-foreground)"
+                    fontSize={11}
+                    opacity={0.6}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    stroke="var(--muted-foreground)"
+                    fontSize={11}
+                    opacity={0.6}
+                    tickLine={false}
+                    axisLine={false}
+                  />
                   <RechartsTooltip contentStyle={tooltipStyle} />
-                  <Bar dataKey="queries" fill="var(--primary)" opacity={0.85} radius={[6, 6, 0, 0]} />
+                  <Bar
+                    dataKey="queries"
+                    fill="var(--primary)"
+                    opacity={0.85}
+                    radius={[6, 6, 0, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -262,18 +363,22 @@ function AdminDashboard() {
                       "flex w-full items-center justify-between rounded-xl px-4 py-3 text-[13px] font-medium transition-all duration-150 border",
                       hasAccess
                         ? "bg-primary/5 border-primary/20 text-foreground"
-                        : "bg-transparent border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]"
+                        : "bg-transparent border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]",
                     )}
                   >
                     <span>{role}</span>
-                    <div className={cn(
-                      "h-5 w-9 rounded-full transition-colors duration-200 relative",
-                      hasAccess ? "bg-primary" : "bg-muted"
-                    )}>
-                      <div className={cn(
-                        "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200",
-                        hasAccess ? "translate-x-4" : "translate-x-0.5"
-                      )} />
+                    <div
+                      className={cn(
+                        "h-5 w-9 rounded-full transition-colors duration-200 relative",
+                        hasAccess ? "bg-primary" : "bg-muted",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200",
+                          hasAccess ? "translate-x-4" : "translate-x-0.5",
+                        )}
+                      />
                     </div>
                   </button>
                 );
@@ -281,7 +386,8 @@ function AdminDashboard() {
             </div>
             <div className="mt-4 rounded-lg bg-[var(--muted)] px-3 py-2">
               <p className="text-[11px] text-muted-foreground">
-                <span className="font-semibold">Note:</span> Admins always have full access. Changes are saved automatically.
+                <span className="font-semibold">Note:</span> Admins always have full access. Changes
+                are saved automatically.
               </p>
             </div>
           </div>
@@ -299,11 +405,16 @@ function AdminDashboard() {
               { name: "Vector Store", status: "Operational", uptime: "99.98%" },
               { name: "Auth Service", status: "Degraded", uptime: "98.20%" },
             ].map((s) => (
-              <div key={s.name} className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3">
-                <div className={cn(
-                  "h-2.5 w-2.5 rounded-full shrink-0",
-                  s.status === "Operational" ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
-                )} />
+              <div
+                key={s.name}
+                className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
+              >
+                <div
+                  className={cn(
+                    "h-2.5 w-2.5 rounded-full shrink-0",
+                    s.status === "Operational" ? "bg-emerald-500" : "bg-amber-500 animate-pulse",
+                  )}
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-medium text-foreground truncate">{s.name}</p>
                   <p className="text-[11px] text-muted-foreground">{s.uptime} uptime</p>

@@ -14,11 +14,13 @@ function applyTheme(theme: Theme) {
 }
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>("system");
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "system";
+    return (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system";
+  });
 
   useEffect(() => {
     const saved = (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "system";
-    setThemeState(saved);
     applyTheme(saved);
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");

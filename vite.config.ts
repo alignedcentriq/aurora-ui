@@ -5,12 +5,7 @@ import tsconfigPaths from "vite-tsconfig-paths";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [
-    tanstackStart(),
-    react(),
-    tailwindcss(),
-    tsconfigPaths(),
-  ],
+  plugins: [tanstackStart(), react(), tailwindcss(), tsconfigPaths()],
   server: {
     port: 3000,
     proxy: {
@@ -26,4 +21,3 @@ export default defineConfig({
     },
   },
 });
-

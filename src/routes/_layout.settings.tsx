@@ -2,9 +2,23 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState } from "react";
 import {
-  User, Palette, Globe, Bell, Shield, Moon, Sun, Monitor,
-  MessageSquare, Volume2, VolumeX, Keyboard, Eye, EyeOff,
-  Download, Trash2, ChevronRight,
+  User,
+  Palette,
+  Globe,
+  Bell,
+  Shield,
+  Moon,
+  Sun,
+  Monitor,
+  MessageSquare,
+  Volume2,
+  VolumeX,
+  Keyboard,
+  Eye,
+  EyeOff,
+  Download,
+  Trash2,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -24,13 +38,15 @@ function Toggle({ enabled, onToggle }: ToggleProps) {
       onClick={onToggle}
       className={cn(
         "h-6 w-11 rounded-full transition-colors duration-200 relative shrink-0",
-        enabled ? "bg-primary" : "bg-muted"
+        enabled ? "bg-primary" : "bg-muted",
       )}
     >
-      <div className={cn(
-        "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
-        enabled ? "translate-x-[22px]" : "translate-x-0.5"
-      )} />
+      <div
+        className={cn(
+          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+          enabled ? "translate-x-[22px]" : "translate-x-0.5",
+        )}
+      />
     </button>
   );
 }
@@ -43,7 +59,13 @@ interface SettingRowProps {
   children: React.ReactNode;
 }
 
-function SettingRow({ icon: Icon, iconColor = "text-muted-foreground", title, description, children }: SettingRowProps) {
+function SettingRow({
+  icon: Icon,
+  iconColor = "text-muted-foreground",
+  title,
+  description,
+  children,
+}: SettingRowProps) {
   return (
     <div className="flex items-center justify-between gap-6 py-4">
       <div className="flex items-center gap-4 min-w-0">
@@ -86,7 +108,9 @@ function SettingsPage() {
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <h1 className="text-xl font-semibold text-foreground tracking-tight">Settings</h1>
-        <p className="text-[13px] text-muted-foreground mt-0.5">Manage your preferences and personalization</p>
+        <p className="text-[13px] text-muted-foreground mt-0.5">
+          Manage your preferences and personalization
+        </p>
       </div>
 
       <div className="flex-1 p-8">
@@ -95,7 +119,10 @@ function SettingsPage() {
           <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
             <div className="flex items-center gap-5">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-xl font-bold text-primary">
-                {user.name.split(" ").map(n => n[0]).join("")}
+                {user.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .join("")}
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="text-lg font-semibold text-foreground">{user.name}</h2>
@@ -106,9 +133,7 @@ function SettingsPage() {
                     {user.role}
                   </span>
                   {user.department && (
-                    <span className="text-[11px] text-muted-foreground">
-                      {user.department}
-                    </span>
+                    <span className="text-[11px] text-muted-foreground">{user.department}</span>
                   )}
                 </div>
               </div>
@@ -139,18 +164,35 @@ function SettingsPage() {
                         "flex flex-col items-center gap-2 rounded-xl border-2 px-4 py-4 transition-all duration-150",
                         isSelected
                           ? "border-primary bg-primary/5"
-                          : "border-[var(--border)] hover:border-[var(--border-strong)]"
+                          : "border-[var(--border)] hover:border-[var(--border-strong)]",
                       )}
                     >
-                      <Icon className={cn("h-5 w-5", isSelected ? "text-primary" : "text-muted-foreground")} />
-                      <span className={cn("text-xs font-medium", isSelected ? "text-primary" : "text-muted-foreground")}>{opt.label}</span>
+                      <Icon
+                        className={cn(
+                          "h-5 w-5",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
+                      <span
+                        className={cn(
+                          "text-xs font-medium",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      >
+                        {opt.label}
+                      </span>
                     </button>
                   );
                 })}
               </div>
 
               <div className="border-t border-[var(--border)] mt-4 pt-4">
-                <SettingRow icon={Eye} iconColor="text-blue-500" title="Compact Mode" description="Reduce spacing for a denser layout">
+                <SettingRow
+                  icon={Eye}
+                  iconColor="text-blue-500"
+                  title="Compact Mode"
+                  description="Reduce spacing for a denser layout"
+                >
                   <Toggle enabled={compactMode} onToggle={() => setCompactMode(!compactMode)} />
                 </SettingRow>
               </div>
@@ -165,7 +207,12 @@ function SettingsPage() {
               </h3>
             </div>
             <div className="p-6 divide-y divide-[var(--border)]">
-              <SettingRow icon={MessageSquare} iconColor="text-emerald-500" title="Response Tone" description="How Centriq AI communicates with you">
+              <SettingRow
+                icon={MessageSquare}
+                iconColor="text-emerald-500"
+                title="Response Tone"
+                description="How Centriq AI communicates with you"
+              >
                 <select
                   value={aiTone}
                   onChange={(e) => setAiTone(e.target.value)}
@@ -177,11 +224,24 @@ function SettingsPage() {
                   <option value="detailed">Detailed</option>
                 </select>
               </SettingRow>
-              <SettingRow icon={Eye} iconColor="text-cyan-500" title="AI Memory" description="Allow Centriq to remember conversation context">
+              <SettingRow
+                icon={Eye}
+                iconColor="text-cyan-500"
+                title="AI Memory"
+                description="Allow Centriq to remember conversation context"
+              >
                 <Toggle enabled={aiMemory} onToggle={() => setAiMemory(!aiMemory)} />
               </SettingRow>
-              <SettingRow icon={Keyboard} iconColor="text-amber-500" title="Auto Suggestions" description="Show smart suggestions as you type">
-                <Toggle enabled={autoSuggestions} onToggle={() => setAutoSuggestions(!autoSuggestions)} />
+              <SettingRow
+                icon={Keyboard}
+                iconColor="text-amber-500"
+                title="Auto Suggestions"
+                description="Show smart suggestions as you type"
+              >
+                <Toggle
+                  enabled={autoSuggestions}
+                  onToggle={() => setAutoSuggestions(!autoSuggestions)}
+                />
               </SettingRow>
             </div>
           </div>
@@ -194,7 +254,12 @@ function SettingsPage() {
               </h3>
             </div>
             <div className="p-6 divide-y divide-[var(--border)]">
-              <SettingRow icon={Bell} iconColor="text-amber-500" title="Push Notifications" description="Get notified about tasks and updates">
+              <SettingRow
+                icon={Bell}
+                iconColor="text-amber-500"
+                title="Push Notifications"
+                description="Get notified about tasks and updates"
+              >
                 <Toggle enabled={notifications} onToggle={() => setNotifications(!notifications)} />
               </SettingRow>
               <SettingRow
@@ -216,7 +281,12 @@ function SettingsPage() {
               </h3>
             </div>
             <div className="p-6">
-              <SettingRow icon={Globe} iconColor="text-cyan-500" title="Assistant Language" description="The language Centriq uses to reply">
+              <SettingRow
+                icon={Globe}
+                iconColor="text-cyan-500"
+                title="Assistant Language"
+                description="The language Centriq uses to reply"
+              >
                 <select
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
@@ -248,10 +318,21 @@ function SettingsPage() {
                 title="Online Status"
                 description="Show your online status to colleagues"
               >
-                <Toggle enabled={showOnlineStatus} onToggle={() => setShowOnlineStatus(!showOnlineStatus)} />
+                <Toggle
+                  enabled={showOnlineStatus}
+                  onToggle={() => setShowOnlineStatus(!showOnlineStatus)}
+                />
               </SettingRow>
-              <SettingRow icon={Keyboard} iconColor="text-indigo-500" title="Keyboard Shortcuts" description="Enable keyboard shortcuts across the app">
-                <Toggle enabled={keyboardShortcuts} onToggle={() => setKeyboardShortcuts(!keyboardShortcuts)} />
+              <SettingRow
+                icon={Keyboard}
+                iconColor="text-indigo-500"
+                title="Keyboard Shortcuts"
+                description="Enable keyboard shortcuts across the app"
+              >
+                <Toggle
+                  enabled={keyboardShortcuts}
+                  onToggle={() => setKeyboardShortcuts(!keyboardShortcuts)}
+                />
               </SettingRow>
             </div>
           </div>
