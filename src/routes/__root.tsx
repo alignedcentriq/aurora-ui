@@ -64,10 +64,58 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+import { useAuth } from "../lib/auth-store";
+import { Logo } from "@/components/Logo";
+
+function LoginView() {
+  const { login } = useAuth();
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
+      <div className="w-full max-w-sm space-y-8 text-center">
+        <div className="flex flex-col items-center gap-4">
+          <Logo size="xl" className="shadow-2xl shadow-primary/20" />
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Welcome to Centriq</h1>
+          <p className="text-muted-foreground font-medium">
+            Your intelligent workplace concierge. Please sign in to continue.
+          </p>
+        </div>
+        
+        <button
+          onClick={() => login()}
+          className="group relative flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card p-4 text-[15px] font-semibold text-foreground transition-all hover:bg-accent hover:shadow-lg active:scale-[0.98]"
+        >
+          <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
+            <path d="M11.5 2.3C6.42 2.3 2.3 6.42 2.3 11.5S6.42 20.7 11.5 20.7s9.2-4.12 9.2-9.2S16.58 2.3 11.5 2.3zm0 16.8c-4.19 0-7.6-3.41-7.6-7.6s3.41-7.6 7.6-7.6 7.6 3.41 7.6 7.6-3.41 7.6-7.6 7.6z" fill="currentColor" fillOpacity="0.2"/>
+            <path d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z" fill="currentColor"/>
+          </svg>
+          Sign in with Microsoft
+        </button>
+
+        <p className="text-[11px] text-muted-foreground/60 uppercase tracking-[0.12em] font-bold">
+          SECURE ENTERPRISE SSO
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AuthenticatedContent() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) return null;
+
+  if (!user) {
+    return <LoginView />;
+  }
+
+  return <Outlet />;
+}
+
 function RootComponent() {
   return (
     <AuthProvider>
-      <Outlet />
+      <AuthenticatedContent />
       <Toaster position="top-center" richColors />
     </AuthProvider>
   );

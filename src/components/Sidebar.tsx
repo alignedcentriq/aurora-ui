@@ -171,9 +171,20 @@ export function Sidebar() {
           onClick={() => setRoleDropdownOpen(!isRoleDropdownOpen)}
           className="flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-white/[0.04]"
         >
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-[13px] font-bold text-primary">
-            {user.name.split(" ").map(n => n[0]).join("")}
-          </div>
+          {user.photo ? (
+            <img
+              src={user.photo}
+              alt={user.name}
+              className="h-9 w-9 rounded-full object-cover shadow-lg shadow-black/20"
+            />
+          ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/20 text-[13px] font-bold text-primary shadow-lg shadow-black/10">
+              {user.name
+                .split(" ")
+                .map((n) => n[0])
+                .join("")}
+            </div>
+          )}
           <div className="flex flex-1 flex-col items-start min-w-0">
             <span className="text-[13px] font-medium text-[var(--sidebar-foreground)] truncate w-full text-left">
               {user.name}
@@ -205,7 +216,7 @@ export function Sidebar() {
                 <button
                   key={r}
                   onClick={() => {
-                    login(r);
+                    setRole(r);
                     setRoleDropdownOpen(false);
                   }}
                   className={cn(
