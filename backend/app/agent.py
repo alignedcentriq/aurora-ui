@@ -10,7 +10,6 @@ load_dotenv()
 # State definition
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
-    next_step: str
 
 # Initialize LLM
 llm = ChatOpenAI(

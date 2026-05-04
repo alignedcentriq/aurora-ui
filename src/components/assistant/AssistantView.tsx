@@ -94,8 +94,11 @@ export function AssistantView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, history }),
       })
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to connect to the server");
+        .then(async (res) => {
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ detail: "Failed to connect to the server" }));
+            throw new Error(errorData.detail || "Server Error");
+          }
           return res.json();
         })
         .then((data) => {
@@ -109,7 +112,7 @@ export function AssistantView() {
         .catch((err) => {
           console.error("Backend Error:", err);
           toast.error("Assistant is unavailable", {
-            description: "Please try again later.",
+            description: err.message || "Please try again later.",
           });
         })
         .finally(() => {
