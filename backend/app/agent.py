@@ -108,9 +108,24 @@ def should_continue(state: AgentState):
         return "tools"
     return END
 
-# Setup Redis Checkpointer
+from langgraph.checkpoint.memory import MemorySaver
+
+# Setup Checkpointer (Redis with Memory fallback)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-checkpointer = AsyncRedisSaver(redis_url=REDIS_URL)
+checkpointer = MemorySaver() # Default to Memory
+
+try:
+    import redis.asyncio as redis
+    from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+    # Create the client without connecting immediately
+    redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+    # Use keyword argument to avoid misinterpretation of client as URL
+    checkpointer = AsyncRedisSaver(redis_client=redis_client)
+    print(f"Redis checkpointer initialized (URL: {REDIS_URL})")
+except ImportError:
+    print("langgraph-checkpoint-redis not installed. Using MemorySaver.")
+except Exception as e:
+    print(f"Redis initialization failed: {e}. Using MemorySaver.")
 
 # Build the graph
 workflow = StateGraph(AgentState)

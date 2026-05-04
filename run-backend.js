@@ -21,21 +21,25 @@ const startBackend = () => {
     args = ['start.sh'];
   }
 
+  const scriptPath = isWindows ? 'start.ps1' : './start.sh';
+  
   console.log(`📂 Starting backend in: ${backendDir}`);
   
   const child = spawn(command, args, {
     cwd: backendDir,
     stdio: 'inherit',
-    shell: true
+    shell: false
   });
 
   child.on('error', (err) => {
-    console.error('❌ Failed to start backend:', err);
+    console.error('❌ Failed to start backend process:', err.message);
   });
 
-  child.on('exit', (code) => {
+  child.on('exit', (code, signal) => {
     if (code !== 0) {
-      console.log(`⚠️ Backend process exited with code ${code}`);
+      console.log(`⚠️ Backend process exited with code ${code}${signal ? ` and signal ${signal}` : ''}`);
+    } else {
+      console.log('✅ Backend process finished successfully');
     }
   });
 };

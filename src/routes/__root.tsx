@@ -1,76 +1,111 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
-import { Toaster } from "sonner";
-import { AuthProvider } from "../lib/auth-store";
+import {
+  createRootRoute,
+  Outlet,
+  HeadContent,
+  Scripts
+} from "@tanstack/react-router";
+import * as React from "react";
+import { DefaultCatchBoundary } from "../components/DefaultCatchBoundary";
+import { NotFound } from "../components/NotFound";
+import appCss from "../styles.css?url";
+import { seo } from "../utils/seo";
 import { MsalProvider } from "@azure/msal-react";
 import { msalInstance } from "../lib/msal";
-
-import appCss from "../styles.css?url";
-
-function NotFoundComponent() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-7xl font-bold text-foreground">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-        <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Go home
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { AuthProvider, useAuth } from "../lib/auth-store";
+import { Toaster } from "sonner";
+import { cn } from "../lib/utils";
+import { Logo } from "../components/Logo";
 
 export const Route = createRootRoute({
   head: () => ({
     meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Centriq AI" },
+      {
+        charSet: "utf-8",
+      },
+      {
+        name: "viewport",
+        content: "width=device-width, initial-scale=1",
+      },
+      ...seo({
+        title: "Centriq AI | Intelligent Workplace Assistant",
+        description:
+          "Centriq is your intelligent workplace concierge, helping you manage HR tasks, IT requests, and payroll with ease.",
+      }),
     ],
     links: [
+      { rel: "stylesheet", href: appCss },
       {
-        rel: "stylesheet",
-        href: appCss,
+        rel: "apple-touch-icon",
+        sizes: "180x180",
+        href: "/apple-touch-icon.png",
       },
       {
         rel: "icon",
         type: "image/png",
-        href: "/logo.png",
+        sizes: "32x32",
+        href: "/favicon-32x32.png",
       },
+      {
+        rel: "icon",
+        type: "image/png",
+        sizes: "16x16",
+        href: "/favicon-16x16.png",
+      },
+      { rel: "manifest", href: "/site.webmanifest", color: "#ffffff" },
+      { rel: "icon", href: "/favicon.ico" },
     ],
   }),
-  shellComponent: RootShell,
+  errorComponent: (props) => (
+    <RootDocument>
+      <DefaultCatchBoundary {...props} />
+    </RootDocument>
+  ),
+  notFoundComponent: () => (
+    <RootDocument>
+      <NotFound />
+    </RootDocument>
+  ),
   component: RootComponent,
-  notFoundComponent: NotFoundComponent,
 });
 
-function RootShell({ children }: { children: React.ReactNode }) {
+function RootComponent() {
+  const isBrowser = typeof window !== "undefined";
+  const [isMsalInitialized, setIsMsalInitialized] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isBrowser && msalInstance) {
+      msalInstance.initialize().then(() => {
+        setIsMsalInitialized(true);
+      }).catch(e => {
+        console.error("MSAL Init Error:", e);
+        setIsMsalInitialized(true);
+      });
+    }
+  }, [isBrowser]);
+
+  if (!isBrowser || !isMsalInitialized) {
+    return (
+      <RootDocument>
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <Logo size="lg" className="animate-pulse" />
+        </div>
+      </RootDocument>
+    );
+  }
+
   return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        {children}
-        <Scripts />
-      </body>
-    </html>
+    <MsalProvider instance={msalInstance}>
+      <AuthProvider>
+        <RootDocument>
+          <AuthenticatedApp />
+        </RootDocument>
+      </AuthProvider>
+    </MsalProvider>
   );
 }
 
-import { useAuth } from "../lib/auth-store";
-import { Logo } from "@/components/Logo";
-
 function LoginView() {
-  const { login } = useAuth();
+  const { login, isInteracting } = useAuth();
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
@@ -85,50 +120,77 @@ function LoginView() {
 
         <button
           onClick={() => login()}
-          className="group relative flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card p-4 text-[15px] font-semibold text-foreground transition-all hover:bg-accent hover:shadow-lg active:scale-[0.98]"
+          disabled={isInteracting}
+          className={cn(
+            "group relative flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card p-4 text-[15px] font-semibold text-foreground transition-all hover:bg-accent hover:shadow-lg active:scale-[0.98]",
+            isInteracting && "opacity-50 cursor-not-allowed"
+          )}
         >
-          <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
-            <path
-              d="M11.5 2.3C6.42 2.3 2.3 6.42 2.3 11.5S6.42 20.7 11.5 20.7s9.2-4.12 9.2-9.2S16.58 2.3 11.5 2.3zm0 16.8c-4.19 0-7.6-3.41-7.6-7.6s3.41-7.6 7.6-7.6 7.6 3.41 7.6 7.6-3.41 7.6-7.6 7.6z"
-              fill="currentColor"
-              fillOpacity="0.2"
-            />
-            <path
-              d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z"
-              fill="currentColor"
-            />
-          </svg>
-          Sign in with Microsoft
+          {isInteracting ? (
+            <div className="flex items-center gap-2">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              Signing in...
+            </div>
+          ) : (
+            <>
+              <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
+                <path
+                  d="M11.5 2.3C6.42 2.3 2.3 6.42 2.3 11.5S6.42 20.7 11.5 20.7s9.2-4.12 9.2-9.2S16.58 2.3 11.5 2.3zm0 16.8c-4.19 0-7.6-3.41-7.6-7.6s3.41-7.6 7.6-7.6 7.6 3.41 7.6 7.6-3.41 7.6-7.6 7.6z"
+                  fill="currentColor"
+                  fillOpacity="0.2"
+                />
+                <path
+                  d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z"
+                  fill="currentColor"
+                />
+              </svg>
+              <span>Sign in with Microsoft</span>
+            </>
+          )}
         </button>
-
-        <p className="text-[11px] text-muted-foreground/60 uppercase tracking-[0.12em] font-bold">
-          SECURE ENTERPRISE SSO
-        </p>
       </div>
     </div>
   );
 }
 
-function AuthenticatedContent() {
+function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
 
-  if (isLoading) return null;
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Logo size="lg" className="animate-pulse" />
+          <div className="h-1 w-32 overflow-hidden rounded-full bg-muted">
+            <div className="h-full w-1/2 animate-progress rounded-full bg-primary" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <LoginView />;
   }
 
-  return <Outlet />;
-}
-
-function RootComponent() {
   return (
-    <MsalProvider instance={msalInstance}>
-      <AuthProvider>
-        <AuthenticatedContent />
-        <Toaster position="top-center" richColors />
-      </AuthProvider>
-    </MsalProvider>
+    <>
+      <Outlet />
+      <Toaster position="top-right" expand={false} richColors />
+    </>
   );
 }
 
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <html>
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+      </body>
+    </html>
+  );
+}
