@@ -1,7 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState } from "react";
-import { Plus, Trash2, Save, Search, Tag, Filter, Zap, MessageSquare, HelpCircle } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Save,
+  Search,
+  Tag,
+  Filter,
+  Zap,
+  MessageSquare,
+  HelpCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -23,21 +33,24 @@ function ConfigPage() {
     {
       id: 1,
       trigger: "How to reset VPN?",
-      response: "Please visit vpn.centriq.ai and follow the automated reset wizard. If the issue persists, contact IT Support at ext. 4500.",
+      response:
+        "Please visit vpn.centriq.ai and follow the automated reset wizard. If the issue persists, contact IT Support at ext. 4500.",
       category: "IT",
       active: true,
     },
     {
       id: 2,
       trigger: "What is the leave policy?",
-      response: "Employees are entitled to 24 earned leaves, 12 casual leaves, and 12 sick leaves per year. Leave requests must be submitted at least 3 days in advance for approval.",
+      response:
+        "Employees are entitled to 24 earned leaves, 12 casual leaves, and 12 sick leaves per year. Leave requests must be submitted at least 3 days in advance for approval.",
       category: "HR",
       active: true,
     },
     {
       id: 3,
       trigger: "How do I book a meeting room?",
-      response: "Use the Centriq Room Booking portal at rooms.centriq.ai or ask me to check availability for a specific date and time.",
+      response:
+        "Use the Centriq Room Booking portal at rooms.centriq.ai or ask me to check availability for a specific date and time.",
       category: "Admin",
       active: false,
     },
@@ -55,7 +68,9 @@ function ConfigPage() {
         <div className="text-center">
           <HelpCircle className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">Prompt configuration is available for HR, IT, PMO and Admins.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Prompt configuration is available for HR, IT, PMO and Admins.
+          </p>
         </div>
       </div>
     );
@@ -67,7 +82,13 @@ function ConfigPage() {
       return;
     }
     setPrompts([
-      { id: Date.now(), trigger: newTrigger, response: newResponse, category: newCategory, active: true },
+      {
+        id: Date.now(),
+        trigger: newTrigger,
+        response: newResponse,
+        category: newCategory,
+        active: true,
+      },
       ...prompts,
     ]);
     setNewTrigger("");
@@ -102,7 +123,9 @@ function ConfigPage() {
       <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">Prompt Configuration</h1>
+            <h1 className="text-xl font-semibold text-foreground tracking-tight">
+              Prompt Configuration
+            </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
               Define automated responses for {user.role} department queries
             </p>
@@ -113,7 +136,7 @@ function ConfigPage() {
               "flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-medium transition-all",
               isFormOpen
                 ? "bg-[var(--muted)] text-foreground"
-                : "bg-primary text-white hover:bg-primary/90"
+                : "bg-primary text-white hover:bg-primary/90",
             )}
           >
             <Plus className="h-4 w-4" />
@@ -131,7 +154,9 @@ function ConfigPage() {
             </h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-[13px] font-medium text-foreground mb-1.5">Trigger Question</label>
+                <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                  Trigger Question
+                </label>
                 <input
                   type="text"
                   value={newTrigger}
@@ -141,7 +166,9 @@ function ConfigPage() {
                 />
               </div>
               <div>
-                <label className="block text-[13px] font-medium text-foreground mb-1.5">AI Response</label>
+                <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                  AI Response
+                </label>
                 <textarea
                   value={newResponse}
                   onChange={(e) => setNewResponse(e.target.value)}
@@ -151,7 +178,9 @@ function ConfigPage() {
               </div>
               <div className="flex items-end gap-4">
                 <div className="flex-1">
-                  <label className="block text-[13px] font-medium text-foreground mb-1.5">Category</label>
+                  <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                    Category
+                  </label>
                   <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value)}
@@ -196,7 +225,7 @@ function ConfigPage() {
                   "rounded-lg px-3 py-1.5 text-[12px] font-medium transition-all",
                   filterCategory === cat
                     ? "bg-primary text-white"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {cat}
@@ -212,7 +241,7 @@ function ConfigPage() {
               key={p.id}
               className={cn(
                 "group rounded-2xl border bg-card p-5 transition-all duration-150",
-                p.active ? "border-[var(--border)]" : "border-[var(--border)] opacity-50"
+                p.active ? "border-[var(--border)]" : "border-[var(--border)] opacity-50",
               )}
             >
               <div className="flex items-start justify-between gap-4">
@@ -222,10 +251,14 @@ function ConfigPage() {
                       <Tag className="h-3 w-3" />
                       {p.category}
                     </span>
-                    <span className={cn(
-                      "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                      p.active ? "bg-emerald-500/10 text-emerald-500" : "bg-[var(--muted)] text-muted-foreground"
-                    )}>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                        p.active
+                          ? "bg-emerald-500/10 text-emerald-500"
+                          : "bg-[var(--muted)] text-muted-foreground",
+                      )}
+                    >
                       {p.active ? "Active" : "Paused"}
                     </span>
                   </div>
@@ -233,7 +266,9 @@ function ConfigPage() {
                     <MessageSquare className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                     <p className="text-[13px] font-semibold text-foreground">{p.trigger}</p>
                   </div>
-                  <p className="text-[12px] text-muted-foreground leading-relaxed ml-6">{p.response}</p>
+                  <p className="text-[12px] text-muted-foreground leading-relaxed ml-6">
+                    {p.response}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                   <button
@@ -242,7 +277,7 @@ function ConfigPage() {
                       "rounded-lg px-3 py-1.5 text-[11px] font-medium border transition-colors",
                       p.active
                         ? "border-amber-500/30 text-amber-500 hover:bg-amber-500/10"
-                        : "border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10"
+                        : "border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10",
                     )}
                   >
                     {p.active ? "Pause" : "Activate"}
@@ -261,8 +296,12 @@ function ConfigPage() {
           {filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <MessageSquare className="h-10 w-10 text-muted-foreground/20 mb-4" />
-              <p className="text-[13px] font-medium text-muted-foreground">No configurations found</p>
-              <p className="text-[11px] text-muted-foreground/60 mt-1">Try adjusting your search or filters</p>
+              <p className="text-[13px] font-medium text-muted-foreground">
+                No configurations found
+              </p>
+              <p className="text-[11px] text-muted-foreground/60 mt-1">
+                Try adjusting your search or filters
+              </p>
             </div>
           )}
         </div>

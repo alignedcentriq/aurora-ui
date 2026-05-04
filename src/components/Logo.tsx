@@ -14,12 +14,14 @@ const sizes = {
 
 export function Logo({ className, size = "md" }: LogoProps) {
   return (
-    <div className={cn("relative flex items-center justify-center overflow-hidden rounded-xl", sizes[size], className)}>
-      <img 
-        src="/logo.png" 
-        alt="Centriq AI Logo" 
-        className="h-full w-full object-cover"
-      />
+    <div
+      className={cn(
+        "relative flex items-center justify-center overflow-hidden rounded-xl",
+        sizes[size],
+        className,
+      )}
+    >
+      <img src="/logo.png" alt="Centriq AI Logo" className="h-full w-full object-cover" />
     </div>
   );
 }

@@ -3,7 +3,13 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 
-export function UserMessage({ children }: { name?: string; initials?: string; children: ReactNode }) {
+export function UserMessage({
+  children,
+}: {
+  name?: string;
+  initials?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both]">
       <div className="chat-bubble-user">
@@ -16,7 +22,7 @@ export function UserMessage({ children }: { name?: string; initials?: string; ch
 export function AIMessage({
   children,
   live,
-  onFeedback
+  onFeedback,
 }: {
   children: ReactNode;
   live?: boolean;
@@ -29,9 +35,7 @@ export function AIMessage({
 
         <div className="flex-1 space-y-2">
           <div className="chat-bubble-assistant">
-            <div className="group/msg relative">
-              {children}
-            </div>
+            <div className="group/msg relative">{children}</div>
           </div>
 
           <div className="flex items-center justify-between px-1">
@@ -78,9 +82,7 @@ export function AnswerCard({
         <div>
           <div className="text-sm font-bold text-foreground tracking-tight">{title}</div>
           {meta && (
-            <div className="mt-0.5 text-[10px] font-medium text-muted-foreground">
-              {meta}
-            </div>
+            <div className="mt-0.5 text-[10px] font-medium text-muted-foreground">{meta}</div>
           )}
         </div>
         <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-500">
@@ -95,13 +97,13 @@ export function AnswerCard({
             key={r.label}
             className={cn(
               "flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors",
-              r.highlight ? "bg-primary/5 text-primary border border-primary/10" : "bg-muted/30 text-foreground border border-transparent"
+              r.highlight
+                ? "bg-primary/5 text-primary border border-primary/10"
+                : "bg-muted/30 text-foreground border border-transparent",
             )}
           >
             <span className="opacity-70 font-medium">{r.label}</span>
-            <span className={cn("font-bold", r.highlight && "text-primary")}>
-              {r.value}
-            </span>
+            <span className={cn("font-bold", r.highlight && "text-primary")}>{r.value}</span>
           </div>
         ))}
       </div>

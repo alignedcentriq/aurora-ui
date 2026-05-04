@@ -13,7 +13,6 @@ export function AmbientBackground() {
         className="absolute -bottom-52 -right-40 h-[640px] w-[640px] rounded-full blur-[140px] mix-blend-screen opacity-60 animate-[float-slow_18s_ease-in-out_infinite]"
         style={{ background: "color-mix(in oklab, var(--accent-cyan) 40%, transparent)" }}
       />
-
     </div>
   );
 }

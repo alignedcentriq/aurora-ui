@@ -2,9 +2,21 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAuth, type TeamMember } from "@/lib/auth-store";
 import { useState } from "react";
 import {
-  Users, Plus, Trash2, Send, CheckCircle2, Clock,
-  BookOpen, FileSpreadsheet, AlertCircle, ChevronDown,
-  ChevronRight, User, CalendarDays, Target, Zap,
+  Users,
+  Plus,
+  Trash2,
+  Send,
+  CheckCircle2,
+  Clock,
+  BookOpen,
+  FileSpreadsheet,
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  User,
+  CalendarDays,
+  Target,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -35,7 +47,8 @@ function TeamPage() {
     {
       id: 1,
       title: "Complete Q2 Security Awareness Training",
-      description: "All team members must complete the mandatory security awareness module on the LMS portal by end of this month.",
+      description:
+        "All team members must complete the mandatory security awareness module on the LMS portal by end of this month.",
       assignedTo: ["all"],
       priority: "high",
       status: "pending",
@@ -46,7 +59,8 @@ function TeamPage() {
     {
       id: 2,
       title: "Fill Monthly Timesheet — April",
-      description: "Submit your April timesheet with accurate project allocation hours. Use the standard Excel template.",
+      description:
+        "Submit your April timesheet with accurate project allocation hours. Use the standard Excel template.",
       assignedTo: ["t1", "t2", "t3"],
       priority: "medium",
       status: "in_progress",
@@ -57,7 +71,8 @@ function TeamPage() {
     {
       id: 3,
       title: "Review & Update Skill Matrix",
-      description: "Update your skills and certifications in the team skill matrix spreadsheet shared on OneDrive.",
+      description:
+        "Update your skills and certifications in the team skill matrix spreadsheet shared on OneDrive.",
       assignedTo: ["all"],
       priority: "low",
       status: "completed",
@@ -83,7 +98,9 @@ function TeamPage() {
         <div className="text-center">
           <Users className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">Team management is available for Functional Managers only.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Team management is available for Functional Managers only.
+          </p>
         </div>
       </div>
     );
@@ -140,13 +157,12 @@ function TeamPage() {
     toast.info("Task removed");
   };
 
-  const filteredTasks = filterStatus === "all" ? tasks : tasks.filter((t) => t.status === filterStatus);
+  const filteredTasks =
+    filterStatus === "all" ? tasks : tasks.filter((t) => t.status === filterStatus);
 
   const getAssigneeLabel = (assignedTo: string[]) => {
     if (assignedTo.includes("all")) return "All Team Members";
-    return assignedTo
-      .map((id) => team.find((m) => m.id === id)?.name || id)
-      .join(", ");
+    return assignedTo.map((id) => team.find((m) => m.id === id)?.name || id).join(", ");
   };
 
   const priorityConfig: Record<TaskPriority, { label: string; classes: string }> = {
@@ -180,7 +196,9 @@ function TeamPage() {
       <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">Team Management</h1>
+            <h1 className="text-xl font-semibold text-foreground tracking-tight">
+              Team Management
+            </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
               Assign tasks, learnings, and forms to your team of {team.length} members
             </p>
@@ -189,7 +207,9 @@ function TeamPage() {
             onClick={() => setIsFormOpen(!isFormOpen)}
             className={cn(
               "flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-medium transition-all",
-              isFormOpen ? "bg-[var(--muted)] text-foreground" : "bg-primary text-white hover:bg-primary/90"
+              isFormOpen
+                ? "bg-[var(--muted)] text-foreground"
+                : "bg-primary text-white hover:bg-primary/90",
             )}
           >
             <Plus className="h-4 w-4" />
@@ -205,7 +225,12 @@ function TeamPage() {
             { label: "Total Tasks", value: stats.total, icon: Target, color: "text-violet-500" },
             { label: "Pending", value: stats.pending, icon: Clock, color: "text-amber-500" },
             { label: "In Progress", value: stats.inProgress, icon: Zap, color: "text-blue-500" },
-            { label: "Completed", value: stats.completed, icon: CheckCircle2, color: "text-emerald-500" },
+            {
+              label: "Completed",
+              value: stats.completed,
+              icon: CheckCircle2,
+              color: "text-emerald-500",
+            },
           ].map((s) => {
             const Icon = s.icon;
             return (
@@ -239,7 +264,9 @@ function TeamPage() {
                   {member.avatar}
                 </div>
                 <div>
-                  <p className="text-[12px] font-medium text-foreground leading-tight">{member.name}</p>
+                  <p className="text-[12px] font-medium text-foreground leading-tight">
+                    {member.name}
+                  </p>
                   <p className="text-[10px] text-muted-foreground">{member.department}</p>
                 </div>
               </div>
@@ -256,7 +283,9 @@ function TeamPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[13px] font-medium text-foreground mb-1.5">Task Title</label>
+                  <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                    Task Title
+                  </label>
                   <input
                     type="text"
                     value={newTitle}
@@ -266,7 +295,9 @@ function TeamPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-foreground mb-1.5">Due Date</label>
+                  <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                    Due Date
+                  </label>
                   <input
                     type="date"
                     value={newDueDate}
@@ -276,7 +307,9 @@ function TeamPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-[13px] font-medium text-foreground mb-1.5">Description</label>
+                <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                  Description
+                </label>
                 <textarea
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
@@ -286,7 +319,9 @@ function TeamPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[13px] font-medium text-foreground mb-1.5">Type</label>
+                  <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                    Type
+                  </label>
                   <select
                     value={newType}
                     onChange={(e) => setNewType(e.target.value as typeof newType)}
@@ -298,7 +333,9 @@ function TeamPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[13px] font-medium text-foreground mb-1.5">Priority</label>
+                  <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                    Priority
+                  </label>
                   <select
                     value={newPriority}
                     onChange={(e) => setNewPriority(e.target.value as TaskPriority)}
@@ -313,7 +350,9 @@ function TeamPage() {
 
               {/* Member Assignment */}
               <div>
-                <label className="block text-[13px] font-medium text-foreground mb-1.5">Assign To</label>
+                <label className="block text-[13px] font-medium text-foreground mb-1.5">
+                  Assign To
+                </label>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => toggleMember("all")}
@@ -321,7 +360,7 @@ function TeamPage() {
                       "rounded-lg px-3 py-1.5 text-[12px] font-medium border transition-all",
                       selectedMembers.includes("all")
                         ? "bg-primary text-white border-primary"
-                        : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]"
+                        : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]",
                     )}
                   >
                     All Members
@@ -334,7 +373,7 @@ function TeamPage() {
                         "rounded-lg px-3 py-1.5 text-[12px] font-medium border transition-all",
                         selectedMembers.includes(m.id) && !selectedMembers.includes("all")
                           ? "bg-primary text-white border-primary"
-                          : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]"
+                          : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]",
                       )}
                     >
                       {m.name}
@@ -365,7 +404,7 @@ function TeamPage() {
                 "rounded-lg px-4 py-2 text-[12px] font-medium transition-all capitalize",
                 filterStatus === s
                   ? "bg-primary text-white"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {s === "all" ? "All" : s.replace("_", " ")}
@@ -395,14 +434,26 @@ function TeamPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-[13px] font-semibold text-foreground truncate">{task.title}</p>
+                      <p className="text-[13px] font-semibold text-foreground truncate">
+                        {task.title}
+                      </p>
                     </div>
                     <div className="flex items-center gap-3 text-[11px]">
-                      <span className={cn("inline-flex items-center gap-1 font-medium", statusMeta.classes)}>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 font-medium",
+                          statusMeta.classes,
+                        )}
+                      >
                         <StatusIcon className="h-3 w-3" />
                         {statusMeta.label}
                       </span>
-                      <span className={cn("rounded-md px-1.5 py-0.5 text-[10px] font-semibold", priorityConfig[task.priority].classes)}>
+                      <span
+                        className={cn(
+                          "rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                          priorityConfig[task.priority].classes,
+                        )}
+                      >
                         {priorityConfig[task.priority].label}
                       </span>
                       <span className="text-muted-foreground flex items-center gap-1">
@@ -415,30 +466,39 @@ function TeamPage() {
                       </span>
                     </div>
                   </div>
-                  <ChevronDown className={cn(
-                    "h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0",
-                    isExpanded && "rotate-180"
-                  )} />
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0",
+                      isExpanded && "rotate-180",
+                    )}
+                  />
                 </div>
 
                 {isExpanded && (
                   <div className="border-t border-[var(--border)] px-5 py-4 animate-in slide-in-from-top-1 duration-150 space-y-4">
-                    <p className="text-[13px] text-muted-foreground leading-relaxed">{task.description}</p>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      {task.description}
+                    </p>
 
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-[11px] text-muted-foreground font-medium">Update Status:</span>
+                      <span className="text-[11px] text-muted-foreground font-medium">
+                        Update Status:
+                      </span>
                       {(["pending", "in_progress", "completed"] as TaskStatus[]).map((s) => {
                         const meta = statusConfig[s];
                         const SIcon = meta.icon;
                         return (
                           <button
                             key={s}
-                            onClick={(e) => { e.stopPropagation(); updateStatus(task.id, s); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateStatus(task.id, s);
+                            }}
                             className={cn(
                               "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium border transition-all",
                               task.status === s
                                 ? "bg-primary/10 border-primary/30 text-primary"
-                                : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]"
+                                : "border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]",
                             )}
                           >
                             <SIcon className="h-3 w-3" />
@@ -448,7 +508,10 @@ function TeamPage() {
                       })}
                       <div className="flex-1" />
                       <button
-                        onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteTask(task.id);
+                        }}
                         className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium border border-rose-500/20 text-rose-500 hover:bg-rose-500/5 transition-colors"
                       >
                         <Trash2 className="h-3 w-3" /> Remove
@@ -464,7 +527,9 @@ function TeamPage() {
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <Target className="h-10 w-10 text-muted-foreground/20 mb-4" />
               <p className="text-[13px] font-medium text-muted-foreground">No tasks found</p>
-              <p className="text-[11px] text-muted-foreground/60 mt-1">Create a new task to assign to your team</p>
+              <p className="text-[11px] text-muted-foreground/60 mt-1">
+                Create a new task to assign to your team
+              </p>
             </div>
           )}
         </div>

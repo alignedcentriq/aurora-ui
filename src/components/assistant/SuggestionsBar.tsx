@@ -85,7 +85,7 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
                 "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-all active:scale-95",
                 isActive
                   ? "bg-primary text-white shadow-sm"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               <Icon className={cn("h-3.5 w-3.5", isActive ? "text-white" : "text-primary")} />

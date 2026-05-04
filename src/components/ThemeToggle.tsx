@@ -28,9 +28,7 @@ export function ThemeToggle() {
             onClick={() => setTheme(opt.value)}
             className={cn(
               "relative flex h-7 w-7 items-center justify-center rounded-full transition-all",
-              active
-                ? "text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground",
+              active ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
             {active && (

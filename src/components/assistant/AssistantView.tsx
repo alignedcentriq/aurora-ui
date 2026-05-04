@@ -9,9 +9,7 @@ import { Logo } from "@/components/Logo";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-type Turn =
-  | { role: "user"; text: string }
-  | { role: "ai"; text: string; card?: boolean };
+type Turn = { role: "user"; text: string } | { role: "ai"; text: string; card?: boolean };
 
 interface ThreadData {
   id: string;
@@ -19,7 +17,10 @@ interface ThreadData {
 }
 
 const initialTurns: Turn[] = [
-  { role: "user", text: "How many leave days do I have left this year, and can I apply for 2 days next Monday?" },
+  {
+    role: "user",
+    text: "How many leave days do I have left this year, and can I apply for 2 days next Monday?",
+  },
   {
     role: "ai",
     text: "You currently have **12 earned leaves** remaining for 2026. Next Monday (May 4) is open on your calendar and clashes with no team OOO. I can file the request with your manager, Priya, in one click.",
@@ -32,7 +33,8 @@ const initialId = "chat-" + Date.now();
 import { useChatStore } from "@/lib/chat-store";
 
 export function AssistantView() {
-  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } = useChatStore();
+  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
+    useChatStore();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
@@ -54,61 +56,68 @@ export function AssistantView() {
     }
   }, [activeThread.turns.length, thinking]);
 
-  const send = useCallback((override?: string) => {
-    const text = (override ?? input).trim();
-    if (!text || !activeId) return;
+  const send = useCallback(
+    (override?: string) => {
+      const text = (override ?? input).trim();
+      if (!text || !activeId) return;
 
-    // 1. Intercept Software Install requests for approval workflow
-    if (text.toLowerCase().includes("software install") || text.toLowerCase().includes("install figma")) {
-      addTurn(activeId, { role: "user", text });
-      addTurn(activeId, {
-        role: "ai",
-        text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
-        card: false,
-      });
-      setInput("");
-      toast.success("IT Approval Request Sent", {
-        description: "Sent to IT Support for software installation."
-      });
-      return;
-    }
-
-    addTurn(activeId, { role: "user", text });
-    setInput("");
-    setThinking(true);
-
-    const history = (threads[activeId]?.turns || []).map(t => ({
-      role: t.role === "user" ? "user" : "assistant",
-      content: t.text
-    }));
-
-    // Real API call to backend
-    fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, history })
-    })
-      .then(res => {
-        if (!res.ok) throw new Error("Failed to connect to the server");
-        return res.json();
-      })
-      .then(data => {
-        const responseText = data.response || "Sorry, I received an empty response from the server.";
+      // 1. Intercept Software Install requests for approval workflow
+      if (
+        text.toLowerCase().includes("software install") ||
+        text.toLowerCase().includes("install figma")
+      ) {
+        addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
-          text: responseText,
+          text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
+          card: false,
         });
-      })
-      .catch(err => {
-        console.error("Backend Error:", err);
-        toast.error("Assistant is unavailable", {
-          description: "Please try again later.",
+        setInput("");
+        toast.success("IT Approval Request Sent", {
+          description: "Sent to IT Support for software installation.",
         });
+        return;
+      }
+
+      addTurn(activeId, { role: "user", text });
+      setInput("");
+      setThinking(true);
+
+      const history = (threads[activeId]?.turns || []).map((t) => ({
+        role: t.role === "user" ? "user" : "assistant",
+        content: t.text,
+      }));
+
+      // Real API call to backend
+      fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, history }),
       })
-      .finally(() => {
-        setThinking(false);
-      });
-  }, [activeId, input, threads, addTurn, setThinking]);
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to connect to the server");
+          return res.json();
+        })
+        .then((data) => {
+          const responseText =
+            data.response || "Sorry, I received an empty response from the server.";
+          addTurn(activeId, {
+            role: "ai",
+            text: responseText,
+          });
+        })
+        .catch((err) => {
+          console.error("Backend Error:", err);
+          toast.error("Assistant is unavailable", {
+            description: "Please try again later.",
+          });
+        })
+        .finally(() => {
+          setThinking(false);
+        });
+    },
+    [activeId, input, threads, addTurn, setThinking],
+  );
 
   const handleNewChat = () => {
     createThread();
@@ -124,7 +133,7 @@ export function AssistantView() {
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, index, threadId: activeId })
+      body: JSON.stringify({ rating, index, threadId: activeId }),
     })
       .then(() => {
         toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
@@ -133,13 +142,14 @@ export function AssistantView() {
   };
 
   const sidebarThreads = Object.values(threads)
-    .filter(t => t.turns.length > 0)
-    .map(t => ({
+    .filter((t) => t.turns.length > 0)
+    .map((t) => ({
       id: t.id,
       title: t.turns[0].text,
       domain: "Centriq",
-      time: "Now"
-    })).reverse();
+      time: "Now",
+    }))
+    .reverse();
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
@@ -158,10 +168,7 @@ export function AssistantView() {
         </header>
 
         {/* Chat Content */}
-        <div
-          ref={scrollRef}
-          className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar"
-        >
+        <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
           <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-8">
             {activeThread.turns.length === 0 ? (
               <section className="flex flex-col items-center justify-center text-center py-10 animate-[fade-in_.6s_ease-out_both]">
@@ -171,10 +178,16 @@ export function AssistantView() {
                   How can I help you today?
                 </h1>
                 <p className="text-lg text-muted-foreground max-w-2xl mb-12 font-medium">
-                  I'm your intelligent workplace assistant. Choose a category below to get started or ask me anything.
+                  I'm your intelligent workplace assistant. Choose a category below to get started
+                  or ask me anything.
                 </p>
 
-                <div className={cn("w-full transition-opacity", thinking && "opacity-50 pointer-events-none")}>
+                <div
+                  className={cn(
+                    "w-full transition-opacity",
+                    thinking && "opacity-50 pointer-events-none",
+                  )}
+                >
                   <QuickActions onPick={(p) => !thinking && send(p)} />
                 </div>
               </section>
@@ -182,9 +195,7 @@ export function AssistantView() {
               <section className="space-y-10 pb-10">
                 {activeThread.turns.map((t, i) =>
                   t.role === "user" ? (
-                    <UserMessage key={i}>
-                      {t.text}
-                    </UserMessage>
+                    <UserMessage key={i}>{t.text}</UserMessage>
                   ) : (
                     <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
                       <div className="space-y-4">
@@ -204,26 +215,35 @@ export function AssistantView() {
                             cta={{
                               label: "File Leave Request",
                               onClick: () => {
-                                toast.promise(new Promise(resolve => setTimeout(resolve, 1500)), {
-                                  loading: 'Processing request...',
-                                  success: 'Leave request filed with Priya!',
-                                  error: 'Failed to file request',
+                                toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
+                                  loading: "Processing request...",
+                                  success: "Leave request filed with Priya!",
+                                  error: "Failed to file request",
                                 });
-                              }
+                              },
                             }}
                           />
                         )}
                       </div>
                     </AIMessage>
-                  )
+                  ),
                 )}
 
                 {thinking && (
                   <AIMessage live>
                     <div className="flex gap-1.5 py-2">
-                      <div className="h-2 w-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="h-2 w-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="h-2 w-2 rounded-full bg-primary/40 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div
+                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                        style={{ animationDelay: "0ms" }}
+                      />
+                      <div
+                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                        style={{ animationDelay: "150ms" }}
+                      />
+                      <div
+                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                        style={{ animationDelay: "300ms" }}
+                      />
                     </div>
                   </AIMessage>
                 )}
@@ -247,12 +267,14 @@ export function AssistantView() {
               onChange={setInput}
               onSubmit={() => send()}
               disabled={thinking}
-              onAttach={() => toast("Attachments", { description: "This feature is currently in preview." })}
+              onAttach={() =>
+                toast("Attachments", { description: "This feature is currently in preview." })
+              }
               onSuggest={() => {
-                toast.promise(new Promise(resolve => setTimeout(resolve, 1500)), {
-                  loading: 'Analyzing conversation context...',
-                  success: 'Suggestions updated based on recent turns.',
-                  error: 'Could not refresh suggestions',
+                toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
+                  loading: "Analyzing conversation context...",
+                  success: "Suggestions updated based on recent turns.",
+                  error: "Could not refresh suggestions",
                 });
               }}
             />
