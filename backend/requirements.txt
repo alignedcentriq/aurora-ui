@@ -11,3 +11,5 @@ sqlalchemy
 asyncpg
 python-multipart
 requests
+redis
+langgraph-checkpoint-redis

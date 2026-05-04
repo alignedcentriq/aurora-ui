@@ -4,13 +4,15 @@ from pydantic import BaseModel
 from typing import List, Optional
 from app.agent import app_agent
 from langchain_core.messages import HumanMessage, AIMessage
+from app.hr_service import HRService, JSONDatabase
+import datetime
 
 app = FastAPI(title="Centriq AI Backend")
 
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,6 +25,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
+    session_id: Optional[str] = "default_session"
 
 @app.get("/")
 async def root():
@@ -41,7 +44,6 @@ async def submit_form(data: dict):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     try:
-        # Prepare inputs for LangGraph
         messages = []
         for msg in request.history:
             if msg.role == "user":
@@ -51,19 +53,98 @@ async def chat(request: ChatRequest):
         
         messages.append(HumanMessage(content=request.message))
         
-        # Invoke LangGraph
-        result = await app_agent.ainvoke({"messages": messages})
+        # Use session_id as thread_id for Redis persistence
+        config = {"configurable": {"thread_id": request.session_id}}
         
-        # Get the last message (AI response)
-        final_message = result["messages"][-1].content
+        # If history is provided, we might want to respect it, but with persistence,
+        # we usually just invoke with the latest message.
+        # For compatibility with current frontend, we use the last message.
+        result = await app_agent.ainvoke({"messages": [HumanMessage(content=request.message)]}, config=config)
+        raw_ai_message = result["messages"][-1].content
+        print(f"DEBUG RAW AI MESSAGE: '{raw_ai_message}'")
+        
+        # Safety cleanup: Strip all curly braces and technical markers
+        import re
+        # Remove anything in braces first (multi-line)
+        final_message = re.sub(r'\{.*?\}', '', raw_ai_message, flags=re.DOTALL).strip()
+        # Remove any stray braces that might be left from nested or malformed JSON
+        final_message = final_message.replace('{', '').replace('}', '').strip()
+        # Remove markdown code blocks
+        final_message = re.sub(r'```.*?```', '', final_message, flags=re.DOTALL).strip()
+        
+        # Final fallback if cleaning left us with nothing
+        if not final_message or len(final_message) < 2:
+            # If the raw message was actually just a tool call with no content, 
+            # we should check if the graph completed correctly.
+            final_message = "I'm ready to help. Could you please provide more details, such as the dates and type of leave?"
+        
+        print(f"DEBUG FINAL MESSAGE SENT TO FRONTEND: '{final_message}'")
         
         return {
             "response": final_message,
-            "id": "msg_" + str(len(messages)) # Simple ID for now
+            "id": "msg_" + str(len(messages))
         }
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/hr/dashboard")
+async def get_hr_dashboard():
+    # Mock: Assume current user is employee 1
+    emp = HRService.get_employee_by_email("employee1@centriq.ai")
+    if not emp:
+        return {"error": "No employees found"}
+    
+    leaves = JSONDatabase.read("leaves.json")
+    emp_leaves = [l for l in leaves if l["employee_id"] == emp["id"]]
+    
+    payroll = JSONDatabase.read("payroll.json")
+    emp_payroll = [p for p in payroll if p["employee_id"] == emp["id"]]
+    last_payroll = emp_payroll[-1] if emp_payroll else None
+    
+    used_leaves = sum(1 for l in emp_leaves if l["status"] == "Approved")
+    leave_balance = 24 - used_leaves
+    
+    return {
+        "employee": {
+            "name": emp["name"],
+            "id": emp["employee_id"],
+            "designation": emp["designation"],
+            "department": emp["department"]
+        },
+        "stats": {
+            "leave_balance": leave_balance,
+            "used_leaves": used_leaves,
+            "attendance_rate": "98%",
+            "net_salary": last_payroll["net_salary"] if last_payroll else 0
+        },
+        "recent_leaves": emp_leaves[-5:],
+        "payroll_summary": {
+            "last_paid": last_payroll["net_salary"] if last_payroll else 0,
+            "month": last_payroll["month"] if last_payroll else 0,
+            "year": last_payroll["year"] if last_payroll else 0
+        }
+    }
+
+@app.get("/api/hr/leaves")
+async def get_leaves():
+    # In a real app, filters would be applied
+    return JSONDatabase.read("leaves.json")
+
+@app.post("/api/hr/leaves/apply")
+async def apply_leave(data: dict):
+    # Mock current user
+    res = HRService.apply_leave(
+        "employee1@centriq.ai", 
+        data["start"], 
+        data["end"], 
+        data.get("type", "Casual")
+    )
+    return {"status": "success", "message": res}
+
+@app.get("/api/hr/payroll")
+async def get_payroll():
+    return JSONDatabase.read("payroll.json")
 
 if __name__ == "__main__":
     import uvicorn

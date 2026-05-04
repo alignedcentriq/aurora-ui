@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "title": "Leave Policy",
+    "category": "Leave",
+    "content": "Employees are entitled to 20 days of Earned Leave per year. Sick leave is capped at 12 days."
+  },
+  {
+    "id": 2,
+    "title": "WFH Policy",
+    "category": "Work",
+    "content": "Hybrid model: 3 days from office, 2 days from home."
+  },
+  {
+    "id": 3,
+    "title": "Reimbursement Policy",
+    "category": "Finance",
+    "content": "Expenses up to $500 can be approved by managers. Higher amounts require Finance VP approval."
+  },
+  {
+    "id": 4,
+    "title": "POSH Policy",
+    "category": "Legal",
+    "content": "Zero tolerance for harassment. Reach out to the IC committee for any concerns."
+  }
+]

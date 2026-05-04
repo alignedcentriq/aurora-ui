@@ -7,11 +7,10 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - frontend
-      - backend
     networks:
       - centriq-network
+    depends_on:
+      - redis
 
   frontend:
     build: .
@@ -30,11 +29,14 @@ services:
       - ./backend/.env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/centriq
+      - REDIS_URL=redis://redis:6379
     networks:
       - centriq-network
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   db:
     image: ankane/pgvector:latest
@@ -49,6 +51,17 @@ services:
       retries: 5
     networks:
       - centriq-network
+
+  redis:
+    image: redis:alpine
+    command: redis-server --save 60 1 --loglevel warning
+    networks:
+      - centriq-network
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
 
 networks:
   centriq-network:

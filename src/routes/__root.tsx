@@ -1,6 +1,8 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { AuthProvider } from "../lib/auth-store";
+import { MsalProvider } from "@azure/msal-react";
+import { msalInstance } from "../lib/msal";
 
 import appCss from "../styles.css?url";
 
@@ -121,9 +123,12 @@ function AuthenticatedContent() {
 
 function RootComponent() {
   return (
-    <AuthProvider>
-      <AuthenticatedContent />
-      <Toaster position="top-center" richColors />
-    </AuthProvider>
+    <MsalProvider instance={msalInstance}>
+      <AuthProvider>
+        <AuthenticatedContent />
+        <Toaster position="top-center" richColors />
+      </AuthProvider>
+    </MsalProvider>
   );
 }
+

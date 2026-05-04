@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { Sidebar } from "@/components/Sidebar";
+import { HRDashboard } from "@/components/hr/HRDashboard";
 
 export const Route = createFileRoute("/_layout")({
   component: LayoutComponent,

@@ -32,7 +32,7 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
 
 export function Sidebar() {
   const { threads, activeId, setActiveId, createThread } = useChatStore();
-  const { user, login, logout } = useAuth();
+  const { user, login, logout, setRole } = useAuth();
   const location = useLocation();
   const [isRoleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -188,9 +188,9 @@ export function Sidebar() {
           onClick={() => setRoleDropdownOpen(!isRoleDropdownOpen)}
           className="flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-white/[0.04]"
         >
-          {user.photo ? (
+          {user.avatarUrl ? (
             <img
-              src={user.photo}
+              src={user.avatarUrl}
               alt={user.name}
               className="h-9 w-9 rounded-full object-cover shadow-lg shadow-black/20"
             />
@@ -207,7 +207,7 @@ export function Sidebar() {
               {user.name}
             </span>
             <span className="text-[11px] text-[var(--sidebar-foreground)]/40 truncate w-full text-left">
-              {user.email}
+              {user.role}
             </span>
           </div>
           <ChevronDown
@@ -222,7 +222,7 @@ export function Sidebar() {
           <div className="absolute bottom-20 left-3 right-3 z-50 rounded-xl border border-white/[0.08] bg-[#1a1f2e] p-1.5 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-150">
             <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-                Switch Role (Mock Auth)
+                Switch Role (Demo)
               </span>
             </div>
             {roles.map((r) => {
