@@ -25,7 +25,21 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
-    session_id: Optional[str] = "default_session"
+    session_id: Optional[str] = "default_session_v2"
+
+class WebhookPolicyRequest(BaseModel):
+    title: str
+    content: str
+    category: Optional[str] = "General"
+
+@app.on_event("startup")
+async def startup_event():
+    if hasattr(app_agent.checkpointer, "setup"):
+        try:
+            await app_agent.checkpointer.setup()
+            print("Successfully set up Redis checkpointer indexes.")
+        except Exception as e:
+            print(f"Error setting up Redis checkpointer: {e}")
 
 @app.get("/")
 async def root():
@@ -40,6 +54,13 @@ async def feedback(data: dict):
 async def submit_form(data: dict):
     print(f"Form submitted: {data}")
     return {"status": "success", "message": "Form processed"}
+
+@app.post("/api/webhooks/sharepoint-sync")
+async def sync_sharepoint_policy(request: WebhookPolicyRequest):
+    """Webhook endpoint for Power Automate to push SharePoint document changes."""
+    HRService.upsert_policy(request.title, request.content, request.category)
+    print(f"Webhook received from Power Automate! Updated policy: {request.title}")
+    return {"status": "success", "message": f"Policy '{request.title}' synchronized successfully"}
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
@@ -61,7 +82,7 @@ async def chat(request: ChatRequest):
         # For compatibility with current frontend, we use the last message.
         result = await app_agent.ainvoke({"messages": [HumanMessage(content=request.message)]}, config=config)
         raw_ai_message = result["messages"][-1].content
-        print(f"DEBUG RAW AI MESSAGE: '{raw_ai_message}'")
+        print(f"DEBUG RAW AI MESSAGE: '{raw_ai_message.encode('ascii', 'backslashreplace').decode()}'")
         
         # Safety cleanup: Strip all curly braces and technical markers
         import re
@@ -78,7 +99,7 @@ async def chat(request: ChatRequest):
             # we should check if the graph completed correctly.
             final_message = "I'm ready to help. Could you please provide more details, such as the dates and type of leave?"
         
-        print(f"DEBUG FINAL MESSAGE SENT TO FRONTEND: '{final_message}'")
+        print(f"DEBUG FINAL MESSAGE SENT TO FRONTEND: '{final_message.encode('ascii', 'backslashreplace').decode()}'")
         
         return {
             "response": final_message,

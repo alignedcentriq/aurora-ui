@@ -32,10 +32,21 @@ sudo service docker start
 
 3: redis-cli ping
 
+<!-- To run in docker (Redis) -->
+
+sudo docker-compose up -d redis
+
 
 <!-- Install MinIO -->
 
 wget https://dl.min.io/server/minio/release/linux-amd64/minio
 chmod +x minio
 ./minio server ~/minio-data --console-address ":9001"
+
+
+<!-- To install docker-compose in wsl -->
+sudo apt-get install docker-compose
+
+
+
 

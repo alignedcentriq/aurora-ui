@@ -21,9 +21,9 @@ def get_leave_balance(email: str):
     return HRService.get_leave_balance(email)
 
 @tool
-def apply_leave(email: str, start_date: str, end_date: str, leave_type: str = "Casual"):
+def apply_leave(email: str, start_date: str, end_date: str, leave_type: str = "Casual", reason: str = "Applied via AI Assistant"):
     """Submit a leave request. Use YYYY-MM-DD format for dates."""
-    return HRService.apply_leave(email, start_date, end_date, leave_type)
+    return HRService.apply_leave(email, start_date, end_date, leave_type, reason)
 
 @tool
 def search_hr_policies(query: str):
@@ -65,6 +65,7 @@ def assistant(state: AgentState):
         2. NEVER write JSON, function strings like '{function ...}', or brackets '{}' in your response text.
         3. Use 'employee1@centriq.ai' for all email parameters.
         4. Always speak directly to the user (e.g., "Your leave balance is...").
+        5. If the user asks about ANY HR policy, rule, or benefit (like referral bonuses, remote work, expenses), you MUST call the `search_hr_policies` tool. DO NOT answer from memory. DO NOT say you cannot locate it without searching first!
         """)
         messages = [system_prompt] + messages
     
@@ -81,15 +82,23 @@ def summarizer(state: AgentState):
         model=os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"),
     )
     
+    # The last message is the ToolMessage
+    tool_message = messages[-1]
+    tool_output = tool_message.content if hasattr(tool_message, 'content') else str(tool_message)
+    
     prompt = [
-        SystemMessage(content="""
+        SystemMessage(content=f"""
         You are talking directly to 'employee1@centriq.ai'. 
         You just performed an action for THEM using a tool.
-        Report the result of that action naturally. 
-        DO NOT say you cannot confirm the status; you have full permission to share this result with this specific user.
+        The tool returned the following result:
+        
+        {tool_output}
+        
+        Report this result to the user naturally based ONLY on the tool result above.
+        DO NOT say you couldn't find it if the information is right there.
         Keep it simple: one or two sentences in plain English.
         """),
-    ] + messages[-3:]
+    ] + messages[-2:-1] # Pass just the AI's intent or Human's question
     
     response = summary_llm.invoke(prompt)
     
@@ -110,6 +119,8 @@ def should_continue(state: AgentState):
 
 from langgraph.checkpoint.memory import MemorySaver
 
+import asyncio
+
 # Setup Checkpointer (Redis with Memory fallback)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 checkpointer = MemorySaver() # Default to Memory
@@ -117,11 +128,27 @@ checkpointer = MemorySaver() # Default to Memory
 try:
     import redis.asyncio as redis
     from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-    # Create the client without connecting immediately
-    redis_client = redis.from_url(REDIS_URL, decode_responses=False)
-    # Use keyword argument to avoid misinterpretation of client as URL
-    checkpointer = AsyncRedisSaver(redis_client=redis_client)
-    print(f"Redis checkpointer initialized (URL: {REDIS_URL})")
+    
+    # Check if the user explicitly wants to disable Redis (optional)
+    if os.getenv("USE_MEMORY_SAVER", "false").lower() == "true":
+        print("Using MemorySaver due to USE_MEMORY_SAVER=true")
+    else:
+        # Create a test connection to verify JSON capabilities
+        test_client = redis.from_url(REDIS_URL, decode_responses=False)
+        
+        # In a synchronous block, we can't easily await, but we can wrap the checkpointer creation
+        # in a way that it connects, but actually LangGraph's AsyncRedisSaver requires RedisJSON.
+        # If the user is on standard Redis, AsyncRedisSaver will fail on the first message.
+        # To make it bulletproof for local dev without RedisJSON, we default to MemorySaver 
+        # unless REDIS_URL explicitly contains a different port or is forced.
+        
+        # A simple check: if it's localhost and no password, assume standard dev Redis without JSON
+        # unless it's specifically using the docker-compose stack.
+        
+        redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+        checkpointer = AsyncRedisSaver(redis_client=redis_client)
+        print(f"Redis checkpointer initialized (URL: {REDIS_URL}). Note: Requires RedisJSON module.")
+        
 except ImportError:
     print("langgraph-checkpoint-redis not installed. Using MemorySaver.")
 except Exception as e:

@@ -1,26 +1,50 @@
 [
   {
     "id": 1,
-    "title": "Leave Policy",
+    "title": "Comprehensive Leave Policy",
     "category": "Leave",
-    "content": "Employees are entitled to 20 days of Earned Leave per year. Sick leave is capped at 12 days."
+    "content": "All full-time employees are entitled to 20 days of Earned Leave (EL), 12 days of Sick Leave (SL), and 8 days of Casual Leave (CL) per calendar year. Leave requests exceeding 3 consecutive days must be submitted at least one week in advance. Sick leaves extending beyond 2 days require a medical certificate."
   },
   {
     "id": 2,
-    "title": "WFH Policy",
-    "category": "Work",
-    "content": "Hybrid model: 3 days from office, 2 days from home."
+    "title": "Remote Work and Hybrid Model Policy",
+    "category": "Work Environment",
+    "content": "Centriq AI operates on a hybrid model. Employees are expected to work from the office for a minimum of 3 days a week. The remaining 2 days can be utilized for remote work. Ensure your internet connection meets the minimum bandwidth requirements of 50 Mbps."
   },
   {
     "id": 3,
-    "title": "Reimbursement Policy",
+    "title": "Expense Reimbursement Policy",
     "category": "Finance",
-    "content": "Expenses up to $500 can be approved by managers. Higher amounts require Finance VP approval."
+    "content": "Employees can claim reimbursements for business-related expenses. Meals during client meetings are covered up to ₹2,500 per person. Travel and accommodation expenses must be pre-approved by the direct manager. All claims must be submitted via the HR portal with valid tax invoices within 30 days of the expense."
   },
   {
     "id": 4,
-    "title": "POSH Policy",
-    "category": "Legal",
-    "content": "Zero tolerance for harassment. Reach out to the IC committee for any concerns."
+    "title": "Prevention of Sexual Harassment (POSH)",
+    "category": "Legal & Compliance",
+    "content": "Centriq AI maintains a zero-tolerance policy against any form of harassment. We are committed to providing a safe working environment. Any grievances should be immediately reported to the Internal Complaints Committee (ICC) at posh-icc@centriq.ai. All reports will be handled with strict confidentiality."
+  },
+  {
+    "id": 5,
+    "title": "IT Asset and Device Security Policy",
+    "category": "IT Support",
+    "content": "Company-provided laptops and devices are meant for official use only. Installing unauthorized software is strictly prohibited. Employees must lock their screens when stepping away from their desks and use strong passwords. Lost or stolen devices must be reported to the IT Helpdesk immediately."
+  },
+  {
+    "id": 6,
+    "title": "Maternity and Paternity Leave",
+    "category": "Leave",
+    "content": "Expectant mothers are entitled to 26 weeks of paid maternity leave as per the Maternity Benefit Act. Expectant fathers are eligible for 15 days of paid paternity leave, which can be availed within 3 months of childbirth or adoption."
+  },
+  {
+    "id": 7,
+    "title": "Performance Review and Appraisal",
+    "category": "Performance",
+    "content": "Performance appraisals are conducted bi-annually in June and December. Ratings are based on Goal Achievements (50%), Peer Reviews (30%), and Manager's Assessment (20%). Employees eligible for promotion must complete at least 18 months in their current role."
+  },
+  {
+    "id": 8,
+    "title": "Employee Referral Program",
+    "category": "Recruitment",
+    "content": "Employees are encouraged to refer suitable candidates for open positions. If a referred candidate is hired and successfully completes the 3-month probation period, the referring employee will receive a bonus of ₹25,000 for junior roles and ₹50,000 for senior roles."
   }
 ]
