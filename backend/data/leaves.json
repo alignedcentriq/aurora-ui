@@ -340,5 +340,32 @@
     "end_date": "2023-05-10",
     "status": "Pending",
     "reason": "Applied via AI Assistant"
+  },
+  {
+    "id": 39,
+    "employee_id": 1,
+    "leave_type": "Casual",
+    "start_date": "",
+    "end_date": "",
+    "status": "Pending",
+    "reason": "Applied via AI Assistant"
+  },
+  {
+    "id": 40,
+    "employee_id": 1,
+    "leave_type": "Casual",
+    "start_date": "2023-05-06",
+    "end_date": "2023-05-10",
+    "status": "Pending",
+    "reason": "Applied via AI Assistant"
+  },
+  {
+    "id": 41,
+    "employee_id": 1,
+    "leave_type": "Casual",
+    "start_date": "2023-05-06",
+    "end_date": "2023-05-10",
+    "status": "Pending",
+    "reason": "Applied via AI Assistant"
   }
 ]
