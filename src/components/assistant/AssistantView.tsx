@@ -6,6 +6,7 @@ import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Sparkles } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -31,10 +32,12 @@ const initialTurns: Turn[] = [
 const initialId = "chat-" + Date.now();
 
 import { useChatStore } from "@/lib/chat-store";
+import { useSettings } from "@/lib/settings-store";
 
 export function AssistantView() {
   const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
     useChatStore();
+  const { aiTone, userNickname, reasoningDepth, responseFormat, actionExecution } = useSettings();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
@@ -83,6 +86,7 @@ export function AssistantView() {
       setInput("");
       setThinking(true);
 
+      // Always send history now that AI Memory toggle is removed
       const history = (threads[activeId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
@@ -92,7 +96,17 @@ export function AssistantView() {
       fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          preferences: {
+            tone: aiTone,
+            nickname: userNickname,
+            reasoningDepth,
+            responseFormat,
+            actionExecution,
+          },
+        }),
       })
         .then(async (res) => {
           if (!res.ok) {
@@ -121,7 +135,7 @@ export function AssistantView() {
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking],
+    [activeId, input, threads, addTurn, setThinking, aiTone, userNickname, reasoningDepth, responseFormat, actionExecution],
   );
 
   const handleNewChat = () => {
@@ -163,7 +177,7 @@ export function AssistantView() {
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--border)] bg-background/80 px-4 backdrop-blur-md sm:px-8">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-foreground">Centriq AI Chat</span>
+              <span className="text-sm font-bold text-foreground flex items-center gap-1"><BrandName withAI={true} /> Chat</span>
             </div>
           </div>
 
@@ -260,13 +274,6 @@ export function AssistantView() {
         {/* Input Area */}
         <footer className="relative border-t border-[var(--border)] bg-background/80 backdrop-blur-md px-4 pb-8 pt-4 sm:px-8">
           <div className="mx-auto w-full max-w-4xl space-y-6">
-            {activeThread.turns.length > 0 && (
-              <SuggestionsBar
-                activeCategory={activeCategory}
-                onCategoryChange={setActiveCategory}
-                onSelect={(text) => send(text)}
-              />
-            )}
             <Composer
               value={input}
               onChange={setInput}

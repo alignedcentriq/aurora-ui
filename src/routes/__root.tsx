@@ -81,6 +81,8 @@ function RootComponent() {
   );
 }
 
+import { BrandName } from "../components/BrandName";
+
 function LoginView() {
   const { login, isInteracting } = useAuth();
 
@@ -89,7 +91,9 @@ function LoginView() {
       <div className="w-full max-w-sm space-y-8 text-center">
         <div className="flex flex-col items-center gap-4">
           <Logo size="xl" className="shadow-2xl shadow-primary/20" />
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Welcome to Centriq</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            Welcome to <BrandName className="text-[1.1em]" />
+          </h1>
           <p className="text-muted-foreground font-medium">
             Your intelligent workplace concierge. Please sign in to continue.
           </p>
@@ -130,6 +134,8 @@ function LoginView() {
   );
 }
 
+import { ThemeManager } from "../lib/ThemeManager";
+
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
 
@@ -152,6 +158,7 @@ function AuthenticatedApp() {
 
   return (
     <>
+      <ThemeManager />
       <Outlet />
       <Toaster position="top-right" expand={false} richColors />
     </>

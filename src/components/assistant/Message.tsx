@@ -2,6 +2,7 @@ import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
+import { BrandName } from "@/components/BrandName";
 
 export function UserMessage({
   children,
@@ -39,8 +40,8 @@ export function AIMessage({
           </div>
 
           <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
-              Centriq AI
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
+              <BrandName withAI />
             </div>
             {!live && onFeedback && (
               <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">

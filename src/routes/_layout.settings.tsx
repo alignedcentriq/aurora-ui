@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState } from "react";
 import {
   User,
   Palette,
@@ -19,9 +18,14 @@ import {
   Download,
   Trash2,
   ChevronRight,
+  Brain,
+  AlignLeft,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useSettings } from "@/lib/settings-store";
 
 export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
@@ -84,16 +88,22 @@ function SettingRow({
 
 function SettingsPage() {
   const { user } = useAuth();
-  const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
-  const [notifications, setNotifications] = useState(true);
-  const [soundEffects, setSoundEffects] = useState(true);
-  const [compactMode, setCompactMode] = useState(false);
-  const [showOnlineStatus, setShowOnlineStatus] = useState(true);
-  const [keyboardShortcuts, setKeyboardShortcuts] = useState(true);
-  const [aiMemory, setAiMemory] = useState(true);
-  const [autoSuggestions, setAutoSuggestions] = useState(true);
-  const [language, setLanguage] = useState("en-us");
-  const [aiTone, setAiTone] = useState("professional");
+  const {
+    theme,
+    compactMode,
+    aiTone,
+    userNickname,
+    reasoningDepth,
+    responseFormat,
+    actionExecution,
+    setTheme,
+    setCompactMode,
+    setAiTone,
+    setUserNickname,
+    setReasoningDepth,
+    setResponseFormat,
+    setActionExecution,
+  } = useSettings();
 
   if (!user) return null;
 
@@ -118,12 +128,20 @@ function SettingsPage() {
           {/* Profile Card */}
           <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
             <div className="flex items-center gap-5">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-xl font-bold text-primary">
-                {user.name
-                  .split(" ")
-                  .map((n) => n[0])
-                  .join("")}
-              </div>
+              {user.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.name}
+                  className="h-16 w-16 rounded-2xl object-cover shadow-md"
+                />
+              ) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-xl font-bold text-primary shadow-sm">
+                  {user.name
+                    .split(" ")
+                    .map((n) => n[0])
+                    .join("")}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <h2 className="text-lg font-semibold text-foreground">{user.name}</h2>
                 <p className="text-[13px] text-muted-foreground">{user.email}</p>
@@ -137,9 +155,6 @@ function SettingsPage() {
                   )}
                 </div>
               </div>
-              <button className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--muted)] transition-colors">
-                Edit Profile
-              </button>
             </div>
           </div>
 
@@ -225,144 +240,65 @@ function SettingsPage() {
                 </select>
               </SettingRow>
               <SettingRow
-                icon={Eye}
+                icon={User}
                 iconColor="text-cyan-500"
-                title="AI Memory"
-                description="Allow Centriq to remember conversation context"
+                title="Assistant Nickname"
+                description="How the assistant should refer to you"
               >
-                <Toggle enabled={aiMemory} onToggle={() => setAiMemory(!aiMemory)} />
-              </SettingRow>
-              <SettingRow
-                icon={Keyboard}
-                iconColor="text-amber-500"
-                title="Auto Suggestions"
-                description="Show smart suggestions as you type"
-              >
-                <Toggle
-                  enabled={autoSuggestions}
-                  onToggle={() => setAutoSuggestions(!autoSuggestions)}
+                <input
+                  type="text"
+                  placeholder="e.g. Captain"
+                  value={userNickname}
+                  onChange={(e) => setUserNickname(e.target.value)}
+                  className="rounded-lg border border-[var(--border)] bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-primary/20 w-32"
                 />
               </SettingRow>
-            </div>
-          </div>
-
-          {/* Notifications */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--border)]">
-              <h3 className="text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Bell className="h-4 w-4 text-amber-500" /> Notifications
-              </h3>
-            </div>
-            <div className="p-6 divide-y divide-[var(--border)]">
               <SettingRow
-                icon={Bell}
-                iconColor="text-amber-500"
-                title="Push Notifications"
-                description="Get notified about tasks and updates"
-              >
-                <Toggle enabled={notifications} onToggle={() => setNotifications(!notifications)} />
-              </SettingRow>
-              <SettingRow
-                icon={soundEffects ? Volume2 : VolumeX}
-                iconColor="text-rose-500"
-                title="Sound Effects"
-                description="Play sounds for messages and alerts"
-              >
-                <Toggle enabled={soundEffects} onToggle={() => setSoundEffects(!soundEffects)} />
-              </SettingRow>
-            </div>
-          </div>
-
-          {/* Language & Region */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--border)]">
-              <h3 className="text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Globe className="h-4 w-4 text-cyan-500" /> Language & Region
-              </h3>
-            </div>
-            <div className="p-6">
-              <SettingRow
-                icon={Globe}
-                iconColor="text-cyan-500"
-                title="Assistant Language"
-                description="The language Centriq uses to reply"
+                icon={Brain}
+                iconColor="text-purple-500"
+                title="Reasoning Depth"
+                description="Trade off speed for analytical depth"
               >
                 <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
+                  value={reasoningDepth}
+                  onChange={(e) => setReasoningDepth(e.target.value as any)}
                   className="rounded-lg border border-[var(--border)] bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-primary/20"
                 >
-                  <option value="en-us">English (US)</option>
-                  <option value="en-gb">English (UK)</option>
-                  <option value="es">Spanish</option>
-                  <option value="fr">French</option>
-                  <option value="de">German</option>
-                  <option value="hi">Hindi</option>
-                  <option value="ja">Japanese</option>
+                  <option value="quick">Quick & Direct</option>
+                  <option value="deep">Deep Analysis</option>
                 </select>
               </SettingRow>
-            </div>
-          </div>
-
-          {/* Privacy & Security */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--border)]">
-              <h3 className="text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Shield className="h-4 w-4 text-rose-500" /> Privacy & Security
-              </h3>
-            </div>
-            <div className="p-6 divide-y divide-[var(--border)]">
               <SettingRow
-                icon={showOnlineStatus ? Eye : EyeOff}
-                iconColor="text-emerald-500"
-                title="Online Status"
-                description="Show your online status to colleagues"
+                icon={AlignLeft}
+                iconColor="text-amber-500"
+                title="Response Format"
+                description="Default structure of AI replies"
               >
-                <Toggle
-                  enabled={showOnlineStatus}
-                  onToggle={() => setShowOnlineStatus(!showOnlineStatus)}
-                />
+                <select
+                  value={responseFormat}
+                  onChange={(e) => setResponseFormat(e.target.value as any)}
+                  className="rounded-lg border border-[var(--border)] bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="standard">Standard Paragraphs</option>
+                  <option value="bullets">Bulleted Lists</option>
+                  <option value="action">Action-Oriented</option>
+                </select>
               </SettingRow>
               <SettingRow
-                icon={Keyboard}
-                iconColor="text-indigo-500"
-                title="Keyboard Shortcuts"
-                description="Enable keyboard shortcuts across the app"
+                icon={ShieldCheck}
+                iconColor="text-blue-500"
+                title="Action Execution"
+                description="How AI handles executing tasks"
               >
-                <Toggle
-                  enabled={keyboardShortcuts}
-                  onToggle={() => setKeyboardShortcuts(!keyboardShortcuts)}
-                />
+                <select
+                  value={actionExecution}
+                  onChange={(e) => setActionExecution(e.target.value as any)}
+                  className="rounded-lg border border-[var(--border)] bg-background px-3 py-1.5 text-[13px] outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="ask">Always Ask</option>
+                  <option value="auto_safe">Auto-Execute Safe Tasks</option>
+                </select>
               </SettingRow>
-            </div>
-          </div>
-
-          {/* Data Management */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--border)]">
-              <h3 className="text-[15px] font-semibold text-foreground">Data Management</h3>
-            </div>
-            <div className="p-6 space-y-3">
-              <button
-                onClick={() => toast.success("Chat history exported successfully")}
-                className="flex w-full items-center justify-between rounded-xl border border-[var(--border)] px-4 py-3.5 text-[13px] font-medium text-foreground transition-colors hover:bg-[var(--muted)]"
-              >
-                <div className="flex items-center gap-3">
-                  <Download className="h-4 w-4 text-muted-foreground" />
-                  Export Chat History
-                </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </button>
-              <button
-                onClick={() => toast.error("This would clear all conversation data")}
-                className="flex w-full items-center justify-between rounded-xl border border-rose-500/20 px-4 py-3.5 text-[13px] font-medium text-rose-500 transition-colors hover:bg-rose-500/5"
-              >
-                <div className="flex items-center gap-3">
-                  <Trash2 className="h-4 w-4" />
-                  Clear All Conversations
-                </div>
-                <ChevronRight className="h-4 w-4" />
-              </button>
             </div>
           </div>
         </div>

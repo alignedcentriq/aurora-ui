@@ -1,6 +1,7 @@
 import { Send, Paperclip, Sparkles, Mic } from "lucide-react";
 import { useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { BrandName } from "@/components/BrandName";
 
 type Props = {
   value: string;
@@ -77,8 +78,8 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
         </div>
       </div>
 
-      <div className="mt-4 text-center text-[11px] font-medium text-muted-foreground/50 uppercase tracking-widest">
-        Centriq AI can make mistakes. Consider checking important information.
+      <div className="mt-4 flex items-center justify-center gap-1 text-center text-[11px] font-medium text-muted-foreground/50 uppercase tracking-widest">
+        <BrandName withAI /> <span className="lowercase">can make mistakes. Consider checking important information.</span>
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Logo } from "./Logo";
+import { BrandName } from "./BrandName";
 import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
@@ -82,9 +83,7 @@ export function Sidebar() {
       {/* Brand */}
       <div className="flex h-16 items-center gap-3 px-6 border-b border-white/[0.06]">
         <Logo size="md" />
-        <span className="text-[15px] font-semibold text-[var(--sidebar-foreground)] tracking-tight">
-          Centriq AI
-        </span>
+        <BrandName className="text-[15px] text-[var(--sidebar-foreground)]" withAI={true} />
       </div>
 
       {/* Role Badge */}
