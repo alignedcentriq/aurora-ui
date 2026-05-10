@@ -1,12 +1,15 @@
-import os
-from sqlalchemy import create_all, create_engine
+
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.models import Base, Employee, Leave, Payroll, Attendance, Policy
+from app.config import settings
 import datetime
+
 import random
 
-# Use SQLite for local development if PG is not reachable
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./centriq.db")
+# Database engine initialization
+DATABASE_URL = settings.DATABASE_URL
+
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

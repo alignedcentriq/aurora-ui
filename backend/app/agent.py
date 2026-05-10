@@ -10,9 +10,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from app.hr_service import HRService
-from dotenv import load_dotenv
+from app.config import settings
 
-load_dotenv()
+# Load environment variables if needed (already done in config)
+
 
 # Define HR Tools
 @tool
@@ -39,10 +40,10 @@ class AgentState(TypedDict):
 
 # Initialize LLM
 llm = ChatOpenAI(
-    base_url=os.getenv("LLM_BASE_URL", "http://ml01.alignedautomation.com:11434/v1"),
-    api_key=os.getenv("LLM_API_KEY", "ollama"),
-    model=os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"),
-    temperature=0,
+    base_url=settings.LLM_BASE_URL,
+    api_key=settings.LLM_API_KEY,
+    model=settings.LLM_MODEL_NAME,
+    temperature=settings.LLM_TEMPERATURE,
 ).bind_tools(hr_tools)
 
 def assistant(state: AgentState):
@@ -50,10 +51,11 @@ def assistant(state: AgentState):
     messages = state["messages"]
     
     if not any(isinstance(m, SystemMessage) for m in messages):
-        system_prompt = SystemMessage(content="""
+        system_prompt = SystemMessage(content=f"""
         You are Centriq, the Workplace AI Assistant.
-        The person you are talking to is 'employee1@centriq.ai'.
+        The person you are talking to is '{settings.DEFAULT_USER_EMAIL}'.
         They are fully authorized to see and manage their own leave and HR data.
+
         
         INCOMPLETE REQUESTS:
         - If a user says "apply for leave" but does not provide dates or type, DO NOT call any tool.
@@ -62,11 +64,12 @@ def assistant(state: AgentState):
         
         CRITICAL RULES:
         1. To use a tool, you MUST emit a tool call.
-        2. NEVER write JSON, function strings like '{function ...}', or brackets '{}' in your response text.
-        3. Use 'employee1@centriq.ai' for all email parameters.
+        2. NEVER write JSON, function strings like '{{function ...}}', or brackets '{{}}' in your response text.
+        3. Use '{settings.DEFAULT_USER_EMAIL}' for all email parameters.
         4. Always speak directly to the user (e.g., "Your leave balance is...").
         5. If the user asks about ANY HR policy, rule, or benefit (like referral bonuses, remote work, expenses), you MUST call the `search_hr_policies` tool. DO NOT answer from memory. DO NOT say you cannot locate it without searching first!
         """)
+
         messages = [system_prompt] + messages
     
     response = llm.invoke(messages)
@@ -77,9 +80,9 @@ def summarizer(state: AgentState):
     messages = state["messages"]
     
     summary_llm = ChatOpenAI(
-        base_url=os.getenv("LLM_BASE_URL", "http://ml01.alignedautomation.com:11434/v1"),
-        api_key=os.getenv("LLM_API_KEY", "ollama"),
-        model=os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"),
+        base_url=settings.LLM_BASE_URL,
+        api_key=settings.LLM_API_KEY,
+        model=settings.LLM_MODEL_NAME,
     )
     
     # The last message is the ToolMessage
@@ -88,8 +91,9 @@ def summarizer(state: AgentState):
     
     prompt = [
         SystemMessage(content=f"""
-        You are talking directly to 'employee1@centriq.ai'. 
+        You are talking directly to '{settings.DEFAULT_USER_EMAIL}'. 
         You just performed an action for THEM using a tool.
+
         The tool returned the following result:
         
         {tool_output}
@@ -122,7 +126,7 @@ from langgraph.checkpoint.memory import MemorySaver
 import asyncio
 
 # Setup Checkpointer (Redis with Memory fallback)
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = settings.REDIS_URL
 checkpointer = MemorySaver() # Default to Memory
 
 try:
@@ -130,8 +134,9 @@ try:
     from langgraph.checkpoint.redis.aio import AsyncRedisSaver
     
     # Check if the user explicitly wants to disable Redis (optional)
-    if os.getenv("USE_MEMORY_SAVER", "false").lower() == "true":
+    if settings.USE_MEMORY_SAVER:
         print("Using MemorySaver due to USE_MEMORY_SAVER=true")
+
     else:
         # Create a test connection to verify JSON capabilities
         test_client = redis.from_url(REDIS_URL, decode_responses=False)

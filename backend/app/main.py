@@ -5,9 +5,14 @@ from typing import List, Optional
 from app.agent import app_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from app.hr_service import HRService, JSONDatabase
-import datetime
+import asyncio
+from app.config import settings
+
+from app.sharepoint_routes import router as sharepoint_router
+from app.graph_sync import renew_subscriptions
 
 app = FastAPI(title="Centriq AI Backend")
+app.include_router(sharepoint_router, prefix="/api")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -40,6 +45,17 @@ async def startup_event():
             print("Successfully set up Redis checkpointer indexes.")
         except Exception as e:
             print(f"Error setting up Redis checkpointer: {e}")
+            
+    async def periodic_renew():
+        while True:
+            await asyncio.sleep(3600)  # Renew every hour
+            try:
+                # Run synchronous renewal in a thread to avoid blocking the event loop
+                await asyncio.to_thread(renew_subscriptions)
+            except Exception as e:
+                print(f"Failed to renew subscriptions: {e}")
+
+    asyncio.create_task(periodic_renew())
 
 @app.get("/")
 async def root():
@@ -111,19 +127,20 @@ async def chat(request: ChatRequest):
 
 @app.get("/api/hr/dashboard")
 async def get_hr_dashboard():
-    # Mock: Assume current user is employee 1
-    emp = HRService.get_employee_by_email("employee1@centriq.ai")
+    # Mock: Assume current user is from settings
+    emp = HRService.get_employee_by_email(settings.DEFAULT_USER_EMAIL)
     if not emp:
+
         return {"error": "No employees found"}
     
     leaves = JSONDatabase.read("leaves.json")
-    emp_leaves = [l for l in leaves if l["employee_id"] == emp["id"]]
+    emp_leaves = [leave for leave in leaves if leave["employee_id"] == emp["id"]]
     
     payroll = JSONDatabase.read("payroll.json")
     emp_payroll = [p for p in payroll if p["employee_id"] == emp["id"]]
     last_payroll = emp_payroll[-1] if emp_payroll else None
     
-    used_leaves = sum(1 for l in emp_leaves if l["status"] == "Approved")
+    used_leaves = sum(1 for leave in emp_leaves if leave["status"] == "Approved")
     leave_balance = 24 - used_leaves
     
     return {
@@ -156,7 +173,7 @@ async def get_leaves():
 async def apply_leave(data: dict):
     # Mock current user
     res = HRService.apply_leave(
-        "employee1@centriq.ai", 
+        settings.DEFAULT_USER_EMAIL, 
         data["start"], 
         data["end"], 
         data.get("type", "Casual")
@@ -169,4 +186,5 @@ async def get_payroll():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT)
+

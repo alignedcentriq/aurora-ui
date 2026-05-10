@@ -1,9 +1,13 @@
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.sql import func
 import datetime
 
 Base = declarative_base()
+
+# Schema for Postgres
+SCHEMA = "enterprise_ai"
 
 class Employee(Base):
     __tablename__ = "employees"
@@ -78,3 +82,60 @@ class Policy(Base):
     category = Column(String) # Leave, WFH, etc.
     content = Column(Text)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+# New SharePoint Integration Tables (Aligned with enterprise_ai schema)
+class GraphSubscription(Base):
+    __tablename__ = "graph_subscriptions"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    subscription_id = Column(String(255), unique=True, index=True, nullable=False)
+    site_id = Column(String(255))
+    drive_id = Column(String(255))
+    expiration_time = Column(DateTime(timezone=True))
+    status = Column(String(50)) # Active, Expired, Failed
+    webhook_endpoint = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class SharePointDeltaToken(Base):
+    __tablename__ = "sharepoint_delta_tokens"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    drive_id = Column(String(255), unique=True, index=True, nullable=False)
+    delta_url = Column(Text)
+    last_sync = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class SharePointFile(Base):
+    __tablename__ = "sharepoint_files"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    file_id = Column(String(255), unique=True, index=True, nullable=False)
+    name = Column(String(500))
+    path = Column(Text)
+    web_url = Column(Text)
+    last_modified = Column(DateTime(timezone=True))
+    is_deleted = Column(Boolean, default=False)
+    drive_id = Column(String(255))
+    
+    # Sync metadata
+    processing_status = Column(String(50), default="Pending") # Pending, Processed, Failed
+    last_processed_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class SyncFailureLog(Base):
+    __tablename__ = "sync_failure_logs"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    resource_id = Column(String(255), index=True, nullable=False) # drive_id or file_id
+    error_type = Column(String(100))
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    resolved = Column(Boolean, default=False)

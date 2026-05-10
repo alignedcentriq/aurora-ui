@@ -1,9 +1,4 @@
-import {
-  createRootRoute,
-  Outlet,
-  HeadContent,
-  Scripts
-} from "@tanstack/react-router";
+import { createRootRoute, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
 import * as React from "react";
 import { DefaultCatchBoundary } from "../components/DefaultCatchBoundary";
 import { NotFound } from "../components/NotFound";
@@ -32,9 +27,7 @@ export const Route = createRootRoute({
           "Centriq is your intelligent workplace concierge, helping you manage HR tasks, IT requests, and payroll with ease.",
       }),
     ],
-    links: [
-      { rel: "stylesheet", href: appCss },
-    ],
+    links: [{ rel: "stylesheet", href: appCss }],
   }),
   errorComponent: (props) => (
     <RootDocument>
@@ -55,12 +48,15 @@ function RootComponent() {
 
   React.useEffect(() => {
     if (isBrowser && msalInstance) {
-      msalInstance.initialize().then(() => {
-        setIsMsalInitialized(true);
-      }).catch(e => {
-        console.error("MSAL Init Error:", e);
-        setIsMsalInitialized(true);
-      });
+      msalInstance
+        .initialize()
+        .then(() => {
+          setIsMsalInitialized(true);
+        })
+        .catch((e) => {
+          console.error("MSAL Init Error:", e);
+          setIsMsalInitialized(true);
+        });
     }
   }, [isBrowser]);
 
@@ -104,7 +100,7 @@ function LoginView() {
           disabled={isInteracting}
           className={cn(
             "group relative flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card p-4 text-[15px] font-semibold text-foreground transition-all hover:bg-accent hover:shadow-lg active:scale-[0.98]",
-            isInteracting && "opacity-50 cursor-not-allowed"
+            isInteracting && "opacity-50 cursor-not-allowed",
           )}
         >
           {isInteracting ? (

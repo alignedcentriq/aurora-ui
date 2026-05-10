@@ -1,27 +1,21 @@
-import {
-  ErrorComponent,
-  Link,
-  rootRouteId,
-  useMatch,
-  useRouter,
-} from '@tanstack/react-router'
-import * as React from 'react'
+import { ErrorComponent, Link, rootRouteId, useMatch, useRouter } from "@tanstack/react-router";
+import * as React from "react";
 
-export function DefaultCatchBoundary({ error }: { error: any }) {
-  const router = useRouter()
-  const isRoot = useMatch({
-    from: rootRouteId,
+export function DefaultCatchBoundary({ error }: { error: Error }) {
+  const router = useRouter();
+  const match = useMatch({
     strict: false,
-  })
+  });
+  const isRoot = match.id === rootRouteId;
 
-  console.error(error)
+  console.error(error);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center">
       <div className="space-y-4">
         <h2 className="text-2xl font-bold tracking-tight">Something went wrong!</h2>
         <p className="text-muted-foreground max-w-[400px] mx-auto">
-          {error.message || 'An unexpected error occurred. Please try again or contact support.'}
+          {error.message || "An unexpected error occurred. Please try again or contact support."}
         </p>
         <div className="flex items-center justify-center gap-4 pt-4">
           <button
@@ -48,5 +42,5 @@ export function DefaultCatchBoundary({ error }: { error: any }) {
         </div>
       </div>
     </div>
-  )
+  );
 }

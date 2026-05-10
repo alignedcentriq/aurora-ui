@@ -96,7 +96,9 @@ export function AssistantView() {
       })
         .then(async (res) => {
           if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ detail: "Failed to connect to the server" }));
+            const errorData = await res
+              .json()
+              .catch(() => ({ detail: "Failed to connect to the server" }));
             throw new Error(errorData.detail || "Server Error");
           }
           return res.json();

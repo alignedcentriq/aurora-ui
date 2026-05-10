@@ -1,5 +1,4 @@
 import asyncio
-import os
 from app.agent import app_agent
 from langchain_core.messages import HumanMessage
 

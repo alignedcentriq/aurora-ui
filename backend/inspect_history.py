@@ -1,8 +1,6 @@
 import asyncio
 import os
-import redis.asyncio as redis
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-from app.agent import app_agent
 
 async def inspect_thread(thread_id: str):
     """Fetches and prints a readable version of the chat history from Redis."""
