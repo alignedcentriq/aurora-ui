@@ -14,3 +14,4 @@ python-multipart
 requests
 redis
 langgraph-checkpoint-redis
+boto3

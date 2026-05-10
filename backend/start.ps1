@@ -1,4 +1,6 @@
 Write-Host "Starting Centriq AI Backend..."
+Write-Host "Ensuring infrastructure is running (Redis, DB, MinIO)..."
+docker compose -f ..\docker-compose.yml up -d redis db minio createbuckets
 
 if (-not (Test-Path "venv")) {
     Write-Host "Creating virtual environment..."

@@ -1,5 +1,7 @@
 #!/bin/bash
 echo "🚀 Starting Centriq AI Backend..."
+echo "📦 Ensuring infrastructure is running (Redis, DB, MinIO)..."
+docker compose -f ../docker-compose.yml up -d redis db minio createbuckets
 
 # Create virtual environment if not exists
 if [ ! -d "venv" ]; then
