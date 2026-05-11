@@ -15,5 +15,6 @@ requests
 redis
 langgraph-checkpoint-redis
 boto3
-langfuse
+langfuse<3.0.0
 python-logging-loki
+python-json-logger

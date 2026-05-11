@@ -29,7 +29,6 @@ const startBackend = () => {
     cwd: backendDir,
     stdio: "inherit",
     shell: false,
-    env: { ...process.env, LANGFUSE_OTEL: "false", OTEL_SDK_DISABLED: "true" }
   });
 
   child.on("error", (err) => {

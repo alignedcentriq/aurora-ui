@@ -1,15 +1,27 @@
-Write-Host "Starting Centriq AI Backend..."
-Write-Host "Ensuring infrastructure is running (Redis, DB, MinIO)..."
-docker compose -f ..\docker-compose.yml up -d redis db minio createbuckets loki grafana langfuse-server
+# Centriq AI Backend Startup Script (Windows Native)
 
-if (-not (Test-Path "venv")) {
-    Write-Host "Creating virtual environment..."
+Write-Host "--- Starting Centriq AI Backend Infrastructure ---" -ForegroundColor Cyan
+docker compose -f ../docker-compose.yml up -d redis db minio createbuckets loki grafana langfuse-server
+
+# Create virtual environment if not exists
+if (!(Test-Path "venv")) {
+    Write-Host "--- Creating virtual environment ---" -ForegroundColor Yellow
     python -m venv venv
+    .\venv\Scripts\activate
+    pip install -r requirements.txt
+    pip install -e .
+} else {
+    .\venv\Scripts\activate
 }
 
-Write-Host "Activating virtual environment and installing dependencies..."
-. .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# Ensure database exists and is initialized
+Write-Host "--- Ensuring database is ready ---" -ForegroundColor Yellow
+python create_db.py
+python init_db_script.py
 
-Write-Host "Backend running on http://localhost:8080"
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+# Set environment variables
+$env:LANGFUSE_OTEL="false"
+
+# Start FastAPI
+Write-Host "--- Backend running on http://localhost:8080 ---" -ForegroundColor Green
+uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload --reload-dir app
