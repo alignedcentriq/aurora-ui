@@ -423,6 +423,43 @@ function AdminDashboard() {
             ))}
           </div>
         </div>
+
+        {/* Observability */}
+        <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
+          <h3 className="text-[15px] font-semibold text-foreground mb-4 flex items-center gap-2">
+            <Eye className="h-4 w-4 text-muted-foreground" /> Observability
+          </h3>
+          <p className="text-xs text-muted-foreground mb-6">
+            Access logs, metrics, and trace data. Available to administrators only.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <a 
+              href="http://localhost:3001" 
+              target="_blank" 
+              rel="noreferrer"
+              className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
+            >
+              <div>
+                <h4 className="text-[14px] font-semibold text-foreground group-hover:text-primary transition-colors">Grafana Dashboard</h4>
+                <p className="text-[12px] text-muted-foreground mt-1">Loki logs and system metrics</p>
+              </div>
+              <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </a>
+            
+            <a 
+              href="http://localhost:3002" 
+              target="_blank" 
+              rel="noreferrer"
+              className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
+            >
+              <div>
+                <h4 className="text-[14px] font-semibold text-foreground group-hover:text-primary transition-colors">Langfuse Tracing</h4>
+                <p className="text-[12px] text-muted-foreground mt-1">LLM analytics and tracing</p>
+              </div>
+              <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );

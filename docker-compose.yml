@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   nginx:
     image: nginx:alpine
@@ -13,6 +11,8 @@ services:
       - redis
       - frontend
       - backend
+      - grafana
+      - langfuse-server
     restart: always
 
   frontend:
@@ -34,6 +34,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/centriq
       - REDIS_URL=redis://redis:6379
+      - LANGFUSE_SECRET_KEY=sk-lf-1234567890
+      - LANGFUSE_PUBLIC_KEY=pk-lf-1234567890
+      - LANGFUSE_HOST=http://langfuse-server:3000
     networks:
       - centriq-network
     depends_on:
@@ -41,6 +44,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://host.docker.internal:3100/loki/api/v1/push"
+        # We'll also add a python loki handler to be safe
 
   db:
     image: ankane/pgvector:latest
@@ -54,9 +62,11 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - centriq-network
+    volumes:
+      - ./init-langfuse.sql:/docker-entrypoint-initdb.d/init-langfuse.sql
 
   redis:
     image: redis/redis-stack-server:latest
@@ -89,6 +99,44 @@ services:
       - centriq-network
     entrypoint: >
       /bin/sh -c " until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done; /usr/bin/mc mb myminio/aurora-bucket; /usr/bin/mc policy set public myminio/aurora-bucket; exit 0; "
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    networks:
+      - centriq-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - loki
+    networks:
+      - centriq-network
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
+
+  langfuse-server:
+    image: langfuse/langfuse:2
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3002:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/langfuse
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://localhost:3002
+      - TELEMETRY_ENABLED=false
+    networks:
+      - centriq-network
 
 volumes:
   redis_data:

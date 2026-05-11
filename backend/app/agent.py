@@ -1,28 +1,65 @@
+"""
+Centriq AI — Multi-Agent LangGraph Brain
+
+Architecture:
+  User Message → Intent Router (gpt-oss) → Domain Agent (llama3.2:3b)
+                                         ↓
+                              HR Agent (active, with tools)
+                              Admin Agent (placeholder)
+                              IT Support Agent (placeholder)
+                              PMO Agent (placeholder)
+                              Functional Manager Agent (placeholder)
+                              General Agent (direct LLM response)
+"""
+
 import os
 import json
 import re
-from typing import TypedDict, Annotated, List, Union
+from typing import TypedDict, Annotated, List, Optional
+
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
-from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-import redis.asyncio as redis
+from langgraph.checkpoint.memory import MemorySaver
+
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage,
+)
 from langchain_core.tools import tool
+
 from app.hr_service import HRService
 from app.config import settings
+from app.router import classify_intent, get_domain_status, get_placeholder_response
 
-# Load environment variables if needed (already done in config)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. STATE DEFINITION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AgentState(TypedDict):
+    messages: Annotated[List[BaseMessage], lambda x, y: x + y]
+    domain: Optional[str]
+    route_confidence: Optional[float]
+    route_reasoning: Optional[str]
 
 
-# Define HR Tools
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. HR TOOLS (the only active agent's tools for now)
+# ═══════════════════════════════════════════════════════════════════════════════
+
 @tool
 def get_leave_balance(email: str):
     """Get the current leave balance for an employee."""
     return HRService.get_leave_balance(email)
 
 @tool
-def apply_leave(email: str, start_date: str, end_date: str, leave_type: str = "Casual", reason: str = "Applied via AI Assistant"):
+def apply_leave(
+    email: str,
+    start_date: str,
+    end_date: str,
+    leave_type: str = "Casual",
+    reason: str = "Applied via AI Assistant",
+):
     """Submit a leave request. Use YYYY-MM-DD format for dates."""
     return HRService.apply_leave(email, start_date, end_date, leave_type, reason)
 
@@ -31,143 +68,245 @@ def search_hr_policies(query: str):
     """Search HR policy documents for a specific topic."""
     return HRService.search_policies(query)
 
-hr_tools = [get_leave_balance, apply_leave, search_hr_policies]
-tool_node = ToolNode(hr_tools)
+@tool
+def get_payroll_info(email: str):
+    """Get the latest payroll / salary information for an employee."""
+    return HRService.get_payroll_info(email)
 
-# State definition
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], lambda x, y: x + y]
 
-# Initialize LLM
-llm = ChatOpenAI(
-    base_url=settings.LLM_BASE_URL,
-    api_key=settings.LLM_API_KEY,
-    model=settings.LLM_MODEL_NAME,
-    temperature=settings.LLM_TEMPERATURE,
-).bind_tools(hr_tools)
+hr_tools = [get_leave_balance, apply_leave, search_hr_policies, get_payroll_info]
+hr_tool_node = ToolNode(hr_tools)
 
-def assistant(state: AgentState):
-    """Main assistant node that decides whether to call a tool."""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. LLM INSTANCES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Agent LLM — used for reasoning and tool calling
+agent_llm = ChatOpenAI(
+    base_url=settings.AGENT_BASE_URL,
+    api_key=settings.AGENT_API_KEY,
+    model=settings.AGENT_MODEL_NAME,
+    temperature=settings.AGENT_TEMPERATURE,
+)
+
+# Agent LLM with HR tools bound
+hr_llm = agent_llm.bind_tools(hr_tools)
+
+# Summary LLM — plain, no tools, for converting tool results to natural language
+summary_llm = ChatOpenAI(
+    base_url=settings.AGENT_BASE_URL,
+    api_key=settings.AGENT_API_KEY,
+    model=settings.AGENT_MODEL_NAME,
+    temperature=0.3,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. GRAPH NODES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def intent_router(state: AgentState):
+    """
+    Entry node — classifies user intent and routes to the correct domain.
+    Uses the fast router model (gpt-oss).
+    """
+    last_human = None
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage):
+            last_human = msg.content
+            break
+
+    if not last_human:
+        return {
+            "domain": "general",
+            "route_confidence": 0.0,
+            "route_reasoning": "No user message found",
+        }
+
+    result = classify_intent(last_human)
+    print(f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} | {result['reasoning']}")
+
+    return {
+        "domain": result["domain"],
+        "route_confidence": result["confidence"],
+        "route_reasoning": result["reasoning"],
+    }
+
+
+def hr_agent(state: AgentState):
+    """HR Agent — handles leave, payroll, policies, attendance."""
     messages = state["messages"]
-    
+
+    # Inject system prompt if not already present
     if not any(isinstance(m, SystemMessage) for m in messages):
-        system_prompt = SystemMessage(content=f"""
-        You are Centriq, the Workplace AI Assistant.
-        The person you are talking to is '{settings.DEFAULT_USER_EMAIL}'.
-        They are fully authorized to see and manage their own leave and HR data.
+        system_prompt = SystemMessage(content=f"""You are Centriq HR Assistant.
+The person you are talking to is '{settings.DEFAULT_USER_EMAIL}'.
+They are fully authorized to view and manage their own HR data.
 
-        
-        INCOMPLETE REQUESTS:
-        - If a user says "apply for leave" but does not provide dates or type, DO NOT call any tool.
-        - Instead, ask them for the missing information: (1) Leave Type (Casual, Sick, or Earned), (2) Start Date, and (3) End Date.
-        - Only call 'apply_leave' when you have all three pieces of information from the user.
-        
-        CRITICAL RULES:
-        1. To use a tool, you MUST emit a tool call.
-        2. NEVER write JSON, function strings like '{{function ...}}', or brackets '{{}}' in your response text.
-        3. Use '{settings.DEFAULT_USER_EMAIL}' for all email parameters.
-        4. Always speak directly to the user (e.g., "Your leave balance is...").
-        5. If the user asks about ANY HR policy, rule, or benefit (like referral bonuses, remote work, expenses), you MUST call the `search_hr_policies` tool. DO NOT answer from memory. DO NOT say you cannot locate it without searching first!
-        """)
+YOUR CAPABILITIES (use the tools provided):
+- Check leave balance → get_leave_balance
+- Apply for leave → apply_leave
+- Search HR policies → search_hr_policies
+- Get payroll/salary info → get_payroll_info
 
+RULES:
+1. If the user's request is incomplete (e.g. "apply leave" without dates), ask for the missing details.
+2. Use '{settings.DEFAULT_USER_EMAIL}' for all email parameters.
+3. NEVER write raw JSON in your response. Use tool calls instead.
+4. Always respond in natural, conversational language.
+5. If the user asks about any policy/benefit, ALWAYS use search_hr_policies first.
+6. ALWAYS provide a meaningful response. Never return empty text.
+""")
         messages = [system_prompt] + messages
-    
-    response = llm.invoke(messages)
+
+    response = hr_llm.invoke(messages)
     return {"messages": [response]}
 
-def summarizer(state: AgentState):
-    """Node that takes tool results and creates a natural language response."""
-    messages = state["messages"]
-    
-    summary_llm = ChatOpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        model=settings.LLM_MODEL_NAME,
-    )
-    
-    # The last message is the ToolMessage
-    tool_message = messages[-1]
-    tool_output = tool_message.content if hasattr(tool_message, 'content') else str(tool_message)
-    
-    prompt = [
-        SystemMessage(content=f"""
-        You are talking directly to '{settings.DEFAULT_USER_EMAIL}'. 
-        You just performed an action for THEM using a tool.
 
-        The tool returned the following result:
-        
-        {tool_output}
-        
-        Report this result to the user naturally based ONLY on the tool result above.
-        DO NOT say you couldn't find it if the information is right there.
-        Keep it simple: one or two sentences in plain English.
-        """),
-    ] + messages[-2:-1] # Pass just the AI's intent or Human's question
-    
+def general_agent(state: AgentState):
+    """General Agent — handles greetings, chitchat, and unclear queries."""
+    messages = state["messages"]
+
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        system_prompt = SystemMessage(content=f"""You are Centriq, the Workplace AI Assistant.
+You are talking to '{settings.DEFAULT_USER_EMAIL}'.
+
+You can help with:
+- HR queries (leave, payroll, policies)
+- IT Support (coming soon)
+- Admin requests (coming soon)
+- Project Management (coming soon)
+- Team management (coming soon)
+
+For now, respond naturally and helpfully. If the user's request maps to a specific domain,
+let them know you can help and guide them to rephrase if needed.
+Always be friendly, professional, and concise.
+""")
+        messages = [system_prompt] + messages
+
+    response = agent_llm.invoke(messages)
+    return {"messages": [response]}
+
+
+def placeholder_agent(state: AgentState):
+    """Placeholder for domains that are not yet implemented."""
+    domain = state.get("domain", "unknown")
+    placeholder_msg = get_placeholder_response(domain)
+    return {"messages": [AIMessage(content=placeholder_msg)]}
+
+
+def summarizer(state: AgentState):
+    """Takes tool results and converts them to a natural language response."""
+    messages = state["messages"]
+    tool_message = messages[-1]
+    tool_output = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
+
+    prompt = [
+        SystemMessage(content=f"""You are talking directly to '{settings.DEFAULT_USER_EMAIL}'.
+You just performed an action for THEM using a tool.
+
+The tool returned the following result:
+
+{tool_output}
+
+Report this result to the user naturally based ONLY on the tool result above.
+DO NOT say you couldn't find it if the information is right there.
+Keep it simple: one or two sentences in plain English.
+ALWAYS provide an answer. Never respond with empty text.
+"""),
+    ] + messages[-2:-1]
+
     response = summary_llm.invoke(prompt)
-    
+
     clean_content = re.sub(r'\{.*?\}', '', response.content, flags=re.DOTALL).strip()
     clean_content = re.sub(r'```.*?```', '', clean_content, flags=re.DOTALL).strip()
-    
+
     if not clean_content and response.content:
         clean_content = response.content
-        
+
     return {"messages": [AIMessage(content=clean_content)]}
 
-def should_continue(state: AgentState):
-    """Determines if the graph should continue to tools or end."""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. ROUTING LOGIC
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def route_to_agent(state: AgentState):
+    """Routes from the intent_router node to the appropriate agent node."""
+    domain = state.get("domain", "general")
+    status = get_domain_status(domain)
+
+    if status == "placeholder":
+        return "placeholder_agent"
+    elif domain == "hr":
+        return "hr_agent"
+    else:
+        return "general_agent"
+
+
+def should_continue_hr(state: AgentState):
+    """After HR agent responds, check if it wants to call tools."""
     last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        return "tools"
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "hr_tools"
     return END
 
-from langgraph.checkpoint.memory import MemorySaver
 
-import asyncio
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. CHECKPOINTER (Redis with Memory fallback)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# Setup Checkpointer (Redis with Memory fallback)
-REDIS_URL = settings.REDIS_URL
-checkpointer = MemorySaver() # Default to Memory
+checkpointer = MemorySaver()
 
 try:
-    import redis.asyncio as redis
+    import redis.asyncio as aioredis
     from langgraph.checkpoint.redis.aio import AsyncRedisSaver
-    
-    # Check if the user explicitly wants to disable Redis (optional)
+
     if settings.USE_MEMORY_SAVER:
         print("Using MemorySaver due to USE_MEMORY_SAVER=true")
-
     else:
-        # Create a test connection to verify JSON capabilities
-        test_client = redis.from_url(REDIS_URL, decode_responses=False)
-        
-        # In a synchronous block, we can't easily await, but we can wrap the checkpointer creation
-        # in a way that it connects, but actually LangGraph's AsyncRedisSaver requires RedisJSON.
-        # If the user is on standard Redis, AsyncRedisSaver will fail on the first message.
-        # To make it bulletproof for local dev without RedisJSON, we default to MemorySaver 
-        # unless REDIS_URL explicitly contains a different port or is forced.
-        
-        # A simple check: if it's localhost and no password, assume standard dev Redis without JSON
-        # unless it's specifically using the docker-compose stack.
-        
-        redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+        redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
         checkpointer = AsyncRedisSaver(redis_client=redis_client)
-        print(f"Redis checkpointer initialized (URL: {REDIS_URL}). Note: Requires RedisJSON module.")
-        
+        print(f"Redis checkpointer initialized (URL: {settings.REDIS_URL})")
+
 except ImportError:
     print("langgraph-checkpoint-redis not installed. Using MemorySaver.")
 except Exception as e:
     print(f"Redis initialization failed: {e}. Using MemorySaver.")
 
-# Build the graph
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. BUILD THE LANGGRAPH
+# ═══════════════════════════════════════════════════════════════════════════════
+
 workflow = StateGraph(AgentState)
-workflow.add_node("assistant", assistant)
-workflow.add_node("tools", tool_node)
+
+# ── Nodes ──
+workflow.add_node("intent_router", intent_router)
+workflow.add_node("hr_agent", hr_agent)
+workflow.add_node("general_agent", general_agent)
+workflow.add_node("placeholder_agent", placeholder_agent)
+workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
-workflow.set_entry_point("assistant")
-workflow.add_conditional_edges("assistant", should_continue)
-workflow.add_edge("tools", "summarizer")
+
+# ── Entry ──
+workflow.set_entry_point("intent_router")
+
+# ── Edges ──
+# Router → Agent
+workflow.add_conditional_edges("intent_router", route_to_agent)
+
+# HR Agent → Tools or END
+workflow.add_conditional_edges("hr_agent", should_continue_hr)
+
+# Tools → Summarizer → END
+workflow.add_edge("hr_tools", "summarizer")
 workflow.add_edge("summarizer", END)
 
-# Compile with persistence
+# General & Placeholder → END
+workflow.add_edge("general_agent", END)
+workflow.add_edge("placeholder_agent", END)
+
+# ── Compile ──
 app_agent = workflow.compile(checkpointer=checkpointer)

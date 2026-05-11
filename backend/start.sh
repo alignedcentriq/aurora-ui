@@ -1,7 +1,7 @@
 #!/bin/bash
 echo "🚀 Starting Centriq AI Backend..."
 echo "📦 Ensuring infrastructure is running (Redis, DB, MinIO)..."
-docker compose -f ../docker-compose.yml up -d redis db minio createbuckets
+docker compose -f ../docker-compose.yml up -d redis db minio createbuckets loki grafana langfuse-server
 
 # Create virtual environment if not exists
 if [ ! -d "venv" ]; then
@@ -25,6 +25,9 @@ fi
 echo "📂 Ensuring database is ready..."
 python3 create_db.py
 python3 init_db_script.py
+
+# Set environment variables for Langfuse
+export LANGFUSE_OTEL=false
 
 # Start FastAPI
 echo "✅ Backend running on http://localhost:8080"

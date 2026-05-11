@@ -1,7 +1,7 @@
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from app.models import Base, Employee, Leave, Payroll, Attendance, Policy
+from app.models import Base, Employee, Leave, Payroll, Attendance, Policy, SCHEMA
 from app.config import settings
 import datetime
 
@@ -15,6 +15,11 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
+    # Ensure schema exists
+    with engine.connect() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+        conn.commit()
+        
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     

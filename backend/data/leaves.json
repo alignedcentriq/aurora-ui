@@ -367,5 +367,14 @@
     "end_date": "2023-05-10",
     "status": "Pending",
     "reason": "Applied via AI Assistant"
+  },
+  {
+    "id": 42,
+    "employee_id": 1,
+    "leave_type": "Annual Leave",
+    "start_date": "2023-12-25",
+    "end_date": "2023-12-30",
+    "status": "Pending",
+    "reason": "Vacation"
   }
 ]

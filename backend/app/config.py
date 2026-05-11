@@ -4,9 +4,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    # LLM
+    # ── Router Model (intent classification & domain routing) ──
+    ROUTER_BASE_URL = os.getenv("ROUTER_BASE_URL", "http://localhost:11434/v1")
+    ROUTER_MODEL_NAME = os.getenv("ROUTER_MODEL_NAME", "llama3.2:3b")
+    ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "ollama")
+
+    # ── Agent Model (reasoning, tool calling, response generation) ──
+    AGENT_BASE_URL = os.getenv("AGENT_BASE_URL", os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"))
+    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "llama3.2:3b"))
+    AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
+    AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
+
+    # ── Embedding Model (semantic search, RAG) ──
+    EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:11434")
+    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
+
+    # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
-    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.2:1b")
+    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.2:3b")
     LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
