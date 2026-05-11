@@ -12,14 +12,8 @@ import re
 import logging
 import json
 
-# ── Disable Langfuse OpenTelemetry BEFORE any Langfuse imports ──
-os.environ["LANGFUSE_OTEL"] = "false"
-os.environ.setdefault("LANGFUSE_SECRET_KEY", os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-1234567890"))
-os.environ.setdefault("LANGFUSE_PUBLIC_KEY", os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-1234567890"))
-os.environ.setdefault("LANGFUSE_HOST", os.environ.get("LANGFUSE_HOST", "http://localhost:3002"))
-
-from langfuse.langchain import CallbackHandler
-from langfuse import Langfuse
+# ── Langfuse tracing (custom lightweight wrapper) ──
+from app.langfuse_tracing import langfuse_trace, langfuse_event
 
 # ── Loki Logger with JSON Formatter ──
 try:
@@ -45,12 +39,6 @@ except Exception as e:
     if not logger.handlers:
         logger.addHandler(logging.StreamHandler())
     logger.warning(f"Loki logging unavailable: {e}. Using console only.")
-
-# ── Langfuse Client ──
-try:
-    langfuse_client = Langfuse()
-except Exception:
-    langfuse_client = None
 
 from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
@@ -90,13 +78,13 @@ async def startup_event():
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
-            print("✅ Redis checkpointer indexes ready.")
+            print("Redis checkpointer indexes ready.")
         except Exception as e:
-            print(f"⚠️  Redis checkpointer setup: {e}")
+            print(f"Redis checkpointer setup: {e}")
             
     async def periodic_renew():
         while True:
-            await asyncio.sleep(3600)  # Renew every hour
+            await asyncio.sleep(3600)
             try:
                 await asyncio.to_thread(renew_subscriptions)
             except Exception as e:
@@ -115,21 +103,8 @@ async def feedback(data: dict):
 
 @app.post("/api/track")
 async def track_data(log: CustomLog):
-    import time
     logger.info("custom_event", extra={"event_name": log.event, "custom_data": log.data})
-    
-    if langfuse_client:
-        try:
-            langfuse_client.create_score(
-                trace_id=f"custom-{log.event}-{time.time()}",
-                name=log.event,
-                value=1,
-                comment=json.dumps(log.data)
-            )
-            langfuse_client.flush()
-        except Exception:
-            pass
-    
+    langfuse_event(log.event, log.data)
     return {"status": "success", "message": "Event tracked successfully"}
 
 @app.post("/api/forms")
@@ -149,37 +124,46 @@ async def chat(request: ChatRequest):
     try:
         logger.info(f"Chat request: session={request.session_id}, message={request.message[:50]}...")
         
-        # Initialize Langfuse Callback (env vars already set globally)
-        langfuse_handler = CallbackHandler()
-        
-        # Config for LangGraph invocation
-        config = {
-            "configurable": {"thread_id": request.session_id},
-            "callbacks": [langfuse_handler],
-        }
-        
-        # Invoke the multi-agent graph
-        result = await app_agent.ainvoke(
-            {"messages": [HumanMessage(content=request.message)]},
-            config=config,
-        )
-        
-        raw_ai_message = result["messages"][-1].content
-        routed_domain = result.get("domain", "unknown")
-        
-        logger.info(f"Routed to: {routed_domain}")
-        print(f"[Chat] Domain: {routed_domain} | Raw response length: {len(raw_ai_message)}")
-        
-        # Safety cleanup for small model artifacts
-        final_message = re.sub(r'\{.*?\}', '', raw_ai_message, flags=re.DOTALL).strip()
-        final_message = final_message.replace('{', '').replace('}', '').strip()
-        final_message = re.sub(r'```.*?```', '', final_message, flags=re.DOTALL).strip()
-        
-        # Fallback for empty responses
-        if not final_message or len(final_message) < 2:
-            final_message = (
-                "I'm here to help! I can assist you with HR queries (leave, payroll, policies), "
-                "and more capabilities are coming soon. What would you like to know?"
+        # Wrap the entire chat in a Langfuse trace
+        with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
+            
+            # Config for LangGraph invocation (no langfuse callback needed)
+            config = {
+                "configurable": {"thread_id": request.session_id},
+            }
+            
+            # Invoke the multi-agent graph
+            result = await app_agent.ainvoke(
+                {"messages": [HumanMessage(content=request.message)]},
+                config=config,
+            )
+            
+            raw_ai_message = result["messages"][-1].content
+            routed_domain = result.get("domain", "unknown")
+            
+            logger.info(f"Routed to: {routed_domain}")
+            print(f"[Chat] Domain: {routed_domain} | Raw response length: {len(raw_ai_message)}")
+            
+            # Safety cleanup for small model artifacts
+            final_message = re.sub(r'\{.*?\}', '', raw_ai_message, flags=re.DOTALL).strip()
+            final_message = final_message.replace('{', '').replace('}', '').strip()
+            final_message = re.sub(r'```.*?```', '', final_message, flags=re.DOTALL).strip()
+            
+            # Fallback for empty responses
+            if not final_message or len(final_message) < 2:
+                final_message = (
+                    "I'm here to help! I can assist you with HR queries (leave, payroll, policies), "
+                    "and more capabilities are coming soon. What would you like to know?"
+                )
+            
+            # Update the Langfuse trace with the result
+            trace.update(
+                output=final_message,
+                metadata={
+                    "domain": routed_domain,
+                    "raw_length": len(raw_ai_message),
+                    "final_length": len(final_message),
+                }
             )
         
         return {
