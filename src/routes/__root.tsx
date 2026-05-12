@@ -134,7 +134,7 @@ function LoginView() {
   );
 }
 
-import { ThemeManager } from "../lib/ThemeManager";
+import { ThemeManager } from "@/lib/ThemeManager";
 
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();

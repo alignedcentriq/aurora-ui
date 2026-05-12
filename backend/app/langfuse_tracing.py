@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from langfuse import Langfuse
 
-# ── Singleton Langfuse Client ────────────────────────────────────────────────
+# -- Singleton Langfuse Client ------------------------------------------------
 
 _client = None
 

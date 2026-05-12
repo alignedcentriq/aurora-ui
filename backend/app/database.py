@@ -28,7 +28,7 @@ def init_db():
         db.close()
         return
 
-    print("🌱 Seeding dummy HR data...")
+    print("Seeding dummy HR data...")
     
     departments = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
     locations = ["Mumbai", "Bangalore", "Gurgaon", "Pune", "Hyderabad"]
@@ -110,4 +110,4 @@ def init_db():
 
     db.commit()
     db.close()
-    print("✅ Seeding complete.")
+    print("Seeding complete.")

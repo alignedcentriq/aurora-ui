@@ -91,7 +91,7 @@ def generate_data():
     with open(f"{data_path}/policies.json", "w") as f:
         json.dump(policies, f, indent=2)
 
-    print(f"✅ JSON data generated in {data_path}/")
+    print(f"JSON data generated in {data_path}/")
 
 if __name__ == "__main__":
     generate_data()

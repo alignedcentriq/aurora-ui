@@ -31,7 +31,7 @@ class Config:
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
     # Redis
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6380")
     USE_MEMORY_SAVER = os.getenv("USE_MEMORY_SAVER", "false").lower() == "true"
 
     # Microsoft Graph

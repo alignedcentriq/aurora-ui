@@ -7,6 +7,7 @@ export default defineConfig({
   plugins: [tanstackStart(), react(), tailwindcss()],
   server: {
     port: 3000,
+    strictPort: true,
     watch: {
       ignored: ["**/backend/**"],
     },

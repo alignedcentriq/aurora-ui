@@ -61,7 +61,7 @@ class HRService:
         if not emp_payroll: return "No payroll records found."
         
         last = emp_payroll[-1]
-        return f"Your last net salary was ₹{last['net_salary']:,.2f} paid for {last['month']}/{last['year']}."
+        return f"Your last net salary was INR {last['net_salary']:,.2f} paid for {last['month']}/{last['year']}."
 
     @staticmethod
     def upsert_policy(title, content, category="General"):

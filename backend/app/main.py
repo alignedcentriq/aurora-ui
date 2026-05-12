@@ -12,10 +12,10 @@ import re
 import logging
 import json
 
-# ── Langfuse tracing (custom lightweight wrapper) ──
+# -- Langfuse tracing (custom lightweight wrapper) --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
 
-# ── Loki Logger with JSON Formatter ──
+# -- Loki Logger with JSON Formatter --
 try:
     import logging_loki
     from pythonjsonlogger import jsonlogger
