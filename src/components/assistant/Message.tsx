@@ -5,6 +5,8 @@ import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 
 export function UserMessage({
+  name,
+  initials,
   children,
 }: {
   name?: string;
