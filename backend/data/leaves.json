@@ -376,5 +376,14 @@
     "end_date": "2023-12-30",
     "status": "Pending",
     "reason": "Vacation"
+  },
+  {
+    "id": 43,
+    "employee_id": 1,
+    "leave_type": "",
+    "start_date": "",
+    "end_date": "",
+    "status": "Pending",
+    "reason": ""
   }
 ]

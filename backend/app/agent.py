@@ -160,7 +160,19 @@ RULES:
 """)
         messages = [system_prompt] + messages
 
-    response = hr_llm.invoke(messages)
+    try:
+        response = hr_llm.invoke(messages)
+    except Exception as e:
+        error_str = str(e)
+        if "does not support tools" in error_str or "Tool calling" in error_str:
+            print(f"[HR Agent] Fallback: Model does not support tools. Using base LLM.")
+            response = agent_llm.invoke(messages)
+            # Optionally add a metadata or system note that tools failed
+            if hasattr(response, "content"):
+                response.content += "\n\n*(Note: Advanced HR actions are currently limited as the selected model does not support tool calling.)*"
+        else:
+            raise e
+
     return {"messages": [response]}
 
 

@@ -61,10 +61,15 @@ def langfuse_trace(name: str, session_id: str = None, metadata: dict = None):
             metadata=metadata or {},
         )
         yield trace
-        client.flush()
     except Exception as e:
         print(f"[Langfuse] Trace error: {e}")
-        yield _NoopTrace()
+        # Re-raise the exception so the caller (main.py) can handle it
+        raise
+    finally:
+        try:
+            client.flush()
+        except:
+            pass
 
 
 def langfuse_event(name: str, data: dict = None):

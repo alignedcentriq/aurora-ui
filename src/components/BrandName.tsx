@@ -5,15 +5,18 @@ interface BrandNameProps {
   withAI?: boolean;
 }
 
-export function BrandName({ className, withAI = false }: BrandNameProps) {
+export function BrandName({ className, withAI = false, plain = false }: BrandNameProps & { plain?: boolean }) {
+  if (plain) {
+    return (
+      <span className={cn("font-bold", className)}>
+        Centriq {withAI && <span className="text-[0.8em] opacity-80">AI</span>}
+      </span>
+    );
+  }
+
   return (
     <span className={cn("inline-flex items-center font-extrabold tracking-tighter", className)}>
-      <span 
-        className="bg-clip-text text-transparent drop-shadow-sm"
-        style={{
-          backgroundImage: "linear-gradient(to right, var(--foreground) 0%, var(--primary) 100%)",
-        }}
-      >
+      <span className="text-current">
         Centriq
       </span>
       {withAI && (

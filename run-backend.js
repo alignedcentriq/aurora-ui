@@ -14,7 +14,7 @@ const infraComposeFile = "docker-compose.infra.yml";
 
 const infraPorts = [
   { name: "Postgres", port: 5433, required: true },
-  { name: "Redis", port: 6380, required: false },
+  { name: "Redis", port: 6380, required: true },
   { name: "MinIO API", port: 9000, required: false },
   { name: "Loki", port: 3100, required: false },
   { name: "Grafana", port: 3001, required: false },
@@ -144,6 +144,15 @@ const runDockerCompose = async () => {
 
   if (isWindows) {
     const wslRepoRoot = getWslRepoRoot();
+
+    // Ensure Docker service is running in WSL
+    try {
+      console.log("--- Ensuring Docker service is running in WSL ---");
+      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+    } catch (err) {
+      console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
+    }
+
     const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
 
     try {

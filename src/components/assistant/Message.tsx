@@ -12,10 +12,19 @@ export function UserMessage({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both]">
+    <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both] gap-3">
       <div className="chat-bubble-user">
         <div className="text-[15px] leading-relaxed">{children}</div>
       </div>
+      {initials ? (
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-sm">
+          {initials}
+        </div>
+      ) : (
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white text-[11px] font-bold">
+          U
+        </div>
+      )}
     </div>
   );
 }

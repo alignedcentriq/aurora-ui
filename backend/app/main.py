@@ -11,6 +11,7 @@ import os
 import re
 import logging
 import json
+import time
 
 # -- Langfuse tracing (custom lightweight wrapper) --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
@@ -122,6 +123,7 @@ async def sync_sharepoint_policy(request: WebhookPolicyRequest):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     try:
+        start_time = time.time()
         logger.info(f"Chat request: session={request.session_id}, message={request.message[:50]}...")
         
         # Wrap the entire chat in a Langfuse trace
@@ -142,7 +144,8 @@ async def chat(request: ChatRequest):
             routed_domain = result.get("domain", "unknown")
             
             logger.info(f"Routed to: {routed_domain}")
-            print(f"[Chat] Domain: {routed_domain} | Raw response length: {len(raw_ai_message)}")
+            elapsed_time = time.time() - start_time
+            print(f"[Chat] Domain: {routed_domain} | Time: {elapsed_time:.2f}s | Raw response length: {len(raw_ai_message)}")
             
             # Safety cleanup for small model artifacts
             final_message = re.sub(r'\{.*?\}', '', raw_ai_message, flags=re.DOTALL).strip()
@@ -170,11 +173,32 @@ async def chat(request: ChatRequest):
             "response": final_message,
             "domain": routed_domain,
             "id": "msg_1",
+            "processing_time": f"{time.time() - start_time:.2f}s"
         }
     except Exception as e:
         print(f"Error in chat endpoint: {e}")
         import traceback
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/chat/{session_id}")
+async def delete_chat(session_id: str):
+    try:
+        logger.info(f"Deleting session: {session_id}")
+        
+        # 1. Clear from the LangGraph checkpointer if possible
+        # Checkpointer keys in langgraph-checkpoint-redis usually follow a pattern
+        # but the safest way is to delete from the underlying client if exposed.
+        if hasattr(app_agent.checkpointer, "redis_client"):
+            # RedisSaver uses thread_id directly or with a prefix
+            # Let's try to delete the thread_id key
+            await app_agent.checkpointer.redis_client.delete(session_id)
+            # Also common prefixes in langgraph-checkpoint-redis
+            await app_agent.checkpointer.redis_client.delete(f"checkpoint:{session_id}")
+            
+        return {"status": "success", "message": f"Session {session_id} deleted"}
+    except Exception as e:
+        print(f"Error deleting session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/hr/dashboard")
