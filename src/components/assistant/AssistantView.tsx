@@ -4,10 +4,19 @@ import { Composer } from "./Composer";
 import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Download } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type Turn = { role: "user"; text: string } | { role: "ai"; text: string; card?: boolean };
 
@@ -38,6 +47,10 @@ export function AssistantView() {
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docType, setDocType] = useState("project_status_report");
+  const [docTitle, setDocTitle] = useState("");
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +117,8 @@ export function AssistantView() {
           addTurn(activeId, {
             role: "ai",
             text: responseText,
+            downloadUrl: data.download_url ?? undefined,
+            downloadTitle: data.download_title ?? undefined,
           });
         })
         .catch((err) => {
@@ -139,6 +154,50 @@ export function AssistantView() {
         toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
       })
       .catch(() => toast.error("Failed to save feedback"));
+  };
+
+  const openDocModal = () => {
+    const firstUserTurn = activeThread.turns.find((t) => t.role === "user");
+    setDocTitle(firstUserTurn ? firstUserTurn.text.slice(0, 60) : "Centriq Report");
+    setShowDocModal(true);
+  };
+
+  const handleGenerateDoc = async () => {
+    setIsGeneratingDoc(true);
+    try {
+      const conversationText = activeThread.turns
+        .map((t) => `${t.role === "user" ? "User" : "Centriq"}: ${t.text}`)
+        .join("\n\n");
+
+      const res = await fetch("/api/documents/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          doc_type: docType,
+          title: docTitle,
+          content: conversationText,
+          thread_id: activeId,
+          generated_by: "Centriq AI",
+        }),
+      });
+
+      if (!res.ok) throw new Error("Generation failed");
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${docTitle.replace(/\s+/g, "_").toLowerCase().slice(0, 50)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setShowDocModal(false);
+      toast.success("Document downloaded successfully");
+    } catch {
+      toast.error("Failed to generate document");
+    } finally {
+      setIsGeneratingDoc(false);
+    }
   };
 
   const sidebarThreads = Object.values(threads)
@@ -202,6 +261,16 @@ export function AssistantView() {
                         <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
                           {renderInline(t.text)}
                         </div>
+                        {t.downloadUrl && (
+                          <a
+                            href={t.downloadUrl}
+                            download={t.downloadTitle ?? "report"}
+                            className="mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95"
+                          >
+                            <Download className="h-4 w-4" />
+                            {t.downloadTitle ?? "Download Report"}
+                          </a>
+                        )}
                         {t.card && (
                           <AnswerCard
                             title="Leave Balance · 2026"
@@ -277,10 +346,48 @@ export function AssistantView() {
                   error: "Could not refresh suggestions",
                 });
               }}
+              onGenerateDoc={activeThread.turns.length > 0 ? openDocModal : undefined}
             />
           </div>
         </footer>
       </main>
+      <Dialog open={showDocModal} onOpenChange={setShowDocModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generate Document</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Document Type</label>
+              <select
+                value={docType}
+                onChange={(e) => setDocType(e.target.value)}
+                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="project_status_report">Project Status Report</option>
+                <option value="sprint_summary">Sprint Summary</option>
+                <option value="meeting_minutes">Meeting Minutes</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Document Title</label>
+              <Input
+                value={docTitle}
+                onChange={(e) => setDocTitle(e.target.value)}
+                placeholder="e.g. Project Aurora — Sprint 5 Summary"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDocModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleGenerateDoc} disabled={isGeneratingDoc || !docTitle.trim()}>
+              {isGeneratingDoc ? "Generating…" : "Download PDF"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

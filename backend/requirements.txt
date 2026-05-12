@@ -11,3 +11,4 @@ sqlalchemy
 asyncpg
 python-multipart
 requests
+reportlab

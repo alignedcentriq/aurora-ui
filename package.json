@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "start": "concurrently \"npm run dev\" \"npm run dev:backend\"",
-    "dev:backend": "cd backend && bash start.sh",
+    "dev:backend": "cd backend && powershell -ExecutionPolicy Bypass -File start.ps1",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",

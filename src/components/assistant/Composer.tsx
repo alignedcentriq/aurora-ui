@@ -1,4 +1,4 @@
-import { Send, Paperclip, Sparkles, Mic } from "lucide-react";
+import { Send, Paperclip, Sparkles, Mic, FileText } from "lucide-react";
 import { useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
@@ -8,10 +8,11 @@ type Props = {
   onSubmit: () => void;
   onAttach?: () => void;
   onSuggest?: () => void;
+  onGenerateDoc?: () => void;
   disabled?: boolean;
 };
 
-export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disabled }: Props) {
+export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, onGenerateDoc, disabled }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -63,6 +64,14 @@ export function Composer({ value, onChange, onSubmit, onAttach, onSuggest, disab
               title="Voice input"
             >
               <Mic className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onGenerateDoc}
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90"
+              title="Generate document"
+            >
+              <FileText className="h-4 w-4" />
             </button>
           </div>
 
