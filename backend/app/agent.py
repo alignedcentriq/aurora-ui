@@ -30,6 +30,10 @@ from langchain_core.tools import tool
 from app.hr_service import HRService
 from app.config import settings
 from app.router import classify_intent, get_domain_status, get_placeholder_response
+from app.agents.pmo_agent import pmo_agent
+
+
+DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -176,6 +180,26 @@ RULES:
     return {"messages": [response]}
 
 
+async def pmo_agent_node(state: AgentState):
+    """PMO Agent - handles project, sprint, capacity, milestone, and report requests."""
+    result = await pmo_agent.ainvoke({"messages": state["messages"]})
+    last_ai = next(
+        (message for message in reversed(result["messages"]) if isinstance(message, AIMessage)),
+        AIMessage(content="I couldn't process your PMO request. Please try again."),
+    )
+
+    if isinstance(last_ai.content, str) and not DOWNLOAD_TAG_PATTERN.search(last_ai.content):
+        for message in result["messages"]:
+            content = getattr(message, "content", "")
+            if isinstance(content, str):
+                match = DOWNLOAD_TAG_PATTERN.search(content)
+                if match:
+                    last_ai = AIMessage(content=f"{last_ai.content}\n\n{match.group(0)}")
+                    break
+
+    return {"messages": [last_ai]}
+
+
 def general_agent(state: AgentState):
     """General Agent — handles greetings, chitchat, and unclear queries."""
     messages = state["messages"]
@@ -188,7 +212,7 @@ You can help with:
 - HR queries (leave, payroll, policies)
 - IT Support (coming soon)
 - Admin requests (coming soon)
-- Project Management (coming soon)
+- Project Management and PMO queries
 - Team management (coming soon)
 
 For now, respond naturally and helpfully. If the user's request maps to a specific domain,
@@ -249,6 +273,8 @@ def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
     status = get_domain_status(domain)
 
+    if domain == "pmo":
+        return "pmo_agent"
     if status == "placeholder":
         return "placeholder_agent"
     elif domain == "hr":
@@ -297,6 +323,7 @@ workflow = StateGraph(AgentState)
 # ── Nodes ──
 workflow.add_node("intent_router", intent_router)
 workflow.add_node("hr_agent", hr_agent)
+workflow.add_node("pmo_agent", pmo_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("placeholder_agent", placeholder_agent)
 workflow.add_node("hr_tools", hr_tool_node)
@@ -318,6 +345,7 @@ workflow.add_edge("summarizer", END)
 
 # General & Placeholder → END
 workflow.add_edge("general_agent", END)
+workflow.add_edge("pmo_agent", END)
 workflow.add_edge("placeholder_agent", END)
 
 # ── Compile ──

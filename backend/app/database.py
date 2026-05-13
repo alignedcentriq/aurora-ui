@@ -1,7 +1,19 @@
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from app.models import Base, Employee, Leave, Payroll, Attendance, Policy, SCHEMA
+from app.models import (
+    Base,
+    Employee,
+    Leave,
+    Payroll,
+    Attendance,
+    Policy,
+    Project,
+    Sprint,
+    TeamCapacity,
+    Milestone,
+    SCHEMA,
+)
 from app.config import settings
 import datetime
 
@@ -11,23 +23,33 @@ import random
 DATABASE_URL = settings.DATABASE_URL
 
 
-engine = create_engine(DATABASE_URL)
+_base_engine = create_engine(DATABASE_URL)
+if _base_engine.dialect.name == "sqlite":
+    engine = _base_engine.execution_options(schema_translate_map={SCHEMA: None})
+else:
+    engine = _base_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     # Ensure schema exists
-    with engine.connect() as conn:
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
-        conn.commit()
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+            conn.commit()
         
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
-    
-    # Check if we already have employees
-    if db.query(Employee).count() > 0:
-        db.close()
-        return
 
+    try:
+        if db.query(Employee).count() == 0:
+            _seed_hr_data(db)
+        if db.query(Project).count() == 0:
+            _seed_pmo_data(db)
+    finally:
+        db.close()
+
+
+def _seed_hr_data(db):
     print("Seeding dummy HR data...")
     
     departments = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
@@ -109,5 +131,154 @@ def init_db():
         db.add(policy)
 
     db.commit()
-    db.close()
-    print("Seeding complete.")
+    print("HR seeding complete.")
+
+
+def _seed_pmo_data(db):
+    print("Seeding dummy PMO data...")
+
+    db.add_all([
+        Project(name="Centriq AI", status="In Progress", completion_pct=65.0,
+                sprint_name="Sprint 5", next_milestone="UAT",
+                next_milestone_date="2026-05-20", owner="Suraj G."),
+        Project(name="Aurora UI", status="In Progress", completion_pct=72.0,
+                sprint_name="Sprint 5", next_milestone="Frontend Integration",
+                next_milestone_date="2026-05-19", owner="Suraj G."),
+        Project(name="HR Integration", status="In Progress", completion_pct=45.0,
+                sprint_name="Sprint 4", next_milestone="API Finalization",
+                next_milestone_date="2026-05-22", owner="Shivam K."),
+        Project(name="Admin Dashboard", status="In Progress", completion_pct=55.0,
+                sprint_name="Sprint 5", next_milestone="Grafana Setup",
+                next_milestone_date="2026-05-21", owner="Priyanka M."),
+        Project(name="IT Support Agent", status="Planning", completion_pct=20.0,
+                sprint_name="Sprint 3", next_milestone="DB Schema",
+                next_milestone_date="2026-05-18", owner="Kajal S."),
+        Project(name="LangGraph Routing Engine", status="In Progress", completion_pct=60.0,
+                sprint_name="Sprint 5", next_milestone="Intent Classifier v1",
+                next_milestone_date="2026-05-19", owner="Shivani R."),
+        Project(name="Vector Search Pipeline", status="In Progress", completion_pct=50.0,
+                sprint_name="Sprint 4", next_milestone="Embedding Indexing",
+                next_milestone_date="2026-05-20", owner="Shivani R."),
+        Project(name="Document Generation Service", status="In Progress", completion_pct=70.0,
+                sprint_name="Sprint 5", next_milestone="PDF Template Polish",
+                next_milestone_date="2026-05-18", owner="Suraj G."),
+        Project(name="Redis Cache Layer", status="In Progress", completion_pct=40.0,
+                sprint_name="Sprint 4", next_milestone="Session Store Integration",
+                next_milestone_date="2026-05-22", owner="Suraj G."),
+        Project(name="Feedback Analytics", status="Planning", completion_pct=15.0,
+                sprint_name="Sprint 3", next_milestone="Schema Design",
+                next_milestone_date="2026-05-23", owner="Suraj G."),
+        Project(name="Power Automate Integration", status="In Progress", completion_pct=35.0,
+                sprint_name="Sprint 4", next_milestone="Approval Flow Trigger",
+                next_milestone_date="2026-05-24", owner="Shivam K."),
+        Project(name="Grafana Monitoring", status="Planning", completion_pct=25.0,
+                sprint_name="Sprint 3", next_milestone="Loki Log Ingestion",
+                next_milestone_date="2026-05-21", owner="Priyanka M."),
+    ])
+
+    db.add_all([
+        Sprint(team="Centriq Team", name="Sprint 5", start_date="2026-05-05",
+               end_date="2026-05-19", velocity=42, committed=38, completed=28, blockers_count=2),
+        Sprint(team="Centriq Team", name="Sprint 4", start_date="2026-04-21",
+               end_date="2026-05-04", velocity=38, committed=35, completed=35, blockers_count=0),
+        Sprint(team="Centriq Team", name="Sprint 3", start_date="2026-04-07",
+               end_date="2026-04-20", velocity=35, committed=30, completed=27, blockers_count=1),
+        Sprint(team="Dev Team", name="Sprint 5", start_date="2026-05-05",
+               end_date="2026-05-19", velocity=50, committed=45, completed=38, blockers_count=3),
+        Sprint(team="Dev Team", name="Sprint 4", start_date="2026-04-21",
+               end_date="2026-05-04", velocity=48, committed=44, completed=44, blockers_count=0),
+        Sprint(team="PMO Team", name="Sprint 5", start_date="2026-05-05",
+               end_date="2026-05-19", velocity=30, committed=28, completed=20, blockers_count=1),
+    ])
+
+    db.add_all([
+        TeamCapacity(team="Centriq Team", total_members=5, available=4, on_leave=1, capacity_pct=80.0),
+        TeamCapacity(team="Dev Team", total_members=6, available=5, on_leave=1, capacity_pct=83.0),
+        TeamCapacity(team="PMO Team", total_members=3, available=3, on_leave=0, capacity_pct=100.0),
+        TeamCapacity(team="QA Team", total_members=4, available=3, on_leave=1, capacity_pct=75.0),
+        TeamCapacity(team="HR Team", total_members=4, available=4, on_leave=0, capacity_pct=100.0),
+    ])
+
+    db.add_all([
+        Milestone(project_name="Centriq AI", name="Requirements Finalized",
+                  due_date="2026-04-10", status="DONE"),
+        Milestone(project_name="Centriq AI", name="Architecture Design",
+                  due_date="2026-04-25", status="DONE"),
+        Milestone(project_name="Centriq AI", name="Backend APIs",
+                  due_date="2026-05-15", status="IN_PROGRESS"),
+        Milestone(project_name="Centriq AI", name="Frontend Integration",
+                  due_date="2026-05-19", status="IN_PROGRESS"),
+        Milestone(project_name="Centriq AI", name="UAT",
+                  due_date="2026-05-20", status="UPCOMING"),
+        Milestone(project_name="Centriq AI", name="Production Deploy",
+                  due_date="2026-05-25", status="UPCOMING"),
+        Milestone(project_name="Aurora UI", name="Component Library Setup",
+                  due_date="2026-04-15", status="DONE"),
+        Milestone(project_name="Aurora UI", name="Auth Integration",
+                  due_date="2026-04-28", status="DONE"),
+        Milestone(project_name="Aurora UI", name="Chat UI",
+                  due_date="2026-05-10", status="DONE"),
+        Milestone(project_name="Aurora UI", name="PMO Agent UI",
+                  due_date="2026-05-19", status="IN_PROGRESS"),
+        Milestone(project_name="Aurora UI", name="Final QA",
+                  due_date="2026-05-22", status="UPCOMING"),
+        Milestone(project_name="HR Integration", name="HR Agent Design",
+                  due_date="2026-04-20", status="DONE"),
+        Milestone(project_name="HR Integration", name="LangFuse Setup",
+                  due_date="2026-05-10", status="DONE"),
+        Milestone(project_name="HR Integration", name="API Finalization",
+                  due_date="2026-05-22", status="UPCOMING"),
+        Milestone(project_name="Admin Dashboard", name="Wireframes Approved",
+                  due_date="2026-04-18", status="DONE"),
+        Milestone(project_name="Admin Dashboard", name="KPI Charts",
+                  due_date="2026-05-08", status="DONE"),
+        Milestone(project_name="Admin Dashboard", name="Grafana Setup",
+                  due_date="2026-05-21", status="IN_PROGRESS"),
+        Milestone(project_name="Admin Dashboard", name="Loki Integration",
+                  due_date="2026-05-23", status="UPCOMING"),
+        Milestone(project_name="IT Support Agent", name="Requirements Gathering",
+                  due_date="2026-04-22", status="DONE"),
+        Milestone(project_name="IT Support Agent", name="DB Schema",
+                  due_date="2026-05-18", status="IN_PROGRESS"),
+        Milestone(project_name="IT Support Agent", name="Agent Logic",
+                  due_date="2026-05-24", status="UPCOMING"),
+        Milestone(project_name="IT Support Agent", name="Testing",
+                  due_date="2026-05-26", status="UPCOMING"),
+        Milestone(project_name="Document Generation Service", name="PDF Template Design",
+                  due_date="2026-05-10", status="DONE"),
+        Milestone(project_name="Document Generation Service", name="Report Generator",
+                  due_date="2026-05-15", status="DONE"),
+        Milestone(project_name="Document Generation Service", name="PDF Template Polish",
+                  due_date="2026-05-18", status="IN_PROGRESS"),
+        Milestone(project_name="Document Generation Service", name="Frontend Integration",
+                  due_date="2026-05-21", status="UPCOMING"),
+        Milestone(project_name="Redis Cache Layer", name="Redis Docker Setup",
+                  due_date="2026-05-05", status="DONE"),
+        Milestone(project_name="Redis Cache Layer", name="Session Store Integration",
+                  due_date="2026-05-22", status="IN_PROGRESS"),
+        Milestone(project_name="Redis Cache Layer", name="Rate Limiting",
+                  due_date="2026-05-25", status="UPCOMING"),
+        Milestone(project_name="Feedback Analytics", name="Schema Design",
+                  due_date="2026-05-23", status="IN_PROGRESS"),
+        Milestone(project_name="Feedback Analytics", name="Store Thumbs Up/Down",
+                  due_date="2026-05-26", status="UPCOMING"),
+        Milestone(project_name="Feedback Analytics", name="Admin Dashboard Widget",
+                  due_date="2026-05-28", status="UPCOMING"),
+        Milestone(project_name="Power Automate Integration", name="Flow Design",
+                  due_date="2026-04-30", status="DONE"),
+        Milestone(project_name="Power Automate Integration", name="Approval Flow Trigger",
+                  due_date="2026-05-24", status="IN_PROGRESS"),
+        Milestone(project_name="Power Automate Integration", name="Email Notifications",
+                  due_date="2026-05-27", status="UPCOMING"),
+        Milestone(project_name="Grafana Monitoring", name="Grafana Docker Setup",
+                  due_date="2026-05-08", status="DONE"),
+        Milestone(project_name="Grafana Monitoring", name="Loki Log Ingestion",
+                  due_date="2026-05-21", status="IN_PROGRESS"),
+        Milestone(project_name="Grafana Monitoring", name="API Latency Dashboard",
+                  due_date="2026-05-25", status="UPCOMING"),
+        Milestone(project_name="Grafana Monitoring", name="Alerting Rules",
+                  due_date="2026-05-28", status="UPCOMING"),
+    ])
+
+    db.commit()
+    print("PMO seeding complete.")

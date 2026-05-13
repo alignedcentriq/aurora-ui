@@ -37,8 +37,9 @@ DOMAIN_REGISTRY = {
     "pmo": {
         "description": "Project Management Office — project timelines, milestones, "
                        "resource allocation, sprint planning, JIRA tickets, project status, "
-                       "risk management, deliverables, stakeholder updates, budget tracking",
-        "status": "placeholder",
+                       "risk management, deliverables, stakeholder updates, budget tracking, "
+                       "status reports, PDF generation, sprint summaries, meeting minutes",
+        "status": "active",
     },
     "functional_manager": {
         "description": "Functional Manager & Team Lead — team approvals, work assignments, "

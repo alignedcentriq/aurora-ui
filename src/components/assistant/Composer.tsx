@@ -1,4 +1,4 @@
-import { Send, Paperclip, Plus, Mic } from "lucide-react";
+import { Send, Paperclip, Plus, Mic, FileText } from "lucide-react";
 import { useRef, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -10,10 +10,19 @@ type Props = {
   onSubmit: () => void;
   onAttach?: () => void;
   onQuickAction?: (prompt: string) => void;
+  onGenerateDoc?: () => void;
   disabled?: boolean;
 };
 
-export function Composer({ value, onChange, onSubmit, onAttach, onQuickAction, disabled }: Props) {
+export function Composer({
+  value,
+  onChange,
+  onSubmit,
+  onAttach,
+  onQuickAction,
+  onGenerateDoc,
+  disabled,
+}: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const [isOpen, setIsOpen] = useState(false);
@@ -75,6 +84,18 @@ export function Composer({ value, onChange, onSubmit, onAttach, onQuickAction, d
           </div>
 
           <div className="flex items-center gap-2">
+            {onGenerateDoc && (
+              <button
+                type="button"
+                onClick={onGenerateDoc}
+                disabled={disabled}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Generate document"
+              >
+                <FileText className="h-5 w-5" strokeWidth={1.5} />
+              </button>
+            )}
+
             <button
               type="button"
               className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90"

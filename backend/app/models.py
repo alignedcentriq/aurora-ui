@@ -139,3 +139,55 @@ class SyncFailureLog(Base):
     error_message = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resolved = Column(Boolean, default=False)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    status = Column(String, default="In Progress")
+    completion_pct = Column(Float, default=0.0)
+    sprint_name = Column(String)
+    next_milestone = Column(String)
+    next_milestone_date = Column(String)
+    owner = Column(String)
+
+
+class Sprint(Base):
+    __tablename__ = "sprints"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    team = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    start_date = Column(String)
+    end_date = Column(String)
+    velocity = Column(Integer, default=0)
+    committed = Column(Integer, default=0)
+    completed = Column(Integer, default=0)
+    blockers_count = Column(Integer, default=0)
+
+
+class TeamCapacity(Base):
+    __tablename__ = "team_capacity"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    team = Column(String, unique=True, nullable=False, index=True)
+    total_members = Column(Integer, default=0)
+    available = Column(Integer, default=0)
+    on_leave = Column(Integer, default=0)
+    capacity_pct = Column(Float, default=100.0)
+
+
+class Milestone(Base):
+    __tablename__ = "milestones"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_name = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    due_date = Column(String)
+    status = Column(String, default="UPCOMING")

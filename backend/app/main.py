@@ -1,5 +1,8 @@
+import io
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from app.agent import app_agent
@@ -12,6 +15,10 @@ import re
 import logging
 import json
 import time
+from app.database import init_db
+from app.document_generation.generator import generate_pdf
+from app.document_store import get_pdf
+from app.pmo_routes import router as pmo_router
 
 # -- Langfuse tracing (custom lightweight wrapper) --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
@@ -46,6 +53,7 @@ from app.graph_sync import renew_subscriptions
 
 app = FastAPI(title="Centriq AI Backend")
 app.include_router(sharepoint_router, prefix="/api")
+app.include_router(pmo_router)
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -74,8 +82,21 @@ class CustomLog(BaseModel):
     event: str
     data: dict
 
+class DocumentRequest(BaseModel):
+    doc_type: str
+    title: str
+    content: str
+    thread_id: Optional[str] = ""
+    generated_by: Optional[str] = "Centriq AI"
+
 @app.on_event("startup")
 async def startup_event():
+    try:
+        await asyncio.to_thread(init_db)
+        print("Database initialized.")
+    except Exception as e:
+        print(f"Database initialization failed: {e}")
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -113,6 +134,40 @@ async def submit_form(data: dict):
     print(f"Form submitted: {data}")
     return {"status": "success", "message": "Form processed"}
 
+@app.get("/api/documents/download/{file_id}")
+async def download_document(file_id: str):
+    doc = get_pdf(file_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or expired")
+    return StreamingResponse(
+        io.BytesIO(doc["data"]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}.pdf"'},
+    )
+
+@app.post("/api/documents/generate")
+async def generate_document(request: DocumentRequest):
+    try:
+        pdf_bytes = generate_pdf(
+            doc_type=request.doc_type,
+            title=request.title,
+            content=request.content,
+            generated_by=request.generated_by or "Centriq AI",
+            thread_id=request.thread_id or "",
+        )
+        safe_name = "".join(
+            char if char.isalnum() or char in "-_" else "_"
+            for char in request.title.lower().replace(" ", "_")
+        )[:50]
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
+        )
+    except Exception as e:
+        print(f"Document generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate document: {e}")
+
 @app.post("/api/webhooks/sharepoint-sync")
 async def sync_sharepoint_policy(request: WebhookPolicyRequest):
     """Webhook endpoint for Power Automate to push SharePoint document changes."""
@@ -142,13 +197,26 @@ async def chat(request: ChatRequest):
             
             raw_ai_message = result["messages"][-1].content
             routed_domain = result.get("domain", "unknown")
+            download_url = None
+            download_title = None
+            download_tag_pattern = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
+
+            for message in result["messages"]:
+                content = getattr(message, "content", "")
+                if isinstance(content, str):
+                    match = download_tag_pattern.search(content)
+                    if match:
+                        download_url = match.group(1)
+                        download_title = match.group(2)
+                        break
             
             logger.info(f"Routed to: {routed_domain}")
             elapsed_time = time.time() - start_time
             print(f"[Chat] Domain: {routed_domain} | Time: {elapsed_time:.2f}s | Raw response length: {len(raw_ai_message)}")
             
             # Safety cleanup for small model artifacts
-            final_message = re.sub(r'\{.*?\}', '', raw_ai_message, flags=re.DOTALL).strip()
+            final_message = download_tag_pattern.sub("", raw_ai_message).strip()
+            final_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
             final_message = final_message.replace('{', '').replace('}', '').strip()
             final_message = re.sub(r'```.*?```', '', final_message, flags=re.DOTALL).strip()
             
@@ -173,7 +241,9 @@ async def chat(request: ChatRequest):
             "response": final_message,
             "domain": routed_domain,
             "id": "msg_1",
-            "processing_time": f"{time.time() - start_time:.2f}s"
+            "processing_time": f"{time.time() - start_time:.2f}s",
+            "download_url": download_url,
+            "download_title": download_title,
         }
     except Exception as e:
         print(f"Error in chat endpoint: {e}")

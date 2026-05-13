@@ -18,3 +18,4 @@ boto3
 langfuse<3.0.0
 python-logging-loki
 python-json-logger
+reportlab
