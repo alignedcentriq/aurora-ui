@@ -2,8 +2,11 @@ import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
+import { BrandName } from "@/components/BrandName";
 
 export function UserMessage({
+  name,
+  initials,
   children,
 }: {
   name?: string;
@@ -11,10 +14,19 @@ export function UserMessage({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both]">
+    <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both] gap-3">
       <div className="chat-bubble-user">
         <div className="text-[15px] leading-relaxed">{children}</div>
       </div>
+      {initials ? (
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-sm">
+          {initials}
+        </div>
+      ) : (
+        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white text-[11px] font-bold">
+          U
+        </div>
+      )}
     </div>
   );
 }
@@ -39,8 +51,8 @@ export function AIMessage({
           </div>
 
           <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
-              Centriq AI
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
+              <BrandName withAI />
             </div>
             {!live && onFeedback && (
               <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">

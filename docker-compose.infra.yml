@@ -1,0 +1,96 @@
+services:
+  db:
+    image: ankane/pgvector:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: centriq
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+    networks:
+      - centriq-network
+    volumes:
+      - ./init-langfuse.sql:/docker-entrypoint-initdb.d/init-langfuse.sql
+
+  redis:
+    image: redis/redis-stack-server:latest
+    ports:
+      - "6380:6379"
+    networks:
+      - centriq-network
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    networks:
+      - centriq-network
+    volumes:
+      - minio_data:/data
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio
+    networks:
+      - centriq-network
+    entrypoint: >
+      /bin/sh -c " until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done; /usr/bin/mc mb --ignore-existing myminio/aurora-bucket; /usr/bin/mc anonymous set public myminio/aurora-bucket; exit 0; "
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3002:3100"
+    networks:
+      - centriq-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - loki
+    networks:
+      - centriq-network
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
+
+  langfuse-server:
+    image: langfuse/langfuse:2
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3003:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/langfuse
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://localhost:3003
+      - TELEMETRY_ENABLED=false
+    networks:
+      - centriq-network
+
+volumes:
+  redis_data:
+  minio_data:
+
+networks:
+  centriq-network:
+    driver: bridge

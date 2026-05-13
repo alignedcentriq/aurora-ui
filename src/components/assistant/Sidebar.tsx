@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
-
+import { BrandName } from "@/components/BrandName";
 type Thread = { id: string; title: string; domain: string; time: string };
 
 const initialThreads: Thread[] = [];
@@ -52,8 +52,8 @@ export function AssistantSidebar({
         <div className="flex items-center gap-3">
           <Logo size="md" className="shadow-lg shadow-primary/20" />
           <div className="leading-tight">
-            <div className="text-lg font-bold tracking-tight text-[var(--sidebar-foreground)]">
-              Centriq AI
+            <div className="text-lg font-bold tracking-tight text-[var(--sidebar-foreground)] flex items-center">
+              <BrandName withAI />
             </div>
             <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-[var(--sidebar-foreground)]/40">
               Assistant
