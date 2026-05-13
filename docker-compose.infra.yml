@@ -52,7 +52,7 @@ services:
   loki:
     image: grafana/loki:latest
     ports:
-      - "3100:3100"
+      - "3002:3100"
     networks:
       - centriq-network
 
@@ -77,12 +77,12 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "3002:3000"
+      - "3003:3000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/langfuse
       - NEXTAUTH_SECRET=mysecret
       - SALT=mysalt
-      - NEXTAUTH_URL=http://localhost:3002
+      - NEXTAUTH_URL=http://localhost:3003
       - TELEMETRY_ENABLED=false
     networks:
       - centriq-network
