@@ -15,15 +15,17 @@ from app.config import settings
 PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation.
 
 Rules:
-1. Never invent project data, timelines, milestones, capacity, or status.
-2. Always use the available tools before answering PMO data questions.
-3. For one-project report or PDF requests, call generate_project_report.
-4. For multi-project or all-project report requests, call generate_multi_project_report.
-5. Keep answers concise and summarize tool results briefly.
-
-You help with project status, timelines, milestones, sprint planning, velocity,
-team capacity, blockers, and project report generation.
+1. Never invent project data. Use the tools provided.
+2. If you don't know which projects exist, call 'list_projects' first.
+3. For one-project report or PDF requests, call 'generate_project_report'.
+4. For multi-project or all-project report requests, call 'generate_multi_project_report'.
+5. If the user asks for a specific number of projects (e.g. "Give 5 projects"), list them from the tool results.
+6. Summarize tool results concisely.
+7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
 """
+
+
+
 
 
 @tool
@@ -46,6 +48,24 @@ def get_project_status(project_name: str) -> str:
         )
     finally:
         db.close()
+
+
+@tool
+def get_project_achievements(project_name: str) -> str:
+    """Get the key achievements and successes for a specific project."""
+    from app.database import SessionLocal
+    from app.models import Project
+
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
+        if not project:
+            return f"No project found matching '{project_name}' to retrieve achievements."
+        achievements = project.achievements or "No achievements recorded yet."
+        return f"Achievements for **{project.name}**:\n{achievements}"
+    finally:
+        db.close()
+
 
 
 @tool
@@ -75,7 +95,24 @@ def get_sprint_info(team: str) -> str:
 
 
 @tool
+def list_projects() -> str:
+    """List all available project names in the system."""
+    from app.database import SessionLocal
+    from app.models import Project
+
+    db = SessionLocal()
+    try:
+        projects = db.query(Project).all()
+        if not projects:
+            return "No projects found in the system."
+        return "Available projects:\n" + "\n".join([f"- {p.name}" for p in projects])
+    finally:
+        db.close()
+
+
+@tool
 def get_team_capacity(team: str) -> str:
+
     """Get current team headcount, availability, leave count, and capacity percentage."""
     from app.database import SessionLocal
     from app.models import TeamCapacity
@@ -249,7 +286,9 @@ def generate_multi_project_report(
 
 
 pmo_tools = [
+    list_projects,
     get_project_status,
+    get_project_achievements,
     get_sprint_info,
     get_team_capacity,
     get_milestones,
@@ -257,12 +296,18 @@ pmo_tools = [
     generate_multi_project_report,
 ]
 
+
+
 pmo_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=os.getenv("PMO_MODEL_NAME", settings.AGENT_MODEL_NAME),
+    base_url=settings.ROUTER_BASE_URL,
+    api_key=settings.ROUTER_API_KEY,
+    model=settings.ROUTER_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
+    max_retries=3,
+    timeout=30,
 )
+
+
 pmo_llm_with_tools = pmo_llm.bind_tools(pmo_tools)
 
 

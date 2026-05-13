@@ -23,7 +23,7 @@ const infraPorts = [
 
 console.log(`Detected OS: ${platform}${isMac ? " (macOS)" : ""}${isLinux ? " (Linux)" : ""}...`);
 
-const isPortOpen = (port, host = "localhost") => {
+const isPortOpen = (port, host = "127.0.0.1") => {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(1000);
@@ -43,7 +43,7 @@ const isPortOpen = (port, host = "localhost") => {
   });
 };
 
-const waitForPort = (port, host = "localhost", timeout = 30000) => {
+const waitForPort = (port, host = "127.0.0.1", timeout = 30000) => {
   return new Promise((resolve, reject) => {
     const start = Date.now();
 
@@ -147,10 +147,17 @@ const runDockerCompose = async () => {
 
     // Ensure Docker service is running in WSL
     try {
-      console.log("--- Ensuring Docker service is running in WSL ---");
-      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+      console.log("--- Checking if Docker is responsive in WSL ---");
+      execFileSync("wsl", ["docker", "ps"], { stdio: "ignore", timeout: 5000 });
+      console.log("Docker is already running in WSL.");
     } catch (err) {
-      console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
+      console.log("--- Ensuring Docker service is running in WSL ---");
+      try {
+        // Use a shorter timeout and don't await indefinitely if it might prompt for password
+        await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+      } catch (sudoErr) {
+        console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
+      }
     }
 
     const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
@@ -211,8 +218,8 @@ const waitForInfrastructure = async () => {
 
   for (const service of infraPorts) {
     try {
-      await waitForPort(service.port, "localhost", service.required ? 60000 : 30000);
-      console.log(`${service.name} is reachable on localhost:${service.port}`);
+      await waitForPort(service.port, "127.0.0.1", service.required ? 60000 : 30000);
+      console.log(`${service.name} is reachable on 127.0.0.1:${service.port}`);
     } catch (err) {
       const message = `${service.name} is not reachable on localhost:${service.port}. ${err.message}`;
       if (service.required) {

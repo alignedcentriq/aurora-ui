@@ -85,7 +85,17 @@ services:
       - NEXTAUTH_URL=http://localhost:3003
       - TELEMETRY_ENABLED=false
     networks:
+
       - centriq-network
+
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8081:8080"
+    networks:
+      - centriq-network
+    depends_on:
+      - db
 
 volumes:
   redis_data:

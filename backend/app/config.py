@@ -15,9 +15,7 @@ class Config:
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-    # ── Embedding Model (semantic search, RAG) ──
-    EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:11434")
-    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
+    # ── Agent Model (reasoning, tool calling, response generation) ──
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")

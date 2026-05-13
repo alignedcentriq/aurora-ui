@@ -153,6 +153,8 @@ class Project(Base):
     next_milestone = Column(String)
     next_milestone_date = Column(String)
     owner = Column(String)
+    achievements = Column(Text)
+
 
 
 class Sprint(Base):

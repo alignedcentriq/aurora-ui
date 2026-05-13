@@ -38,15 +38,48 @@ def init_db():
             conn.commit()
         
     Base.metadata.create_all(bind=engine)
+    
+    # Simple migration: ensure achievements column exists in projects table
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            try:
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT'))
+                conn.commit()
+            except Exception as e:
+                print(f"Migration notice (achievements column): {e}")
+
     db = SessionLocal()
 
     try:
+        # Check if we need to re-seed HR data
         if db.query(Employee).count() == 0:
             _seed_hr_data(db)
-        if db.query(Project).count() == 0:
+        
+        # Check if we need to re-seed PMO data
+        project_count = db.query(Project).count()
+        needs_pmo_seed = project_count == 0
+        if project_count > 0:
+            first_project = db.query(Project).first()
+            if first_project and first_project.achievements is None:
+                print("Detected missing achievements. Clearing PMO tables for clean re-seed...")
+                needs_pmo_seed = True
+
+        if needs_pmo_seed:
+            # Clear all PMO tables to avoid UniqueViolations
+            db.query(Milestone).delete()
+            db.query(Sprint).delete()
+            db.query(TeamCapacity).delete()
+            db.query(Project).delete()
+            db.commit()
             _seed_pmo_data(db)
+            
+    except Exception as e:
+        print(f"Error during init_db: {e}")
+        db.rollback()
+        raise e
     finally:
         db.close()
+
 
 
 def _seed_hr_data(db):
@@ -140,40 +173,53 @@ def _seed_pmo_data(db):
     db.add_all([
         Project(name="Centriq AI", status="In Progress", completion_pct=65.0,
                 sprint_name="Sprint 5", next_milestone="UAT",
-                next_milestone_date="2026-05-20", owner="Suraj G."),
+                next_milestone_date="2026-05-20", owner="Suraj G.",
+                achievements="Successfully integrated multi-agent LangGraph; Implemented real-time HR data sync."),
         Project(name="Aurora UI", status="In Progress", completion_pct=72.0,
                 sprint_name="Sprint 5", next_milestone="Frontend Integration",
-                next_milestone_date="2026-05-19", owner="Suraj G."),
+                next_milestone_date="2026-05-19", owner="Suraj G.",
+                achievements="Migrated to TanStack Start; Implemented responsive glassmorphic chat interface."),
         Project(name="HR Integration", status="In Progress", completion_pct=45.0,
                 sprint_name="Sprint 4", next_milestone="API Finalization",
-                next_milestone_date="2026-05-22", owner="Shivam K."),
+                next_milestone_date="2026-05-22", owner="Shivam K.",
+                achievements="Secured payroll API endpoints; Completed employee document extraction pipeline."),
         Project(name="Admin Dashboard", status="In Progress", completion_pct=55.0,
                 sprint_name="Sprint 5", next_milestone="Grafana Setup",
-                next_milestone_date="2026-05-21", owner="Priyanka M."),
+                next_milestone_date="2026-05-21", owner="Priyanka M.",
+                achievements="Configured real-time system monitoring; Visualized agent routing latency."),
         Project(name="IT Support Agent", status="Planning", completion_pct=20.0,
                 sprint_name="Sprint 3", next_milestone="DB Schema",
-                next_milestone_date="2026-05-18", owner="Kajal S."),
+                next_milestone_date="2026-05-18", owner="Kajal S.",
+                achievements="Finalized IT ticketing workflow; Defined asset management integration."),
         Project(name="LangGraph Routing Engine", status="In Progress", completion_pct=60.0,
                 sprint_name="Sprint 5", next_milestone="Intent Classifier v1",
-                next_milestone_date="2026-05-19", owner="Shivani R."),
+                next_milestone_date="2026-05-19", owner="Shivani R.",
+                achievements="Achieved 95% classification accuracy on test sets; Optimized routing path latency."),
         Project(name="Vector Search Pipeline", status="In Progress", completion_pct=50.0,
                 sprint_name="Sprint 4", next_milestone="Embedding Indexing",
-                next_milestone_date="2026-05-20", owner="Shivani R."),
+                next_milestone_date="2026-05-20", owner="Shivani R.",
+                achievements="Successfully indexed 500+ HR policy documents; Integrated Nomic-embed-text."),
         Project(name="Document Generation Service", status="In Progress", completion_pct=70.0,
                 sprint_name="Sprint 5", next_milestone="PDF Template Polish",
-                next_milestone_date="2026-05-18", owner="Suraj G."),
+                next_milestone_date="2026-05-18", owner="Suraj G.",
+                achievements="Implemented dynamic PDF generation from DB state; Standardized project status report templates."),
         Project(name="Redis Cache Layer", status="In Progress", completion_pct=40.0,
                 sprint_name="Sprint 4", next_milestone="Session Store Integration",
-                next_milestone_date="2026-05-22", owner="Suraj G."),
+                next_milestone_date="2026-05-22", owner="Suraj G.",
+                achievements="Reduced session load time by 40%; Implemented RedisJSON for complex state storage."),
         Project(name="Feedback Analytics", status="Planning", completion_pct=15.0,
                 sprint_name="Sprint 3", next_milestone="Schema Design",
-                next_milestone_date="2026-05-23", owner="Suraj G."),
+                next_milestone_date="2026-05-23", owner="Suraj G.",
+                achievements="Designed feedback collection loop; Integrated sentiment analysis placeholder."),
         Project(name="Power Automate Integration", status="In Progress", completion_pct=35.0,
                 sprint_name="Sprint 4", next_milestone="Approval Flow Trigger",
-                next_milestone_date="2026-05-24", owner="Shivam K."),
+                next_milestone_date="2026-05-24", owner="Shivam K.",
+                achievements="Mapped SharePoint triggers to backend webhooks; Optimized approval notification latency."),
         Project(name="Grafana Monitoring", status="Planning", completion_pct=25.0,
                 sprint_name="Sprint 3", next_milestone="Loki Log Ingestion",
-                next_milestone_date="2026-05-21", owner="Priyanka M."),
+                next_milestone_date="2026-05-21", owner="Priyanka M.",
+                achievements="Successfully deployed Loki instance; Configured centralized logging for backend services."),
+
     ])
 
     db.add_all([

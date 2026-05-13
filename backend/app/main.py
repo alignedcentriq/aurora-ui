@@ -1,29 +1,31 @@
 import io
+import asyncio
+import os
+import re
+import logging
+import json
+import time
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
+
 from app.agent import app_agent
 from langchain_core.messages import HumanMessage, AIMessage
-from app.hr_service import HRService, JSONDatabase
-import asyncio
+from app.hr_service import HRService
 from app.config import settings
-import os
-import re
-import logging
-import json
-import time
-from app.database import init_db
+from app.database import init_db, SessionLocal
+from app.models import Employee, Leave, Payroll, Policy
 from app.document_generation.generator import generate_pdf
 from app.document_store import get_pdf
 from app.pmo_routes import router as pmo_router
 
-# -- Langfuse tracing (custom lightweight wrapper) --
+# -- Langfuse tracing --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
 
-# -- Loki Logger with JSON Formatter --
+# -- Loki Logger --
 try:
     import logging_loki
     from pythonjsonlogger import jsonlogger
@@ -55,7 +57,6 @@ app = FastAPI(title="Centriq AI Backend")
 app.include_router(sharepoint_router, prefix="/api")
 app.include_router(pmo_router)
 
-# Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -120,7 +121,6 @@ async def root():
 
 @app.post("/api/feedback")
 async def feedback(data: dict):
-    print(f"Feedback received: {data}")
     return {"status": "success", "message": "Feedback logged"}
 
 @app.post("/api/track")
@@ -128,11 +128,6 @@ async def track_data(log: CustomLog):
     logger.info("custom_event", extra={"event_name": log.event, "custom_data": log.data})
     langfuse_event(log.event, log.data)
     return {"status": "success", "message": "Event tracked successfully"}
-
-@app.post("/api/forms")
-async def submit_form(data: dict):
-    print(f"Form submitted: {data}")
-    return {"status": "success", "message": "Form processed"}
 
 @app.get("/api/documents/download/{file_id}")
 async def download_document(file_id: str):
@@ -145,51 +140,12 @@ async def download_document(file_id: str):
         headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}.pdf"'},
     )
 
-@app.post("/api/documents/generate")
-async def generate_document(request: DocumentRequest):
-    try:
-        pdf_bytes = generate_pdf(
-            doc_type=request.doc_type,
-            title=request.title,
-            content=request.content,
-            generated_by=request.generated_by or "Centriq AI",
-            thread_id=request.thread_id or "",
-        )
-        safe_name = "".join(
-            char if char.isalnum() or char in "-_" else "_"
-            for char in request.title.lower().replace(" ", "_")
-        )[:50]
-        return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}.pdf"'},
-        )
-    except Exception as e:
-        print(f"Document generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate document: {e}")
-
-@app.post("/api/webhooks/sharepoint-sync")
-async def sync_sharepoint_policy(request: WebhookPolicyRequest):
-    """Webhook endpoint for Power Automate to push SharePoint document changes."""
-    HRService.upsert_policy(request.title, request.content, request.category)
-    print(f"Webhook received from Power Automate! Updated policy: {request.title}")
-    return {"status": "success", "message": f"Policy '{request.title}' synchronized successfully"}
-
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     try:
         start_time = time.time()
-        logger.info(f"Chat request: session={request.session_id}, message={request.message[:50]}...")
-        
-        # Wrap the entire chat in a Langfuse trace
         with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
-            
-            # Config for LangGraph invocation (no langfuse callback needed)
-            config = {
-                "configurable": {"thread_id": request.session_id},
-            }
-            
-            # Invoke the multi-agent graph
+            config = {"configurable": {"thread_id": request.session_id}}
             result = await app_agent.ainvoke(
                 {"messages": [HumanMessage(content=request.message)]},
                 config=config,
@@ -197,134 +153,77 @@ async def chat(request: ChatRequest):
             
             raw_ai_message = result["messages"][-1].content
             routed_domain = result.get("domain", "unknown")
-            download_url = None
-            download_title = None
+            
+            # Extract and convert [DOWNLOAD_PDF:url:title] to markdown link
             download_tag_pattern = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
-
-            for message in result["messages"]:
-                content = getattr(message, "content", "")
-                if isinstance(content, str):
-                    match = download_tag_pattern.search(content)
-                    if match:
-                        download_url = match.group(1)
-                        download_title = match.group(2)
-                        break
+            match = download_tag_pattern.search(raw_ai_message)
             
-            logger.info(f"Routed to: {routed_domain}")
-            elapsed_time = time.time() - start_time
-            print(f"[Chat] Domain: {routed_domain} | Time: {elapsed_time:.2f}s | Raw response length: {len(raw_ai_message)}")
+            final_message = raw_ai_message
+            download_url = None
+            if match:
+                path = match.group(1)
+                title = match.group(2)
+                # Use current request host if possible, or fallback to settings
+                base_url = f"http://localhost:{settings.PORT}" 
+                download_url = f"{base_url}{path}"
+                markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
+                # Replace the tag with a nice markdown link
+                final_message = download_tag_pattern.sub(markdown_link, raw_ai_message)
             
-            # Safety cleanup for small model artifacts
-            final_message = download_tag_pattern.sub("", raw_ai_message).strip()
+            # Final cleanup of any other artifacts
             final_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
-            final_message = final_message.replace('{', '').replace('}', '').strip()
-            final_message = re.sub(r'```.*?```', '', final_message, flags=re.DOTALL).strip()
             
-            # Fallback for empty responses
-            if not final_message or len(final_message) < 2:
-                final_message = (
-                    "I'm here to help! I can assist you with HR queries (leave, payroll, policies), "
-                    "and more capabilities are coming soon. What would you like to know?"
-                )
-            
-            # Update the Langfuse trace with the result
-            trace.update(
-                output=final_message,
-                metadata={
-                    "domain": routed_domain,
-                    "raw_length": len(raw_ai_message),
-                    "final_length": len(final_message),
-                }
-            )
+            trace.update(output=final_message, metadata={"domain": routed_domain})
         
         return {
             "response": final_message,
             "domain": routed_domain,
             "id": "msg_1",
             "processing_time": f"{time.time() - start_time:.2f}s",
-            "download_url": download_url,
-            "download_title": download_title,
+            "download_url": download_url
         }
-    except Exception as e:
-        print(f"Error in chat endpoint: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/chat/{session_id}")
-async def delete_chat(session_id: str):
-    try:
-        logger.info(f"Deleting session: {session_id}")
-        
-        # 1. Clear from the LangGraph checkpointer if possible
-        # Checkpointer keys in langgraph-checkpoint-redis usually follow a pattern
-        # but the safest way is to delete from the underlying client if exposed.
-        if hasattr(app_agent.checkpointer, "redis_client"):
-            # RedisSaver uses thread_id directly or with a prefix
-            # Let's try to delete the thread_id key
-            await app_agent.checkpointer.redis_client.delete(session_id)
-            # Also common prefixes in langgraph-checkpoint-redis
-            await app_agent.checkpointer.redis_client.delete(f"checkpoint:{session_id}")
-            
-        return {"status": "success", "message": f"Session {session_id} deleted"}
     except Exception as e:
-        print(f"Error deleting session: {e}")
+        print(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/hr/dashboard")
 async def get_hr_dashboard():
-    emp = HRService.get_employee_by_email(settings.DEFAULT_USER_EMAIL)
-    if not emp:
-        return {"error": "No employees found"}
-    
-    leaves = JSONDatabase.read("leaves.json")
-    emp_leaves = [leave for leave in leaves if leave["employee_id"] == emp["id"]]
-    
-    payroll = JSONDatabase.read("payroll.json")
-    emp_payroll = [p for p in payroll if p["employee_id"] == emp["id"]]
-    last_payroll = emp_payroll[-1] if emp_payroll else None
-    
-    used_leaves = sum(1 for leave in emp_leaves if leave["status"] == "Approved")
-    leave_balance = 24 - used_leaves
-    
-    return {
-        "employee": {
-            "name": emp["name"],
-            "id": emp["employee_id"],
-            "designation": emp["designation"],
-            "department": emp["department"]
-        },
-        "stats": {
-            "leave_balance": leave_balance,
-            "used_leaves": used_leaves,
-            "attendance_rate": "98%",
-            "net_salary": last_payroll["net_salary"] if last_payroll else 0
-        },
-        "recent_leaves": emp_leaves[-5:],
-        "payroll_summary": {
-            "last_paid": last_payroll["net_salary"] if last_payroll else 0,
-            "month": last_payroll["month"] if last_payroll else 0,
-            "year": last_payroll["year"] if last_payroll else 0
+    db = SessionLocal()
+    try:
+        emp = HRService.get_employee_by_email(db, settings.DEFAULT_USER_EMAIL)
+        if not emp: return {"error": "No employees found"}
+        
+        emp_leaves = db.query(Leave).filter(Leave.employee_id == emp.id).all()
+        emp_payroll = db.query(Payroll).filter(Payroll.employee_id == emp.id).order_by(Payroll.year.desc(), Payroll.month.desc()).all()
+        last_payroll = emp_payroll[0] if emp_payroll else None
+        
+        used_leaves = sum(1 for leave in emp_leaves if leave.status == "Approved")
+        leave_balance = 24 - used_leaves
+        
+        return {
+            "employee": {"name": emp.name, "id": emp.employee_id, "designation": emp.designation},
+            "stats": {"leave_balance": leave_balance, "used_leaves": used_leaves, "net_salary": last_payroll.net_salary if last_payroll else 0},
+            "recent_leaves": [{"leave_type": l.leave_type, "status": l.status} for l in emp_leaves[-5:]]
         }
-    }
+    finally:
+        db.close()
 
 @app.get("/api/hr/leaves")
 async def get_leaves():
-    return JSONDatabase.read("leaves.json")
-
-@app.post("/api/hr/leaves/apply")
-async def apply_leave(data: dict):
-    res = HRService.apply_leave(
-        settings.DEFAULT_USER_EMAIL, 
-        data["start"], 
-        data["end"], 
-        data.get("type", "Casual")
-    )
-    return {"status": "success", "message": res}
+    db = SessionLocal()
+    try:
+        return [{"id": l.id, "leave_type": l.leave_type, "status": l.status} for l in db.query(Leave).all()]
+    finally:
+        db.close()
 
 @app.get("/api/hr/payroll")
 async def get_payroll():
-    return JSONDatabase.read("payroll.json")
+    db = SessionLocal()
+    try:
+        return [{"month": p.month, "year": p.year, "net_salary": p.net_salary} for p in db.query(Payroll).all()]
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     import uvicorn
