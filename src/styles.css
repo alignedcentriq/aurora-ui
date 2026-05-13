@@ -126,6 +126,8 @@
   --sidebar-bg: #0f172a;
   --sidebar-foreground: #f8fafc;
   --sidebar-accent: rgba(255, 255, 255, 0.08);
+
+  --gradient-primary: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
 }
 
 /* DARK MODE */
@@ -172,6 +174,8 @@
   --sidebar-bg: #020617;
   --sidebar-foreground: #f8fafc;
   --sidebar-accent: rgba(255, 255, 255, 0.05);
+
+  --gradient-primary: linear-gradient(135deg, #8b5cf6 0%, #c084fc 100%);
 }
 
 @layer base {
@@ -244,5 +248,50 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  .compact-mode {
+    --radius: 0.5rem;
+  }
+
+  .compact-mode .p-8 {
+    padding: 1rem;
+  }
+
+  .compact-mode .p-6 {
+    padding: 0.75rem;
+  }
+
+  .compact-mode .py-8 {
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+
+  .compact-mode .space-y-8 > :not([hidden]) ~ :not([hidden]) {
+    --tw-space-y-reverse: 0;
+    margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
+    margin-bottom: calc(1rem * var(--tw-space-y-reverse));
+  }
+
+  .compact-mode .gap-6 {
+    gap: 0.75rem;
+  }
+
+  .compact-mode .h-10 {
+    height: 2rem;
+  }
+
+  .compact-mode .w-10 {
+    width: 2rem;
+  }
+
+  .compact-mode .text-xl {
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+  }
+
+  .compact-mode .text-lg {
+    font-size: 1rem;
+    line-height: 1.5rem;
   }
 }

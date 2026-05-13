@@ -14,8 +14,11 @@ import {
   ClipboardList,
   UserCog,
   Zap,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { Logo } from "./Logo";
+import { BrandName } from "./BrandName";
 import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
@@ -31,8 +34,8 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
 };
 
 export function Sidebar() {
-  const { threads, activeId, setActiveId, createThread } = useChatStore();
-  const { user, login, logout } = useAuth();
+  const { threads, activeId, setActiveId, createThread, deleteThread } = useChatStore();
+  const { user, login, logout, setRole } = useAuth();
   const location = useLocation();
   const [isRoleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -53,6 +56,18 @@ export function Sidebar() {
     if (path === "/" && location.pathname === "/") return true;
     if (path !== "/" && location.pathname.startsWith(path)) return true;
     return false;
+  };
+
+  const handleDelete = async (id: string) => {
+    // Delete from state
+    deleteThread(id);
+    
+    // Delete from backend/redis
+    try {
+      await fetch(`/api/chat/${id}`, { method: "DELETE" });
+    } catch (err) {
+      console.error("Failed to delete chat from backend:", err);
+    }
   };
 
   const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager"];
@@ -77,31 +92,16 @@ export function Sidebar() {
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 
+  const [avatarError, setAvatarError] = useState(false);
+
   return (
     <aside className="relative flex h-screen w-[272px] flex-col border-r border-[var(--border)] bg-[var(--sidebar-bg)]">
       {/* Brand */}
       <div className="flex h-16 items-center gap-3 px-6 border-b border-white/[0.06]">
         <Logo size="md" />
-        <span className="text-[15px] font-semibold text-[var(--sidebar-foreground)] tracking-tight">
-          Centriq AI
-        </span>
+        <BrandName className="text-[15px] text-[var(--sidebar-foreground)]" withAI={true} />
       </div>
-
-      {/* Role Badge */}
-      <div className="mx-4 mt-4 mb-2">
-        <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.04] px-3 py-2">
-          <RoleIcon className={cn("h-4 w-4", currentRoleMeta.color)} />
-          <div className="flex flex-col">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--sidebar-foreground)]/40">
-              Role
-            </span>
-            <span className="text-xs font-medium text-[var(--sidebar-foreground)]/80">
-              {currentRoleMeta.label}
-            </span>
-          </div>
-        </div>
-      </div>
-
+      
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5 no-scrollbar">
         <div className="px-3 py-2">
@@ -164,8 +164,20 @@ export function Sidebar() {
                           active ? "text-primary" : "opacity-40",
                         )}
                       />
-                      <span className="truncate text-left">{title}</span>
-                      {active && <div className="ml-auto h-1 w-1 rounded-full bg-primary" />}
+                      <span className="truncate text-left flex-1">{title}</span>
+                      {active ? (
+                        <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(thread.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded transition-all text-[var(--sidebar-foreground)]/30 hover:text-red-400"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </button>
                   );
                 })}
@@ -174,7 +186,7 @@ export function Sidebar() {
                 onClick={() => createThread()}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-primary hover:bg-primary/5 transition-colors mt-2"
               >
-                <Zap className="h-4 w-4" />
+                <Plus className="h-4 w-4" />
                 <span>New Conversation</span>
               </button>
             </div>
@@ -188,10 +200,11 @@ export function Sidebar() {
           onClick={() => setRoleDropdownOpen(!isRoleDropdownOpen)}
           className="flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-white/[0.04]"
         >
-          {user.photo ? (
+          {user.avatarUrl && !avatarError ? (
             <img
-              src={user.photo}
+              src={user.avatarUrl}
               alt={user.name}
+              onError={() => setAvatarError(true)}
               className="h-9 w-9 rounded-full object-cover shadow-lg shadow-black/20"
             />
           ) : (
@@ -207,7 +220,7 @@ export function Sidebar() {
               {user.name}
             </span>
             <span className="text-[11px] text-[var(--sidebar-foreground)]/40 truncate w-full text-left">
-              {user.email}
+              {user.role}
             </span>
           </div>
           <ChevronDown
@@ -222,7 +235,7 @@ export function Sidebar() {
           <div className="absolute bottom-20 left-3 right-3 z-50 rounded-xl border border-white/[0.08] bg-[#1a1f2e] p-1.5 shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-150">
             <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
               <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
-                Switch Role (Mock Auth)
+                Switch Role (Demo)
               </span>
             </div>
             {roles.map((r) => {
