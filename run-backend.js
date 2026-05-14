@@ -139,6 +139,16 @@ const getWslRepoRoot = () => {
   }
 };
 
+const getWslIp = () => {
+  try {
+    const output = execFileSync("wsl", ["hostname", "-I"], { encoding: "utf8" });
+    return output.trim().split(/\s+/)[0];
+  } catch (err) {
+    console.warn("Could not detect WSL IP address.");
+    return "127.0.0.1";
+  }
+};
+
 const runDockerCompose = async () => {
   console.log("--- Starting local infrastructure containers ---");
 
@@ -215,13 +225,15 @@ const runDockerCompose = async () => {
 
 const waitForInfrastructure = async () => {
   console.log("--- Waiting for local infrastructure ports ---");
+  const host = isWindows ? getWslIp() : "127.0.0.1";
+  console.log(`Using host ${host} for infrastructure checks.`);
 
   for (const service of infraPorts) {
     try {
-      await waitForPort(service.port, "127.0.0.1", service.required ? 60000 : 30000);
-      console.log(`${service.name} is reachable on 127.0.0.1:${service.port}`);
+      await waitForPort(service.port, host, service.required ? 60000 : 30000);
+      console.log(`${service.name} is reachable on ${host}:${service.port}`);
     } catch (err) {
-      const message = `${service.name} is not reachable on localhost:${service.port}. ${err.message}`;
+      const message = `${service.name} is not reachable on ${host}:${service.port}. ${err.message}`;
       if (service.required) {
         throw new Error(message);
       }

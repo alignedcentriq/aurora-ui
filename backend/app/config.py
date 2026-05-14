@@ -38,6 +38,13 @@ class Config:
     GRAPH_CLIENT_SECRET = os.getenv("GRAPH_CLIENT_SECRET")
     GRAPH_CLIENT_STATE = os.getenv("GRAPH_CLIENT_STATE", "secretClientState")
 
+    # MinIO
+    MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+    MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+    MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+    MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "aurora-bucket")
+
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
     PORT = int(os.getenv("PORT", "8080"))

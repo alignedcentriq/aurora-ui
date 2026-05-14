@@ -32,6 +32,7 @@ from app.hr_service import HRService
 from app.config import settings
 from app.router import classify_intent, get_domain_status, get_placeholder_response
 from app.agents.pmo_agent import pmo_agent
+from app.sharepoint_transfer_service import sharepoint_transfer_service
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
@@ -78,8 +79,27 @@ def get_payroll_info(email: str):
     """Get the latest payroll / salary information for an employee."""
     return HRService.get_payroll_info(email)
 
+@tool
+def transfer_sharepoint_to_minio(site_name: str, folder_path: str, minio_prefix: str = ""):
+    """
+    Pull documents from a SharePoint folder and transfer them to MinIO.
+    site_name: e.g. 'tenant.sharepoint.com:/sites/SiteName'
+    folder_path: e.g. 'Shared Documents/General'
+    minio_prefix: Optional prefix for the objects in MinIO
+    """
+    return sharepoint_transfer_service.transfer_folder_to_minio(site_name, folder_path, minio_prefix)
 
-hr_tools = [get_leave_balance, apply_leave, search_hr_policies, get_payroll_info]
+@tool
+def list_minio_documents(prefix: str = ""):
+    """
+    List all documents currently stored in MinIO.
+    prefix: Optional prefix to filter the search.
+    """
+    from app.minio_client import minio_client
+    return minio_client.list_objects(prefix)
+
+
+hr_tools = [get_leave_balance, apply_leave, search_hr_policies, get_payroll_info, transfer_sharepoint_to_minio, list_minio_documents]
 hr_tool_node = ToolNode(hr_tools)
 
 
