@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aurora-backend"
+version = "1.0.0"
+description = "Aurora AI Backend"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

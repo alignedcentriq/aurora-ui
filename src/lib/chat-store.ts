@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export interface Turn {
   role: "user" | "ai";
@@ -12,7 +11,6 @@ export interface Turn {
 export interface Thread {
   id: string;
   turns: Turn[];
-  createdAt: number;
   updatedAt: number;
 }
 
@@ -20,58 +18,52 @@ interface ChatState {
   threads: Record<string, Thread>;
   activeId: string | null;
   thinking: boolean;
-  setActiveId: (id: string) => void;
+  setActiveId: (id: string | null) => void;
   setThinking: (thinking: boolean) => void;
+  createThread: () => string;
   addTurn: (threadId: string, turn: Turn) => void;
-  createThread: () => void;
+  deleteThread: (id: string) => void;
 }
 
-export const useChatStore = create<ChatState>()(
-  persist(
-    (set, get) => ({
-      threads: {},
-      activeId: null,
-      thinking: false,
-      setActiveId: (id) => set({ activeId: id }),
-      setThinking: (thinking) => set({ thinking }),
-      addTurn: (threadId, turn) => {
-        const { threads } = get();
-        const thread = threads[threadId];
-        if (!thread) return;
-
-        const updatedThread = {
-          ...thread,
-          turns: [...thread.turns, turn],
-          updatedAt: Date.now(),
-        };
-
-        set({
-          threads: {
-            ...threads,
-            [threadId]: updatedThread,
-          },
-        });
+export const useChatStore = create<ChatState>((set) => ({
+  threads: {},
+  activeId: null,
+  thinking: false,
+  setActiveId: (id) => set({ activeId: id }),
+  setThinking: (thinking) => set({ thinking }),
+  createThread: () => {
+    const id = "chat-" + Date.now();
+    set((state) => ({
+      threads: {
+        ...state.threads,
+        [id]: { id, turns: [], updatedAt: Date.now() },
       },
-      createThread: () => {
-        const id = "chat-" + Date.now();
-        const newThread: Thread = {
-          id,
-          turns: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-
-        set((state) => ({
-          threads: {
-            ...state.threads,
-            [id]: newThread,
+      activeId: id,
+    }));
+    return id;
+  },
+  addTurn: (threadId, turn) =>
+    set((state) => {
+      const thread = state.threads[threadId];
+      if (!thread) return state;
+      return {
+        threads: {
+          ...state.threads,
+          [threadId]: {
+            ...thread,
+            turns: [...thread.turns, turn],
+            updatedAt: Date.now(),
           },
-          activeId: id,
-        }));
-      },
+        },
+      };
     }),
-    {
-      name: "chat-storage",
-    }
-  )
-);
+  deleteThread: (id) =>
+    set((state) => {
+      const newThreads = { ...state.threads };
+      delete newThreads[id];
+      return {
+        threads: newThreads,
+        activeId: state.activeId === id ? null : state.activeId,
+      };
+    }),
+}));

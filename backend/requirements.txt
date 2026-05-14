@@ -2,6 +2,7 @@ fastapi
 uvicorn
 langgraph
 langchain
+langchain-core
 langchain-openai
 langchain-community
 python-dotenv
@@ -11,4 +12,10 @@ sqlalchemy
 asyncpg
 python-multipart
 requests
+redis
+langgraph-checkpoint-redis
+boto3
+langfuse<3.0.0
+python-logging-loki
+python-json-logger
 reportlab

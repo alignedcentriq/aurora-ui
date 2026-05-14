@@ -1,8 +1,7 @@
-"""
-In-memory PDF store for agent-generated documents.
-Keyed by a short UUID. Replace with MinIO/S3 when Shivam's MinIO work is merged.
-"""
+"""In-memory PDF store for generated documents."""
+
 from typing import Optional
+
 
 _store: dict[str, dict] = {}
 

@@ -40,33 +40,43 @@ const domains: Domain[] = [
   },
 ];
 
-export function QuickActions({ onPick }: { onPick: (prompt: string) => void }) {
+export function QuickActions({
+  onPick,
+  variant = "grid",
+}: {
+  onPick: (prompt: string) => void;
+  variant?: "grid" | "list";
+}) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className={cn("grid gap-4", variant === "grid" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1")}>
       {domains.map((d, i) => {
         const Icon = d.icon;
         return (
           <button
             key={d.key}
             onClick={() => onPick(d.label)}
-            className="group relative flex flex-col items-start gap-4 rounded-2xl border border-[var(--border)] bg-card/50 p-6 text-left transition-all duration-300 hover:border-primary/30 hover:bg-card/80 hover:shadow-lg animate-[slide-up_.5s_ease-out_both] backdrop-blur-sm"
+            className={cn(
+              "group relative flex flex-col items-start gap-4 rounded-[20px] border border-[var(--border)] bg-card/30 p-5 text-left transition-all duration-300 hover:bg-card/50 hover:shadow-md animate-[slide-up_.5s_ease-out_both] backdrop-blur-md",
+              variant === "grid" ? "min-h-[140px]" : "flex-row p-4 min-h-0"
+            )}
             style={{ animationDelay: `${i * 100}ms` }}
           >
             <div
               className={cn(
-                "flex h-12 w-12 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110",
+                "flex items-center justify-center rounded-lg transition-transform duration-300 group-hover:scale-110 shrink-0",
+                variant === "grid" ? "h-10 w-10" : "h-8 w-8",
                 d.color,
               )}
             >
-              <Icon className="h-6 w-6" strokeWidth={2} />
+              <Icon className={cn(variant === "grid" ? "h-5 w-5" : "h-4 w-4")} strokeWidth={1.5} />
             </div>
 
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-foreground">{d.label}</h3>
-                <ArrowRight className="h-4 w-4 opacity-0 -translate-x-2 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-primary" />
+                <h3 className={cn("font-bold text-foreground truncate", variant === "grid" ? "text-[15px]" : "text-[13px]")}>{d.label}</h3>
+                <ArrowRight className="h-4 w-4 opacity-0 -translate-x-2 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-primary shrink-0" />
               </div>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{d.description}</p>
+              <p className={cn("leading-relaxed text-muted-foreground", variant === "grid" ? "mt-2 text-[13px]" : "mt-0.5 text-[12px] line-clamp-1")}>{d.description}</p>
             </div>
           </button>
         );

@@ -4,21 +4,25 @@ import { Composer } from "./Composer";
 import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Sparkles, Download } from "lucide-react";
+import { Download, Sparkles } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-store";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type Turn = { role: "user"; text: string } | { role: "ai"; text: string; card?: boolean };
+type Turn =
+  | { role: "user"; text: string }
+  | { role: "ai"; text: string; card?: boolean; downloadUrl?: string; downloadTitle?: string };
 
 interface ThreadData {
   id: string;
@@ -40,10 +44,13 @@ const initialTurns: Turn[] = [
 const initialId = "chat-" + Date.now();
 
 import { useChatStore } from "@/lib/chat-store";
+import { useSettings } from "@/lib/settings-store";
 
 export function AssistantView() {
   const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
     useChatStore();
+  const { aiTone, userNickname, reasoningDepth, responseFormat, actionExecution } = useSettings();
+  const { user } = useAuth();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
@@ -54,12 +61,14 @@ export function AssistantView() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize first thread if none exists
+  // Initialize a new thread on every fresh mount (refresh)
+  const initialized = useRef(false);
   useEffect(() => {
-    if (!activeId || !threads[activeId]) {
+    if (!initialized.current) {
       createThread();
+      initialized.current = true;
     }
-  }, [activeId, threads, createThread]);
+  }, [createThread]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
@@ -96,6 +105,7 @@ export function AssistantView() {
       setInput("");
       setThinking(true);
 
+      // Always send history now that AI Memory toggle is removed
       const history = (threads[activeId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
@@ -105,10 +115,25 @@ export function AssistantView() {
       fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          preferences: {
+            tone: aiTone,
+            nickname: userNickname,
+            reasoningDepth,
+            responseFormat,
+            actionExecution,
+          },
+        }),
       })
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to connect to the server");
+        .then(async (res) => {
+          if (!res.ok) {
+            const errorData = await res
+              .json()
+              .catch(() => ({ detail: "Failed to connect to the server" }));
+            throw new Error(errorData.detail || "Server Error");
+          }
           return res.json();
         })
         .then((data) => {
@@ -124,14 +149,14 @@ export function AssistantView() {
         .catch((err) => {
           console.error("Backend Error:", err);
           toast.error("Assistant is unavailable", {
-            description: "Please try again later.",
+            description: err.message || "Please try again later.",
           });
         })
         .finally(() => {
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking],
+    [activeId, input, threads, addTurn, setThinking, aiTone, userNickname, reasoningDepth, responseFormat, actionExecution],
   );
 
   const handleNewChat = () => {
@@ -157,16 +182,18 @@ export function AssistantView() {
   };
 
   const openDocModal = () => {
-    const firstUserTurn = activeThread.turns.find((t) => t.role === "user");
+    const firstUserTurn = activeThread.turns.find((turn) => turn.role === "user");
     setDocTitle(firstUserTurn ? firstUserTurn.text.slice(0, 60) : "Centriq Report");
     setShowDocModal(true);
   };
 
   const handleGenerateDoc = async () => {
+    if (!activeId) return;
+
     setIsGeneratingDoc(true);
     try {
       const conversationText = activeThread.turns
-        .map((t) => `${t.role === "user" ? "User" : "Centriq"}: ${t.text}`)
+        .map((turn) => `${turn.role === "user" ? "User" : "Centriq"}: ${turn.text}`)
         .join("\n\n");
 
       const res = await fetch("/api/documents/generate", {
@@ -185,10 +212,10 @@ export function AssistantView() {
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${docTitle.replace(/\s+/g, "_").toLowerCase().slice(0, 50)}.pdf`;
-      a.click();
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${docTitle.replace(/\s+/g, "_").toLowerCase().slice(0, 50)}.pdf`;
+      anchor.click();
       URL.revokeObjectURL(url);
 
       setShowDocModal(false);
@@ -214,39 +241,29 @@ export function AssistantView() {
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--border)] bg-background/80 px-4 backdrop-blur-md sm:px-8">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-foreground">Centriq AI Chat</span>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            <ThemeToggle />
-          </div>
-        </header>
-
-        {/* Chat Content */}
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
-          <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-8">
+          <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
             {activeThread.turns.length === 0 ? (
-              <section className="flex flex-col items-center justify-center text-center py-10 animate-[fade-in_.6s_ease-out_both]">
-                <Logo size="xl" className="mb-8 shadow-2xl shadow-primary/20" />
-
-                <h1 className="text-4xl font-black tracking-tight text-foreground sm:text-5xl mb-4">
-                  How can I help you today?
+              <section className="flex w-full flex-col items-center justify-center text-center animate-[fade-in_.6s_ease-out_both] max-w-5xl mx-auto">
+                <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-12">
+                  Hi, how can I help you?
                 </h1>
-                <p className="text-lg text-muted-foreground max-w-2xl mb-12 font-medium">
-                  I'm your intelligent workplace assistant. Choose a category below to get started
-                  or ask me anything.
-                </p>
+                
+                <div className="w-full max-w-3xl mb-12">
+                  <Composer
+                    value={input}
+                    onChange={setInput}
+                    onSubmit={() => send()}
+                    disabled={thinking}
+                    onAttach={() =>
+                      toast("Attachments", { description: "This feature is currently in preview." })
+                    }
+                    onQuickAction={(p) => !thinking && send(p)}
+                  />
+                </div>
 
-                <div
-                  className={cn(
-                    "w-full transition-opacity",
-                    thinking && "opacity-50 pointer-events-none",
-                  )}
-                >
+                <div className="w-full max-w-5xl mt-4">
                   <QuickActions onPick={(p) => !thinking && send(p)} />
                 </div>
               </section>
@@ -254,7 +271,12 @@ export function AssistantView() {
               <section className="space-y-10 pb-10">
                 {activeThread.turns.map((t, i) =>
                   t.role === "user" ? (
-                    <UserMessage key={i}>{t.text}</UserMessage>
+                    <UserMessage 
+                      key={i} 
+                      initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                    >
+                      {t.text}
+                    </UserMessage>
                   ) : (
                     <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
                       <div className="space-y-4">
@@ -322,34 +344,23 @@ export function AssistantView() {
         </div>
 
         {/* Input Area */}
-        <footer className="relative border-t border-[var(--border)] bg-background/80 backdrop-blur-md px-4 pb-8 pt-4 sm:px-8">
-          <div className="mx-auto w-full max-w-4xl space-y-6">
-            {activeThread.turns.length > 0 && (
-              <SuggestionsBar
-                activeCategory={activeCategory}
-                onCategoryChange={setActiveCategory}
-                onSelect={(text) => send(text)}
+        {activeThread.turns.length > 0 && (
+          <footer className="relative border-t border-[var(--border)] bg-background/80 backdrop-blur-md px-4 pb-8 pt-4 sm:px-8">
+            <div className="mx-auto w-full max-w-4xl space-y-6">
+              <Composer
+                value={input}
+                onChange={setInput}
+                onSubmit={() => send()}
+                disabled={thinking}
+                onAttach={() =>
+                  toast("Attachments", { description: "This feature is currently in preview." })
+                }
+                onQuickAction={(p) => !thinking && send(p)}
+                onGenerateDoc={openDocModal}
               />
-            )}
-            <Composer
-              value={input}
-              onChange={setInput}
-              onSubmit={() => send()}
-              disabled={thinking}
-              onAttach={() =>
-                toast("Attachments", { description: "This feature is currently in preview." })
-              }
-              onSuggest={() => {
-                toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
-                  loading: "Analyzing conversation context...",
-                  success: "Suggestions updated based on recent turns.",
-                  error: "Could not refresh suggestions",
-                });
-              }}
-              onGenerateDoc={activeThread.turns.length > 0 ? openDocModal : undefined}
-            />
-          </div>
-        </footer>
+            </div>
+          </footer>
+        )}
       </main>
       <Dialog open={showDocModal} onOpenChange={setShowDocModal}>
         <DialogContent className="sm:max-w-md">
@@ -361,7 +372,7 @@ export function AssistantView() {
               <label className="text-sm font-medium text-foreground">Document Type</label>
               <select
                 value={docType}
-                onChange={(e) => setDocType(e.target.value)}
+                onChange={(event) => setDocType(event.target.value)}
                 className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
               >
                 <option value="project_status_report">Project Status Report</option>
@@ -373,8 +384,8 @@ export function AssistantView() {
               <label className="text-sm font-medium text-foreground">Document Title</label>
               <Input
                 value={docTitle}
-                onChange={(e) => setDocTitle(e.target.value)}
-                placeholder="e.g. Project Aurora — Sprint 5 Summary"
+                onChange={(event) => setDocTitle(event.target.value)}
+                placeholder="e.g. Project Aurora Sprint 5 Summary"
               />
             </div>
           </div>
@@ -383,7 +394,7 @@ export function AssistantView() {
               Cancel
             </Button>
             <Button onClick={handleGenerateDoc} disabled={isGeneratingDoc || !docTitle.trim()}>
-              {isGeneratingDoc ? "Generating…" : "Download PDF"}
+              {isGeneratingDoc ? "Generating..." : "Download PDF"}
             </Button>
           </DialogFooter>
         </DialogContent>

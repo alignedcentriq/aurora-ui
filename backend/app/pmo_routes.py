@@ -1,16 +1,27 @@
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
-from app.db import get_db, Project, Sprint, TeamCapacity, Milestone
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import Milestone, Project, Sprint, TeamCapacity
+
 
 router = APIRouter(prefix="/api/pmo", tags=["PMO Data"])
 
 
-# ── Pydantic response schemas ──────────────────────────────────────────────
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 class ProjectSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     status: str
@@ -23,6 +34,7 @@ class ProjectSchema(BaseModel):
 
 class SprintSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
     id: int
     team: str
     name: str
@@ -36,6 +48,7 @@ class SprintSchema(BaseModel):
 
 class TeamCapacitySchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
     id: int
     team: str
     total_members: int
@@ -46,6 +59,7 @@ class TeamCapacitySchema(BaseModel):
 
 class MilestoneSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
     id: int
     project_name: str
     name: str
@@ -61,26 +75,24 @@ class PaginatedResponse(BaseModel):
     items: list
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────
-
 @router.get("/projects", response_model=PaginatedResponse, summary="List all projects")
 def list_projects(
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
-    status: Optional[str] = Query(None, description="Filter by status (e.g. 'In Progress')"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Project)
+    query = db.query(Project)
     if status:
-        q = q.filter(Project.status.ilike(f"%{status}%"))
-    total = q.count()
-    items = q.offset((page - 1) * page_size).limit(page_size).all()
+        query = query.filter(Project.status.ilike(f"%{status}%"))
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": -(-total // page_size),
-        "items": [ProjectSchema.model_validate(i) for i in items],
+        "items": [ProjectSchema.model_validate(item) for item in items],
     }
 
 
@@ -88,7 +100,6 @@ def list_projects(
 def get_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectSchema.model_validate(project)
 
@@ -97,20 +108,20 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 def list_sprints(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
-    team: Optional[str] = Query(None, description="Filter by team name"),
+    team: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Sprint)
+    query = db.query(Sprint)
     if team:
-        q = q.filter(Sprint.team.ilike(f"%{team}%"))
-    total = q.count()
-    items = q.offset((page - 1) * page_size).limit(page_size).all()
+        query = query.filter(Sprint.team.ilike(f"%{team}%"))
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": -(-total // page_size),
-        "items": [SprintSchema.model_validate(i) for i in items],
+        "items": [SprintSchema.model_validate(item) for item in items],
     }
 
 
@@ -127,7 +138,7 @@ def list_team_capacity(
         "page": page,
         "page_size": page_size,
         "total_pages": -(-total // page_size),
-        "items": [TeamCapacitySchema.model_validate(i) for i in items],
+        "items": [TeamCapacitySchema.model_validate(item) for item in items],
     }
 
 
@@ -135,21 +146,21 @@ def list_team_capacity(
 def list_milestones(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
-    project: Optional[str] = Query(None, description="Filter by project name"),
-    status: Optional[str] = Query(None, description="Filter by status (DONE, IN_PROGRESS, UPCOMING)"),
+    project: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Milestone)
+    query = db.query(Milestone)
     if project:
-        q = q.filter(Milestone.project_name.ilike(f"%{project}%"))
+        query = query.filter(Milestone.project_name.ilike(f"%{project}%"))
     if status:
-        q = q.filter(Milestone.status == status.upper())
-    total = q.count()
-    items = q.offset((page - 1) * page_size).limit(page_size).all()
+        query = query.filter(Milestone.status == status.upper())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": -(-total // page_size),
-        "items": [MilestoneSchema.model_validate(i) for i in items],
+        "items": [MilestoneSchema.model_validate(item) for item in items],
     }
