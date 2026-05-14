@@ -41,6 +41,13 @@ else:
     engine = _base_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 def init_db():
     # Ensure schema exists
     if _base_engine.dialect.name != "sqlite":
@@ -93,7 +100,17 @@ def init_db():
             _seed_manager_data(db)
         if db.query(PromptConfig).count() == 0:
             _seed_prompt_configs(db)
-            
+        
+        # Ingest real policy documents from OneDrive folder (if not already done)
+        policy_count = db.query(Policy).count()
+        if policy_count < 10:  # only 4 dummy policies from HR seed
+            try:
+                from app.services.policy_service import PolicyService
+                print("Ingesting policy documents from OneDrive folder...")
+                PolicyService.ingest_policies_from_folder()
+            except Exception as e:
+                print(f"Policy ingestion notice: {e}")
+
     except Exception as e:
         print(f"Error during init_db: {e}")
         db.rollback()

@@ -181,7 +181,10 @@ def hr_agent(state: AgentState):
     
     return {"messages": [response]}
 
-
+async def pmo_agent_node(state: AgentState):
+    """PMO Agent - handles project and report requests."""
+    result = await pmo_agent.ainvoke({"messages": state["messages"]})
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
     return {"messages": [last_ai]}
 
 

@@ -5,8 +5,8 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from app.services.admin_service import AdminService
 from app.services.prompt_service import PromptService
-from app.config import get_model
-import json
+from app.config import settings
+from langchain_openai import ChatOpenAI
 
 # -- Tools --------------------------------------------------------------------
 
@@ -75,7 +75,12 @@ def admin_assistant(state: AdminState):
     system_prompt = PromptService.get_system_prompt("admin", default_prompt)
     
     messages = [HumanMessage(content=system_prompt)] + state["messages"]
-    model = get_model().bind_tools(tools)
+    model = ChatOpenAI(
+        base_url=settings.ROUTER_BASE_URL,
+        api_key=settings.ROUTER_API_KEY,
+        model=settings.ROUTER_MODEL_NAME,
+        temperature=settings.AGENT_TEMPERATURE,
+    ).bind_tools(tools)
     response = model.invoke(messages)
     return {"messages": [response]}
 

@@ -46,6 +46,7 @@ ENV/
 .env.*
 !.env.example
 .dev.vars
+OneDrive_1_12-5-2026
 
 # Wrangler / Cloudflare
 .wrangler/
