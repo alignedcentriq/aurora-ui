@@ -21,6 +21,8 @@ from app.models import Employee, Leave, Payroll, Policy
 from app.document_generation.generator import generate_pdf
 from app.document_store import get_pdf
 from app.pmo_routes import router as pmo_router
+from app.routes.it_routes import router as it_router
+from app.routes.prompt_routes import router as prompt_router
 
 # -- Langfuse tracing --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
@@ -56,6 +58,8 @@ from app.graph_sync import renew_subscriptions
 app = FastAPI(title="Centriq AI Backend")
 app.include_router(sharepoint_router, prefix="/api")
 app.include_router(pmo_router)
+app.include_router(it_router)
+app.include_router(prompt_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -163,17 +167,29 @@ async def chat(request: ChatRequest):
             if match:
                 path = match.group(1)
                 title = match.group(2)
-                # Use current request host if possible, or fallback to settings
                 base_url = f"http://localhost:{settings.PORT}" 
                 download_url = f"{base_url}{path}"
                 markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
-                # Replace the tag with a nice markdown link
                 final_message = download_tag_pattern.sub(markdown_link, raw_ai_message)
             
-            # Final cleanup of any other artifacts
-            final_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+            # Remove any internal JSON/metadata blocks but ONLY if they are not the only content
+            cleaned_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+            if cleaned_message:
+                final_message = cleaned_message
+            
+            # Ultimate fallback if empty
+            if not final_message.strip():
+                final_message = "I processed your request, but I was unable to generate a text summary. Please try again or rephrase your question."
             
             trace.update(output=final_message, metadata={"domain": routed_domain})
+            
+            # Structured Logging for Loki
+            logger.info("chat_response", extra={
+                "domain": routed_domain,
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "session_id": request.session_id,
+                "message_length": len(request.message),
+            })
         
         return {
             "response": final_message,

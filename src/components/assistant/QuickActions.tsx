@@ -1,10 +1,9 @@
-import { Users, Wrench, FileText, Megaphone, ArrowRight, type LucideIcon } from "lucide-react";
+import { Users, Wrench, FileText, Megaphone, ArrowRight, Briefcase, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Domain = {
   key: string;
   label: string;
-  description: string;
   icon: LucideIcon;
   color: string;
 };
@@ -13,28 +12,30 @@ const domains: Domain[] = [
   {
     key: "hr",
     label: "HR & People",
-    description: "Manage your leaves, salary and employee benefits seamlessly.",
     icon: Users,
     color: "bg-emerald-500/10 text-emerald-500",
   },
   {
+    key: "pmo",
+    label: "PMO & Projects",
+    icon: Briefcase,
+    color: "bg-rose-500/10 text-rose-500",
+  },
+  {
     key: "it",
     label: "IT Support",
-    description: "Get help with hardware, software and network access requests.",
     icon: Wrench,
     color: "bg-violet-500/10 text-violet-500",
   },
   {
     key: "admin",
     label: "Admin & Operations",
-    description: "Access company policies, documents and workplace tools.",
     icon: FileText,
     color: "bg-amber-500/10 text-amber-500",
   },
   {
     key: "org",
     label: "Org Directory",
-    description: "Find colleagues, team info and company-wide announcements.",
     icon: Megaphone,
     color: "bg-blue-500/10 text-blue-500",
   },
@@ -48,7 +49,7 @@ export function QuickActions({
   variant?: "grid" | "list";
 }) {
   return (
-    <div className={cn("grid gap-4", variant === "grid" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1")}>
+    <div className={cn("grid gap-4", variant === "grid" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-5" : "grid-cols-1")}>
       {domains.map((d, i) => {
         const Icon = d.icon;
         return (
@@ -56,27 +57,23 @@ export function QuickActions({
             key={d.key}
             onClick={() => onPick(d.label)}
             className={cn(
-              "group relative flex flex-col items-start gap-4 rounded-[20px] border border-[var(--border)] bg-card/30 p-5 text-left transition-all duration-300 hover:bg-card/50 hover:shadow-md animate-[slide-up_.5s_ease-out_both] backdrop-blur-md",
-              variant === "grid" ? "min-h-[140px]" : "flex-row p-4 min-h-0"
+              "group relative flex flex-col items-center gap-3 rounded-[20px] border border-[var(--border)] bg-card/30 p-5 text-center transition-all duration-300 hover:bg-card/50 hover:shadow-md animate-[slide-up_.5s_ease-out_both] backdrop-blur-md",
+              variant === "grid" ? "min-h-[120px]" : "flex-row p-4 min-h-0"
             )}
             style={{ animationDelay: `${i * 100}ms` }}
           >
             <div
               className={cn(
-                "flex items-center justify-center rounded-lg transition-transform duration-300 group-hover:scale-110 shrink-0",
-                variant === "grid" ? "h-10 w-10" : "h-8 w-8",
+                "flex items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-110 shrink-0",
+                variant === "grid" ? "h-12 w-12" : "h-8 w-8",
                 d.color,
               )}
             >
-              <Icon className={cn(variant === "grid" ? "h-5 w-5" : "h-4 w-4")} strokeWidth={1.5} />
+              <Icon className={cn(variant === "grid" ? "h-6 w-6" : "h-4 w-4")} strokeWidth={1.5} />
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <h3 className={cn("font-bold text-foreground truncate", variant === "grid" ? "text-[15px]" : "text-[13px]")}>{d.label}</h3>
-                <ArrowRight className="h-4 w-4 opacity-0 -translate-x-2 transition-all group-hover:opacity-100 group-hover:translate-x-0 text-primary shrink-0" />
-              </div>
-              <p className={cn("leading-relaxed text-muted-foreground", variant === "grid" ? "mt-2 text-[13px]" : "mt-0.5 text-[12px] line-clamp-1")}>{d.description}</p>
+              <h3 className={cn("font-semibold text-foreground truncate", variant === "grid" ? "text-[14px]" : "text-[13px]")}>{d.label}</h3>
             </div>
           </button>
         );

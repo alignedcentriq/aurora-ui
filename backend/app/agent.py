@@ -32,6 +32,9 @@ from app.hr_service import HRService
 from app.config import settings
 from app.router import classify_intent, get_domain_status, get_placeholder_response
 from app.agents.pmo_agent import pmo_agent
+from app.agents.admin_agent import admin_agent
+from app.agents.it_agent import it_agent
+from app.agents.manager_agent import manager_agent
 from app.sharepoint_transfer_service import sharepoint_transfer_service
 
 
@@ -179,10 +182,36 @@ def hr_agent(state: AgentState):
     return {"messages": [response]}
 
 
-async def pmo_agent_node(state: AgentState):
-    """PMO Agent - handles project and report requests."""
-    result = await pmo_agent.ainvoke({"messages": state["messages"]})
-    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
+    return {"messages": [last_ai]}
+
+
+async def admin_agent_node(state: AgentState):
+    """Admin Agent - handles reimbursement, parking, etc."""
+    result = await admin_agent.ainvoke({
+        "messages": state["messages"], 
+        "user_email": settings.DEFAULT_USER_EMAIL
+    })
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Admin request."))
+    return {"messages": [last_ai]}
+
+
+async def it_agent_node(state: AgentState):
+    """IT Agent - handles software install, tickets, etc."""
+    result = await it_agent.ainvoke({
+        "messages": state["messages"], 
+        "user_email": settings.DEFAULT_USER_EMAIL
+    })
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
+    return {"messages": [last_ai]}
+
+
+async def manager_agent_node(state: AgentState):
+    """Manager Agent - handles team approvals, assignments, etc."""
+    result = await manager_agent.ainvoke({
+        "messages": state["messages"], 
+        "user_email": settings.DEFAULT_USER_EMAIL
+    })
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
     return {"messages": [last_ai]}
 
 
@@ -213,21 +242,31 @@ def summarizer(state: AgentState):
     tool_message = state["messages"][-1]
     tool_output = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
     
+    # Use HumanMessage as some models (like llama3.2) return empty for SystemMessage-only prompts
     prompt = [
-        SystemMessage(content=f"""Summarize this tool result for '{settings.DEFAULT_USER_EMAIL}'.
+        HumanMessage(content=f"""You are an HR Assistant. Summarize this tool result for the employee.
         
-IMPORTANT:
-1. If the tool result contains a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is.
-2. NEVER convert it to a standard markdown link like [title](url).
-3. NEVER change the URL or host.
-4. If there is a download tag, make sure it is at the end of your response.
-
-Tool result:
+TOOL RESULT:
 {tool_output}
+
+INSTRUCTIONS:
+1. Provide a concise, friendly summary of the result.
+2. IMPORTANT: If and ONLY IF the tool result contains a tag like [DOWNLOAD_PDF:url:title], include it exactly at the end.
+3. If no such tag is present in the TOOL RESULT above, DO NOT make one up or add any links.
+4. Do not include any JSON, curly braces, or technical metadata in your response.
 """)
     ]
-    response = summary_llm.invoke(prompt)
-    return {"messages": [AIMessage(content=response.content)]}
+    try:
+        response = summary_llm.invoke(prompt)
+        content = response.content.strip()
+        
+        # Fallback if content is empty or model hallucinated the example tag
+        if not content or "[DOWNLOAD_PDF:url:title]" in content:
+            content = f"I've retrieved the information for you: {tool_output}"
+            
+        return {"messages": [AIMessage(content=content)]}
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"The operation was successful, but I had trouble summarizing the result: {tool_output}")]}
 
 
 
@@ -239,6 +278,9 @@ def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
     status = get_domain_status(domain)
     if domain == "pmo": return "pmo_agent"
+    if domain == "admin": return "admin_agent"
+    if domain == "it_support": return "it_agent"
+    if domain == "functional_manager": return "manager_agent"
     if domain == "dummy_test": return "dummy_test_agent"
     if status == "placeholder": return "placeholder_agent"
     if domain == "hr": return "hr_agent"
@@ -275,6 +317,9 @@ workflow = StateGraph(AgentState)
 workflow.add_node("intent_router", intent_router)
 workflow.add_node("hr_agent", hr_agent)
 workflow.add_node("pmo_agent", pmo_agent_node)
+workflow.add_node("admin_agent", admin_agent_node)
+workflow.add_node("it_agent", it_agent_node)
+workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
 workflow.add_node("placeholder_agent", placeholder_agent)
@@ -288,6 +333,9 @@ workflow.add_edge("hr_tools", "summarizer")
 workflow.add_edge("summarizer", END)
 workflow.add_edge("general_agent", END)
 workflow.add_edge("pmo_agent", END)
+workflow.add_edge("admin_agent", END)
+workflow.add_edge("it_agent", END)
+workflow.add_edge("manager_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 

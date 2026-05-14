@@ -23,16 +23,17 @@ DOMAIN_REGISTRY = {
         "status": "active",
     },
     "admin": {
-        "description": "Office Administration — office supplies, facility management, "
-                       "parking, cab booking, ID cards, access cards, visitor management, "
-                       "meeting room booking, cafeteria, housekeeping, courier services",
-        "status": "placeholder",
+        "description": "Office Administration — reimbursement (travel, medical, certification, equipment), "
+                       "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
+                       "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
+                       "courier services, ID cards, access management",
+        "status": "active",
     },
     "it_support": {
-        "description": "IT Support & Helpdesk — password reset, VPN access, laptop issues, "
-                       "software installation, email access, network connectivity, "
-                       "printer setup, security incidents, MFA setup, system access requests",
-        "status": "placeholder",
+        "description": "IT Support & Helpdesk — software installation (with HITL approval flow), IT tickets, "
+                       "asset management (laptops, monitors), password reset, VPN access, laptop issues, "
+                       "email access, network connectivity, system access requests",
+        "status": "active",
     },
     "pmo": {
         "description": "Project Management Office — project timelines, milestones, "
@@ -42,10 +43,10 @@ DOMAIN_REGISTRY = {
         "status": "active",
     },
     "functional_manager": {
-        "description": "Functional Manager & Team Lead — team approvals, work assignments, "
-                       "task delegation, performance feedback, 1-on-1 scheduling, "
-                       "skill assessments, training requests, team capacity, shift management",
-        "status": "placeholder",
+        "description": "Functional Manager & Team Lead — team management, attendance tracking, "
+                       "leave approvals, training assignments, skill assessments, performance feedback, "
+                       "employee project history, 1-on-1 scheduling, task delegation",
+        "status": "active",
     },
     "general": {
         "description": "General conversation — greetings, small talk, unclear requests, "

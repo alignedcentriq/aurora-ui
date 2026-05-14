@@ -193,3 +193,195 @@ class Milestone(Base):
     name = Column(String, nullable=False)
     due_date = Column(String)
     status = Column(String, default="UPCOMING")
+
+# ── Admin Domain ──────────────────────────
+class Reimbursement(Base):
+    __tablename__ = "reimbursements"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    type = Column(String)  # Travel, Medical, Certification, Equipment
+    amount = Column(Float)
+    receipt_url = Column(String, nullable=True)
+    status = Column(String, default="Pending")  # Pending, Approved, Rejected
+    approved_by = Column(String, nullable=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class ParkingSticker(Base):
+    __tablename__ = "parking_stickers"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    vehicle_type = Column(String)  # 2-wheeler, 4-wheeler
+    vehicle_number = Column(String)
+    sticker_number = Column(String, nullable=True)
+    valid_from = Column(Date)
+    valid_until = Column(Date)
+    status = Column(String, default="Active")  # Active, Expired, Pending
+
+class Accommodation(Base):
+    __tablename__ = "accommodations"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    type = Column(String)  # Guest House, Hotel
+    check_in = Column(Date)
+    check_out = Column(Date)
+    location = Column(String)
+    status = Column(String, default="Pending")
+    approved_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class FacilityComplaint(Base):
+    __tablename__ = "facility_complaints"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(String, unique=True, index=True)  # FC-001
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    category = Column(String)  # Housekeeping, Electrical, Plumbing, AC, Cafeteria, Other
+    description = Column(Text)
+    location = Column(String)
+    priority = Column(String, default="Medium")  # Low, Medium, High, Critical
+    status = Column(String, default="Open")  # Open, In Progress, Resolved, Closed
+    assigned_to = Column(String, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+class FoodVendorFeedback(Base):
+    __tablename__ = "food_vendor_feedback"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    vendor_name = Column(String)
+    rating = Column(Integer)  # 1-5
+    food_quality = Column(Integer)  # 1-5
+    hygiene = Column(Integer)  # 1-5
+    service = Column(Integer)  # 1-5
+    comments = Column(Text, nullable=True)
+    date = Column(Date, default=datetime.date.today)
+
+# ── IT Support Domain ─────────────────────
+class ITTicket(Base):
+    __tablename__ = "it_tickets"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(String, unique=True, index=True)  # IT-001
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    category = Column(String)  # Software Install, Hardware, Network, Access, Security
+    subject = Column(String)
+    description = Column(Text)
+    priority = Column(String, default="Medium")
+    status = Column(String, default="Open")  # Open, Awaiting Approval, In Progress, Resolved, Closed
+    assigned_to = Column(String, nullable=True)
+    requires_admin_password = Column(Boolean, default=False)
+    admin_password_provided = Column(Boolean, default=False)
+    resolution_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+class SoftwareRequest(Base):
+    __tablename__ = "software_requests"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    it_ticket_id = Column(Integer, ForeignKey(f"{SCHEMA}.it_tickets.id"))
+    software_name = Column(String)
+    version = Column(String, nullable=True)
+    justification = Column(Text)
+    requires_admin = Column(Boolean, default=True)
+    status = Column(String, default="Pending")  # Pending, Approved, Installed, Rejected
+    approved_by = Column(String, nullable=True)
+    installed_at = Column(DateTime, nullable=True)
+
+class AssetAssignment(Base):
+    __tablename__ = "asset_assignments"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    asset_type = Column(String)  # Laptop, Monitor, Keyboard, Mouse, Headset
+    asset_tag = Column(String, unique=True)
+    brand = Column(String)
+    model = Column(String)
+    serial_number = Column(String)
+    assigned_date = Column(Date)
+    returned_date = Column(Date, nullable=True)
+    status = Column(String, default="Assigned")  # Assigned, Returned
+
+# ── Manager Domain ────────────────────────
+class TrainingAssignment(Base):
+    __tablename__ = "training_assignments"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    assigned_by = Column(Integer, ForeignKey("employees.id"))
+    course_name = Column(String)
+    platform = Column(String)  # Udemy, Coursera, LinkedIn Learning, Internal
+    due_date = Column(Date)
+    status = Column(String, default="Assigned")  # Assigned, In Progress, Completed, Overdue
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class EmployeeSkillMap(Base):
+    __tablename__ = "employee_skills"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    skill_name = Column(String)
+    proficiency = Column(String)  # Beginner, Intermediate, Expert
+    last_assessed = Column(Date)
+    certified = Column(Boolean, default=False)
+
+class ProjectAssignment(Base):
+    __tablename__ = "project_assignments"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    project_name = Column(String)
+    role = Column(String)
+    start_date = Column(Date)
+    end_date = Column(Date, nullable=True)
+    allocation_pct = Column(Float, default=100.0)
+    status = Column(String, default="Active")  # Active, Completed, On Hold
+
+# ── Prompt Config (Role-Based) ────────────
+class PromptConfig(Base):
+    __tablename__ = "prompt_configs"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    agent_domain = Column(String)  # hr, admin, it_support, pmo, functional_manager
+    prompt_key = Column(String)  # system_prompt, tool_instruction, guardrail
+    prompt_value = Column(Text)
+    version = Column(Integer, default=1)
+    is_active = Column(Boolean, default=True)
+    allowed_roles = Column(String)  # comma separated: admin,hr_manager,it_admin
+    created_by = Column(String)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+# ── HITL Tracking ─────────────────────────
+class HITLRequest(Base):
+    __tablename__ = "hitl_requests"
+    __table_args__ = {"schema": SCHEMA}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String)
+    ticket_id = Column(String)  # Reference to it_tickets.ticket_id
+    request_type = Column(String)  # admin_password, approval, escalation
+    status = Column(String, default="Pending")  # Pending, Completed, Expired
+    requested_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(String, nullable=True)

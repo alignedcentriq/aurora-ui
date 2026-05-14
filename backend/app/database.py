@@ -12,6 +12,17 @@ from app.models import (
     Sprint,
     TeamCapacity,
     Milestone,
+    Reimbursement,
+    ITTicket,
+    TrainingAssignment,
+    PromptConfig,
+    HITLRequest,
+    EmployeeSkillMap,
+    ProjectAssignment,
+    ParkingSticker,
+    Accommodation,
+    FacilityComplaint,
+    FoodVendorFeedback,
     SCHEMA,
 )
 from app.config import settings
@@ -72,6 +83,16 @@ def init_db():
             db.query(Project).delete()
             db.commit()
             _seed_pmo_data(db)
+            
+        # NEW: seed new domain data
+        if db.query(Reimbursement).count() == 0:
+            _seed_admin_data(db)
+        if db.query(ITTicket).count() == 0:
+            _seed_it_data(db)
+        if db.query(TrainingAssignment).count() == 0:
+            _seed_manager_data(db)
+        if db.query(PromptConfig).count() == 0:
+            _seed_prompt_configs(db)
             
     except Exception as e:
         print(f"Error during init_db: {e}")
@@ -328,3 +349,181 @@ def _seed_pmo_data(db):
 
     db.commit()
     print("PMO seeding complete.")
+
+def _seed_admin_data(db):
+    print("Seeding Admin data...")
+    from app.models import Reimbursement, ParkingSticker, Accommodation, FacilityComplaint, FoodVendorFeedback
+    
+    employees = db.query(Employee).all()
+    if not employees: return
+    
+    # Seed Reimbursements
+    for _ in range(15):
+        emp = random.choice(employees)
+        db.add(Reimbursement(
+            employee_id=emp.id,
+            type=random.choice(["Travel", "Medical", "Certification", "Equipment"]),
+            amount=random.randint(500, 10000),
+            status=random.choice(["Pending", "Approved", "Rejected"]),
+            reason="Sample reimbursement"
+        ))
+    
+    # Seed Parking Stickers
+    for _ in range(20):
+        emp = random.choice(employees)
+        db.add(ParkingSticker(
+            employee_id=emp.id,
+            vehicle_type=random.choice(["2-wheeler", "4-wheeler"]),
+            vehicle_number=f"KA-01-{random.randint(1000, 9999)}",
+            sticker_number=f"P-{random.randint(1000, 9999)}",
+            valid_from=datetime.date.today(),
+            valid_until=datetime.date.today() + datetime.timedelta(days=365),
+            status="Active"
+        ))
+        
+    # Seed Accommodations
+    for _ in range(5):
+        emp = random.choice(employees)
+        db.add(Accommodation(
+            employee_id=emp.id,
+            type=random.choice(["Guest House", "Hotel"]),
+            check_in=datetime.date.today() + datetime.timedelta(days=random.randint(1, 10)),
+            check_out=datetime.date.today() + datetime.timedelta(days=random.randint(11, 15)),
+            location="Pune",
+            status="Pending"
+        ))
+        
+    # Seed Facility Complaints
+    for i in range(10):
+        emp = random.choice(employees)
+        db.add(FacilityComplaint(
+            ticket_id=f"FC-00{i+1}",
+            employee_id=emp.id,
+            category=random.choice(["Housekeeping", "Electrical", "Plumbing", "AC", "Cafeteria"]),
+            description="Sample complaint description",
+            location="Floor 2, Wing A",
+            priority=random.choice(["Low", "Medium", "High"]),
+            status=random.choice(["Open", "In Progress", "Resolved"])
+        ))
+        
+    # Seed Food Feedback
+    vendors = ["Fresh Bites", "Spice Kitchen", "Green Bowl"]
+    for _ in range(25):
+        emp = random.choice(employees)
+        db.add(FoodVendorFeedback(
+            employee_id=emp.id,
+            vendor_name=random.choice(vendors),
+            rating=random.randint(3, 5),
+            food_quality=random.randint(3, 5),
+            hygiene=random.randint(3, 5),
+            service=random.randint(3, 5),
+            comments="Good food"
+        ))
+        
+    db.commit()
+    print("Admin seeding complete.")
+
+def _seed_it_data(db):
+    print("Seeding IT data...")
+    from app.models import ITTicket, SoftwareRequest, AssetAssignment
+    
+    employees = db.query(Employee).all()
+    if not employees: return
+    
+    # Seed IT Tickets
+    for i in range(20):
+        emp = random.choice(employees)
+        db.add(ITTicket(
+            ticket_id=f"IT-00{i+1}",
+            employee_id=emp.id,
+            category=random.choice(["Software Install", "Hardware", "Network", "Access", "Security"]),
+            subject="Issue with my device",
+            description="I am facing issues with my primary workstation.",
+            priority=random.choice(["Low", "Medium", "High", "Critical"]),
+            status=random.choice(["Open", "In Progress", "Resolved", "Closed"])
+        ))
+        
+    # Seed Asset Assignments
+    asset_types = ["Laptop", "Monitor", "Keyboard", "Mouse", "Headset"]
+    brands = ["Dell", "HP", "Logitech", "Jabra"]
+    for emp in employees:
+        # Give every employee a laptop
+        db.add(AssetAssignment(
+            employee_id=emp.id,
+            asset_type="Laptop",
+            asset_tag=f"AA-LAP-{emp.id:03}",
+            brand=random.choice(["Dell", "HP", "MacBook"]),
+            model="Precision 5550" if i % 2 == 0 else "EliteBook 840",
+            serial_number=f"SN-{random.randint(100000, 999999)}",
+            assigned_date=emp.joining_date,
+            status="Assigned"
+        ))
+        
+    db.commit()
+    print("IT seeding complete.")
+
+def _seed_manager_data(db):
+    print("Seeding Manager data...")
+    from app.models import TrainingAssignment, EmployeeSkillMap, ProjectAssignment
+    
+    employees = db.query(Employee).all()
+    if not employees: return
+    
+    # Training Assignments
+    courses = [
+        ("Python for Data Science", "Udemy"),
+        ("Advanced React Patterns", "Coursera"),
+        ("Project Management Professional (PMP)", "Internal"),
+        ("AWS Certified Solutions Architect", "Internal")
+    ]
+    for _ in range(15):
+        emp = random.choice(employees)
+        mgr = random.choice(employees)
+        course, platform = random.choice(courses)
+        db.add(TrainingAssignment(
+            employee_id=emp.id,
+            assigned_by=mgr.id,
+            course_name=course,
+            platform=platform,
+            due_date=datetime.date.today() + datetime.timedelta(days=30),
+            status=random.choice(["Assigned", "In Progress", "Completed"])
+        ))
+        
+    # Skill Maps
+    skills = ["Python", "React", "SQL", "Project Management", "UI Design", "AWS", "Docker"]
+    for emp in employees:
+        for _ in range(3):
+            db.add(EmployeeSkillMap(
+                employee_id=emp.id,
+                skill_name=random.choice(skills),
+                proficiency=random.choice(["Beginner", "Intermediate", "Expert"]),
+                last_assessed=datetime.date.today() - datetime.timedelta(days=random.randint(1, 100)),
+                certified=random.choice([True, False])
+            ))
+            
+    db.commit()
+    print("Manager seeding complete.")
+
+def _seed_prompt_configs(db):
+    print("Seeding Prompt Configs...")
+    
+    prompts = [
+        ("hr", "system_prompt", "You are the HR Assistant for Aligned Automation. Help employees with leave management, WFH requests, payroll queries, and HR policies.", "admin,hr_manager"),
+        ("admin", "system_prompt", "You are the Admin Services Assistant. Help with reimbursements (travel, medical, certification), parking sticker applications, guest accommodation, and facility complaints.", "admin,admin_manager"),
+        ("it_support", "system_prompt", "You are the IT Support Assistant. Help with software installation, hardware issues, network problems, and asset management.", "admin,it_admin"),
+        ("pmo", "system_prompt", "You are the PMO Assistant. Help with project status, sprint summaries, and team capacity queries.", "admin,pmo_manager"),
+        ("functional_manager", "system_prompt", "You are the Manager Assistant. Help managers view team attendance, approve leaves, and assign trainings.", "admin,functional_manager")
+    ]
+    
+    for domain, key, value, roles in prompts:
+        db.add(PromptConfig(
+            agent_domain=domain,
+            prompt_key=key,
+            prompt_value=value,
+            allowed_roles=roles,
+            is_active=True,
+            created_by="System"
+        ))
+        
+    db.commit()
+    print("Prompt Configs seeding complete.")
