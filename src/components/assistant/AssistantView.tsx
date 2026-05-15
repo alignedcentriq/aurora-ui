@@ -61,14 +61,14 @@ export function AssistantView() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize a new thread on every fresh mount (refresh)
+  // Initialize a new thread ONLY if one doesn't exist (persistence will restore activeId)
   const initialized = useRef(false);
   useEffect(() => {
-    if (!initialized.current) {
+    if (!initialized.current && !activeId) {
       createThread();
       initialized.current = true;
     }
-  }, [createThread]);
+  }, [createThread, activeId]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
@@ -118,6 +118,7 @@ export function AssistantView() {
         body: JSON.stringify({
           message: text,
           history,
+          session_id: activeId,
           preferences: {
             tone: aiTone,
             nickname: userNickname,

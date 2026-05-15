@@ -1,10 +1,13 @@
 import requests
 import datetime
 import time
+import logging
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import GraphSubscription, SharePointDeltaToken, SharePointFile, SyncFailureLog, Policy
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class GraphClient:
@@ -29,6 +32,8 @@ class GraphClient:
             "grant_type": "client_credentials"
         }
         response = requests.post(url, data=payload)
+        if response.status_code != 200:
+            print(f"Graph Token Error: {response.status_code} - {response.text}")
         response.raise_for_status()
         data = response.json()
         self._access_token = data["access_token"]
@@ -92,6 +97,47 @@ class GraphClient:
         response = requests.get(url, headers=self._headers())
         response.raise_for_status()
         return response.json()
+
+    def list_folder_contents(self, drive_id: str, folder_path: str = None):
+        if folder_path and folder_path != "/":
+            url = f"{self.base_url}/drives/{drive_id}/root:/{folder_path}:/children"
+        else:
+            url = f"{self.base_url}/drives/{drive_id}/root/children"
+        
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json().get("value", [])
+
+    def download_file(self, drive_id: str, item_id: str):
+        url = f"{self.base_url}/drives/{drive_id}/items/{item_id}/content"
+        response = requests.get(url, headers=self._headers(), stream=True)
+        response.raise_for_status()
+        return response
+
+    def get_site_id(self, site_name: str):
+        print(f"DEBUG: Using Token: {self._get_token()[:20]}...")
+        # If user provides a full URL, clean it up to the format Graph expects:
+        # 'hostname:/sites/sitename'
+        clean_site = site_name.replace("https://", "").replace("http://", "").strip()
+        if "/" in clean_site and ":" not in clean_site:
+            # Convert 'tenant.sharepoint.com/sites/name' to 'tenant.sharepoint.com:/sites/name'
+            parts = clean_site.split("/", 1)
+            clean_site = f"{parts[0]}:/{parts[1]}"
+        
+        url = f"{self.base_url}/sites/{clean_site}"
+        logger.info(f"Resolving SharePoint site ID for: {clean_site}")
+        
+        response = requests.get(url, headers=self._headers())
+        if response.status_code == 401:
+             logger.error(f"Graph API 401 Unauthorized. Check if Client Secret is correct and App has 'Sites.Read.All' permission. Response: {response.text}")
+        response.raise_for_status()
+        return response.json().get("id")
+
+    def get_drive_id(self, site_id: str):
+        url = f"{self.base_url}/sites/{site_id}/drive"
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json().get("id")
 
 graph_client = GraphClient()
 

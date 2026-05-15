@@ -85,31 +85,33 @@ class HRService:
 
     @staticmethod
     def search_policies(query: str):
-        db = SessionLocal()
+        """Search policies using the enhanced PolicyService (real documents)."""
         try:
-            policies = db.query(Policy).all()
-            # Extract keywords longer than 3 characters
-            query_words = [w.lower() for w in query.split() if len(w) > 3]
-            if not query_words:
-                query_words = [query.lower()]
-                
-            relevant = []
-            for p in policies:
-                text = (p.title + " " + p.content).lower()
-                # Score by how many keywords are present
-                score = sum(1 for w in query_words if w in text)
-                if score > 0:
-                    relevant.append((score, p))
+            from app.services.policy_service import PolicyService
+            return PolicyService.search_policies(query)
+        except Exception as e:
+            # Fallback to basic search if PolicyService fails
+            db = SessionLocal()
+            try:
+                policies = db.query(Policy).all()
+                query_words = [w.lower() for w in query.split() if len(w) > 3]
+                if not query_words:
+                    query_words = [query.lower()]
                     
-            if not relevant:
-                available_titles = "\n".join([f"- {p.title}" for p in policies])
-                return f"No specific policy found for your query. However, here is a list of all available policies:\n{available_titles}\n\nPlease check if any of these match what you are looking for."
-            
-            # Sort by score descending and take top 3
-            relevant.sort(key=lambda x: x[0], reverse=True)
-            top_policies = [p for score, p in relevant[:3]]
-            
-            return "\n\n".join([f"**{p.title}**\n{p.content}" for p in top_policies])
-        finally:
-            db.close()
-
+                relevant = []
+                for p in policies:
+                    text = (p.title + " " + (p.content or "")).lower()
+                    score = sum(1 for w in query_words if w in text)
+                    if score > 0:
+                        relevant.append((score, p))
+                        
+                if not relevant:
+                    available_titles = "\n".join([f"- {p.title}" for p in policies])
+                    return f"No specific policy found for your query. Available policies:\n{available_titles}"
+                
+                relevant.sort(key=lambda x: x[0], reverse=True)
+                top_policies = [p for score, p in relevant[:3]]
+                
+                return "\n\n".join([f"**{p.title}**\n{(p.content or '')[:500]}..." for p in top_policies])
+            finally:
+                db.close()
