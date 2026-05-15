@@ -23,6 +23,11 @@ from app.models import (
     Accommodation,
     FacilityComplaint,
     FoodVendorFeedback,
+    EmployeeZohoProfile,
+    Announcement,
+    FoodComplaint,
+    SessionTranscript,
+    ChatFeedback,
     SCHEMA,
 )
 from app.config import settings
@@ -57,14 +62,19 @@ def init_db():
         
     Base.metadata.create_all(bind=engine)
     
-    # Simple migration: ensure achievements column exists in projects table
+    # Migrations: add columns that may not exist in older deployments
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
-            try:
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT'))
-                conn.commit()
-            except Exception as e:
-                print(f"Migration notice (achievements column): {e}")
+            for stmt in [
+                f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
+                f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Migration notice: {e}")
 
     db = SessionLocal()
 
@@ -100,7 +110,17 @@ def init_db():
             _seed_manager_data(db)
         if db.query(PromptConfig).count() == 0:
             _seed_prompt_configs(db)
-        
+        else:
+            _migrate_prompt_configs(db)
+        if db.query(EmployeeZohoProfile).count() == 0:
+            _seed_zoho_profiles(db)
+        if db.query(Announcement).count() == 0:
+            _seed_announcements(db)
+        if db.query(SessionTranscript).count() == 0:
+            _seed_transcripts(db)
+        # ChatFeedback and FoodComplaint are user-generated — no seed data needed
+        _ = db.query(ChatFeedback).count()  # ensure table exists
+
         # Ingest real policy documents from OneDrive folder (if not already done)
         policy_count = db.query(Policy).count()
         if policy_count < 10:  # only 4 dummy policies from HR seed
@@ -521,12 +541,188 @@ def _seed_manager_data(db):
     db.commit()
     print("Manager seeding complete.")
 
+def _seed_zoho_profiles(db):
+    print("Seeding ZOHO employee profiles...")
+    employees = db.query(Employee).all()
+    if not employees:
+        return
+
+    functions = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
+    levels = ["L1", "L2", "L3", "L4", "L5"]
+    grades = ["A1", "A2", "B1", "B2", "C1"]
+    managers = ["Suraj G.", "Priyanka M.", "Shivam K.", "Kajal S.", "Shivani R."]
+    blood_groups = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"]
+    languages = ["English, Hindi", "English, Marathi", "English, Tamil", "English, Telugu", "English, Kannada"]
+    sub_locations = ["Mumbai - HQ", "Bangalore - Tower A", "Pune - East Wing", "Gurgaon - Block B", "Hyderabad - SEZ"]
+    skills_pool = [
+        "Python, FastAPI, LangChain",
+        "React, TypeScript, TailwindCSS",
+        "Project Management, JIRA, Agile",
+        "SQL, PostgreSQL, Data Analysis",
+        "UI/UX Design, Figma",
+        "AWS, Docker, Kubernetes",
+        "HR Operations, ZOHO People",
+        "Finance, Tally, GST",
+        "IT Support, ManageEngine, Networking",
+    ]
+    expertise_pool = [
+        "Multi-agent AI systems",
+        "Frontend performance optimization",
+        "Sprint planning and delivery",
+        "Database query optimization",
+        "User research and wireframing",
+        "Cloud infrastructure",
+        "Employee lifecycle management",
+        "Tax and compliance",
+        "Endpoint management and helpdesk",
+    ]
+
+    for i, emp in enumerate(employees):
+        first, *rest = emp.name.split()
+        last = rest[0] if rest else ""
+        mgr = managers[i % len(managers)]
+        fn = functions[i % len(functions)]
+
+        db.add(EmployeeZohoProfile(
+            employee_id=emp.id,
+            zoho_link_id=f"ZOHO-{emp.employee_id}",
+            first_name=first,
+            last_name=last,
+            official_email=emp.email,
+            function=fn,
+            designation=emp.designation,
+            zoho_role="Employee",
+            employment_type=emp.employment_type,
+            employee_status="Active",
+            source_of_hire=random.choice(["Direct", "Referral", "Agency", "Campus"]),
+            date_of_joining=emp.joining_date,
+            date_of_confirmation=emp.joining_date + datetime.timedelta(days=180) if emp.joining_date else None,
+            tenure_in_aa=f"{random.randint(1, 4)} years",
+            total_experience=f"{random.randint(2, 12)} years",
+            reporting_manager=mgr,
+            functional_manager=managers[(i + 1) % len(managers)],
+            age=random.randint(24, 45),
+            gender=random.choice(["Male", "Female"]),
+            about_me=f"Passionate {fn} professional at Aligned Automation.",
+            blood_group=random.choice(blood_groups),
+            expertise=expertise_pool[i % len(expertise_pool)],
+            work_phone=f"+91-{random.randint(7000000000, 9999999999)}",
+            extension=f"{1000 + i}",
+            sub_location=sub_locations[i % len(sub_locations)],
+            tags=fn.lower(),
+            onboarding_status="Completed",
+            organization_structure="Flat",
+            level=levels[i % len(levels)],
+            grade=grades[i % len(grades)],
+            skill_set=skills_pool[i % len(skills_pool)],
+            language_known=languages[i % len(languages)],
+            resource_management_function=fn,
+            project_manager=managers[(i + 2) % len(managers)],
+            nationality="Indian",
+            active_details="Active",
+        ))
+
+    db.commit()
+    print("ZOHO profile seeding complete.")
+
+
+def _seed_announcements(db):
+    print("Seeding sample announcements...")
+    samples = [
+        ("Office Closure — Diwali", "The office will be closed on 20th Oct for Diwali. Wishing everyone a Happy Diwali!", "Holiday", "hr", "all"),
+        ("WFH Policy Update", "Effective June 1st, the WFH policy is updated to 3 days from office per week. Please refer to the HR portal for details.", "Policy Update", "hr", "all"),
+        ("Planned Network Maintenance", "IT will perform network maintenance on Saturday 18th May, 11 PM – 2 AM. VPN and internal tools may be intermittently unavailable.", "IT Alert", "it_support", "all"),
+        ("New Cafeteria Vendor — Spice Kitchen", "We welcome a new cafeteria partner — Spice Kitchen — starting Monday. Do give them a try and share your feedback!", "Events", "admin", "all"),
+        ("Quarterly Town Hall — May 2026", "Join us for the Q1 Town Hall on 25th May at 4 PM IST (virtual + in-person at HQ). Agenda will be shared shortly.", "Events", "hr", "all"),
+    ]
+    for title, body, category, domain, audience in samples:
+        db.add(Announcement(
+            title=title,
+            body=body,
+            category=category,
+            created_by="system@centriq.ai",
+            created_by_domain=domain,
+            target_audience=audience,
+            is_active=True,
+        ))
+    db.commit()
+    print("Announcements seeding complete.")
+
+
+def _seed_transcripts(db):
+    print("Seeding session transcripts...")
+    samples = [
+        (
+            "Centriq AI", "Flash Review — Sprint 5 Week 1", "Flash Review",
+            "Completed LangGraph router refactor. HR agent now handles employee directory queries via ZOHO profiles. "
+            "IT ticket email dispatch to ManageEngine integrated. Blockers: Redis checkpointer latency on high-concurrency sessions.",
+        ),
+        (
+            "Centriq AI", "PMO Monitored — Sprint 5 Mid-Check", "PMO Monitored",
+            "PMO review noted 28/38 story points completed at sprint mid-point. "
+            "Risk flagged: UAT timeline may slip by 2 days due to delayed QA environment setup. "
+            "Mitigation: parallel QA and dev tracks proposed.",
+        ),
+        (
+            "Aurora UI", "Sprint Review — Sprint 4", "Sprint Review",
+            "Delivered: chat interface glassmorphic redesign, TanStack router migration, MSAL SSO. "
+            "Velocity: 44/44 points. No blockers. Next sprint focus: PMO dashboard and announcement banner.",
+        ),
+        (
+            "HR Integration", "Flash Review — API Finalization", "Flash Review",
+            "ZOHO People API sync design finalized. Non-sensitive fields identified. "
+            "Payroll endpoint secured with role-based access. "
+            "Open item: confirm data retention policy with legal before enabling auto-sync.",
+        ),
+        (
+            "Grafana Monitoring", "Standup — Loki Integration", "Standup",
+            "Loki log ingestion pipeline configured. Aurora backend structured JSON logs flowing in. "
+            "Dashboard panels for agent routing latency and error rates drafted. "
+            "Pending: Grafana alerting rules for p95 latency > 2s.",
+        ),
+        (
+            "LangGraph Routing Engine", "Project Review — Intent Classifier v1", "Project Review",
+            "Intent classifier achieves 95% accuracy on 200-sample test set. "
+            "Domains: HR, IT, Admin, PMO, Org. Fallback to general Q&A for unclassified intents. "
+            "Next: add confidence threshold to avoid misrouting ambiguous queries.",
+        ),
+    ]
+    for project_name, title, session_type, summary in samples:
+        db.add(SessionTranscript(
+            project_name=project_name,
+            session_title=title,
+            session_type=session_type,
+            summary=summary,
+            uploaded_by="system@centriq.ai",
+            session_date=datetime.date.today() - datetime.timedelta(days=random.randint(1, 14)),
+        ))
+    db.commit()
+    print("Session transcript seeding complete.")
+
+
+def _migrate_prompt_configs(db):
+    """Update existing prompt configs that still have the old generic text."""
+    updates = {
+        "admin": "You are the Admin Services Assistant for Aligned Automation. You handle: parking stickers, reimbursements, accommodation, facility complaints, food complaints and ratings. For every request, call the matching tool. If required details are missing (e.g. vehicle number for a parking sticker), ask the user for them. Never refuse a request you have a tool for.",
+    }
+    for domain, new_value in updates.items():
+        config = db.query(PromptConfig).filter(
+            PromptConfig.agent_domain == domain,
+            PromptConfig.prompt_key == "system_prompt",
+            PromptConfig.is_active == True,
+        ).order_by(PromptConfig.version.desc()).first()
+        if config and config.prompt_value != new_value:
+            config.prompt_value = new_value
+            print(f"Migrated system_prompt for domain: {domain}")
+    db.commit()
+
+
 def _seed_prompt_configs(db):
     print("Seeding Prompt Configs...")
     
     prompts = [
         ("hr", "system_prompt", "You are the HR Assistant for Aligned Automation. Help employees with leave management, WFH requests, payroll queries, and HR policies.", "admin,hr_manager"),
-        ("admin", "system_prompt", "You are the Admin Services Assistant. Help with reimbursements (travel, medical, certification), parking sticker applications, guest accommodation, and facility complaints.", "admin,admin_manager"),
+        ("admin", "system_prompt", "You are the Admin Services Assistant for Aligned Automation. You have tools to handle ALL of these — ALWAYS call the right tool, never say you cannot help: parking sticker requests (request_parking_sticker — ask for vehicle_number, vehicle_make, vehicle_model, vehicle_type if missing), surrender parking sticker (surrender_parking_sticker), view parking info (get_parking_info), reimbursements travel/medical/certification/equipment (submit_reimbursement, check_reimbursement_status), accommodation guest-house/hotel (request_accommodation), facility complaints cleanliness/electrical/AC/plumbing/safety (file_facility_complaint), complaint status (check_complaint_status), food complaints (submit_food_complaint), food vendor ratings (submit_food_feedback, get_vendor_ratings). CRITICAL: If the user requests a parking sticker and details are missing, ASK for them — do NOT say you cannot help.", "admin,admin_manager"),
         ("it_support", "system_prompt", "You are the IT Support Assistant. Help with software installation, hardware issues, network problems, and asset management.", "admin,it_admin"),
         ("pmo", "system_prompt", "You are the PMO Assistant. Help with project status, sprint summaries, and team capacity queries.", "admin,pmo_manager"),
         ("functional_manager", "system_prompt", "You are the Manager Assistant. Help managers view team attendance, approve leaves, and assign trainings.", "admin,functional_manager")

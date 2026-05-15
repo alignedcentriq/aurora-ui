@@ -6,7 +6,7 @@ import logging
 import json
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -23,6 +23,9 @@ from app.document_store import get_pdf
 from app.pmo_routes import router as pmo_router
 from app.routes.it_routes import router as it_router
 from app.routes.prompt_routes import router as prompt_router
+from app.routes.announcement_routes import router as announcement_router
+from app.routes.employee_routes import router as employee_router
+from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
 from app.langfuse_tracing import langfuse_trace, langfuse_event
@@ -60,6 +63,8 @@ app.include_router(sharepoint_router, prefix="/api")
 app.include_router(pmo_router)
 app.include_router(it_router)
 app.include_router(prompt_router)
+app.include_router(announcement_router)
+app.include_router(employee_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,6 +82,15 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     session_id: Optional[str] = "default_session_v2"
+
+class FeedbackRequest(BaseModel):
+    rating: str                          # "up" or "down"
+    index: Optional[int] = None          # message index in conversation
+    threadId: Optional[str] = None       # session / thread id
+    domain: Optional[str] = None
+    user_message: Optional[str] = None
+    ai_response: Optional[str] = None
+    feedback_text: Optional[str] = None
 
 class WebhookPolicyRequest(BaseModel):
     title: str
@@ -124,14 +138,55 @@ async def root():
     return {"status": "online", "message": "Centriq AI Backend is running"}
 
 @app.post("/api/feedback")
-async def feedback(data: dict):
-    return {"status": "success", "message": "Feedback logged"}
+async def feedback(req: FeedbackRequest):
+    rating_int = 1 if req.rating == "up" else -1
+    FeedbackService.record(
+        session_id=req.threadId or "unknown",
+        domain=req.domain or "unknown",
+        user_message=req.user_message or "",
+        ai_response=req.ai_response or "",
+        rating=rating_int,
+        feedback_text=req.feedback_text or "",
+    )
+    return {"status": "success"}
+
+@app.get("/api/feedback/stats")
+async def feedback_stats(domain: str = ""):
+    return FeedbackService.get_stats(domain or "")
 
 @app.post("/api/track")
 async def track_data(log: CustomLog):
     logger.info("custom_event", extra={"event_name": log.event, "custom_data": log.data})
     langfuse_event(log.event, log.data)
     return {"status": "success", "message": "Event tracked successfully"}
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Accept a PDF or text file and return its extracted text content."""
+    filename = file.filename or "upload"
+    content_bytes = await file.read()
+
+    extracted = ""
+    if filename.lower().endswith(".pdf"):
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content_bytes)) as pdf:
+                extracted = "\n".join(
+                    page.extract_text() or "" for page in pdf.pages
+                ).strip()
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"PDF extraction failed: {e}")
+    else:
+        try:
+            extracted = content_bytes.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Text decoding failed: {e}")
+
+    if not extracted:
+        raise HTTPException(status_code=422, detail="Could not extract text from file")
+
+    return {"text": extracted, "filename": filename, "char_count": len(extracted)}
+
 
 @app.get("/api/documents/download/{file_id}")
 async def download_document(file_id: str):
@@ -202,6 +257,45 @@ async def chat(request: ChatRequest):
     except Exception as e:
         print(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/stats")
+async def get_admin_stats():
+    db = SessionLocal()
+    try:
+        from app.models import ITTicket, FacilityComplaint, ParkingSticker, Reimbursement, FoodComplaint, Announcement
+        import datetime
+        today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
+
+        return {
+            "it_tickets": {
+                "total": db.query(ITTicket).count(),
+                "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
+                "resolved_today": db.query(ITTicket).filter(
+                    ITTicket.resolved_at >= today_start
+                ).count(),
+            },
+            "facility_complaints": {
+                "total": db.query(FacilityComplaint).count(),
+                "open": db.query(FacilityComplaint).filter(FacilityComplaint.status == "Open").count(),
+            },
+            "parking": {
+                "active": db.query(ParkingSticker).filter(ParkingSticker.status == "Active").count(),
+                "pending": db.query(ParkingSticker).filter(ParkingSticker.status == "Pending").count(),
+            },
+            "reimbursements": {
+                "pending": db.query(Reimbursement).filter(Reimbursement.status == "Pending").count(),
+                "total": db.query(Reimbursement).count(),
+            },
+            "announcements": {
+                "active": db.query(Announcement).filter(Announcement.is_active == True).count(),
+            },
+            "food_complaints": {
+                "open": db.query(FoodComplaint).filter(FoodComplaint.status == "Open").count(),
+            },
+        }
+    finally:
+        db.close()
+
 
 @app.get("/api/hr/dashboard")
 async def get_hr_dashboard():

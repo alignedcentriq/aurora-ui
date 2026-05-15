@@ -20,9 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type Turn =
-  | { role: "user"; text: string }
-  | { role: "ai"; text: string; card?: boolean; downloadUrl?: string; downloadTitle?: string };
+import type { Turn } from "@/lib/chat-store";
 
 interface ThreadData {
   id: string;
@@ -49,7 +47,7 @@ import { useSettings } from "@/lib/settings-store";
 export function AssistantView() {
   const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
     useChatStore();
-  const { aiTone, userNickname, reasoningDepth, responseFormat, actionExecution } = useSettings();
+  const { theme } = useSettings();
   const { user } = useAuth();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -119,13 +117,7 @@ export function AssistantView() {
           message: text,
           history,
           session_id: activeId,
-          preferences: {
-            tone: aiTone,
-            nickname: userNickname,
-            reasoningDepth,
-            responseFormat,
-            actionExecution,
-          },
+          preferences: {},
         }),
       })
         .then(async (res) => {
@@ -145,6 +137,7 @@ export function AssistantView() {
             text: responseText,
             downloadUrl: data.download_url ?? undefined,
             downloadTitle: data.download_title ?? undefined,
+            domain: data.domain ?? undefined,
           });
         })
         .catch((err) => {
@@ -157,7 +150,7 @@ export function AssistantView() {
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking, aiTone, userNickname, reasoningDepth, responseFormat, actionExecution],
+    [activeId, input, threads, addTurn, setThinking],
   );
 
   const handleNewChat = () => {
@@ -171,10 +164,19 @@ export function AssistantView() {
   };
 
   const handleFeedback = (rating: "up" | "down", index: number) => {
+    const turns = (activeId ? threads[activeId]?.turns : undefined) || [];
+    const aiTurn = turns[index];
+    const prevUserTurn = turns.slice(0, index).reverse().find((t: Turn) => t.role === "user");
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, index, threadId: activeId }),
+      body: JSON.stringify({
+        rating,
+        index,
+        threadId: activeId,
+        user_message: prevUserTurn?.text || "",
+        ai_response: aiTurn?.text || "",
+      }),
     })
       .then(() => {
         toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
@@ -241,8 +243,6 @@ export function AssistantView() {
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* Top bar */}
-
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
           <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
             {activeThread.turns.length === 0 ? (
@@ -279,7 +279,7 @@ export function AssistantView() {
                       {t.text}
                     </UserMessage>
                   ) : (
-                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
+                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)} domain={t.role === "ai" ? t.domain : undefined}>
                       <div className="space-y-4">
                         <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
                           {renderInline(t.text)}

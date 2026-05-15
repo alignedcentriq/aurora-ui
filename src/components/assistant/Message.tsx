@@ -18,28 +18,32 @@ export function UserMessage({
       <div className="chat-bubble-user">
         <div className="text-[15px] leading-relaxed">{children}</div>
       </div>
-      {initials ? (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-sm">
-          {initials}
-        </div>
-      ) : (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white text-[11px] font-bold">
-          U
-        </div>
-      )}
     </div>
   );
 }
+
+const DOMAIN_BADGE: Record<string, { label: string; classes: string }> = {
+  hr: { label: "HR", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  admin: { label: "Admin", classes: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  it_support: { label: "IT Support", classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  pmo: { label: "PMO", classes: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+  functional_manager: { label: "Manager", classes: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  general: { label: "General", classes: "bg-muted text-muted-foreground" },
+};
 
 export function AIMessage({
   children,
   live,
   onFeedback,
+  domain,
 }: {
   children: ReactNode;
   live?: boolean;
   onFeedback?: (rating: "up" | "down") => void;
+  domain?: string;
 }) {
+  const badge = domain ? DOMAIN_BADGE[domain] : null;
+
   return (
     <div className="flex w-full justify-start animate-[slide-up_.5s_cubic-bezier(0.16,1,0.3,1)_both]">
       <div className="flex max-w-[85%] gap-3">
@@ -51,8 +55,15 @@ export function AIMessage({
           </div>
 
           <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
-              <BrandName withAI />
+            <div className="flex items-center gap-2">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
+                <BrandName withAI />
+              </div>
+              {badge && (
+                <span className={cn("rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider", badge.classes)}>
+                  {badge.label}
+                </span>
+              )}
             </div>
             {!live && onFeedback && (
               <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">

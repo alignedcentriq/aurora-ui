@@ -23,6 +23,7 @@ import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/chat-store";
+import { AnnouncementBanner } from "./assistant/AnnouncementBanner";
 
 const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string }> = {
   Employee: { icon: Briefcase, color: "text-blue-400", label: "Employee" },
@@ -192,6 +193,8 @@ export function Sidebar() {
             </div>
           </>
         )}
+
+        <AnnouncementBanner />
       </nav>
 
       {/* User Switcher */}

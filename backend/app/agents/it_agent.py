@@ -1,10 +1,11 @@
+import json
 from typing import Annotated, List, TypedDict, Union
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from app.services.it_service import ITService
-from app.services.prompt_service import PromptService
+from app.services.prompt_service import PromptService, UNIVERSAL_GUARDRAIL
 from app.config import settings
 from langchain_openai import ChatOpenAI
 
@@ -50,9 +51,19 @@ tools = [
 tool_node = ToolNode(tools)
 
 def it_assistant(state: ITState):
-    default_prompt = "You are the IT Support Assistant for Aligned Automation. Help employees with software installation, hardware issues, network problems, and asset management. Note that software installations requiring admin passwords will trigger an asynchronous HITL (Human-In-The-Loop) request to the IT Admin team. Inform the user when such a request is initiated."
-    system_prompt = PromptService.get_system_prompt("it_support", default_prompt)
-    
+    user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
+    default_prompt = (
+        f"You are the IT Support Assistant for Aligned Automation. "
+        f"The currently logged-in employee's email is: {user_email}. "
+        f"IMPORTANT: Always use this email for tool calls — NEVER ask the user for their email, name, or identity. "
+        f"Help employees with software installation, hardware issues, network problems, and asset management. "
+        f"Note that software installations requiring admin passwords will trigger an asynchronous HITL "
+        f"(Human-In-The-Loop) request to the IT Admin team. Inform the user when such a request is initiated."
+    )
+    base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
+    guardrail = PromptService.get_guardrail("it_support")
+    system_prompt = base_prompt + guardrail
+
     messages = [HumanMessage(content=system_prompt)] + state["messages"]
     model = ChatOpenAI(
         base_url=settings.ROUTER_BASE_URL,

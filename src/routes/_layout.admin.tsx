@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -28,6 +28,14 @@ import {
   Server,
   Shield,
   Eye,
+  Ticket,
+  AlertTriangle,
+  Car,
+  Receipt,
+  Megaphone,
+  Plus,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -101,10 +109,107 @@ function StatCard({ title, value, change, trend, icon: Icon, iconColor }: StatCa
   );
 }
 
+interface OpsMetricProps {
+  label: string;
+  value: number | string;
+  sub: string;
+  icon: typeof Ticket;
+  color: string;
+}
+
+function OpsMetric({ label, value, sub, icon: Icon, color }: OpsMetricProps) {
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] px-4 py-4">
+      <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", color)}>
+        <Icon className="h-5 w-5 text-white" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-2xl font-bold text-foreground leading-none">{value}</p>
+        <p className="text-[13px] font-medium text-foreground mt-0.5">{label}</p>
+        <p className="text-[11px] text-muted-foreground">{sub}</p>
+      </div>
+    </div>
+  );
+}
+
+interface Announcement {
+  id: number;
+  title: string;
+  body: string;
+  category: string;
+  created_by: string;
+  created_by_domain: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 function AdminDashboard() {
   const { user } = useAuth();
   const [viewerAccess, setViewerAccess] = useState(["HR", "PMO"]);
   const allRoles = ["HR", "IT", "PMO", "Employee", "Functional Manager"];
+
+  // Live ops stats
+  const [stats, setStats] = useState<Record<string, Record<string, number>> | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  // Announcements
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [annLoading, setAnnLoading] = useState(true);
+  const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General" });
+  const [creating, setCreating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/stats")
+      .then((r) => r.json())
+      .then(setStats)
+      .catch(() => setStats(null))
+      .finally(() => setStatsLoading(false));
+
+    fetch("/api/announcements")
+      .then((r) => r.json())
+      .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
+      .catch(() => setAnnouncements([]))
+      .finally(() => setAnnLoading(false));
+  }, []);
+
+  const refreshAnnouncements = () => {
+    fetch("/api/announcements")
+      .then((r) => r.json())
+      .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  };
+
+  const handleCreateAnnouncement = async () => {
+    if (!newAnn.title.trim() || !newAnn.body.trim()) return;
+    setCreating(true);
+    try {
+      await fetch("/api/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newAnn.title,
+          body: newAnn.body,
+          category: newAnn.category,
+          created_by: user?.email ?? "admin@centriq.ai",
+          created_by_domain: "admin",
+          target_audience: "all",
+        }),
+      });
+      setNewAnn({ title: "", body: "", category: "General" });
+      setShowForm(false);
+      refreshAnnouncements();
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeactivate = async (id: number) => {
+    await fetch(`/api/announcements/${id}?requested_by=${encodeURIComponent(user?.email ?? "admin")}`, {
+      method: "DELETE",
+    });
+    refreshAnnouncements();
+  };
 
   if (!user || user.role !== "Admin") {
     return (
@@ -134,6 +239,14 @@ function AdminDashboard() {
     color: "var(--foreground)",
     fontSize: "12px",
     padding: "8px 12px",
+  };
+
+  const categoryColors: Record<string, string> = {
+    "Policy Update": "bg-blue-500/10 text-blue-500",
+    "Holiday": "bg-emerald-500/10 text-emerald-500",
+    "Events": "bg-violet-500/10 text-violet-500",
+    "IT Alert": "bg-rose-500/10 text-rose-500",
+    "General": "bg-amber-500/10 text-amber-500",
   };
 
   return (
@@ -193,6 +306,65 @@ function AdminDashboard() {
             icon={TrendingUp}
             iconColor="text-violet-500"
           />
+        </div>
+
+        {/* Operations Overview — live from API */}
+        <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h3 className="text-[15px] font-semibold text-foreground">Operations Overview</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Live counts from all service domains</p>
+            </div>
+            {statsLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </div>
+          {stats ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+              <OpsMetric
+                label="IT Tickets"
+                value={stats.it_tickets?.open ?? "—"}
+                sub="open tickets"
+                icon={Ticket}
+                color="bg-indigo-500"
+              />
+              <OpsMetric
+                label="Resolved Today"
+                value={stats.it_tickets?.resolved_today ?? "—"}
+                sub="IT tickets"
+                icon={Zap}
+                color="bg-emerald-500"
+              />
+              <OpsMetric
+                label="Facility Issues"
+                value={stats.facility_complaints?.open ?? "—"}
+                sub="open complaints"
+                icon={AlertTriangle}
+                color="bg-amber-500"
+              />
+              <OpsMetric
+                label="Parking Pending"
+                value={stats.parking?.pending ?? "—"}
+                sub="sticker requests"
+                icon={Car}
+                color="bg-sky-500"
+              />
+              <OpsMetric
+                label="Reimbursements"
+                value={stats.reimbursements?.pending ?? "—"}
+                sub="pending approval"
+                icon={Receipt}
+                color="bg-rose-500"
+              />
+              <OpsMetric
+                label="Announcements"
+                value={stats.announcements?.active ?? "—"}
+                sub="active broadcasts"
+                icon={Megaphone}
+                color="bg-violet-500"
+              />
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Stats unavailable — backend may be offline.</p>
+          )}
         </div>
 
         {/* Charts Row */}
@@ -393,6 +565,125 @@ function AdminDashboard() {
           </div>
         </div>
 
+        {/* Announcement Management */}
+        <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <Megaphone className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <h3 className="text-[15px] font-semibold text-foreground">Announcement Management</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Create and manage broadcasts for all employees</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowForm((v) => !v)}
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+            >
+              <Plus className="h-4 w-4" />
+              New Announcement
+            </button>
+          </div>
+
+          {/* Create form */}
+          {showForm && (
+            <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-4 space-y-3">
+              <input
+                type="text"
+                placeholder="Title"
+                value={newAnn.title}
+                onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
+                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
+              />
+              <textarea
+                placeholder="Announcement body..."
+                rows={3}
+                value={newAnn.body}
+                onChange={(e) => setNewAnn((p) => ({ ...p, body: e.target.value }))}
+                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 resize-none"
+              />
+              <div className="flex items-center gap-3">
+                <select
+                  value={newAnn.category}
+                  onChange={(e) => setNewAnn((p) => ({ ...p, category: e.target.value }))}
+                  className="rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50"
+                >
+                  {["General", "Policy Update", "Holiday", "Events", "IT Alert"].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleCreateAnnouncement}
+                  disabled={creating || !newAnn.title.trim() || !newAnn.body.trim()}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Publish
+                </button>
+                <button
+                  onClick={() => setShowForm(false)}
+                  className="rounded-lg border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Announcements list */}
+          {annLoading ? (
+            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading announcements...
+            </div>
+          ) : announcements.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">No announcements found.</p>
+          ) : (
+            <div className="space-y-2">
+              {announcements.map((ann) => (
+                <div
+                  key={ann.id}
+                  className={cn(
+                    "flex items-start justify-between gap-4 rounded-xl border px-4 py-3",
+                    ann.is_active
+                      ? "border-[var(--border)] bg-background"
+                      : "border-[var(--border)] bg-[var(--muted)] opacity-60",
+                  )}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[13px] font-semibold text-foreground">{ann.title}</span>
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          categoryColors[ann.category] ?? "bg-[var(--muted)] text-muted-foreground",
+                        )}
+                      >
+                        {ann.category}
+                      </span>
+                      {!ann.is_active && (
+                        <span className="rounded-full bg-[var(--muted)] px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                          Inactive
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-2">{ann.body}</p>
+                    <p className="text-[11px] text-muted-foreground/60 mt-1">
+                      by {ann.created_by} · {ann.created_by_domain}
+                    </p>
+                  </div>
+                  {ann.is_active && (
+                    <button
+                      onClick={() => handleDeactivate(ann.id)}
+                      className="shrink-0 flex items-center gap-1 rounded-lg border border-rose-500/20 px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    >
+                      <Trash2 className="h-3 w-3" /> Deactivate
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* System Status */}
         <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
           <h3 className="text-[15px] font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -433,9 +724,9 @@ function AdminDashboard() {
             Access logs, metrics, and trace data. Available to administrators only.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <a 
-              href="http://localhost:3001" 
-              target="_blank" 
+            <a
+              href="http://localhost:3001"
+              target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
             >
@@ -445,10 +736,10 @@ function AdminDashboard() {
               </div>
               <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
             </a>
-            
-            <a 
-              href="http://localhost:3003" 
-              target="_blank" 
+
+            <a
+              href="http://localhost:3003"
+              target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
             >

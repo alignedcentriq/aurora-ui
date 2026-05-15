@@ -36,10 +36,11 @@ DOMAIN_REGISTRY = {
         "status": "active",
     },
     "pmo": {
-        "description": "Project Management Office — project timelines, milestones, "
-                       "resource allocation, sprint planning, JIRA tickets, project status, "
-                       "risk management, deliverables, stakeholder updates, budget tracking, "
-                       "status reports, PDF generation, sprint summaries, meeting minutes",
+        "description": "Project Management Office — company projects, internal projects, active projects, "
+                       "AI projects, technology projects, initiatives the company is working on, "
+                       "project timelines, milestones, resource allocation, sprint planning, JIRA tickets, "
+                       "project status, risk management, deliverables, stakeholder updates, budget tracking, "
+                       "status reports, PDF generation, sprint summaries, meeting minutes, session transcripts",
         "status": "active",
     },
     "functional_manager": {
@@ -50,7 +51,8 @@ DOMAIN_REGISTRY = {
     },
     "general": {
         "description": "General conversation — greetings, small talk, unclear requests, "
-                       "questions about the AI itself, capabilities inquiry, thank you, goodbye",
+                       "questions about the AI assistant itself (Centriq), capabilities inquiry, thank you, goodbye. "
+                       "NOT for questions about company projects, internal tools, or employee matters.",
         "status": "active",
     },
 }

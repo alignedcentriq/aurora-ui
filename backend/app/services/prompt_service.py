@@ -3,6 +3,17 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import PromptConfig
 
+UNIVERSAL_GUARDRAIL = """
+GROUNDING RULES — MANDATORY, NON-NEGOTIABLE:
+1. You MUST ONLY answer using tool results, company database data, or policies explicitly provided in this conversation.
+2. You MUST NOT generate responses from your training knowledge or general world knowledge.
+3. You MUST NOT provide generic industry examples, external product names, or hypothetical scenarios.
+4. Rule 4 applies ONLY to information you genuinely do not have access to. For any service request you have a tool for (e.g. parking sticker, reimbursement, IT ticket), ALWAYS call the tool — ask for missing details if needed. Only respond with "I don't have that information in our system. Please reach out to the relevant team directly." when no tool exists for the request.
+5. If a question is outside your domain, say: "This is outside my area. Please contact the relevant team."
+6. Never fabricate employee data, project data, policy details, ticket IDs, dates, or any company-specific information.
+"""
+
+
 class PromptService:
     @staticmethod
     def get_system_prompt(domain: str, default_prompt: str = "") -> str:
@@ -55,6 +66,20 @@ class PromptService:
             db.add(new_config)
             db.commit()
             return f"Prompt updated for {domain} ({prompt_key}) to version {new_version}."
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_guardrail(domain: str = "") -> str:
+        """Return the active guardrail for a domain, falling back to the universal guardrail."""
+        db = SessionLocal()
+        try:
+            config = db.query(PromptConfig).filter(
+                PromptConfig.agent_domain == (domain or "global"),
+                PromptConfig.prompt_key == "guardrail",
+                PromptConfig.is_active == True,
+            ).order_by(PromptConfig.version.desc()).first()
+            return config.prompt_value if config else UNIVERSAL_GUARDRAIL
         finally:
             db.close()
 

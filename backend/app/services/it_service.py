@@ -1,7 +1,7 @@
 import datetime
-from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import Employee, ITTicket, SoftwareRequest, AssetAssignment, HITLRequest
+
 
 class ITService:
     @staticmethod
@@ -9,8 +9,9 @@ class ITService:
         db = SessionLocal()
         try:
             emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            if not emp:
+                return "Employee not found."
+
             ticket_id = f"IT-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_t = ITTicket(
                 ticket_id=ticket_id,
@@ -19,11 +20,33 @@ class ITService:
                 subject=subject,
                 description=description,
                 priority=priority,
-                status="Open"
+                status="Open",
             )
             db.add(new_t)
             db.commit()
-            return f"IT Support Ticket created. Ticket ID: {ticket_id}. An IT executive will be assigned soon."
+
+            # Send email to helpdesk — ManageEngine auto-creates ticket from this
+            try:
+                from app.services.email_service import send_it_ticket_email
+                send_it_ticket_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    employee_id=emp.employee_id or str(emp.id),
+                    department=emp.department or "N/A",
+                    category=category,
+                    subject=subject,
+                    description=description,
+                    priority=priority,
+                    ticket_id=ticket_id,
+                )
+            except Exception:
+                pass  # email failure must never block ticket creation
+
+            return (
+                f"IT Support Ticket created. **Ticket ID: {ticket_id}**. "
+                f"Your request has been sent to the helpdesk and a ticket will be created in ManageEngine. "
+                f"An IT executive will be assigned to you shortly."
+            )
         finally:
             db.close()
 

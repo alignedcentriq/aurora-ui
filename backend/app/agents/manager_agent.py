@@ -8,6 +8,7 @@ from app.services.prompt_service import PromptService
 from app.config import settings
 from langchain_openai import ChatOpenAI
 
+
 # -- Tools --------------------------------------------------------------------
 
 @tool
@@ -71,9 +72,19 @@ tools = [
 tool_node = ToolNode(tools)
 
 def manager_assistant(state: ManagerState):
-    default_prompt = "You are the Manager Assistant for Aligned Automation. Help managers manage their teams, track attendance, approve or reject leaves, assign trainings, and review employee skills and projects. Always use the user_email provided in the state as the manager_email for tool calls. Only perform actions for which the manager is authorized."
-    system_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
-    
+    user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
+    default_prompt = (
+        f"You are the Manager Assistant for Aligned Automation. "
+        f"The currently logged-in manager's email is: {user_email}. "
+        f"IMPORTANT: Always use this email as manager_email for tool calls — NEVER ask who the user is. "
+        f"Help managers manage their teams, track attendance, approve or reject leaves, "
+        f"assign trainings, and review employee skills and projects. "
+        f"Only perform actions for which this manager is authorized."
+    )
+    base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
+    guardrail = PromptService.get_guardrail("functional_manager")
+    system_prompt = base_prompt + guardrail
+
     messages = [HumanMessage(content=system_prompt)] + state["messages"]
     model = ChatOpenAI(
         base_url=settings.ROUTER_BASE_URL,

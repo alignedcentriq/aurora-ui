@@ -50,4 +50,13 @@ class Config:
     PORT = int(os.getenv("PORT", "8080"))
     HOST = os.getenv("HOST", "0.0.0.0")
 
+    # SMTP / Email (for IT helpdesk tickets + admin notifications)
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASS = os.getenv("SMTP_PASS", "")
+    SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Centriq AI")
+    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "helpdesk@alignedautomation.com")
+    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@alignedautomation.com")
+
 settings = Config()

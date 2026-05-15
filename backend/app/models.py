@@ -213,15 +213,17 @@ class Reimbursement(Base):
 class ParkingSticker(Base):
     __tablename__ = "parking_stickers"
     __table_args__ = {"schema": SCHEMA}
-    
+
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"))
     vehicle_type = Column(String)  # 2-wheeler, 4-wheeler
     vehicle_number = Column(String)
+    vehicle_make = Column(String, nullable=True)   # e.g. Honda, Maruti
+    vehicle_model = Column(String, nullable=True)  # e.g. Activa, Swift
     sticker_number = Column(String, nullable=True)
     valid_from = Column(Date)
     valid_until = Column(Date)
-    status = Column(String, default="Active")  # Active, Expired, Pending
+    status = Column(String, default="Pending")  # Active, Expired, Pending, Surrendered
 
 class Accommodation(Base):
     __tablename__ = "accommodations"
@@ -385,3 +387,115 @@ class HITLRequest(Base):
     requested_at = Column(DateTime, default=datetime.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     completed_by = Column(String, nullable=True)
+
+
+# ── Extended ZOHO Employee Profile (non-sensitive fields only) ────────────────
+class EmployeeZohoProfile(Base):
+    """Safe ZOHO fields synced from HRMS — no salary, bank, or ID document data."""
+    __tablename__ = "employee_zoho_profiles"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), unique=True)
+    zoho_link_id = Column(String, unique=True, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    official_email = Column(String, nullable=True, index=True)
+    function = Column(String, nullable=True)
+    designation = Column(String, nullable=True)
+    zoho_role = Column(String, nullable=True)
+    employment_type = Column(String, nullable=True)
+    employee_status = Column(String, nullable=True)
+    source_of_hire = Column(String, nullable=True)
+    date_of_joining = Column(Date, nullable=True)
+    date_of_confirmation = Column(Date, nullable=True)
+    tenure_in_aa = Column(String, nullable=True)
+    total_experience = Column(String, nullable=True)
+    reporting_manager = Column(String, nullable=True)
+    age = Column(Integer, nullable=True)
+    gender = Column(String, nullable=True)
+    about_me = Column(Text, nullable=True)
+    blood_group = Column(String, nullable=True)
+    expertise = Column(Text, nullable=True)          # "Ask me about / Expertise"
+    work_phone = Column(String, nullable=True)
+    extension = Column(String, nullable=True)
+    sub_location = Column(String, nullable=True)
+    tags = Column(String, nullable=True)
+    onboarding_status = Column(String, nullable=True)
+    organization_structure = Column(String, nullable=True)
+    level = Column(String, nullable=True)
+    grade = Column(String, nullable=True)
+    skill_set = Column(Text, nullable=True)
+    functional_manager = Column(String, nullable=True)
+    language_known = Column(String, nullable=True)
+    resource_management_function = Column(String, nullable=True)
+    project_manager = Column(String, nullable=True)
+    project_manager_2 = Column(String, nullable=True)
+    role = Column(String, nullable=True)
+    date_for_360_feedback = Column(Date, nullable=True)
+    nationality = Column(String, nullable=True)
+    active_details = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+# ── Announcements (HR / Admin / IT / Manager) ─────────────────────────────────
+class Announcement(Base):
+    __tablename__ = "announcements"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    category = Column(String, default="General")  # Policy Update, Holiday, Events, Hiring, Training, General, IT Alert
+    created_by = Column(String)                   # creator email
+    created_by_domain = Column(String)            # hr, admin, it_support, functional_manager
+    target_audience = Column(String, default="all")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+
+
+# ── Food / Cafeteria Complaints (distinct from star-rating feedback) ──────────
+class FoodComplaint(Base):
+    __tablename__ = "food_complaints"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"))
+    vendor_name = Column(String)
+    complaint_type = Column(String)  # Quality, Hygiene, Pricing, Variety, Service, Foreign Object, Other
+    description = Column(Text)
+    status = Column(String, default="Open")  # Open, Acknowledged, Resolved
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
+# ── PMO Session Transcripts ───────────────────────────────────────────────────
+class SessionTranscript(Base):
+    __tablename__ = "session_transcripts"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_name = Column(String, nullable=False, index=True)
+    session_title = Column(String, nullable=False)
+    session_date = Column(Date, default=datetime.date.today)
+    summary = Column(Text)
+    transcript_text = Column(Text, nullable=True)
+    uploaded_by = Column(String)
+    session_type = Column(String, default="Flash Review")  # Flash Review, Sprint Review, Project Review, Standup, PMO Monitored
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ChatFeedback(Base):
+    __tablename__ = "chat_feedback"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    domain = Column(String, nullable=True)          # hr, admin, it_support, pmo, functional_manager, general
+    user_message = Column(Text, nullable=True)
+    ai_response = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)          # 1 = thumbs up / helpful, -1 = thumbs down / unhelpful
+    feedback_text = Column(String, nullable=True)   # optional free-text comment
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

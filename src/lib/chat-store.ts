@@ -7,6 +7,7 @@ export interface Turn {
   card?: boolean;
   downloadUrl?: string;
   downloadTitle?: string;
+  domain?: string;
 }
 
 export interface Thread {

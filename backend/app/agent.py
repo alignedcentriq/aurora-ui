@@ -36,6 +36,9 @@ from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.sharepoint_transfer_service import sharepoint_transfer_service
+from app.services.employee_service import EmployeeService
+from app.services.announcement_service import AnnouncementService
+from app.services.prompt_service import PromptService
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
@@ -102,7 +105,94 @@ def list_minio_documents(prefix: str = ""):
     return minio_client.list_objects(prefix)
 
 
-hr_tools = [get_leave_balance, apply_leave, search_hr_policies, get_payroll_info, transfer_sharepoint_to_minio, list_minio_documents]
+# ── HR Employee Directory Tools ──────────────────────────────────────────────
+
+@tool
+def search_employee_directory(query: str, function: str = "", location: str = "", designation: str = ""):
+    """Search the employee directory by name, skill, function, designation, or location."""
+    return EmployeeService.search_directory(
+        query=query,
+        function=function or None,
+        location=location or None,
+        designation=designation or None,
+    )
+
+@tool
+def get_employee_profile(name_or_email: str):
+    """Get the full non-sensitive profile for an employee by name or email."""
+    return EmployeeService.get_profile(name_or_email)
+
+@tool
+def get_org_chart(name_or_email: str):
+    """Get the reporting chain (manager above and direct reports below) for an employee."""
+    return EmployeeService.get_org_chart(name_or_email)
+
+@tool
+def get_team_roster(manager_name: str):
+    """List all direct reports for a given manager."""
+    return EmployeeService.get_team_roster(manager_name)
+
+@tool
+def find_skills_expert(skill: str):
+    """Find employees who have a specific skill or expertise."""
+    return EmployeeService.find_skills_expert(skill)
+
+@tool
+def get_department_headcount(function: str = ""):
+    """Get headcount of active employees by function/department. Leave function blank for all departments."""
+    return EmployeeService.get_department_headcount(function or None)
+
+# ── HR Announcement Tools ─────────────────────────────────────────────────────
+
+@tool
+def create_announcement(title: str, body: str, category: str = "General", target_audience: str = "all", expires_days: int = 0):
+    """
+    Publish a company-wide announcement (HR role only).
+    Categories: Policy Update, Holiday, Events, Hiring, Training, General, IT Alert.
+    expires_days: 0 = never expires.
+    """
+    return AnnouncementService.create(
+        title=title,
+        body=body,
+        category=category,
+        created_by=settings.DEFAULT_USER_EMAIL,
+        created_by_domain="hr",
+        target_audience=target_audience,
+        expires_days=expires_days if expires_days > 0 else None,
+    )
+
+@tool
+def get_announcements(domain_filter: str = ""):
+    """Get latest active announcements. Optionally filter by domain: hr, admin, it_support, functional_manager."""
+    return AnnouncementService.get_active(domain_filter=domain_filter or None)
+
+@tool
+def deactivate_announcement(announcement_id: int):
+    """Deactivate/remove an announcement by its ID (HR role only)."""
+    return AnnouncementService.deactivate(announcement_id, requested_by=settings.DEFAULT_USER_EMAIL)
+
+# ── HR Prompt Config Tool ─────────────────────────────────────────────────────
+
+@tool
+def update_hr_prompt(new_prompt: str):
+    """Update the HR agent system prompt (HR manager role only)."""
+    return PromptService.update_prompt(
+        domain="hr",
+        prompt_key="system_prompt",
+        value=new_prompt,
+        updated_by=settings.DEFAULT_USER_EMAIL,
+        user_role="hr_manager",
+    )
+
+
+hr_tools = [
+    get_leave_balance, apply_leave, search_hr_policies, get_payroll_info,
+    transfer_sharepoint_to_minio, list_minio_documents,
+    search_employee_directory, get_employee_profile, get_org_chart,
+    get_team_roster, find_skills_expert, get_department_headcount,
+    create_announcement, get_announcements, deactivate_announcement,
+    update_hr_prompt,
+]
 hr_tool_node = ToolNode(hr_tools)
 
 
@@ -171,14 +261,22 @@ def hr_agent(state: AgentState):
     """HR Agent — handles leave, payroll, policies."""
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
-        system_prompt = SystemMessage(content=f"You are Centriq HR Assistant. Use the provided tools to help '{settings.DEFAULT_USER_EMAIL}'.")
-        messages = [system_prompt] + messages
+        base = PromptService.get_system_prompt(
+            "hr",
+            f"You are Centriq HR Assistant for Aligned Automation. "
+            f"The logged-in employee's email is: {settings.DEFAULT_USER_EMAIL}. "
+            f"IMPORTANT: Always use this email for tool calls — NEVER ask who the user is. "
+            f"Use tools for all HR data (leave, payroll, policies, directory). "
+            f"Never answer HR questions from your training knowledge.",
+        )
+        guardrail = PromptService.get_guardrail("hr")
+        messages = [SystemMessage(content=base + guardrail)] + messages
 
     try:
         response = hr_llm.invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, the HR system is currently unreachable.")]}
-    
+
     return {"messages": [response]}
 
 async def pmo_agent_node(state: AgentState):
@@ -218,13 +316,38 @@ async def manager_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
+general_tools = [get_announcements, search_hr_policies]
+general_tool_node = ToolNode(general_tools)
+general_llm = agent_llm.bind_tools(general_tools)
+
+
 def general_agent(state: AgentState):
-    """General Agent — handles greetings and chitchat."""
+    """General Agent — greetings, announcements, and policy Q&A."""
+    base = PromptService.get_system_prompt(
+        "general",
+        "You are Centriq, the AI assistant for Aligned Automation. "
+        "You handle greetings, small talk, company announcements, and general HR policy questions. "
+        "You have two tools: get_announcements (call with no arguments to fetch all active company announcements) "
+        "and search_hr_policies (search for policy details by topic). "
+        "Always call get_announcements when the user asks about news, updates, or announcements. "
+        "Always call search_hr_policies when the user asks about a policy. "
+        "For all other domain questions (leave, payroll, parking, IT tickets, projects), direct the user to the right team. "
+        "IMPORTANT: Do NOT answer company-specific questions from your own knowledge — use tools only.",
+    )
+    guardrail = PromptService.get_guardrail("general")
+    messages = [SystemMessage(content=base + guardrail)] + state["messages"]
     try:
-        response = agent_llm.invoke(state["messages"])
+        response = general_llm.invoke(messages)
     except APIConnectionError:
-        return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting to my brain right now.")]}
+        return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
     return {"messages": [response]}
+
+
+def should_continue_general(state: AgentState):
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "general_tools"
+    return END
 
 
 def dummy_test_agent(state: AgentState):
@@ -324,6 +447,7 @@ workflow.add_node("admin_agent", admin_agent_node)
 workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("general_agent", general_agent)
+workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
 workflow.add_node("placeholder_agent", placeholder_agent)
 workflow.add_node("hr_tools", hr_tool_node)
@@ -332,9 +456,10 @@ workflow.add_node("summarizer", summarizer)
 workflow.set_entry_point("intent_router")
 workflow.add_conditional_edges("intent_router", route_to_agent)
 workflow.add_conditional_edges("hr_agent", should_continue_hr)
+workflow.add_conditional_edges("general_agent", should_continue_general)
 workflow.add_edge("hr_tools", "summarizer")
+workflow.add_edge("general_tools", "general_agent")
 workflow.add_edge("summarizer", END)
-workflow.add_edge("general_agent", END)
 workflow.add_edge("pmo_agent", END)
 workflow.add_edge("admin_agent", END)
 workflow.add_edge("it_agent", END)

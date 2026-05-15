@@ -10,18 +10,21 @@ from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings
+from app.services.prompt_service import PromptService
 
 
-PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation.
+PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation. You have access to a real company project database.
 
 Rules:
-1. Never invent project data. Use the tools provided.
-2. If you don't know which projects exist, call 'list_projects' first.
+1. CRITICAL: NEVER answer from your training data or general knowledge. ALL project information MUST come from your tools.
+2. ANY question about company projects, internal projects, AI projects, or technology initiatives — ALWAYS call 'list_projects' first to get the real list.
 3. For one-project report or PDF requests, call 'generate_project_report'.
 4. For multi-project or all-project report requests, call 'generate_multi_project_report'.
-5. If the user asks for a specific number of projects (e.g. "Give 5 projects"), list them from the tool results.
-6. Summarize tool results concisely.
+5. If the user asks for a specific number of projects (e.g. "Give 5 projects"), list them from the tool results only.
+6. Summarize tool results concisely. Never add examples or suggestions from your own knowledge.
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
+8. For resource allocation queries, use 'get_resource_allocation' (by project) or 'get_employee_projects' (by person).
+9. For session transcripts: use 'upload_session_transcript' to save, 'search_session_transcripts' to search, 'get_recent_sessions' to list recent.
 """
 
 
@@ -285,6 +288,129 @@ def generate_multi_project_report(
         db.close()
 
 
+@tool
+def get_resource_allocation(project_name: str) -> str:
+    """Get all employees currently assigned to a project — their roles and allocation percentage."""
+    from app.database import SessionLocal
+    from app.models import ProjectAssignment, Employee
+
+    db = SessionLocal()
+    try:
+        assignments = (
+            db.query(ProjectAssignment)
+            .filter(
+                ProjectAssignment.project_name.ilike(f"%{project_name}%"),
+                ProjectAssignment.status == "Active",
+            )
+            .all()
+        )
+        if not assignments:
+            return f"No active resource allocations found for project '{project_name}'."
+
+        lines = [f"Resource Allocation — {project_name}:"]
+        for a in assignments:
+            emp = db.query(Employee).filter(Employee.id == a.employee_id).first()
+            emp_name = emp.name if emp else f"Employee #{a.employee_id}"
+            lines.append(
+                f"- {emp_name} | Role: {a.role} | Allocation: {a.allocation_pct}% | From: {a.start_date}"
+            )
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+@tool
+def get_employee_projects(employee_identifier: str) -> str:
+    """Get all projects an employee is assigned to. Pass name or email."""
+    from app.database import SessionLocal
+    from app.models import ProjectAssignment, Employee
+
+    db = SessionLocal()
+    try:
+        emp = (
+            db.query(Employee)
+            .filter(
+                (Employee.name.ilike(f"%{employee_identifier}%"))
+                | (Employee.email.ilike(f"%{employee_identifier}%"))
+            )
+            .first()
+        )
+        if not emp:
+            return f"Employee '{employee_identifier}' not found."
+
+        assignments = (
+            db.query(ProjectAssignment)
+            .filter(ProjectAssignment.employee_id == emp.id)
+            .order_by(ProjectAssignment.status)
+            .all()
+        )
+        if not assignments:
+            return f"{emp.name} has no project assignments on record."
+
+        lines = [f"Projects for {emp.name} ({emp.designation}):"]
+        for a in assignments:
+            lines.append(
+                f"- {a.project_name} | Role: {a.role} | {a.allocation_pct}% | Status: {a.status}"
+            )
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+@tool
+def upload_session_transcript(
+    project_name: str,
+    session_title: str,
+    summary: str,
+    session_type: str = "Flash Review",
+) -> str:
+    """
+    Save a session transcript/summary for a project.
+    session_type options: Flash Review, Sprint Review, Project Review, Standup, PMO Monitored.
+    """
+    from app.services.transcript_service import TranscriptService
+    from app.config import settings
+
+    return TranscriptService.save_transcript(
+        project_name=project_name,
+        session_title=session_title,
+        summary=summary,
+        session_type=session_type,
+        uploaded_by=settings.DEFAULT_USER_EMAIL,
+    )
+
+
+@tool
+def search_session_transcripts(query: str, project_name: str = "") -> str:
+    """Search session transcript summaries by keyword. Optionally filter by project name."""
+    from app.services.transcript_service import TranscriptService
+
+    results = TranscriptService.search_transcripts(query, project_name or None)
+    if not results:
+        return f"No transcripts found matching '{query}'."
+    lines = [f"Found {len(results)} transcript(s) matching '{query}':"]
+    for r in results:
+        lines.append(f"\n[{r['type']}] {r['project']} — {r['title']} ({r['date']})")
+        lines.append(f"  {r['summary']}")
+    return "\n".join(lines)
+
+
+@tool
+def get_recent_sessions(project_name: str = "", limit: int = 5) -> str:
+    """Get the most recent session transcripts. Optionally filter by project name."""
+    from app.services.transcript_service import TranscriptService
+
+    results = TranscriptService.get_recent_sessions(project_name or None, limit)
+    if not results:
+        scope = f" for '{project_name}'" if project_name else ""
+        return f"No session transcripts found{scope}."
+    lines = [f"Recent sessions{' for ' + project_name if project_name else ''}:"]
+    for r in results:
+        lines.append(f"\n[{r['type']}] {r['project']} — {r['title']} ({r['date']})")
+        lines.append(f"  {r['summary']}")
+    return "\n".join(lines)
+
+
 pmo_tools = [
     list_projects,
     get_project_status,
@@ -294,6 +420,11 @@ pmo_tools = [
     get_milestones,
     generate_project_report,
     generate_multi_project_report,
+    get_resource_allocation,
+    get_employee_projects,
+    upload_session_transcript,
+    search_session_transcripts,
+    get_recent_sessions,
 ]
 
 
@@ -318,7 +449,9 @@ class PMOState(TypedDict):
 def pmo_assistant(state: PMOState):
     messages = state["messages"]
     if not any(isinstance(message, SystemMessage) for message in messages):
-        messages = [SystemMessage(content=PMO_SYSTEM_PROMPT)] + messages
+        base_prompt = PromptService.get_system_prompt("pmo", PMO_SYSTEM_PROMPT)
+        guardrail = PromptService.get_guardrail("pmo")
+        messages = [SystemMessage(content=base_prompt + guardrail)] + messages
     try:
         return {"messages": [pmo_llm_with_tools.invoke(messages)]}
     except Exception as exc:
