@@ -15,7 +15,8 @@ class Config:
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-    # ── Agent Model (reasoning, tool calling, response generation) ──
+    # ── General Model (greetings, small talk) ──
+    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "MichelRosselli/apertus:8b-instruct-2509-bf16")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")

@@ -199,13 +199,22 @@ hr_tool_node = ToolNode(hr_tools)
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. LLM INSTANCES
 # ═══════════════════════════════════════════════════════════════════════════════
-# Agent LLM — used for reasoning and tool calling
-# Switching to Router settings for tool support
+# Agent LLM — used for reasoning and tool calling (HR, PMO, Admin, IT, Manager)
 agent_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
+    base_url=settings.AGENT_BASE_URL,
+    api_key=settings.AGENT_API_KEY,
+    model=settings.AGENT_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
+    max_retries=3,
+    timeout=30,
+)
+
+# General LLM — used for non-technical chat (Greetings, Announcements)
+general_llm_base = ChatOpenAI(
+    base_url=settings.AGENT_BASE_URL,
+    api_key=settings.AGENT_API_KEY,
+    model=settings.GENERAL_MODEL_NAME,
+    temperature=0.7,
     max_retries=3,
     timeout=30,
 )
@@ -318,7 +327,7 @@ async def manager_agent_node(state: AgentState):
 
 general_tools = [get_announcements, search_hr_policies]
 general_tool_node = ToolNode(general_tools)
-general_llm = agent_llm.bind_tools(general_tools)
+general_llm = general_llm_base.bind_tools(general_tools)
 
 
 def general_agent(state: AgentState):
