@@ -43,3 +43,17 @@ chmod +x minio
 <!-- To install docker-compose in wsl -->
 
 sudo apt-get install docker-compose
+
+<!-- Claude Memory Sync (share AI memory across machines via git) -->
+
+After cloning the repo, run this once to link Claude's memory to the project:
+
+Mac/Linux:
+ln -s "$(pwd)/.claude/memory" ~/.claude/projects/$(echo "$(pwd)" | sed 's|/|-|g' | sed 's|^-||')/memory
+
+Windows (Command Prompt — no admin or Developer Mode needed):
+
+  mkdir "%USERPROFILE%\.claude\projects\C:-Users-yourname-aurora-ui"
+  mklink /J "%USERPROFILE%\.claude\projects\C:-Users-yourname-aurora-ui\memory" ".claude\memory"
+
+  Replace "yourname" with your Windows username.
