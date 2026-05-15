@@ -48,8 +48,6 @@ sudo apt-get install docker-compose
 
 After cloning the repo, run this once to link Claude's memory to the project:
 
-Mac/Linux:
-ln -s "$(pwd)/.claude/memory" ~/.claude/projects/$(echo "$(pwd)" | sed 's|/|-|g' | sed 's|^-||')/memory
 
 Windows (Command Prompt — no admin or Developer Mode needed):
 
