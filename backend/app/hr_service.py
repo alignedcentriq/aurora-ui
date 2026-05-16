@@ -1,19 +1,35 @@
 import datetime
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import Employee, Leave, Payroll, Policy
+from app.models import Employee, Leave, Policy
 
 class HRService:
     @staticmethod
-    def get_employee_by_email(db: Session, email: str):
-        return db.query(Employee).filter(Employee.email == email).first()
+    def get_employee_by_email(db: Session, email: str) -> Employee:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            emp = Employee(
+                employee_id=f"EMP{abs(hash(email)) % 9000 + 1000}",
+                name=name,
+                email=email,
+                department="General",
+                designation="Employee",
+                joining_date=datetime.date.today(),
+                employment_type="Full-time",
+                location="Mumbai",
+                shift_type="Day",
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+        return emp
 
     @staticmethod
     def get_leave_balance(email: str):
         db = SessionLocal()
         try:
             emp = HRService.get_employee_by_email(db, email)
-            if not emp: return "Employee not found."
             
             # Simple logic: 24 days annual - approved leaves
             approved_leaves = db.query(Leave).filter(
@@ -31,7 +47,6 @@ class HRService:
         db = SessionLocal()
         try:
             emp = HRService.get_employee_by_email(db, email)
-            if not emp: return "Employee not found."
             
             try:
                 start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -53,19 +68,6 @@ class HRService:
         finally:
             db.close()
 
-    @staticmethod
-    def get_payroll_info(email: str):
-        db = SessionLocal()
-        try:
-            emp = HRService.get_employee_by_email(db, email)
-            if not emp: return "Employee not found."
-            
-            payroll = db.query(Payroll).filter(Payroll.employee_id == emp.id).order_by(Payroll.year.desc(), Payroll.month.desc()).first()
-            if not payroll: return "No payroll records found."
-            
-            return f"Your last net salary was INR {payroll.net_salary:,.2f} paid for {payroll.month}/{payroll.year}."
-        finally:
-            db.close()
 
     @staticmethod
     def upsert_policy(title: str, content: str, category: str = "General"):

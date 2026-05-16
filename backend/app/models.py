@@ -29,7 +29,6 @@ class Employee(Base):
     
     # Relationships
     leaves = relationship("Leave", back_populates="employee")
-    payroll = relationship("Payroll", back_populates="employee")
     attendance = relationship("Attendance", back_populates="employee")
 
 class Leave(Base):
@@ -45,22 +44,6 @@ class Leave(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     employee = relationship("Employee", back_populates="leaves")
-
-class Payroll(Base):
-    __tablename__ = "payroll"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
-    month = Column(Integer)
-    year = Column(Integer)
-    base_salary = Column(Float)
-    bonus = Column(Float, default=0.0)
-    deductions = Column(Float, default=0.0)
-    net_salary = Column(Float)
-    tax_paid = Column(Float)
-    status = Column(String, default="Paid")
-    
-    employee = relationship("Employee", back_populates="payroll")
 
 class Attendance(Base):
     __tablename__ = "attendance"

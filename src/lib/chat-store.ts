@@ -1,6 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface EmailDraftData {
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export interface InteractivePayload {
+  type: "email_draft" | "parking_form";
+  data?: EmailDraftData;
+}
+
 export interface Turn {
   role: "user" | "ai";
   text: string;
@@ -8,6 +19,7 @@ export interface Turn {
   downloadUrl?: string;
   downloadTitle?: string;
   domain?: string;
+  interactive?: InteractivePayload;
 }
 
 export interface Thread {

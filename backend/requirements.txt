@@ -19,3 +19,5 @@ langfuse<3.0.0
 python-logging-loki
 python-json-logger
 reportlab
+pdfplumber
+python-docx

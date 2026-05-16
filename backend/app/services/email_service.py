@@ -9,16 +9,28 @@ Used by:
 
 import smtplib
 import logging
+import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
+
+
+def _nl2br(text: str) -> str:
+    """Escape HTML and convert newlines to <br> for email clients that ignore CSS."""
+    return html.escape(text).replace("\n", "<br>")
 
 from app.config import settings
 
 logger = logging.getLogger("aurora-logger")
 
 
-def _send(to: str, subject: str, html_body: str, cc: Optional[str] = None) -> bool:
+def _send(
+    to: str,
+    subject: str,
+    html_body: str,
+    cc: Optional[str] = None,
+    reply_to: Optional[str] = None,
+) -> bool:
     """Send an email. Returns True on success, False on failure."""
     if not settings.SMTP_USER or not settings.SMTP_PASS:
         logger.warning("SMTP credentials not configured — email not sent.")
@@ -31,6 +43,8 @@ def _send(to: str, subject: str, html_body: str, cc: Optional[str] = None) -> bo
         msg["Subject"] = subject
         if cc:
             msg["Cc"] = cc
+        if reply_to:
+            msg["Reply-To"] = reply_to
         msg.attach(MIMEText(html_body, "html"))
 
         recipients = [to] + ([cc] if cc else [])
@@ -45,6 +59,31 @@ def _send(to: str, subject: str, html_body: str, cc: Optional[str] = None) -> bo
     except Exception as e:
         logger.error(f"Email send failed: {e}")
         return False
+
+
+def send_software_install_email(
+    requester_email: str,
+    software_name: str,
+    subject: str,
+    body: str,
+) -> bool:
+    """Send a confirmed software install request to IT support."""
+    html_body = f"""
+    <html><body style="font-family: Arial, sans-serif; color: #333;">
+      <h2 style="color:#1a73e8;">Software Installation Request</h2>
+      <p style="line-height:1.5;">{_nl2br(body)}</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">
+        Submitted via Centriq AI after user confirmation. Reply-To is set to the requester.
+      </p>
+    </body></html>
+    """
+    return _send(
+        to=settings.HELPDESK_EMAIL,
+        subject=subject,
+        html_body=html_body,
+        cc=requester_email,
+        reply_to=requester_email,
+    )
 
 
 # ── IT Helpdesk (ManageEngine) ────────────────────────────────────────────────
@@ -78,7 +117,7 @@ def send_it_ticket_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;">Priority</td><td>{priority}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Subject</td><td>{subject}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
-            <td style="white-space:pre-wrap;">{description}</td></tr>
+            <td>{_nl2br(description)}</td></tr>
       </table>
       <p style="color:#888;font-size:12px;margin-top:24px;">
         This request was submitted via Centriq AI Assistant. Please do not reply directly to this email.
@@ -143,7 +182,7 @@ def send_food_complaint_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;">Vendor</td><td>{vendor_name}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Complaint Type</td><td>{complaint_type}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
-            <td style="white-space:pre-wrap;">{description}</td></tr>
+            <td>{_nl2br(description)}</td></tr>
       </table>
       <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
     </body></html>
@@ -172,7 +211,7 @@ def send_facility_complaint_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;">Location</td><td>{location}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Priority</td><td>{priority}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
-            <td style="white-space:pre-wrap;">{description}</td></tr>
+            <td>{_nl2br(description)}</td></tr>
       </table>
       <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
     </body></html>
@@ -199,7 +238,7 @@ def send_reimbursement_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;">Type</td><td>{reimbursement_type}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Amount</td><td>INR {amount:,.2f}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Reason / Details</td>
-            <td style="white-space:pre-wrap;">{reason}</td></tr>
+            <td>{_nl2br(reason)}</td></tr>
       </table>
       <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Please process in the reimbursement portal.</p>
     </body></html>
@@ -223,7 +262,7 @@ def send_announcement_email(
         <span style="color:#c8e0ff;font-size:13px;">Category: {category} | From: {sent_by}</span>
       </div>
       <div style="padding:24px;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px;">
-        <p style="white-space:pre-wrap;line-height:1.6;">{body}</p>
+        <p style="line-height:1.6;">{_nl2br(body)}</p>
       </div>
       <p style="color:#888;font-size:12px;margin-top:16px;">Sent via Centriq AI. Do not reply to this email.</p>
     </body></html>

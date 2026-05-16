@@ -1,11 +1,12 @@
 import io
 import asyncio
+import json
 import os
 import re
 import logging
 import time
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings
 from app.database import init_db, SessionLocal
-from app.models import Leave, Payroll
+from app.models import Leave
 from app.document_store import get_pdf
 from app.pmo_routes import router as pmo_router
 from app.routes.it_routes import router as it_router
@@ -112,6 +113,19 @@ class DocumentRequest(BaseModel):
     thread_id: Optional[str] = ""
     generated_by: Optional[str] = "Centriq AI"
 
+class ParkingSubmitRequest(BaseModel):
+    email: str
+    vehicle_type: str
+    vehicle_number: str
+    vehicle_make: Optional[str] = ""
+    vehicle_model: Optional[str] = ""
+
+class SendEmailDraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    requester_email: Optional[str] = ""
+
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -204,44 +218,60 @@ async def download_document(file_id: str):
     )
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None)):
     try:
         start_time = time.time()
         with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
             config = {"configurable": {"thread_id": request.session_id}}
             result = await app_agent.ainvoke(
-                {"messages": [HumanMessage(content=request.message)]},
+                {
+                    "messages": [HumanMessage(content=request.message)],
+                    "user_email": x_user_email or settings.DEFAULT_USER_EMAIL,
+                    "session_id": request.session_id,
+                },
                 config=config,
             )
             
             raw_ai_message = result["messages"][-1].content
             routed_domain = result.get("domain", "unknown")
-            
-            # Extract and convert [DOWNLOAD_PDF:url:title] to markdown link
-            download_tag_pattern = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
-            match = download_tag_pattern.search(raw_ai_message)
-            
+
             final_message = raw_ai_message
             download_url = None
+            interactive = None
+
+            # Extract interactive email draft marker before any cleanup
+            email_draft_pattern = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
+            email_draft_match = email_draft_pattern.search(final_message)
+            if email_draft_match:
+                try:
+                    draft_data = json.loads(email_draft_match.group(1))
+                    interactive = {"type": "email_draft", "data": draft_data}
+                    final_message = email_draft_pattern.sub("", final_message).strip()
+                except Exception:
+                    pass
+
+            # Extract and convert [DOWNLOAD_PDF:url:title] to markdown link
+            download_tag_pattern = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
+            match = download_tag_pattern.search(final_message)
             if match:
                 path = match.group(1)
                 title = match.group(2)
-                base_url = f"http://localhost:{settings.PORT}" 
+                base_url = f"http://localhost:{settings.PORT}"
                 download_url = f"{base_url}{path}"
                 markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
-                final_message = download_tag_pattern.sub(markdown_link, raw_ai_message)
-            
+                final_message = download_tag_pattern.sub(markdown_link, final_message)
+
             # Remove any internal JSON/metadata blocks but ONLY if they are not the only content
             cleaned_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
             if cleaned_message:
                 final_message = cleaned_message
-            
+
             # Ultimate fallback if empty
             if not final_message.strip():
                 final_message = "I processed your request, but I was unable to generate a text summary. Please try again or rephrase your question."
-            
+
             trace.update(output=final_message, metadata={"domain": routed_domain})
-            
+
             # Structured Logging for Loki
             logger.info("chat_response", extra={
                 "domain": routed_domain,
@@ -249,13 +279,14 @@ async def chat(request: ChatRequest):
                 "session_id": request.session_id,
                 "message_length": len(request.message),
             })
-        
+
         return {
             "response": final_message,
             "domain": routed_domain,
             "id": "msg_1",
             "processing_time": f"{time.time() - start_time:.2f}s",
-            "download_url": download_url
+            "download_url": download_url,
+            "interactive": interactive,
         }
 
     except Exception as e:
@@ -309,15 +340,12 @@ async def get_hr_dashboard(user: CurrentUser = Depends(get_current_user)):
         if not emp: return {"error": "No employees found"}
         
         emp_leaves = db.query(Leave).filter(Leave.employee_id == emp.id).all()
-        emp_payroll = db.query(Payroll).filter(Payroll.employee_id == emp.id).order_by(Payroll.year.desc(), Payroll.month.desc()).all()
-        last_payroll = emp_payroll[0] if emp_payroll else None
-        
         used_leaves = sum(1 for leave in emp_leaves if leave.status == "Approved")
         leave_balance = 24 - used_leaves
-        
+
         return {
             "employee": {"name": emp.name, "id": emp.employee_id, "designation": emp.designation},
-            "stats": {"leave_balance": leave_balance, "used_leaves": used_leaves, "net_salary": last_payroll.net_salary if last_payroll else 0},
+            "stats": {"leave_balance": leave_balance, "used_leaves": used_leaves},
             "recent_leaves": [{"leave_type": l.leave_type, "status": l.status} for l in emp_leaves[-5:]]
         }
     finally:
@@ -338,19 +366,40 @@ async def get_leaves(user: CurrentUser = Depends(get_current_user)):
     finally:
         db.close()
 
-@app.get("/api/hr/payroll")
-async def get_payroll(user: CurrentUser = Depends(get_current_user)):
-    db = SessionLocal()
-    try:
-        emp = HRService.get_employee_by_email(db, user.email)
-        if not emp:
-            return []
-        return [
-            {"month": p.month, "year": p.year, "net_salary": p.net_salary}
-            for p in db.query(Payroll).filter(Payroll.employee_id == emp.id).all()
-        ]
-    finally:
-        db.close()
+
+@app.post("/api/parking/submit")
+async def submit_parking(req: ParkingSubmitRequest):
+    from app.services.admin_service import AdminService
+    result = AdminService.request_parking_sticker(
+        req.email,
+        req.vehicle_type,
+        req.vehicle_number,
+        req.vehicle_make or "",
+        req.vehicle_model or "",
+    )
+    return {"message": result}
+
+
+@app.post("/api/email/send-draft")
+async def send_email_draft(req: SendEmailDraftRequest):
+    import html as html_lib
+    from app.services.email_service import _send, _nl2br
+    html_body = f"""
+    <html><body style="font-family: Arial, sans-serif; color: #333;">
+      <p style="line-height:1.5;">{_nl2br(req.body)}</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Sent via Centriq AI.</p>
+    </body></html>
+    """
+    sent = _send(
+        to=req.to,
+        subject=req.subject,
+        html_body=html_body,
+        reply_to=req.requester_email or None,
+    )
+    if sent:
+        return {"message": f"Email sent to **{req.to}** successfully."}
+    return {"message": "Email could not be sent — please check SMTP configuration."}
+
 
 if __name__ == "__main__":
     import uvicorn

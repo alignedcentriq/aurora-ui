@@ -17,7 +17,7 @@ from app.config import settings
 DOMAIN_REGISTRY = {
     "hr": {
         "description": "Human Resources — leave management, leave balance, leave applications, "
-                       "payroll, salary slips, attendance, HR policies, employee benefits, "
+                       "attendance, HR policies, employee benefits, "
                        "onboarding, offboarding, referral bonuses, appraisals, PIP, "
                        "performance reviews, work from home policy, holidays, comp-off",
         "status": "active",
@@ -31,8 +31,12 @@ DOMAIN_REGISTRY = {
     },
     "it_support": {
         "description": "IT Support & Helpdesk — software installation (with HITL approval flow), IT tickets, "
-                       "asset management (laptops, monitors), password reset, VPN access, laptop issues, "
-                       "email access, network connectivity, system access requests",
+                       "asset management (laptops, monitors, keyboards, peripherals), password reset, VPN access, "
+                       "laptop issues, email access, network connectivity, system access requests, "
+                       "hardware problems (overheating, heating, system getting hot, device too hot, laptop fan loud), "
+                       "device performance issues (slow system, system freezing, computer crashing, system hanging, "
+                       "laptop not starting, blue screen, system restart), any issue with a computer, machine, "
+                       "device, workstation, or IT equipment",
         "status": "active",
     },
     "pmo": {
@@ -82,6 +86,8 @@ RULES:
 
 Example responses:
 {{"domain": "it_support", "confidence": 0.97, "reasoning": "User wants to install Node.js, which is a software installation request.", "sub_intent": "software_install", "entities": {{"software_name": "Node.js"}}}}
+{{"domain": "it_support", "confidence": 0.95, "reasoning": "User reports their system is heating up, which is a hardware/device issue handled by IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "overheating"}}}}
+{{"domain": "it_support", "confidence": 0.93, "reasoning": "User's laptop is slow/freezing, which is a device performance issue for IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "performance"}}}}
 {{"domain": "hr", "confidence": 0.95, "reasoning": "User is asking about their leave balance.", "sub_intent": "leave_balance", "entities": {{}}}}
 {{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
 """

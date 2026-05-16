@@ -1,20 +1,33 @@
 import os
-import platform
-import subprocess
 from dotenv import load_dotenv
 
 load_dotenv()
 
 ALIGNED_LLM_BASE_URL = "http://ml01.alignedautomation.com:11434/v1"
-LOCAL_LLM_BASE_URL = "http://localhost:11434/v1"
 AUTO_BASE_URL_VALUES = {"", "auto", "platform"}
+LOCAL_INFRA_HOST = "127.0.0.1"
+ALIGNED_LLM_HOST = "ml01.alignedautomation.com"
+
+
+def _append_no_proxy(*hosts: str) -> None:
+    current = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    entries = [entry.strip() for entry in current.split(",") if entry.strip()]
+    seen = {entry.lower() for entry in entries}
+    for host in hosts:
+        if host.lower() not in seen:
+            entries.append(host)
+            seen.add(host.lower())
+    value = ",".join(entries)
+    os.environ["NO_PROXY"] = value
+    os.environ["no_proxy"] = value
+
+
+_append_no_proxy(ALIGNED_LLM_HOST)
 
 
 def _platform_llm_base_url() -> str:
-    """Use the shared Aligned server on Windows and local Ollama elsewhere."""
-    if platform.system().lower() == "windows":
-        return ALIGNED_LLM_BASE_URL
-    return LOCAL_LLM_BASE_URL
+    """Use the shared Aligned server for this Windows-only local app."""
+    return ALIGNED_LLM_BASE_URL
 
 
 def _resolve_llm_base_url(env_name: str, fallback_env_name: str | None = None) -> str:
@@ -29,15 +42,8 @@ def _resolve_llm_base_url(env_name: str, fallback_env_name: str | None = None) -
 
 
 def _resolve_infra_host() -> str:
-    """On Windows, Docker/Redis/Postgres run inside WSL — get the WSL IP dynamically.
-    On macOS/Linux they are reachable via 127.0.0.1."""
-    if platform.system().lower() == "windows":
-        try:
-            output = subprocess.check_output(["wsl", "hostname", "-I"], timeout=5)
-            return output.decode().strip().split()[0]
-        except Exception:
-            return "127.0.0.1"
-    return "127.0.0.1"
+    """Docker runs in WSL, but published ports are reached from Windows via localhost."""
+    return LOCAL_INFRA_HOST
 
 
 def _resolve_db_url() -> str:
@@ -70,13 +76,11 @@ def _resolve_minio_endpoint() -> str:
 
 
 def _resolve_router_model() -> str:
-    """Windows uses gpt-oss:latest (Aligned server); macOS/Linux use gpt-oss:20b (local Ollama)."""
+    """Use the Windows Aligned server router model."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    if platform.system().lower() == "windows":
-        return "gpt-oss:latest"
-    return "gpt-oss:20b"
+    return "gpt-oss:latest"
 
 
 class Config:
@@ -87,7 +91,7 @@ class Config:
 
     # ── Agent Model (reasoning, tool calling, response generation) ──
     AGENT_BASE_URL = os.getenv("AGENT_BASE_URL", os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"))
-    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "llama3.2:3b"))
+    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"))
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
@@ -96,23 +100,23 @@ class Config:
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")
-    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama3.3:70b")
+    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-oss:latest")
     LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── Agent Model (reasoning, tool calling, response generation) ──
     AGENT_BASE_URL = _resolve_llm_base_url("AGENT_BASE_URL", "LLM_BASE_URL")
-    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "llama3.3:70b"))
+    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"))
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── Embedding + Chunking Models (semantic search / RAG ingestion) ──
     EMBEDDING_BASE_URL = _resolve_llm_base_url("EMBEDDING_BASE_URL", "LLM_BASE_URL")
-    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "llama3.3:70b")
+    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "gpt-oss:latest")
     EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
 
     CHUNKING_BASE_URL = _resolve_llm_base_url("CHUNKING_BASE_URL", "EMBEDDING_BASE_URL")
-    CHUNKING_MODEL_NAME = os.getenv("CHUNKING_MODEL_NAME", os.getenv("EMBEDDING_MODEL_NAME", "llama3.3:70b"))
+    CHUNKING_MODEL_NAME = os.getenv("CHUNKING_MODEL_NAME", os.getenv("EMBEDDING_MODEL_NAME", "gpt-oss:latest"))
     CHUNKING_API_KEY = os.getenv("CHUNKING_API_KEY", os.getenv("EMBEDDING_API_KEY", "ollama"))
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
@@ -148,7 +152,7 @@ class Config:
     SMTP_USER = os.getenv("SMTP_USER", "")
     SMTP_PASS = os.getenv("SMTP_PASS", "")
     SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Centriq AI")
-    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "helpdesk@alignedautomation.com")
-    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@alignedautomation.com")
+    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "poc@alignedautomation")
+    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "poc@alignedautomation")
 
 settings = Config()

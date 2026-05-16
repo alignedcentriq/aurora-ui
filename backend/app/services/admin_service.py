@@ -8,15 +8,34 @@ from app.models import (
 
 class AdminService:
 
+    @staticmethod
+    def _get_or_create_employee(db, email: str) -> Employee:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            emp = Employee(
+                employee_id=f"EMP{abs(hash(email)) % 9000 + 1000}",
+                name=name,
+                email=email,
+                department="General",
+                designation="Employee",
+                joining_date=datetime.date.today(),
+                employment_type="Full-time",
+                location="Mumbai",
+                shift_type="Day",
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+        return emp
+
     # ── Reimbursement ─────────────────────────────────────────────────────────
 
     @staticmethod
     def submit_reimbursement(email: str, type: str, amount: float, reason: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             new_r = Reimbursement(
                 employee_id=emp.id,
@@ -54,9 +73,7 @@ class AdminService:
     def get_reimbursements(email: str) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             items = db.query(Reimbursement).filter(Reimbursement.employee_id == emp.id).all()
             if not items:
@@ -82,9 +99,7 @@ class AdminService:
     ) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             # Check if employee already has an active sticker
             existing = db.query(ParkingSticker).filter(
@@ -137,9 +152,7 @@ class AdminService:
     def surrender_parking_sticker(email: str, vehicle_number: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             q = db.query(ParkingSticker).filter(
                 ParkingSticker.employee_id == emp.id,
@@ -182,9 +195,7 @@ class AdminService:
     def get_parking_info(email: str) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             stickers = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).all()
             if not stickers:
@@ -210,9 +221,7 @@ class AdminService:
     ) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             new_a = Accommodation(
                 employee_id=emp.id,
@@ -239,9 +248,7 @@ class AdminService:
     ) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             ticket_id = f"FC-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_c = FacilityComplaint(
@@ -297,9 +304,7 @@ class AdminService:
     def submit_food_feedback(email: str, vendor_name: str, rating: int, comments: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             new_f = FoodVendorFeedback(
                 employee_id=emp.id,
@@ -323,9 +328,7 @@ class AdminService:
         """Lodge a food/cafeteria complaint — distinct from a star rating."""
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = AdminService._get_or_create_employee(db, email)
 
             new_c = FoodComplaint(
                 employee_id=emp.id,

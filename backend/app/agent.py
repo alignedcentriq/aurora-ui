@@ -2,7 +2,7 @@
 Centriq AI — Multi-Agent LangGraph Brain
 
 Architecture:
-  User Message → Intent Router (gpt-oss) → Domain Agent (llama3.2:3b)
+  User Message → Intent Router (gpt-oss:latest / 20.9B) → Domain Agent (gpt-oss:latest / 20.9B)
                                          ↓
                               HR Agent (active, with tools)
                               Admin Agent (placeholder)
@@ -35,6 +35,7 @@ from app.agents.pmo_agent import pmo_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
+from app.services.it_service import ITService
 from app.sharepoint_transfer_service import sharepoint_transfer_service
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
@@ -58,6 +59,26 @@ class AgentState(TypedDict):
     entities: Optional[dict]           # pre-extracted entities from the user message
     feedback_context: Optional[str]    # injected feedback prompt block
     user_email: Optional[str]          # logged-in user email
+    session_id: Optional[str]          # chat thread id, used for pending confirmations
+
+
+PENDING_IT_EMAIL_DRAFTS: dict[str, dict] = {}
+
+
+def _draft_key(state: AgentState) -> str:
+    return state.get("session_id") or state.get("user_email") or settings.DEFAULT_USER_EMAIL
+
+
+def _is_confirmation(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in {"yes", "y", "ok", "okay", "confirm", "send", "send it", "yes send it"} or (
+        "yes" in normalized and "send" in normalized
+    )
+
+
+def _is_cancellation(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in {"no", "cancel", "stop", "discard", "do not send", "don't send"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -84,11 +105,6 @@ def apply_leave(
 def search_hr_policies(query: str):
     """Search HR policy documents for a specific topic."""
     return HRService.search_policies(query)
-
-@tool
-def get_payroll_info(email: str):
-    """Get the latest payroll / salary information for an employee."""
-    return HRService.get_payroll_info(email)
 
 @tool
 def transfer_sharepoint_to_minio(site_name: str, folder_path: str, minio_prefix: str = ""):
@@ -191,7 +207,7 @@ def update_hr_prompt(new_prompt: str):
 
 
 hr_tools = [
-    get_leave_balance, apply_leave, search_hr_policies, get_payroll_info,
+    get_leave_balance, apply_leave, search_hr_policies,
     transfer_sharepoint_to_minio, list_minio_documents,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
@@ -256,6 +272,25 @@ def intent_router(state: AgentState):
         return {"domain": "general", "route_confidence": 0.0, "route_reasoning": "No user message found",
                 "sub_intent": "unknown", "entities": {}}
 
+    draft_key = _draft_key(state)
+    if draft_key in PENDING_IT_EMAIL_DRAFTS:
+        if _is_confirmation(last_human):
+            return {
+                "domain": "it_support",
+                "route_confidence": 1.0,
+                "route_reasoning": "User confirmed a pending IT email draft.",
+                "sub_intent": "software_install_confirm",
+                "entities": {},
+            }
+        if _is_cancellation(last_human):
+            return {
+                "domain": "it_support",
+                "route_confidence": 1.0,
+                "route_reasoning": "User cancelled a pending IT email draft.",
+                "sub_intent": "software_install_cancel",
+                "entities": {},
+            }
+
     if "five project name" in last_human.lower():
         return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected.",
                 "sub_intent": "test", "entities": {}}
@@ -295,7 +330,7 @@ def feedback_lookup(state: AgentState) -> dict:
 
 
 def hr_agent(state: AgentState):
-    """HR Agent — handles leave, payroll, policies."""
+    """HR Agent — handles leave and policies."""
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
@@ -307,10 +342,9 @@ def hr_agent(state: AgentState):
             f"1. Leave balance ('my leave balance', 'how many leaves do I have'): → call get_leave_balance immediately.\n"
             f"2. Apply leave ('apply leave from X to Y', 'take 3 days off'): → call apply_leave immediately. "
             f"Infer leave_type (default Casual) from context.\n"
-            f"3. Salary / payroll ('my salary', 'payslip', 'this month's payroll'): → call get_payroll_info immediately.\n"
-            f"4. Policy question ('WFH policy', 'sick leave rules', 'maternity leave'): → call search_hr_policies immediately.\n"
-            f"5. Employee search ('find John', 'who is in Finance', 'locate someone'): → call search_employee_directory immediately.\n"
-            f"6. Org chart / reporting ('who does Alice report to', 'team under Bob'): → call get_org_chart or get_team_roster immediately.\n\n"
+            f"3. Policy question ('WFH policy', 'sick leave rules', 'maternity leave'): → call search_hr_policies immediately.\n"
+            f"4. Employee search ('find John', 'who is in Finance', 'locate someone'): → call search_employee_directory immediately.\n"
+            f"5. Org chart / reporting ('who does Alice report to', 'team under Bob'): → call get_org_chart or get_team_roster immediately.\n\n"
             f"RESPONSE STYLE: Act first. Only ask when a REQUIRED parameter is truly missing. "
             f"Never answer from training knowledge — use tools only.",
         )
@@ -351,12 +385,38 @@ async def it_agent_node(state: AgentState):
     """IT Agent - handles software install, tickets, etc."""
     entities = state.get("entities") or {}
     sub_intent = state.get("sub_intent") or ""
+    user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    draft_key = _draft_key(state)
+
+    if sub_intent == "software_install_confirm":
+        draft = PENDING_IT_EMAIL_DRAFTS.get(draft_key)
+        if not draft:
+            return {"messages": [AIMessage(content="I do not have a pending IT email draft to send. Please start the software install request again.")]}
+        response = ITService.send_software_install_request(user_email, draft["software_name"])
+        PENDING_IT_EMAIL_DRAFTS.pop(draft_key, None)
+        return {"messages": [AIMessage(content=response)]}
+
+    if sub_intent == "software_install_cancel":
+        PENDING_IT_EMAIL_DRAFTS.pop(draft_key, None)
+        return {"messages": [AIMessage(content="No problem. I discarded the pending IT email draft and did not send anything.")]}
+
+    if sub_intent == "software_install":
+        software_name = (
+            entities.get("software_name")
+            or entities.get("software")
+            or entities.get("application")
+            or entities.get("app")
+        )
+        if software_name:
+            PENDING_IT_EMAIL_DRAFTS[draft_key] = {"software_name": str(software_name)}
+            return {"messages": [AIMessage(content=ITService.request_software_install(user_email, str(software_name)))]}
+
     entity_hint = ""
     if entities:
         entity_hint = f"\n[Router extracted: sub_intent={sub_intent}, entities={entities}]"
     result = await it_agent.ainvoke({
         "messages": state["messages"],
-        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "user_email": user_email,
         "feedback_context": (state.get("feedback_context") or "") + entity_hint,
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
@@ -389,7 +449,7 @@ def general_agent(state: AgentState):
         "and search_hr_policies (search for policy details by topic). "
         "Always call get_announcements when the user asks about news, updates, or announcements. "
         "Always call search_hr_policies when the user asks about a policy. "
-        "For all other domain questions (leave, payroll, parking, IT tickets, projects), direct the user to the right team. "
+        "For all other domain questions (leave, parking, IT tickets, projects), direct the user to the right team. "
         "IMPORTANT: Do NOT answer company-specific questions from your own knowledge — use tools only.",
     )
     guardrail = PromptService.get_guardrail("general")

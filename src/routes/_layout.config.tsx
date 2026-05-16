@@ -34,7 +34,7 @@ const DOMAINS = [
 ];
 
 const PROMPT_KEYS = [
-  { key: "system_prompt", label: "System Prompt", description: "Core instructions and persona for this agent domain." },
+  { key: "system_prompt", label: "System Prompt", description: "Core instructions and persona for this domain." },
   { key: "guardrail", label: "Guardrail", description: "Anti-hallucination and scope constraints appended after the system prompt." },
 ];
 
@@ -125,7 +125,7 @@ function ConfigPage() {
               Prompt Configuration
             </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
-              Edit live agent system prompts and guardrails — changes take effect immediately.
+              Edit live system prompts and guardrails — changes take effect immediately.
             </p>
           </div>
           <button
@@ -163,7 +163,7 @@ function ConfigPage() {
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           <div className="flex items-center gap-2 mb-6">
             <span className={cn("h-2.5 w-2.5 rounded-full", activeMeta?.color?.replace("text-", "bg-"))} />
-            <h2 className="text-[15px] font-semibold text-foreground">{activeMeta?.label} Agent</h2>
+            <h2 className="text-[15px] font-semibold text-foreground">{activeMeta?.label} Settings</h2>
           </div>
 
           {loading ? (
@@ -226,7 +226,7 @@ function ConfigPage() {
                     <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/30 px-4 py-6 text-center">
                       <ChevronDown className="h-4 w-4 text-muted-foreground/40 mx-auto mb-2" />
                       <p className="text-[11px] text-muted-foreground/60">
-                        No custom {label.toLowerCase()} configured — agent is using its hardcoded default.
+                        No custom {label.toLowerCase()} configured — using the default.
                       </p>
                     </div>
                   )}

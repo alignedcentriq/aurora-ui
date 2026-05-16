@@ -71,12 +71,12 @@ export function AIMessage({
 
   return (
     <div className="flex w-full justify-start animate-[slide-up_.5s_cubic-bezier(0.16,1,0.3,1)_both]">
-      <div className="flex max-w-[85%] gap-3">
+      <div className="group flex max-w-[85%] gap-3">
         <Logo size="sm" className="mt-1 shadow-sm shrink-0" />
 
         <div className="flex-1 space-y-2">
           <div className="chat-bubble-assistant">
-            <div className="group/msg relative">{children}</div>
+            <div className="relative">{children}</div>
           </div>
 
           <div className="flex flex-col gap-2 px-1">
@@ -95,7 +95,7 @@ export function AIMessage({
 
               {/* Feedback buttons — only shown when idle and not live */}
               {!live && onFeedback && feedbackState === "idle" && (
-                <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <button
                     onClick={handleThumbsUp}
                     title="Helpful"

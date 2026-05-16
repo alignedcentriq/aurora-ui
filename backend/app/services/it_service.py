@@ -7,12 +7,30 @@ from app.models import Employee, ITTicket, AssetAssignment, HITLRequest
 
 class ITService:
     @staticmethod
+    def _get_or_create_employee(db, email: str) -> Employee:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            emp = Employee(
+                employee_id=f"EMP{abs(hash(email)) % 9000 + 1000}",
+                name=name,
+                email=email,
+                department="General",
+                designation="Employee",
+                joining_date=datetime.date.today(),
+                employment_type="Full-time",
+                location="Mumbai",
+                shift_type="Day",
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+        return emp
+    @staticmethod
     def create_ticket(email: str, category: str, subject: str, description: str, priority: str = "Medium"):
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp:
-                return "Employee not found."
+            emp = ITService._get_or_create_employee(db, email)
 
             ticket_id = f"IT-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_t = ITTicket(
@@ -66,9 +84,8 @@ class ITService:
     def get_my_tickets(email: str):
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = ITService._get_or_create_employee(db, email)
+
             tickets = db.query(ITTicket).filter(ITTicket.employee_id == emp.id).all()
             if not tickets: return "You have no active IT support tickets."
             
@@ -78,7 +95,7 @@ class ITService:
             db.close()
 
     @staticmethod
-    def request_software_install(email: str, software_name: str):
+    def request_software_install_mailto_legacy(email: str, software_name: str):
         subject = f"Software Installation Request – {software_name}"
         body = (
             f"Dear IT Support Team,\n\n"
@@ -101,6 +118,59 @@ class ITService:
             f"I've prepared a professional email to the IT support team requesting installation of **{software_name}**.\n\n"
             f"[Open in Outlook to send]({mailto_url})\n\n"
             f"Click the link above — it will open your Outlook with the email pre-filled and ready to send."
+        )
+
+    @staticmethod
+    def build_software_install_email(email: str, software_name: str):
+        subject = f"Software Installation Request - {software_name}"
+        body = (
+            f"Dear IT Support Team,\n\n"
+            f"I hope this message finds you well.\n\n"
+            f"I would like to request the installation of {software_name} on my workstation "
+            f"at the earliest convenience.\n\n"
+            f"Details:\n"
+            f"  Requested by: {email}\n"
+            f"  Software required: {software_name}\n\n"
+            f"Please let me know if any additional approvals or information are required.\n\n"
+            f"Thank you for your assistance.\n\n"
+            f"Best regards"
+        )
+        return {"to": settings.HELPDESK_EMAIL, "subject": subject, "body": body}
+
+    @staticmethod
+    def request_software_install(email: str, software_name: str):
+        import json
+        draft = ITService.build_software_install_email(email, software_name)
+        draft_json = json.dumps({"to": draft["to"], "subject": draft["subject"], "body": draft["body"]})
+        return (
+            f"I've prepared this email to IT Support for **{software_name}**. "
+            f"Review and edit it below, then click Send.\n\n"
+            f"[EMAIL_DRAFT_START]{draft_json}[EMAIL_DRAFT_END]"
+        )
+
+    @staticmethod
+    def send_software_install_request(email: str, software_name: str):
+        draft = ITService.build_software_install_email(email, software_name)
+        try:
+            from app.services.email_service import send_software_install_email
+            sent = send_software_install_email(
+                requester_email=email,
+                software_name=software_name,
+                subject=draft["subject"],
+                body=draft["body"],
+            )
+        except Exception:
+            sent = False
+
+        if not sent:
+            return (
+                "I prepared the email, but I could not send it because the mail service is not available "
+                "or SMTP credentials are not configured correctly. Please try again after mail settings are fixed."
+            )
+
+        return (
+            f"Done. I sent the software installation request for **{software_name}** to IT Support "
+            f"and copied **{email}**."
         )
 
     @staticmethod
@@ -132,9 +202,8 @@ class ITService:
     def get_my_assets(email: str):
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = ITService._get_or_create_employee(db, email)
+
             assets = db.query(AssetAssignment).filter(AssetAssignment.employee_id == emp.id, AssetAssignment.status == "Assigned").all()
             if not assets: return "No IT assets assigned to you."
             

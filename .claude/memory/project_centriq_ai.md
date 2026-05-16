@@ -13,7 +13,7 @@ metadata:
 **Product:** Centriq AI — enterprise internal AI assistant  
 **Repo root:** `/Users/sharmaji/aurora-ui/`  
 **Backend port:** 8080  
-**Frontend port:** 5173 (Vite dev server, proxies `/api` → `http://127.0.0.1:8080`)  
+**Frontend port:** 3000 (Vite dev server, proxies `/api` → `http://127.0.0.1:8080`)  
 **Git branch:** `dev_sharmaji` → PR to `main`
 
 ---

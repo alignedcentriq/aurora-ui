@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
+import { ParkingForm } from "./ParkingForm";
 
 import type { Turn } from "@/lib/chat-store";
 
@@ -56,6 +58,7 @@ export function AssistantView() {
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+  const [activity, setActivity] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -81,21 +84,18 @@ export function AssistantView() {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
-      // 1. Intercept Software Install requests for approval workflow
+      // Intercept parking sticker requests — show interactive form
       if (
-        text.toLowerCase().includes("software install") ||
-        text.toLowerCase().includes("install figma")
+        text.toLowerCase().includes("parking sticker") ||
+        (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
-          text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
-          card: false,
+          text: "Please fill in your vehicle details below to submit a parking sticker request.",
+          interactive: { type: "parking_form" },
         });
         setInput("");
-        toast.success("IT Approval Request Sent", {
-          description: "Sent to IT Support for software installation.",
-        });
         return;
       }
 
@@ -103,15 +103,22 @@ export function AssistantView() {
       setInput("");
       setThinking(true);
 
-      // Always send history now that AI Memory toggle is removed
       const history = (threads[activeId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
       }));
 
-      // Real API call to backend
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      const activitySteps = getActivitySteps(text);
+      setActivity(activitySteps[0]);
+      const activityTimers = activitySteps
+        .slice(1)
+        .map((step, index) => window.setTimeout(() => setActivity(step), (index + 1) * 1800));
+
       fetch("/api/chat", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           ...(user?.email ? { "x-user-email": user.email } : {}),
@@ -142,19 +149,34 @@ export function AssistantView() {
             downloadUrl: data.download_url ?? undefined,
             downloadTitle: data.download_title ?? undefined,
             domain: data.domain ?? undefined,
+            interactive: data.interactive ?? undefined,
           });
         })
         .catch((err) => {
           console.error("Backend Error:", err);
-          toast.error("Assistant is unavailable", {
-            description: err.message || "Please try again later.",
+          const message =
+            err.name === "AbortError"
+              ? "The request timed out after 90 seconds."
+              : err.message || "Please try again later.";
+          addTurn(activeId, {
+            role: "ai",
+            text:
+              err.name === "AbortError"
+                ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
+                : "I couldn't complete that request right now. Please try again in a moment.",
+          });
+          toast.error("Service unavailable", {
+            description: message,
           });
         })
         .finally(() => {
+          window.clearTimeout(timeoutId);
+          activityTimers.forEach((timer) => window.clearTimeout(timer));
+          setActivity("");
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking],
+    [activeId, input, threads, addTurn, setThinking, user?.email, user?.role],
   );
 
   const handleNewChat = () => {
@@ -286,9 +308,11 @@ export function AssistantView() {
                   ) : (
                     <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined}>
                       <div className="space-y-4">
-                        <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                          {renderInline(t.text)}
-                        </div>
+                        {t.text && (
+                          <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                            {renderInline(t.text)}
+                          </div>
+                        )}
                         {t.downloadUrl && (
                           <a
                             href={t.downloadUrl}
@@ -321,6 +345,23 @@ export function AssistantView() {
                             }}
                           />
                         )}
+                        {t.interactive?.type === "parking_form" && (
+                          <ParkingForm
+                            userEmail={user?.email || ""}
+                            onSubmitted={(msg) =>
+                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                            }
+                          />
+                        )}
+                        {t.interactive?.type === "email_draft" && t.interactive.data && (
+                          <InteractiveEmailDraft
+                            data={t.interactive.data}
+                            userEmail={user?.email}
+                            onSent={(msg) =>
+                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                            }
+                          />
+                        )}
                       </div>
                     </AIMessage>
                   ),
@@ -328,19 +369,22 @@ export function AssistantView() {
 
                 {thinking && (
                   <AIMessage live>
-                    <div className="flex gap-1.5 py-2">
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "150ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "300ms" }}
-                      />
+                    <div className="flex items-center gap-3 py-2 text-sm text-muted-foreground">
+                      <div className="flex gap-1.5">
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "0ms" }}
+                        />
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "150ms" }}
+                        />
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "300ms" }}
+                        />
+                      </div>
+                      <span>{activity || "Working..."}</span>
                     </div>
                   </AIMessage>
                 )}
@@ -421,4 +465,23 @@ function renderInline(text: string | undefined) {
       <span key={i}>{p}</span>
     ),
   );
+}
+
+function getActivitySteps(text: string) {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("install") ||
+    lower.includes("software") ||
+    lower.includes("nodejs") ||
+    lower.includes("node.js") ||
+    lower.includes("figma")
+  ) {
+    return ["Routing to IT Support...", "Preparing email draft...", "Waiting for response..."];
+  }
+
+  if (/\b(yes|send|confirm|ok|okay)\b/.test(lower)) {
+    return ["Checking pending draft...", "Sending email...", "Finalizing response..."];
+  }
+
+  return ["Routing request...", "Selecting the right service...", "Preparing response..."];
 }

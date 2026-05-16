@@ -5,7 +5,6 @@ from app.models import (
     Base,
     Employee,
     Leave,
-    Payroll,
     Attendance,
     Policy,
     Project,
@@ -54,7 +53,16 @@ def init_db():
             conn.commit()
         
     Base.metadata.create_all(bind=engine)
-    
+
+    # Drop removed tables
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            try:
+                conn.execute(text(f'DROP TABLE IF EXISTS "{SCHEMA}".payroll CASCADE'))
+                conn.commit()
+            except Exception:
+                pass
+
     # Migrations: add columns that may not exist in older deployments
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
@@ -175,24 +183,6 @@ def _seed_hr_data(db):
             )
             db.add(leave)
     
-    # Seed Payroll for current month
-    for emp in employees:
-        base = random.randint(50000, 150000)
-        bonus = random.randint(0, 10000)
-        tax = base * 0.1
-        payroll = Payroll(
-            employee_id=emp.id,
-            month=datetime.date.today().month,
-            year=datetime.date.today().year,
-            base_salary=base,
-            bonus=bonus,
-            deductions=tax,
-            net_salary=base + bonus - tax,
-            tax_paid=tax,
-            status="Paid"
-        )
-        db.add(payroll)
-
     # Seed HR Policies
     policies = [
         ("Leave Policy", "Leave", "Employees are entitled to 20 days of Earned Leave per year. Sick leave is capped at 12 days."),
@@ -497,7 +487,7 @@ def _seed_prompt_configs(db):
     print("Seeding Prompt Configs...")
     
     prompts = [
-        ("hr", "system_prompt", "You are the HR Assistant for Aligned Automation. Help employees with leave management, WFH requests, payroll queries, and HR policies.", "admin,hr_manager"),
+        ("hr", "system_prompt", "You are the HR Assistant for Aligned Automation. Help employees with leave management, WFH requests, and HR policies.", "admin,hr_manager"),
         ("admin", "system_prompt", "You are the Admin Services Assistant for Aligned Automation. You have tools to handle ALL of these — ALWAYS call the right tool, never say you cannot help: parking sticker requests (request_parking_sticker — ask for vehicle_number, vehicle_make, vehicle_model, vehicle_type if missing), surrender parking sticker (surrender_parking_sticker), view parking info (get_parking_info), reimbursements travel/medical/certification/equipment (submit_reimbursement, check_reimbursement_status), accommodation guest-house/hotel (request_accommodation), facility complaints cleanliness/electrical/AC/plumbing/safety (file_facility_complaint), complaint status (check_complaint_status), food complaints (submit_food_complaint), food vendor ratings (submit_food_feedback, get_vendor_ratings). CRITICAL: If the user requests a parking sticker and details are missing, ASK for them — do NOT say you cannot help.", "admin,admin_manager"),
         ("it_support", "system_prompt", "You are the IT Support Assistant. Help with software installation, hardware issues, network problems, and asset management.", "admin,it_admin"),
         ("pmo", "system_prompt", "You are the PMO Assistant. Help with project status, sprint summaries, and team capacity queries.", "admin,pmo_manager"),
