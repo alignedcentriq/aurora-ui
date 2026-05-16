@@ -9,16 +9,10 @@ from app.models import (
     Attendance,
     Policy,
     Project,
-    Sprint,
-    TeamCapacity,
-    Milestone,
     Reimbursement,
     ITTicket,
-    TrainingAssignment,
     PromptConfig,
     HITLRequest,
-    EmployeeSkillMap,
-    ProjectAssignment,
     ParkingSticker,
     Accommodation,
     FacilityComplaint,
@@ -26,7 +20,6 @@ from app.models import (
     EmployeeZohoProfile,
     Announcement,
     FoodComplaint,
-    SessionTranscript,
     ChatFeedback,
     SCHEMA,
 )
@@ -93,21 +86,14 @@ def init_db():
                 needs_pmo_seed = True
 
         if needs_pmo_seed:
-            # Clear all PMO tables to avoid UniqueViolations
-            db.query(Milestone).delete()
-            db.query(Sprint).delete()
-            db.query(TeamCapacity).delete()
             db.query(Project).delete()
             db.commit()
             _seed_pmo_data(db)
-            
-        # NEW: seed new domain data
+
         if db.query(Reimbursement).count() == 0:
             _seed_admin_data(db)
         if db.query(ITTicket).count() == 0:
             _seed_it_data(db)
-        if db.query(TrainingAssignment).count() == 0:
-            _seed_manager_data(db)
         if db.query(PromptConfig).count() == 0:
             _seed_prompt_configs(db)
         else:
@@ -116,10 +102,7 @@ def init_db():
             _seed_zoho_profiles(db)
         if db.query(Announcement).count() == 0:
             _seed_announcements(db)
-        if db.query(SessionTranscript).count() == 0:
-            _seed_transcripts(db)
-        # ChatFeedback and FoodComplaint are user-generated — no seed data needed
-        _ = db.query(ChatFeedback).count()  # ensure table exists
+        _ = db.query(ChatFeedback).count()
 
         # Ingest real policy documents from OneDrive folder (if not already done)
         policy_count = db.query(Policy).count()
@@ -226,162 +209,45 @@ def _seed_hr_data(db):
 
 
 def _seed_pmo_data(db):
-    print("Seeding dummy PMO data...")
+    print("Seeding PMO project data...")
 
     db.add_all([
         Project(name="Centriq AI", status="In Progress", completion_pct=65.0,
-                sprint_name="Sprint 5", next_milestone="UAT",
-                next_milestone_date="2026-05-20", owner="Suraj G.",
+                next_milestone="UAT", next_milestone_date="2026-05-20", owner="Suraj G.",
                 achievements="Successfully integrated multi-agent LangGraph; Implemented real-time HR data sync."),
         Project(name="Aurora UI", status="In Progress", completion_pct=72.0,
-                sprint_name="Sprint 5", next_milestone="Frontend Integration",
-                next_milestone_date="2026-05-19", owner="Suraj G.",
+                next_milestone="Frontend Integration", next_milestone_date="2026-05-19", owner="Suraj G.",
                 achievements="Migrated to TanStack Start; Implemented responsive glassmorphic chat interface."),
         Project(name="HR Integration", status="In Progress", completion_pct=45.0,
-                sprint_name="Sprint 4", next_milestone="API Finalization",
-                next_milestone_date="2026-05-22", owner="Shivam K.",
+                next_milestone="API Finalization", next_milestone_date="2026-05-22", owner="Shivam K.",
                 achievements="Secured payroll API endpoints; Completed employee document extraction pipeline."),
         Project(name="Admin Dashboard", status="In Progress", completion_pct=55.0,
-                sprint_name="Sprint 5", next_milestone="Grafana Setup",
-                next_milestone_date="2026-05-21", owner="Priyanka M.",
+                next_milestone="Grafana Setup", next_milestone_date="2026-05-21", owner="Priyanka M.",
                 achievements="Configured real-time system monitoring; Visualized agent routing latency."),
         Project(name="IT Support Agent", status="Planning", completion_pct=20.0,
-                sprint_name="Sprint 3", next_milestone="DB Schema",
-                next_milestone_date="2026-05-18", owner="Kajal S.",
+                next_milestone="DB Schema", next_milestone_date="2026-05-18", owner="Kajal S.",
                 achievements="Finalized IT ticketing workflow; Defined asset management integration."),
         Project(name="LangGraph Routing Engine", status="In Progress", completion_pct=60.0,
-                sprint_name="Sprint 5", next_milestone="Intent Classifier v1",
-                next_milestone_date="2026-05-19", owner="Shivani R.",
+                next_milestone="Intent Classifier v1", next_milestone_date="2026-05-19", owner="Shivani R.",
                 achievements="Achieved 95% classification accuracy on test sets; Optimized routing path latency."),
         Project(name="Vector Search Pipeline", status="In Progress", completion_pct=50.0,
-                sprint_name="Sprint 4", next_milestone="Embedding Indexing",
-                next_milestone_date="2026-05-20", owner="Shivani R.",
+                next_milestone="Embedding Indexing", next_milestone_date="2026-05-20", owner="Shivani R.",
                 achievements="Successfully indexed 500+ HR policy documents; Integrated Nomic-embed-text."),
         Project(name="Document Generation Service", status="In Progress", completion_pct=70.0,
-                sprint_name="Sprint 5", next_milestone="PDF Template Polish",
-                next_milestone_date="2026-05-18", owner="Suraj G.",
+                next_milestone="PDF Template Polish", next_milestone_date="2026-05-18", owner="Suraj G.",
                 achievements="Implemented dynamic PDF generation from DB state; Standardized project status report templates."),
         Project(name="Redis Cache Layer", status="In Progress", completion_pct=40.0,
-                sprint_name="Sprint 4", next_milestone="Session Store Integration",
-                next_milestone_date="2026-05-22", owner="Suraj G.",
+                next_milestone="Session Store Integration", next_milestone_date="2026-05-22", owner="Suraj G.",
                 achievements="Reduced session load time by 40%; Implemented RedisJSON for complex state storage."),
         Project(name="Feedback Analytics", status="Planning", completion_pct=15.0,
-                sprint_name="Sprint 3", next_milestone="Schema Design",
-                next_milestone_date="2026-05-23", owner="Suraj G.",
+                next_milestone="Schema Design", next_milestone_date="2026-05-23", owner="Suraj G.",
                 achievements="Designed feedback collection loop; Integrated sentiment analysis placeholder."),
         Project(name="Power Automate Integration", status="In Progress", completion_pct=35.0,
-                sprint_name="Sprint 4", next_milestone="Approval Flow Trigger",
-                next_milestone_date="2026-05-24", owner="Shivam K.",
+                next_milestone="Approval Flow Trigger", next_milestone_date="2026-05-24", owner="Shivam K.",
                 achievements="Mapped SharePoint triggers to backend webhooks; Optimized approval notification latency."),
         Project(name="Grafana Monitoring", status="Planning", completion_pct=25.0,
-                sprint_name="Sprint 3", next_milestone="Loki Log Ingestion",
-                next_milestone_date="2026-05-21", owner="Priyanka M.",
+                next_milestone="Loki Log Ingestion", next_milestone_date="2026-05-21", owner="Priyanka M.",
                 achievements="Successfully deployed Loki instance; Configured centralized logging for backend services."),
-
-    ])
-
-    db.add_all([
-        Sprint(team="Centriq Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=42, committed=38, completed=28, blockers_count=2),
-        Sprint(team="Centriq Team", name="Sprint 4", start_date="2026-04-21",
-               end_date="2026-05-04", velocity=38, committed=35, completed=35, blockers_count=0),
-        Sprint(team="Centriq Team", name="Sprint 3", start_date="2026-04-07",
-               end_date="2026-04-20", velocity=35, committed=30, completed=27, blockers_count=1),
-        Sprint(team="Dev Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=50, committed=45, completed=38, blockers_count=3),
-        Sprint(team="Dev Team", name="Sprint 4", start_date="2026-04-21",
-               end_date="2026-05-04", velocity=48, committed=44, completed=44, blockers_count=0),
-        Sprint(team="PMO Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=30, committed=28, completed=20, blockers_count=1),
-    ])
-
-    db.add_all([
-        TeamCapacity(team="Centriq Team", total_members=5, available=4, on_leave=1, capacity_pct=80.0),
-        TeamCapacity(team="Dev Team", total_members=6, available=5, on_leave=1, capacity_pct=83.0),
-        TeamCapacity(team="PMO Team", total_members=3, available=3, on_leave=0, capacity_pct=100.0),
-        TeamCapacity(team="QA Team", total_members=4, available=3, on_leave=1, capacity_pct=75.0),
-        TeamCapacity(team="HR Team", total_members=4, available=4, on_leave=0, capacity_pct=100.0),
-    ])
-
-    db.add_all([
-        Milestone(project_name="Centriq AI", name="Requirements Finalized",
-                  due_date="2026-04-10", status="DONE"),
-        Milestone(project_name="Centriq AI", name="Architecture Design",
-                  due_date="2026-04-25", status="DONE"),
-        Milestone(project_name="Centriq AI", name="Backend APIs",
-                  due_date="2026-05-15", status="IN_PROGRESS"),
-        Milestone(project_name="Centriq AI", name="Frontend Integration",
-                  due_date="2026-05-19", status="IN_PROGRESS"),
-        Milestone(project_name="Centriq AI", name="UAT",
-                  due_date="2026-05-20", status="UPCOMING"),
-        Milestone(project_name="Centriq AI", name="Production Deploy",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Aurora UI", name="Component Library Setup",
-                  due_date="2026-04-15", status="DONE"),
-        Milestone(project_name="Aurora UI", name="Auth Integration",
-                  due_date="2026-04-28", status="DONE"),
-        Milestone(project_name="Aurora UI", name="Chat UI",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="Aurora UI", name="PMO Agent UI",
-                  due_date="2026-05-19", status="IN_PROGRESS"),
-        Milestone(project_name="Aurora UI", name="Final QA",
-                  due_date="2026-05-22", status="UPCOMING"),
-        Milestone(project_name="HR Integration", name="HR Agent Design",
-                  due_date="2026-04-20", status="DONE"),
-        Milestone(project_name="HR Integration", name="LangFuse Setup",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="HR Integration", name="API Finalization",
-                  due_date="2026-05-22", status="UPCOMING"),
-        Milestone(project_name="Admin Dashboard", name="Wireframes Approved",
-                  due_date="2026-04-18", status="DONE"),
-        Milestone(project_name="Admin Dashboard", name="KPI Charts",
-                  due_date="2026-05-08", status="DONE"),
-        Milestone(project_name="Admin Dashboard", name="Grafana Setup",
-                  due_date="2026-05-21", status="IN_PROGRESS"),
-        Milestone(project_name="Admin Dashboard", name="Loki Integration",
-                  due_date="2026-05-23", status="UPCOMING"),
-        Milestone(project_name="IT Support Agent", name="Requirements Gathering",
-                  due_date="2026-04-22", status="DONE"),
-        Milestone(project_name="IT Support Agent", name="DB Schema",
-                  due_date="2026-05-18", status="IN_PROGRESS"),
-        Milestone(project_name="IT Support Agent", name="Agent Logic",
-                  due_date="2026-05-24", status="UPCOMING"),
-        Milestone(project_name="IT Support Agent", name="Testing",
-                  due_date="2026-05-26", status="UPCOMING"),
-        Milestone(project_name="Document Generation Service", name="PDF Template Design",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="Document Generation Service", name="Report Generator",
-                  due_date="2026-05-15", status="DONE"),
-        Milestone(project_name="Document Generation Service", name="PDF Template Polish",
-                  due_date="2026-05-18", status="IN_PROGRESS"),
-        Milestone(project_name="Document Generation Service", name="Frontend Integration",
-                  due_date="2026-05-21", status="UPCOMING"),
-        Milestone(project_name="Redis Cache Layer", name="Redis Docker Setup",
-                  due_date="2026-05-05", status="DONE"),
-        Milestone(project_name="Redis Cache Layer", name="Session Store Integration",
-                  due_date="2026-05-22", status="IN_PROGRESS"),
-        Milestone(project_name="Redis Cache Layer", name="Rate Limiting",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Feedback Analytics", name="Schema Design",
-                  due_date="2026-05-23", status="IN_PROGRESS"),
-        Milestone(project_name="Feedback Analytics", name="Store Thumbs Up/Down",
-                  due_date="2026-05-26", status="UPCOMING"),
-        Milestone(project_name="Feedback Analytics", name="Admin Dashboard Widget",
-                  due_date="2026-05-28", status="UPCOMING"),
-        Milestone(project_name="Power Automate Integration", name="Flow Design",
-                  due_date="2026-04-30", status="DONE"),
-        Milestone(project_name="Power Automate Integration", name="Approval Flow Trigger",
-                  due_date="2026-05-24", status="IN_PROGRESS"),
-        Milestone(project_name="Power Automate Integration", name="Email Notifications",
-                  due_date="2026-05-27", status="UPCOMING"),
-        Milestone(project_name="Grafana Monitoring", name="Grafana Docker Setup",
-                  due_date="2026-05-08", status="DONE"),
-        Milestone(project_name="Grafana Monitoring", name="Loki Log Ingestion",
-                  due_date="2026-05-21", status="IN_PROGRESS"),
-        Milestone(project_name="Grafana Monitoring", name="API Latency Dashboard",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Grafana Monitoring", name="Alerting Rules",
-                  due_date="2026-05-28", status="UPCOMING"),
     ])
 
     db.commit()
@@ -499,47 +365,6 @@ def _seed_it_data(db):
     db.commit()
     print("IT seeding complete.")
 
-def _seed_manager_data(db):
-    print("Seeding Manager data...")
-    from app.models import TrainingAssignment, EmployeeSkillMap, ProjectAssignment
-    
-    employees = db.query(Employee).all()
-    if not employees: return
-    
-    # Training Assignments
-    courses = [
-        ("Python for Data Science", "Udemy"),
-        ("Advanced React Patterns", "Coursera"),
-        ("Project Management Professional (PMP)", "Internal"),
-        ("AWS Certified Solutions Architect", "Internal")
-    ]
-    for _ in range(15):
-        emp = random.choice(employees)
-        mgr = random.choice(employees)
-        course, platform = random.choice(courses)
-        db.add(TrainingAssignment(
-            employee_id=emp.id,
-            assigned_by=mgr.id,
-            course_name=course,
-            platform=platform,
-            due_date=datetime.date.today() + datetime.timedelta(days=30),
-            status=random.choice(["Assigned", "In Progress", "Completed"])
-        ))
-        
-    # Skill Maps
-    skills = ["Python", "React", "SQL", "Project Management", "UI Design", "AWS", "Docker"]
-    for emp in employees:
-        for _ in range(3):
-            db.add(EmployeeSkillMap(
-                employee_id=emp.id,
-                skill_name=random.choice(skills),
-                proficiency=random.choice(["Beginner", "Intermediate", "Expert"]),
-                last_assessed=datetime.date.today() - datetime.timedelta(days=random.randint(1, 100)),
-                certified=random.choice([True, False])
-            ))
-            
-    db.commit()
-    print("Manager seeding complete.")
 
 def _seed_zoho_profiles(db):
     print("Seeding ZOHO employee profiles...")
@@ -649,55 +474,6 @@ def _seed_announcements(db):
     print("Announcements seeding complete.")
 
 
-def _seed_transcripts(db):
-    print("Seeding session transcripts...")
-    samples = [
-        (
-            "Centriq AI", "Flash Review — Sprint 5 Week 1", "Flash Review",
-            "Completed LangGraph router refactor. HR agent now handles employee directory queries via ZOHO profiles. "
-            "IT ticket email dispatch to ManageEngine integrated. Blockers: Redis checkpointer latency on high-concurrency sessions.",
-        ),
-        (
-            "Centriq AI", "PMO Monitored — Sprint 5 Mid-Check", "PMO Monitored",
-            "PMO review noted 28/38 story points completed at sprint mid-point. "
-            "Risk flagged: UAT timeline may slip by 2 days due to delayed QA environment setup. "
-            "Mitigation: parallel QA and dev tracks proposed.",
-        ),
-        (
-            "Aurora UI", "Sprint Review — Sprint 4", "Sprint Review",
-            "Delivered: chat interface glassmorphic redesign, TanStack router migration, MSAL SSO. "
-            "Velocity: 44/44 points. No blockers. Next sprint focus: PMO dashboard and announcement banner.",
-        ),
-        (
-            "HR Integration", "Flash Review — API Finalization", "Flash Review",
-            "ZOHO People API sync design finalized. Non-sensitive fields identified. "
-            "Payroll endpoint secured with role-based access. "
-            "Open item: confirm data retention policy with legal before enabling auto-sync.",
-        ),
-        (
-            "Grafana Monitoring", "Standup — Loki Integration", "Standup",
-            "Loki log ingestion pipeline configured. Aurora backend structured JSON logs flowing in. "
-            "Dashboard panels for agent routing latency and error rates drafted. "
-            "Pending: Grafana alerting rules for p95 latency > 2s.",
-        ),
-        (
-            "LangGraph Routing Engine", "Project Review — Intent Classifier v1", "Project Review",
-            "Intent classifier achieves 95% accuracy on 200-sample test set. "
-            "Domains: HR, IT, Admin, PMO, Org. Fallback to general Q&A for unclassified intents. "
-            "Next: add confidence threshold to avoid misrouting ambiguous queries.",
-        ),
-    ]
-    for project_name, title, session_type, summary in samples:
-        db.add(SessionTranscript(
-            project_name=project_name,
-            session_title=title,
-            session_type=session_type,
-            summary=summary,
-            uploaded_by="system@centriq.ai",
-            session_date=datetime.date.today() - datetime.timedelta(days=random.randint(1, 14)),
-        ))
-    db.commit()
-    print("Session transcript seeding complete.")
 
 
 def _migrate_prompt_configs(db):
@@ -725,7 +501,7 @@ def _seed_prompt_configs(db):
         ("admin", "system_prompt", "You are the Admin Services Assistant for Aligned Automation. You have tools to handle ALL of these — ALWAYS call the right tool, never say you cannot help: parking sticker requests (request_parking_sticker — ask for vehicle_number, vehicle_make, vehicle_model, vehicle_type if missing), surrender parking sticker (surrender_parking_sticker), view parking info (get_parking_info), reimbursements travel/medical/certification/equipment (submit_reimbursement, check_reimbursement_status), accommodation guest-house/hotel (request_accommodation), facility complaints cleanliness/electrical/AC/plumbing/safety (file_facility_complaint), complaint status (check_complaint_status), food complaints (submit_food_complaint), food vendor ratings (submit_food_feedback, get_vendor_ratings). CRITICAL: If the user requests a parking sticker and details are missing, ASK for them — do NOT say you cannot help.", "admin,admin_manager"),
         ("it_support", "system_prompt", "You are the IT Support Assistant. Help with software installation, hardware issues, network problems, and asset management.", "admin,it_admin"),
         ("pmo", "system_prompt", "You are the PMO Assistant. Help with project status, sprint summaries, and team capacity queries.", "admin,pmo_manager"),
-        ("functional_manager", "system_prompt", "You are the Manager Assistant. Help managers view team attendance, approve leaves, and assign trainings.", "admin,functional_manager")
+        ("functional_manager", "system_prompt", "You are the Manager Assistant. Help managers find out who is on their team.", "admin,functional_manager")
     ]
     
     for domain, key, value, roles in prompts:

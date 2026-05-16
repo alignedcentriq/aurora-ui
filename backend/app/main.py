@@ -3,22 +3,21 @@ import asyncio
 import os
 import re
 import logging
-import json
 import time
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
+from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings
 from app.database import init_db, SessionLocal
-from app.models import Employee, Leave, Payroll, Policy
-from app.document_generation.generator import generate_pdf
+from app.models import Leave, Payroll
 from app.document_store import get_pdf
 from app.pmo_routes import router as pmo_router
 from app.routes.it_routes import router as it_router
@@ -35,7 +34,12 @@ try:
     import logging_loki
     from pythonjsonlogger import jsonlogger
 
-    loki_handler = logging_loki.LokiHandler(
+    class _SilentLokiHandler(logging_loki.LokiHandler):
+        """Suppress connection errors when Loki is not running."""
+        def handleError(self, record):
+            pass
+
+    loki_handler = _SilentLokiHandler(
         url=os.environ.get("LOKI_URL", "http://localhost:3100/loki/api/v1/push"),
         tags={"application": "aurora-backend"},
         version="1",
@@ -259,7 +263,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/admin/stats")
-async def get_admin_stats():
+async def get_admin_stats(_: CurrentUser = Depends(require_admin)):
     db = SessionLocal()
     try:
         from app.models import ITTicket, FacilityComplaint, ParkingSticker, Reimbursement, FoodComplaint, Announcement
@@ -298,10 +302,10 @@ async def get_admin_stats():
 
 
 @app.get("/api/hr/dashboard")
-async def get_hr_dashboard():
+async def get_hr_dashboard(user: CurrentUser = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        emp = HRService.get_employee_by_email(db, settings.DEFAULT_USER_EMAIL)
+        emp = HRService.get_employee_by_email(db, user.email)
         if not emp: return {"error": "No employees found"}
         
         emp_leaves = db.query(Leave).filter(Leave.employee_id == emp.id).all()
@@ -320,18 +324,31 @@ async def get_hr_dashboard():
         db.close()
 
 @app.get("/api/hr/leaves")
-async def get_leaves():
+async def get_leaves(user: CurrentUser = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        return [{"id": l.id, "leave_type": l.leave_type, "status": l.status} for l in db.query(Leave).all()]
+        from app.models import Employee
+        emp = HRService.get_employee_by_email(db, user.email)
+        if not emp:
+            return []
+        return [
+            {"id": l.id, "leave_type": l.leave_type, "status": l.status}
+            for l in db.query(Leave).filter(Leave.employee_id == emp.id).all()
+        ]
     finally:
         db.close()
 
 @app.get("/api/hr/payroll")
-async def get_payroll():
+async def get_payroll(user: CurrentUser = Depends(get_current_user)):
     db = SessionLocal()
     try:
-        return [{"month": p.month, "year": p.year, "net_salary": p.net_salary} for p in db.query(Payroll).all()]
+        emp = HRService.get_employee_by_email(db, user.email)
+        if not emp:
+            return []
+        return [
+            {"month": p.month, "year": p.year, "net_salary": p.net_salary}
+            for p in db.query(Payroll).filter(Payroll.employee_id == emp.id).all()
+        ]
     finally:
         db.close()
 

@@ -11,13 +11,15 @@ import re
 import datetime
 from pathlib import Path
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.database import SessionLocal
 from app.models import Policy
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-2026"
-CHUNK_SIZE = 800  # characters per chunk (roughly ~200 words)
-CHUNK_OVERLAP = 100  # overlap between consecutive chunks
+CHUNK_SIZE = settings.POLICY_CHUNK_SIZE  # characters per chunk (roughly ~200 words)
+CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP  # overlap between consecutive chunks
+CHUNKING_MODEL_NAME = settings.CHUNKING_MODEL_NAME
 
 # ── Category mapping based on filename keywords ──────────────────────────────
 CATEGORY_MAP = {

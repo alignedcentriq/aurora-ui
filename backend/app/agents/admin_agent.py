@@ -116,6 +116,7 @@ def update_admin_prompt(new_prompt: str):
 class AdminState(TypedDict):
     messages: Annotated[List[BaseMessage], "The messages in the conversation"]
     user_email: str
+    feedback_context: str
 
 
 tools = [
@@ -135,15 +136,33 @@ tool_node = ToolNode(tools)
 def admin_assistant(state: AdminState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
     default_prompt = (
-        f"You are the Admin Services Assistant for Aligned Automation. "
-        f"The logged-in employee's email is: {user_email}. Never ask for their email or name. "
-        f"You handle: parking stickers, reimbursements, accommodation, facility complaints, food complaints and ratings. "
-        f"For every request, call the matching tool. If required details are missing (e.g. vehicle number for a parking sticker), "
-        f"ask the user for them. Never refuse a request you have a tool for."
+        f"You are the Admin Services Assistant for Aligned Automation.\n"
+        f"The logged-in employee's email is: {user_email}. NEVER ask for their email or name.\n\n"
+        f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
+        f"1. Reimbursement submission ('I spent X on travel/medical/certification'):\n"
+        f"   → Call submit_reimbursement immediately with the type and amount from the message.\n"
+        f"2. Reimbursement status ('my reimbursements', 'status of my claims'):\n"
+        f"   → Call check_reimbursement_status immediately.\n"
+        f"3. Parking sticker request ('I need a parking sticker', 'register my bike/car'):\n"
+        f"   → Call request_parking_sticker. Vehicle number IS required — ask for it if not in message. "
+        f"Vehicle make/model are optional.\n"
+        f"4. Facility complaint ('AC not working', 'lights broken', 'dirty washroom'):\n"
+        f"   → Call file_facility_complaint immediately. Infer category and location from context.\n"
+        f"5. Food complaint ('bad food at Fresh Bites', 'hygiene issue at Spice Kitchen'):\n"
+        f"   → Call submit_food_complaint immediately. Infer vendor and complaint_type from message.\n"
+        f"6. Food rating ('rate Fresh Bites 4 stars', 'give feedback on Green Bowl'):\n"
+        f"   → Call submit_food_feedback immediately.\n"
+        f"7. Accommodation ('book guest house from X to Y', 'need hotel for Bangalore trip'):\n"
+        f"   → Call request_accommodation. Dates and location are required — ask if genuinely missing.\n\n"
+        f"RESPONSE STYLE:\n"
+        f"- Act first. Only ask for details that are TRULY missing and cannot be inferred.\n"
+        f"- Never ask 'How can I help you today?' or restate what the user just said.\n"
+        f"- One focused clarifying question at a time, if needed at all.\n"
     )
     base_prompt = PromptService.get_system_prompt("admin", default_prompt)
     guardrail = PromptService.get_guardrail("admin")
-    system_prompt = base_prompt + guardrail
+    feedback_ctx = state.get("feedback_context") or ""
+    system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [HumanMessage(content=system_prompt)] + state["messages"]
     model = ChatOpenAI(
@@ -151,6 +170,7 @@ def admin_assistant(state: AdminState):
         api_key=settings.ROUTER_API_KEY,
         model=settings.ROUTER_MODEL_NAME,
         temperature=settings.AGENT_TEMPERATURE,
+        timeout=120,
     ).bind_tools(tools)
     response = model.invoke(messages)
     return {"messages": [response]}

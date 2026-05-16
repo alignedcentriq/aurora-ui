@@ -112,7 +112,11 @@ export function AssistantView() {
       // Real API call to backend
       fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(user?.email ? { "x-user-email": user.email } : {}),
+          ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+        },
         body: JSON.stringify({
           message: text,
           history,
@@ -163,7 +167,7 @@ export function AssistantView() {
     setIsSidebarOpen(false);
   };
 
-  const handleFeedback = (rating: "up" | "down", index: number) => {
+  const handleFeedback = (rating: "up" | "down", index: number, feedbackText?: string) => {
     const turns = (activeId ? threads[activeId]?.turns : undefined) || [];
     const aiTurn = turns[index];
     const prevUserTurn = turns.slice(0, index).reverse().find((t: Turn) => t.role === "user");
@@ -172,14 +176,15 @@ export function AssistantView() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         rating,
-        index,
         threadId: activeId,
+        domain: aiTurn?.role === "ai" ? aiTurn.domain : undefined,
         user_message: prevUserTurn?.text || "",
         ai_response: aiTurn?.text || "",
+        feedback_text: feedbackText || "",
       }),
     })
       .then(() => {
-        toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
+        if (rating === "up") toast.success("Glad I could help!");
       })
       .catch(() => toast.error("Failed to save feedback"));
   };
@@ -279,7 +284,7 @@ export function AssistantView() {
                       {t.text}
                     </UserMessage>
                   ) : (
-                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)} domain={t.role === "ai" ? t.domain : undefined}>
+                    <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined}>
                       <div className="space-y-4">
                         <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
                           {renderInline(t.text)}

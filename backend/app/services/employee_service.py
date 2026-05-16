@@ -6,7 +6,7 @@ Used by the HR agent for directory search, org-chart, skill-matching, etc.
 from typing import Optional
 from sqlalchemy import or_, func
 from app.database import SessionLocal
-from app.models import Employee, EmployeeZohoProfile, EmployeeSkillMap
+from app.models import Employee, EmployeeZohoProfile
 
 
 class EmployeeService:
@@ -167,38 +167,19 @@ class EmployeeService:
 
     @staticmethod
     def find_skills_expert(skill: str) -> str:
-        """Find employees with a specific skill from ZOHO skill_set or EmployeeSkillMap."""
+        """Find employees with a specific skill from their ZOHO skill_set profile."""
         db = SessionLocal()
         try:
             term = f"%{skill}%"
-            # Check ZOHO profiles first (free-text skill_set field)
-            zoho_matches = db.query(EmployeeZohoProfile).filter(
+            matches = db.query(EmployeeZohoProfile).filter(
                 EmployeeZohoProfile.skill_set.ilike(term)
             ).all()
 
-            # Also check the structured skill map
-            skill_map_ids = db.query(EmployeeSkillMap.employee_id).filter(
-                EmployeeSkillMap.skill_name.ilike(term)
-            ).all()
-            skill_map_employee_ids = {row[0] for row in skill_map_ids}
-
-            # Merge results
-            found_email_set = {p.official_email for p in zoho_matches if p.official_email}
-            zoho_by_emp_id = {p.employee_id: p for p in zoho_matches}
-
-            extra_profiles = []
-            if skill_map_employee_ids:
-                extra_profiles = db.query(EmployeeZohoProfile).filter(
-                    EmployeeZohoProfile.employee_id.in_(skill_map_employee_ids),
-                    EmployeeZohoProfile.official_email.notin_(found_email_set),
-                ).all()
-
-            all_profiles = zoho_matches + extra_profiles
-            if not all_profiles:
+            if not matches:
                 return f"No employees found with '{skill}' in their skill set."
 
-            lines = [f"**Employees with '{skill}' expertise ({len(all_profiles)}):**"]
-            for p in all_profiles:
+            lines = [f"**Employees with '{skill}' expertise ({len(matches)}):**"]
+            for p in matches:
                 name = f"{p.first_name or ''} {p.last_name or ''}".strip()
                 lines.append(
                     f"  • {name} | {p.designation or 'N/A'} | {p.function or 'N/A'} | {p.official_email or 'N/A'}"

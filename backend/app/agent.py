@@ -39,6 +39,7 @@ from app.sharepoint_transfer_service import sharepoint_transfer_service
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
 from app.services.prompt_service import PromptService
+from app.services.feedback_service import FeedbackService
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
@@ -53,6 +54,10 @@ class AgentState(TypedDict):
     domain: Optional[str]
     route_confidence: Optional[float]
     route_reasoning: Optional[str]
+    sub_intent: Optional[str]          # granular intent label (e.g. "software_install")
+    entities: Optional[dict]           # pre-extracted entities from the user message
+    feedback_context: Optional[str]    # injected feedback prompt block
+    user_email: Optional[str]          # logged-in user email
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -206,7 +211,7 @@ agent_llm = ChatOpenAI(
     model=settings.AGENT_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
     max_retries=3,
-    timeout=30,
+    timeout=120,
 )
 
 # General LLM — used for non-technical chat (Greetings, Announcements)
@@ -230,7 +235,7 @@ summary_llm = ChatOpenAI(
     model=settings.AGENT_MODEL_NAME,
     temperature=0.3,
     max_retries=3,
-    timeout=30,
+    timeout=120,
 )
 
 
@@ -240,7 +245,7 @@ summary_llm = ChatOpenAI(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def intent_router(state: AgentState):
-    """Entry node — classifies user intent and routes to the correct domain."""
+    """Entry node — classifies intent, extracts sub-intent + entities, routes to domain."""
     last_human = None
     for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
@@ -248,38 +253,70 @@ def intent_router(state: AgentState):
             break
 
     if not last_human:
-        return {"domain": "general", "route_confidence": 0.0, "route_reasoning": "No user message found"}
+        return {"domain": "general", "route_confidence": 0.0, "route_reasoning": "No user message found",
+                "sub_intent": "unknown", "entities": {}}
 
     if "five project name" in last_human.lower():
-        return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected."}
+        return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected.",
+                "sub_intent": "test", "entities": {}}
 
     try:
         result = classify_intent(last_human)
-        print(f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f}")
+        print(
+            f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} "
+            f"| Sub-intent: {result.get('sub_intent', '?')} | Entities: {result.get('entities', {})}"
+        )
     except APIConnectionError:
-        return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed."}
+        return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
+                "sub_intent": "unknown", "entities": {}}
 
     return {
         "domain": result["domain"],
         "route_confidence": result["confidence"],
         "route_reasoning": result["reasoning"],
+        "sub_intent": result.get("sub_intent", "unknown"),
+        "entities": result.get("entities", {}),
     }
+
+
+def feedback_lookup(state: AgentState) -> dict:
+    """Fetch relevant past feedback for the current query and store as prompt context."""
+    domain = state.get("domain", "unknown") or "unknown"
+    last_human = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+        "",
+    )
+    try:
+        relevant = FeedbackService.get_relevant_feedback(domain, last_human, limit=3)
+        ctx = FeedbackService.build_feedback_prompt(relevant)
+    except Exception:
+        ctx = ""
+    return {"feedback_context": ctx}
 
 
 def hr_agent(state: AgentState):
     """HR Agent — handles leave, payroll, policies."""
+    user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
         base = PromptService.get_system_prompt(
             "hr",
-            f"You are Centriq HR Assistant for Aligned Automation. "
-            f"The logged-in employee's email is: {settings.DEFAULT_USER_EMAIL}. "
-            f"IMPORTANT: Always use this email for tool calls — NEVER ask who the user is. "
-            f"Use tools for all HR data (leave, payroll, policies, directory). "
-            f"Never answer HR questions from your training knowledge.",
+            f"You are Centriq HR Assistant for Aligned Automation.\n"
+            f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n\n"
+            f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
+            f"1. Leave balance ('my leave balance', 'how many leaves do I have'): → call get_leave_balance immediately.\n"
+            f"2. Apply leave ('apply leave from X to Y', 'take 3 days off'): → call apply_leave immediately. "
+            f"Infer leave_type (default Casual) from context.\n"
+            f"3. Salary / payroll ('my salary', 'payslip', 'this month's payroll'): → call get_payroll_info immediately.\n"
+            f"4. Policy question ('WFH policy', 'sick leave rules', 'maternity leave'): → call search_hr_policies immediately.\n"
+            f"5. Employee search ('find John', 'who is in Finance', 'locate someone'): → call search_employee_directory immediately.\n"
+            f"6. Org chart / reporting ('who does Alice report to', 'team under Bob'): → call get_org_chart or get_team_roster immediately.\n\n"
+            f"RESPONSE STYLE: Act first. Only ask when a REQUIRED parameter is truly missing. "
+            f"Never answer from training knowledge — use tools only.",
         )
         guardrail = PromptService.get_guardrail("hr")
-        messages = [SystemMessage(content=base + guardrail)] + messages
+        feedback_ctx = state.get("feedback_context") or ""
+        messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
 
     try:
         response = hr_llm.invoke(messages)
@@ -290,7 +327,11 @@ def hr_agent(state: AgentState):
 
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
-    result = await pmo_agent.ainvoke({"messages": state["messages"]})
+    result = await pmo_agent.ainvoke({
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": state.get("feedback_context") or "",
+    })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
     return {"messages": [last_ai]}
 
@@ -298,8 +339,9 @@ async def pmo_agent_node(state: AgentState):
 async def admin_agent_node(state: AgentState):
     """Admin Agent - handles reimbursement, parking, etc."""
     result = await admin_agent.ainvoke({
-        "messages": state["messages"], 
-        "user_email": settings.DEFAULT_USER_EMAIL
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": state.get("feedback_context") or "",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Admin request."))
     return {"messages": [last_ai]}
@@ -307,9 +349,15 @@ async def admin_agent_node(state: AgentState):
 
 async def it_agent_node(state: AgentState):
     """IT Agent - handles software install, tickets, etc."""
+    entities = state.get("entities") or {}
+    sub_intent = state.get("sub_intent") or ""
+    entity_hint = ""
+    if entities:
+        entity_hint = f"\n[Router extracted: sub_intent={sub_intent}, entities={entities}]"
     result = await it_agent.ainvoke({
-        "messages": state["messages"], 
-        "user_email": settings.DEFAULT_USER_EMAIL
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": (state.get("feedback_context") or "") + entity_hint,
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
     return {"messages": [last_ai]}
@@ -318,8 +366,9 @@ async def it_agent_node(state: AgentState):
 async def manager_agent_node(state: AgentState):
     """Manager Agent - handles team approvals, assignments, etc."""
     result = await manager_agent.ainvoke({
-        "messages": state["messages"], 
-        "user_email": settings.DEFAULT_USER_EMAIL
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": state.get("feedback_context") or "",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
     return {"messages": [last_ai]}
@@ -344,7 +393,8 @@ def general_agent(state: AgentState):
         "IMPORTANT: Do NOT answer company-specific questions from your own knowledge — use tools only.",
     )
     guardrail = PromptService.get_guardrail("general")
-    messages = [SystemMessage(content=base + guardrail)] + state["messages"]
+    feedback_ctx = state.get("feedback_context") or ""
+    messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + state["messages"]
     try:
         response = general_llm.invoke(messages)
     except APIConnectionError:
@@ -450,6 +500,7 @@ except Exception as e:
 workflow = StateGraph(AgentState)
 
 workflow.add_node("intent_router", intent_router)
+workflow.add_node("feedback_lookup", feedback_lookup)
 workflow.add_node("hr_agent", hr_agent)
 workflow.add_node("pmo_agent", pmo_agent_node)
 workflow.add_node("admin_agent", admin_agent_node)
@@ -463,7 +514,8 @@ workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
 
 workflow.set_entry_point("intent_router")
-workflow.add_conditional_edges("intent_router", route_to_agent)
+workflow.add_edge("intent_router", "feedback_lookup")
+workflow.add_conditional_edges("feedback_lookup", route_to_agent)
 workflow.add_conditional_edges("hr_agent", should_continue_hr)
 workflow.add_conditional_edges("general_agent", should_continue_general)
 workflow.add_edge("hr_tools", "summarizer")

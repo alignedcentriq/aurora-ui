@@ -1,5 +1,5 @@
-import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
@@ -31,6 +31,8 @@ const DOMAIN_BADGE: Record<string, { label: string; classes: string }> = {
   general: { label: "General", classes: "bg-muted text-muted-foreground" },
 };
 
+type FeedbackState = "idle" | "up" | "down_pending" | "submitted";
+
 export function AIMessage({
   children,
   live,
@@ -39,10 +41,33 @@ export function AIMessage({
 }: {
   children: ReactNode;
   live?: boolean;
-  onFeedback?: (rating: "up" | "down") => void;
+  onFeedback?: (rating: "up" | "down", feedbackText?: string) => void;
   domain?: string;
 }) {
   const badge = domain ? DOMAIN_BADGE[domain] : null;
+  const [feedbackState, setFeedbackState] = useState<FeedbackState>("idle");
+  const [feedbackText, setFeedbackText] = useState("");
+
+  const handleThumbsUp = () => {
+    if (feedbackState !== "idle") return;
+    setFeedbackState("up");
+    onFeedback?.("up");
+  };
+
+  const handleThumbsDown = () => {
+    if (feedbackState !== "idle") return;
+    setFeedbackState("down_pending");
+  };
+
+  const handleSubmitNegative = () => {
+    onFeedback?.("down", feedbackText.trim());
+    setFeedbackState("submitted");
+  };
+
+  const handleSkipReason = () => {
+    onFeedback?.("down");
+    setFeedbackState("submitted");
+  };
 
   return (
     <div className="flex w-full justify-start animate-[slide-up_.5s_cubic-bezier(0.16,1,0.3,1)_both]">
@@ -54,31 +79,92 @@ export function AIMessage({
             <div className="group/msg relative">{children}</div>
           </div>
 
-          <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-2">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
-                <BrandName withAI />
+          <div className="flex flex-col gap-2 px-1">
+            {/* Brand + domain badge row */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
+                  <BrandName withAI />
+                </div>
+                {badge && (
+                  <span className={cn("rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider", badge.classes)}>
+                    {badge.label}
+                  </span>
+                )}
               </div>
-              {badge && (
-                <span className={cn("rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider", badge.classes)}>
-                  {badge.label}
+
+              {/* Feedback buttons — only shown when idle and not live */}
+              {!live && onFeedback && feedbackState === "idle" && (
+                <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">
+                  <button
+                    onClick={handleThumbsUp}
+                    title="Helpful"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-primary transition-all"
+                  >
+                    <ThumbsUp className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={handleThumbsDown}
+                    title="Not helpful"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-destructive transition-all"
+                  >
+                    <ThumbsDown className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+
+              {/* Confirmed thumbs up */}
+              {!live && feedbackState === "up" && (
+                <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-500">
+                  <ThumbsUp className="h-3 w-3" />
+                  Helpful
+                </span>
+              )}
+
+              {/* After negative feedback submitted */}
+              {!live && feedbackState === "submitted" && (
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  Thanks for the feedback
                 </span>
               )}
             </div>
-            {!live && onFeedback && (
-              <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">
-                <button
-                  onClick={() => onFeedback("up")}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-primary transition-all"
-                >
-                  <ThumbsUp className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={() => onFeedback("down")}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-destructive transition-all"
-                >
-                  <ThumbsDown className="h-3 w-3" />
-                </button>
+
+            {/* Inline negative-feedback form */}
+            {!live && feedbackState === "down_pending" && (
+              <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 space-y-2">
+                <p className="text-[11px] font-medium text-foreground/70">
+                  What was wrong with this answer? <span className="text-muted-foreground">(optional)</span>
+                </p>
+                <textarea
+                  autoFocus
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmitNegative();
+                    }
+                    if (e.key === "Escape") handleSkipReason();
+                  }}
+                  placeholder="e.g. The policy details were incorrect, or it gave a generic answer..."
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-destructive/30 transition-all"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={handleSkipReason}
+                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    onClick={handleSubmitNegative}
+                    className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-[11px] font-semibold text-destructive hover:bg-destructive/20 transition-all"
+                  >
+                    <Send className="h-3 w-3" />
+                    Send feedback
+                  </button>
+                </div>
               </div>
             )}
           </div>

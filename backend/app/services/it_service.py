@@ -76,75 +76,78 @@ class ITService:
             db.close()
 
     @staticmethod
-    def request_software_install(email: str, software_name: str, justification: str):
+    def request_software_install(email: str, software_name: str):
         db = SessionLocal()
         try:
             emp = db.query(Employee).filter(Employee.email == email).first()
             if not emp: return "Employee not found."
-            
+
             ticket_id = f"IT-SW-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
-            
-            # Create IT Ticket
+            description = f"Software installation request for {software_name}."
+
             new_t = ITTicket(
                 ticket_id=ticket_id,
                 employee_id=emp.id,
                 category="Software Install",
                 subject=f"Install {software_name}",
-                description=justification,
+                description=description,
                 priority="Medium",
                 status="Awaiting Approval",
-                requires_admin_password=True
             )
             db.add(new_t)
-            db.flush() # Get the ID
-            
-            # Create Software Request
+            db.flush()
+
             new_sw = SoftwareRequest(
                 employee_id=emp.id,
                 it_ticket_id=new_t.id,
                 software_name=software_name,
-                justification=justification,
+                justification=description,
                 requires_admin=True,
-                status="Pending"
+                status="Pending",
             )
             db.add(new_sw)
-            
-            # Create HITL Request for admin
+
             new_hitl = HITLRequest(
                 ticket_id=ticket_id,
-                request_type="admin_password",
-                status="Pending"
+                request_type="software_approval",
+                status="Pending",
             )
             db.add(new_hitl)
-            
+
             db.commit()
             return {
                 "ticket_id": ticket_id,
-                "message": f"Software installation request for '{software_name}' has been created (Ticket ID: {ticket_id}). This requires an admin password. I've initiated a Human-In-The-Loop (HITL) request to the IT Admin team."
+                "message": (
+                    f"Software installation request for **'{software_name}'** has been submitted "
+                    f"(Ticket ID: **{ticket_id}**). An IT Admin will review and approve it shortly. "
+                    f"You will be notified once approved."
+                ),
             }
         finally:
             db.close()
 
     @staticmethod
-    def mark_admin_password_provided(ticket_id: str, admin_email: str):
+    def approve_hitl_request(ticket_id: str, approved_by: str):
+        """Mark a pending HITL software-install request as approved."""
         db = SessionLocal()
         try:
-            # Update IT Ticket
             ticket = db.query(ITTicket).filter(ITTicket.ticket_id == ticket_id).first()
-            if not ticket: return "Ticket not found."
-            
-            ticket.admin_password_provided = True
+            if not ticket:
+                return "Ticket not found."
+
             ticket.status = "In Progress"
-            
-            # Update HITL Request
-            hitl = db.query(HITLRequest).filter(HITLRequest.ticket_id == ticket_id, HITLRequest.status == "Pending").first()
+
+            hitl = db.query(HITLRequest).filter(
+                HITLRequest.ticket_id == ticket_id,
+                HITLRequest.status == "Pending",
+            ).first()
             if hitl:
                 hitl.status = "Completed"
                 hitl.completed_at = datetime.datetime.utcnow()
-                hitl.completed_by = admin_email
-            
+                hitl.completed_by = approved_by
+
             db.commit()
-            return f"Admin password successfully recorded for ticket {ticket_id}. The installation is now 'In Progress'."
+            return f"Ticket {ticket_id} approved by {approved_by}. Status is now 'In Progress'."
         finally:
             db.close()
 

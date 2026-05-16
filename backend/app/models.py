@@ -157,42 +157,6 @@ class Project(Base):
 
 
 
-class Sprint(Base):
-    __tablename__ = "sprints"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    team = Column(String, nullable=False, index=True)
-    name = Column(String, nullable=False)
-    start_date = Column(String)
-    end_date = Column(String)
-    velocity = Column(Integer, default=0)
-    committed = Column(Integer, default=0)
-    completed = Column(Integer, default=0)
-    blockers_count = Column(Integer, default=0)
-
-
-class TeamCapacity(Base):
-    __tablename__ = "team_capacity"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    team = Column(String, unique=True, nullable=False, index=True)
-    total_members = Column(Integer, default=0)
-    available = Column(Integer, default=0)
-    on_leave = Column(Integer, default=0)
-    capacity_pct = Column(Float, default=100.0)
-
-
-class Milestone(Base):
-    __tablename__ = "milestones"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    project_name = Column(String, nullable=False, index=True)
-    name = Column(String, nullable=False)
-    due_date = Column(String)
-    status = Column(String, default="UPCOMING")
 
 # ── Admin Domain ──────────────────────────
 class Reimbursement(Base):
@@ -320,44 +284,6 @@ class AssetAssignment(Base):
     returned_date = Column(Date, nullable=True)
     status = Column(String, default="Assigned")  # Assigned, Returned
 
-# ── Manager Domain ────────────────────────
-class TrainingAssignment(Base):
-    __tablename__ = "training_assignments"
-    __table_args__ = {"schema": SCHEMA}
-    
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
-    assigned_by = Column(Integer, ForeignKey("employees.id"))
-    course_name = Column(String)
-    platform = Column(String)  # Udemy, Coursera, LinkedIn Learning, Internal
-    due_date = Column(Date)
-    status = Column(String, default="Assigned")  # Assigned, In Progress, Completed, Overdue
-    completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-class EmployeeSkillMap(Base):
-    __tablename__ = "employee_skills"
-    __table_args__ = {"schema": SCHEMA}
-    
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
-    skill_name = Column(String)
-    proficiency = Column(String)  # Beginner, Intermediate, Expert
-    last_assessed = Column(Date)
-    certified = Column(Boolean, default=False)
-
-class ProjectAssignment(Base):
-    __tablename__ = "project_assignments"
-    __table_args__ = {"schema": SCHEMA}
-    
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
-    project_name = Column(String)
-    role = Column(String)
-    start_date = Column(Date)
-    end_date = Column(Date, nullable=True)
-    allocation_pct = Column(Float, default=100.0)
-    status = Column(String, default="Active")  # Active, Completed, On Hold
 
 # ── Prompt Config (Role-Based) ────────────
 class PromptConfig(Base):
@@ -382,7 +308,7 @@ class HITLRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
     thread_id = Column(String)
     ticket_id = Column(String)  # Reference to it_tickets.ticket_id
-    request_type = Column(String)  # admin_password, approval, escalation
+    request_type = Column(String)  # software_approval, escalation
     status = Column(String, default="Pending")  # Pending, Completed, Expired
     requested_at = Column(DateTime, default=datetime.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
@@ -470,21 +396,6 @@ class FoodComplaint(Base):
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
 
-
-# ── PMO Session Transcripts ───────────────────────────────────────────────────
-class SessionTranscript(Base):
-    __tablename__ = "session_transcripts"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    project_name = Column(String, nullable=False, index=True)
-    session_title = Column(String, nullable=False)
-    session_date = Column(Date, default=datetime.date.today)
-    summary = Column(Text)
-    transcript_text = Column(Text, nullable=True)
-    uploaded_by = Column(String)
-    session_type = Column(String, default="Flash Review")  # Flash Review, Sprint Review, Project Review, Standup, PMO Monitored
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class ChatFeedback(Base):
