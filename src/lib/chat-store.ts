@@ -73,6 +73,12 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: "aurora-chat-storage",
+      partialize: (state) => ({ threads: state.threads, activeId: state.activeId }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setThinking(false);
+        }
+      },
     }
   )
 );

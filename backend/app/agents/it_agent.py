@@ -1,4 +1,3 @@
-import json
 from typing import Annotated, List, TypedDict
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.tools import tool
@@ -27,8 +26,7 @@ def request_software_install(
 ):
     """Request installation of a software application on your machine."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
-    result = ITService.request_software_install(email, software_name)
-    return json.dumps(result)
+    return ITService.request_software_install(email, software_name)
 
 
 @tool
@@ -91,7 +89,7 @@ def it_assistant(state: ITState):
         f"- NEVER ask for justification, reason, or purpose for a software install.\n"
         f"- NEVER ask for their email — it is already known.\n"
         f"- Act first. Only ask if something is genuinely impossible to infer (e.g. ticket ID for status check).\n"
-        f"- Software installs trigger an IT Admin approval. Tell the user the ticket ID and that they'll be notified.\n"
+        f"- For software installs: present the tool result exactly as returned — it contains an Outlook mailto link the user clicks to send the email themselves.\n"
     )
     base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
     guardrail = PromptService.get_guardrail("it_support")

@@ -1,6 +1,8 @@
 import datetime
+import urllib.parse
+from app.config import settings
 from app.database import SessionLocal
-from app.models import Employee, ITTicket, SoftwareRequest, AssetAssignment, HITLRequest
+from app.models import Employee, ITTicket, AssetAssignment, HITLRequest
 
 
 class ITService:
@@ -77,54 +79,29 @@ class ITService:
 
     @staticmethod
     def request_software_install(email: str, software_name: str):
-        db = SessionLocal()
-        try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-
-            ticket_id = f"IT-SW-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
-            description = f"Software installation request for {software_name}."
-
-            new_t = ITTicket(
-                ticket_id=ticket_id,
-                employee_id=emp.id,
-                category="Software Install",
-                subject=f"Install {software_name}",
-                description=description,
-                priority="Medium",
-                status="Awaiting Approval",
-            )
-            db.add(new_t)
-            db.flush()
-
-            new_sw = SoftwareRequest(
-                employee_id=emp.id,
-                it_ticket_id=new_t.id,
-                software_name=software_name,
-                justification=description,
-                requires_admin=True,
-                status="Pending",
-            )
-            db.add(new_sw)
-
-            new_hitl = HITLRequest(
-                ticket_id=ticket_id,
-                request_type="software_approval",
-                status="Pending",
-            )
-            db.add(new_hitl)
-
-            db.commit()
-            return {
-                "ticket_id": ticket_id,
-                "message": (
-                    f"Software installation request for **'{software_name}'** has been submitted "
-                    f"(Ticket ID: **{ticket_id}**). An IT Admin will review and approve it shortly. "
-                    f"You will be notified once approved."
-                ),
-            }
-        finally:
-            db.close()
+        subject = f"Software Installation Request – {software_name}"
+        body = (
+            f"Dear IT Support Team,\n\n"
+            f"I hope this message finds you well.\n\n"
+            f"I would like to request the installation of {software_name} on my workstation "
+            f"at the earliest convenience.\n\n"
+            f"Details:\n"
+            f"  Requested by: {email}\n"
+            f"  Software required: {software_name}\n\n"
+            f"Please let me know if any additional approvals or information are required.\n\n"
+            f"Thank you for your assistance.\n\n"
+            f"Best regards"
+        )
+        mailto_url = (
+            f"mailto:{settings.HELPDESK_EMAIL}"
+            f"?subject={urllib.parse.quote(subject)}"
+            f"&body={urllib.parse.quote(body)}"
+        )
+        return (
+            f"I've prepared a professional email to the IT support team requesting installation of **{software_name}**.\n\n"
+            f"[Open in Outlook to send]({mailto_url})\n\n"
+            f"Click the link above — it will open your Outlook with the email pre-filled and ready to send."
+        )
 
     @staticmethod
     def approve_hitl_request(ticket_id: str, approved_by: str):
