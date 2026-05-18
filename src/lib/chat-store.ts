@@ -1,12 +1,25 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface EmailDraftData {
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export interface InteractivePayload {
+  type: "email_draft" | "parking_form";
+  data?: EmailDraftData;
+}
+
 export interface Turn {
   role: "user" | "ai";
   text: string;
   card?: boolean;
   downloadUrl?: string;
   downloadTitle?: string;
+  domain?: string;
+  interactive?: InteractivePayload;
 }
 
 export interface Thread {
@@ -72,6 +85,12 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: "aurora-chat-storage",
+      partialize: (state) => ({ threads: state.threads, activeId: state.activeId }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setThinking(false);
+        }
+      },
     }
   )
 );

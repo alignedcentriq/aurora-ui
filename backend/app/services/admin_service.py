@@ -1,107 +1,273 @@
 import datetime
-from sqlalchemy.orm import Session
+import threading
 from app.database import SessionLocal
-from app.models import Employee, Reimbursement, ParkingSticker, Accommodation, FacilityComplaint, FoodVendorFeedback
+from app.models import (
+    Employee, Reimbursement, ParkingSticker,
+    Accommodation, FacilityComplaint, FoodVendorFeedback, FoodComplaint
+)
+
 
 class AdminService:
+
     @staticmethod
-    def submit_reimbursement(email: str, type: str, amount: float, reason: str = ""):
+    def _notify_power_automate(payload: dict) -> None:
+        """Fire-and-forget POST to the Power Automate webhook. Errors are swallowed silently."""
+        from app.config import settings
+        url = settings.POWER_AUTOMATE_WEBHOOK_URL
+        if not url:
+            return
+
+        def _post():
+            try:
+                import requests as _requests
+                _requests.post(url, json=payload, timeout=10)
+            except Exception:
+                pass
+
+        threading.Thread(target=_post, daemon=True).start()
+
+    @staticmethod
+    def _get_or_create_employee(db, email: str) -> Employee:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+            emp = Employee(
+                employee_id=f"EMP{abs(hash(email)) % 9000 + 1000}",
+                name=name,
+                email=email,
+                department="General",
+                designation="Employee",
+                joining_date=datetime.date.today(),
+                employment_type="Full-time",
+                location="Mumbai",
+                shift_type="Day",
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+        return emp
+
+    # ── Reimbursement ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def submit_reimbursement(email: str, type: str, amount: float, reason: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
             new_r = Reimbursement(
                 employee_id=emp.id,
                 type=type,
                 amount=amount,
                 reason=reason,
-                status="Pending"
+                status="Pending",
             )
             db.add(new_r)
             db.commit()
-            return f"Reimbursement request of INR {amount:,.2f} for {type} submitted successfully."
+            db.refresh(new_r)
+
+            # Notify admin via email (non-blocking — ignore failure)
+            try:
+                from app.services.email_service import send_reimbursement_email
+                send_reimbursement_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    reimbursement_type=type,
+                    amount=amount,
+                    reason=reason,
+                    reimbursement_id=new_r.id,
+                )
+            except Exception:
+                pass
+
+            return (
+                f"Reimbursement request of INR {amount:,.2f} for {type} submitted successfully "
+                f"(Request #{new_r.id}). The admin team has been notified."
+            )
         finally:
             db.close()
 
     @staticmethod
-    def get_reimbursements(email: str):
+    def get_reimbursements(email: str) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
             items = db.query(Reimbursement).filter(Reimbursement.employee_id == emp.id).all()
-            if not items: return "No reimbursement requests found."
-            
-            lines = [f"- {r.type}: INR {r.amount:,.2f} ({r.status}) on {r.created_at.date()}" for r in items]
+            if not items:
+                return "No reimbursement requests found."
+
+            lines = [
+                f"- #{r.id} | {r.type}: INR {r.amount:,.2f} ({r.status}) on {r.created_at.date()}"
+                for r in items
+            ]
             return "Your reimbursement requests:\n" + "\n".join(lines)
         finally:
             db.close()
 
+    # ── Parking ───────────────────────────────────────────────────────────────
+
     @staticmethod
-    def request_parking_sticker(email: str, vehicle_type: str, vehicle_number: str):
+    def request_parking_sticker(
+        email: str,
+        vehicle_type: str,
+        vehicle_number: str,
+        vehicle_make: str = "",
+        vehicle_model: str = "",
+    ) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
+            # Check if employee already has an active sticker
+            existing = db.query(ParkingSticker).filter(
+                ParkingSticker.employee_id == emp.id,
+                ParkingSticker.status.in_(["Active", "Pending"]),
+            ).first()
+            if existing:
+                return (
+                    f"You already have a {'pending' if existing.status == 'Pending' else 'active'} "
+                    f"parking sticker for vehicle {existing.vehicle_number}. "
+                    f"Please surrender it before requesting a new one."
+                )
+
             new_s = ParkingSticker(
                 employee_id=emp.id,
                 vehicle_type=vehicle_type,
-                vehicle_number=vehicle_number,
+                vehicle_number=vehicle_number.upper(),
+                vehicle_make=vehicle_make,
+                vehicle_model=vehicle_model,
                 valid_from=datetime.date.today(),
                 valid_until=datetime.date.today() + datetime.timedelta(days=365),
-                status="Pending"
+                status="Pending",
             )
             db.add(new_s)
             db.commit()
-            return f"Parking sticker request for your {vehicle_type} ({vehicle_number}) submitted successfully."
+
+            try:
+                from app.services.email_service import send_parking_request_email
+                send_parking_request_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    vehicle_type=vehicle_type,
+                    vehicle_number=vehicle_number.upper(),
+                    vehicle_make=vehicle_make,
+                    vehicle_model=vehicle_model,
+                    action="request",
+                )
+            except Exception:
+                pass
+
+            return (
+                f"Parking sticker request submitted for your {vehicle_type} "
+                f"({vehicle_make} {vehicle_model}, {vehicle_number.upper()}). "
+                f"The admin team has been notified and will issue your sticker shortly."
+            )
         finally:
             db.close()
 
     @staticmethod
-    def get_parking_info(email: str):
+    def surrender_parking_sticker(email: str, vehicle_number: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
-            sticker = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).first()
-            if not sticker: return "No parking sticker records found."
-            
-            return f"Vehicle: {sticker.vehicle_number} ({sticker.vehicle_type}) | Status: {sticker.status} | Valid until: {sticker.valid_until}"
+            emp = AdminService._get_or_create_employee(db, email)
+
+            q = db.query(ParkingSticker).filter(
+                ParkingSticker.employee_id == emp.id,
+                ParkingSticker.status.in_(["Active", "Pending"]),
+            )
+            if vehicle_number:
+                q = q.filter(ParkingSticker.vehicle_number.ilike(vehicle_number))
+            sticker = q.first()
+
+            if not sticker:
+                return "No active parking sticker found to surrender."
+
+            vnum = sticker.vehicle_number
+            vtype = sticker.vehicle_type
+            sticker.status = "Surrendered"
+            db.commit()
+
+            try:
+                from app.services.email_service import send_parking_request_email
+                send_parking_request_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    vehicle_type=vtype,
+                    vehicle_number=vnum,
+                    vehicle_make=sticker.vehicle_make or "",
+                    vehicle_model=sticker.vehicle_model or "",
+                    action="surrender",
+                )
+            except Exception:
+                pass
+
+            return (
+                f"Parking sticker for vehicle {vnum} has been surrendered. "
+                f"The admin team has been notified. Your sticker will be deactivated shortly."
+            )
         finally:
             db.close()
 
     @staticmethod
-    def request_accommodation(email: str, type: str, check_in: str, check_out: str, location: str):
+    def get_parking_info(email: str) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
+            stickers = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).all()
+            if not stickers:
+                return "No parking sticker records found."
+
+            lines = []
+            for s in stickers:
+                make_model = f" ({s.vehicle_make} {s.vehicle_model})".strip() if (s.vehicle_make or s.vehicle_model) else ""
+                lines.append(
+                    f"• {s.vehicle_type}: {s.vehicle_number}{make_model} | "
+                    f"Status: {s.status} | Valid until: {s.valid_until} | "
+                    f"Sticker #: {s.sticker_number or 'Pending'}"
+                )
+            return "Your parking sticker(s):\n" + "\n".join(lines)
+        finally:
+            db.close()
+
+    # ── Accommodation ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def request_accommodation(
+        email: str, type: str, check_in: str, check_out: str, location: str
+    ) -> str:
+        db = SessionLocal()
+        try:
+            emp = AdminService._get_or_create_employee(db, email)
+
             new_a = Accommodation(
                 employee_id=emp.id,
                 type=type,
                 check_in=datetime.datetime.strptime(check_in, "%Y-%m-%d").date(),
                 check_out=datetime.datetime.strptime(check_out, "%Y-%m-%d").date(),
                 location=location,
-                status="Pending"
+                status="Pending",
             )
             db.add(new_a)
             db.commit()
-            return f"Accommodation request at {location} from {check_in} to {check_out} submitted."
+            return (
+                f"Accommodation request ({type}) at {location} from {check_in} to {check_out} submitted. "
+                f"The admin team will confirm availability shortly."
+            )
         finally:
             db.close()
 
+    # ── Facility Complaints ───────────────────────────────────────────────────
+
     @staticmethod
-    def submit_facility_complaint(email: str, category: str, description: str, location: str, priority: str = "Medium"):
+    def submit_facility_complaint(
+        email: str, category: str, description: str, location: str, priority: str = "Medium"
+    ) -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
             ticket_id = f"FC-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_c = FacilityComplaint(
                 ticket_id=ticket_id,
@@ -110,54 +276,148 @@ class AdminService:
                 description=description,
                 location=location,
                 priority=priority,
-                status="Open"
+                status="Open",
             )
             db.add(new_c)
             db.commit()
-            return f"Complaint registered. Ticket ID: {ticket_id}. Our facility team will look into it."
+
+            try:
+                from app.services.email_service import send_facility_complaint_email
+                send_facility_complaint_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    ticket_id=ticket_id,
+                    category=category,
+                    description=description,
+                    location=location,
+                    priority=priority,
+                )
+            except Exception:
+                pass
+
+            AdminService._notify_power_automate({
+                "complaint_type": "premises",
+                "ticket_id": ticket_id,
+                "category": category,
+                "description": description,
+                "location": location,
+                "priority": priority,
+                "status": "Open",
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+                "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            })
+
+            return (
+                f"Facility complaint registered. **Ticket ID: {ticket_id}**. "
+                f"The facility team has been notified and will address it based on priority."
+            )
         finally:
             db.close()
 
     @staticmethod
-    def get_complaint_status(ticket_id: str):
+    def get_complaint_status(ticket_id: str) -> str:
         db = SessionLocal()
         try:
             c = db.query(FacilityComplaint).filter(FacilityComplaint.ticket_id == ticket_id).first()
-            if not c: return "Complaint ticket not found."
-            return f"Ticket: {c.ticket_id} | Status: {c.status} | Priority: {c.priority} | Location: {c.location}"
+            if not c:
+                return "Complaint ticket not found."
+            return (
+                f"Ticket: {c.ticket_id} | Category: {c.category} | "
+                f"Status: {c.status} | Priority: {c.priority} | Location: {c.location}"
+            )
         finally:
             db.close()
 
+    # ── Food / Cafeteria ──────────────────────────────────────────────────────
+
     @staticmethod
-    def submit_food_feedback(email: str, vendor_name: str, rating: int, comments: str = ""):
+    def submit_food_feedback(email: str, vendor_name: str, rating: int, comments: str = "") -> str:
         db = SessionLocal()
         try:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if not emp: return "Employee not found."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
             new_f = FoodVendorFeedback(
                 employee_id=emp.id,
                 vendor_name=vendor_name,
                 rating=rating,
-                food_quality=rating, # Simplified for mock
+                food_quality=rating,
                 hygiene=rating,
                 service=rating,
-                comments=comments
+                comments=comments,
             )
             db.add(new_f)
             db.commit()
-            return f"Thank you for your feedback on {vendor_name}!"
+            return f"Thank you for your {rating}/5 rating for {vendor_name}!"
         finally:
             db.close()
 
     @staticmethod
-    def get_vendor_ratings(vendor_name: str):
+    def submit_food_complaint(
+        email: str, vendor_name: str, complaint_type: str, description: str
+    ) -> str:
+        """Lodge a food/cafeteria complaint — distinct from a star rating."""
         db = SessionLocal()
         try:
-            feedbacks = db.query(FoodVendorFeedback).filter(FoodVendorFeedback.vendor_name.ilike(f"%{vendor_name}%")).all()
-            if not feedbacks: return f"No feedback found for {vendor_name}."
-            
+            emp = AdminService._get_or_create_employee(db, email)
+
+            new_c = FoodComplaint(
+                employee_id=emp.id,
+                vendor_name=vendor_name,
+                complaint_type=complaint_type,
+                description=description,
+                status="Open",
+            )
+            db.add(new_c)
+            db.commit()
+            db.refresh(new_c)
+
+            try:
+                from app.services.email_service import send_food_complaint_email
+                send_food_complaint_email(
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    vendor_name=vendor_name,
+                    complaint_type=complaint_type,
+                    description=description,
+                    complaint_id=new_c.id,
+                )
+            except Exception:
+                pass
+
+            AdminService._notify_power_automate({
+                "complaint_type": "food_vendor",
+                "ticket_id": str(new_c.id),
+                "vendor_name": vendor_name,
+                "category": complaint_type,
+                "description": description,
+                "status": "Open",
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+                "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            })
+
+            return (
+                f"Food complaint submitted (#{new_c.id}) regarding '{vendor_name}' "
+                f"for '{complaint_type}'. The admin team has been notified."
+            )
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_vendor_ratings(vendor_name: str) -> str:
+        db = SessionLocal()
+        try:
+            feedbacks = db.query(FoodVendorFeedback).filter(
+                FoodVendorFeedback.vendor_name.ilike(f"%{vendor_name}%")
+            ).all()
+            if not feedbacks:
+                return f"No feedback found for {vendor_name}."
+
             avg_rating = sum(f.rating for f in feedbacks) / len(feedbacks)
-            return f"Average rating for {vendor_name}: {avg_rating:.1f}/5.0 based on {len(feedbacks)} reviews."
+            return (
+                f"Average rating for {vendor_name}: **{avg_rating:.1f}/5.0** "
+                f"based on {len(feedbacks)} reviews."
+            )
         finally:
             db.close()

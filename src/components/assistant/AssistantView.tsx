@@ -1,10 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { QuickActions } from "./QuickActions";
 import { Composer } from "./Composer";
-import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles } from "lucide-react";
+import { Download, Sparkles, WifiOff, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -19,10 +17,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
+import { ParkingForm } from "./ParkingForm";
 
-type Turn =
-  | { role: "user"; text: string }
-  | { role: "ai"; text: string; card?: boolean; downloadUrl?: string; downloadTitle?: string };
+import type { Turn } from "@/lib/chat-store";
 
 interface ThreadData {
   id: string;
@@ -49,15 +47,16 @@ import { useSettings } from "@/lib/settings-store";
 export function AssistantView() {
   const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
     useChatStore();
-  const { aiTone, userNickname, reasoningDepth, responseFormat, actionExecution } = useSettings();
+  const { theme } = useSettings();
   const { user } = useAuth();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+  const [activity, setActivity] = useState("");
+  const [vpnWarning, setVpnWarning] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +68,29 @@ export function AssistantView() {
       initialized.current = true;
     }
   }, [createThread, activeId]);
+
+  // Check LLM reachability on mount — surfaces VPN issue before the user tries to chat
+  useEffect(() => {
+    fetch("/api/health/llm")
+      .then((res) => { if (!res.ok) setVpnWarning(true); })
+      .catch(() => { /* backend itself unreachable — separate issue */ });
+  }, []);
+
+  // Poll health endpoint while VPN warning is active; auto-clear when VPN connects
+  useEffect(() => {
+    if (!vpnWarning) return;
+    const id = setInterval(() => {
+      fetch("/api/health/llm")
+        .then((res) => {
+          if (res.ok) {
+            setVpnWarning(false);
+            toast.success("VPN connected", { description: "You're back on the office network." });
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [vpnWarning]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
@@ -83,21 +105,18 @@ export function AssistantView() {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
-      // 1. Intercept Software Install requests for approval workflow
+      // Intercept parking sticker requests — show interactive form
       if (
-        text.toLowerCase().includes("software install") ||
-        text.toLowerCase().includes("install figma")
+        text.toLowerCase().includes("parking sticker") ||
+        (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
-          text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
-          card: false,
+          text: "Please fill in your vehicle details below to submit a parking sticker request.",
+          interactive: { type: "parking_form" },
         });
         setInput("");
-        toast.success("IT Approval Request Sent", {
-          description: "Sent to IT Support for software installation.",
-        });
         return;
       }
 
@@ -105,35 +124,45 @@ export function AssistantView() {
       setInput("");
       setThinking(true);
 
-      // Always send history now that AI Memory toggle is removed
       const history = (threads[activeId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
       }));
 
-      // Real API call to backend
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      const activitySteps = getActivitySteps(text);
+      setActivity(activitySteps[0]);
+      const activityTimers = activitySteps
+        .slice(1)
+        .map((step, index) => window.setTimeout(() => setActivity(step), (index + 1) * 1800));
+
       fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(user?.email ? { "x-user-email": user.email } : {}),
+          ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+        },
         body: JSON.stringify({
           message: text,
           history,
           session_id: activeId,
-          preferences: {
-            tone: aiTone,
-            nickname: userNickname,
-            reasoningDepth,
-            responseFormat,
-            actionExecution,
-          },
+          preferences: {},
         }),
       })
         .then(async (res) => {
           if (!res.ok) {
-            const errorData = await res
-              .json()
-              .catch(() => ({ detail: "Failed to connect to the server" }));
-            throw new Error(errorData.detail || "Server Error");
+            const errorData = await res.json().catch(() => ({}));
+            const detail = errorData.detail;
+            if (detail && typeof detail === "object" && detail.code === "VPN_REQUIRED") {
+              setVpnWarning(true);
+              const err = new Error(detail.message) as Error & { code: string };
+              err.code = "VPN_REQUIRED";
+              throw err;
+            }
+            throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
           }
           return res.json();
         })
@@ -145,19 +174,45 @@ export function AssistantView() {
             text: responseText,
             downloadUrl: data.download_url ?? undefined,
             downloadTitle: data.download_title ?? undefined,
+            domain: data.domain ?? undefined,
+            interactive: data.interactive ?? undefined,
           });
         })
-        .catch((err) => {
+        .catch((err: Error & { code?: string }) => {
           console.error("Backend Error:", err);
-          toast.error("Assistant is unavailable", {
-            description: err.message || "Please try again later.",
+          const isVpn = err.code === "VPN_REQUIRED";
+          const isTimeout = err.name === "AbortError";
+
+          addTurn(activeId, {
+            role: "ai",
+            text: isVpn
+              ? "I can't reach the AI service right now.\n\n**You appear to be outside the office network.** Please connect to the VPN and try again."
+              : isTimeout
+              ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
+              : "I couldn't complete that request right now. Please try again in a moment.",
           });
+
+          if (isVpn) {
+            toast.error("VPN not connected", {
+              description: "Connect to the office VPN to use Centriq AI.",
+              duration: 8000,
+            });
+          } else {
+            toast.error("Service unavailable", {
+              description: isTimeout
+                ? "The request timed out after 90 seconds."
+                : err.message || "Please try again later.",
+            });
+          }
         })
         .finally(() => {
+          window.clearTimeout(timeoutId);
+          activityTimers.forEach((timer) => window.clearTimeout(timer));
+          setActivity("");
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking, aiTone, userNickname, reasoningDepth, responseFormat, actionExecution],
+    [activeId, input, threads, addTurn, setThinking, user?.email, user?.role],
   );
 
   const handleNewChat = () => {
@@ -170,14 +225,24 @@ export function AssistantView() {
     setIsSidebarOpen(false);
   };
 
-  const handleFeedback = (rating: "up" | "down", index: number) => {
+  const handleFeedback = (rating: "up" | "down", index: number, feedbackText?: string) => {
+    const turns = (activeId ? threads[activeId]?.turns : undefined) || [];
+    const aiTurn = turns[index];
+    const prevUserTurn = turns.slice(0, index).reverse().find((t: Turn) => t.role === "user");
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, index, threadId: activeId }),
+      body: JSON.stringify({
+        rating,
+        threadId: activeId,
+        domain: aiTurn?.role === "ai" ? aiTurn.domain : undefined,
+        user_message: prevUserTurn?.text || "",
+        ai_response: aiTurn?.text || "",
+        feedback_text: feedbackText || "",
+      }),
     })
       .then(() => {
-        toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
+        if (rating === "up") toast.success("Glad I could help!");
       })
       .catch(() => toast.error("Failed to save feedback"));
   };
@@ -241,8 +306,21 @@ export function AssistantView() {
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* Top bar */}
-
+        {vpnWarning && (
+          <div className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            <span>
+              <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
+            </span>
+            <button
+              onClick={() => setVpnWarning(false)}
+              className="ml-auto shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40"
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
           <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
             {activeThread.turns.length === 0 ? (
@@ -264,9 +342,6 @@ export function AssistantView() {
                   />
                 </div>
 
-                <div className="w-full max-w-5xl mt-4">
-                  <QuickActions onPick={(p) => !thinking && send(p)} />
-                </div>
               </section>
             ) : (
               <section className="space-y-10 pb-10">
@@ -279,11 +354,13 @@ export function AssistantView() {
                       {t.text}
                     </UserMessage>
                   ) : (
-                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
+                    <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined}>
                       <div className="space-y-4">
-                        <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                          {renderInline(t.text)}
-                        </div>
+                        {t.text && (
+                          <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                            {renderInline(t.text)}
+                          </div>
+                        )}
                         {t.downloadUrl && (
                           <a
                             href={t.downloadUrl}
@@ -316,6 +393,23 @@ export function AssistantView() {
                             }}
                           />
                         )}
+                        {t.interactive?.type === "parking_form" && (
+                          <ParkingForm
+                            userEmail={user?.email || ""}
+                            onSubmitted={(msg) =>
+                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                            }
+                          />
+                        )}
+                        {t.interactive?.type === "email_draft" && t.interactive.data && (
+                          <InteractiveEmailDraft
+                            data={t.interactive.data}
+                            userEmail={user?.email}
+                            onSent={(msg) =>
+                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                            }
+                          />
+                        )}
                       </div>
                     </AIMessage>
                   ),
@@ -323,19 +417,22 @@ export function AssistantView() {
 
                 {thinking && (
                   <AIMessage live>
-                    <div className="flex gap-1.5 py-2">
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "150ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "300ms" }}
-                      />
+                    <div className="flex items-center gap-3 py-2 text-sm text-muted-foreground">
+                      <div className="flex gap-1.5">
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "0ms" }}
+                        />
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "150ms" }}
+                        />
+                        <div
+                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
+                          style={{ animationDelay: "300ms" }}
+                        />
+                      </div>
+                      <span>{activity || "Working..."}</span>
                     </div>
                   </AIMessage>
                 )}
@@ -416,4 +513,23 @@ function renderInline(text: string | undefined) {
       <span key={i}>{p}</span>
     ),
   );
+}
+
+function getActivitySteps(text: string) {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("install") ||
+    lower.includes("software") ||
+    lower.includes("nodejs") ||
+    lower.includes("node.js") ||
+    lower.includes("figma")
+  ) {
+    return ["Routing to IT Support...", "Preparing email draft...", "Waiting for response..."];
+  }
+
+  if (/\b(yes|send|confirm|ok|okay)\b/.test(lower)) {
+    return ["Checking pending draft...", "Sending email...", "Finalizing response..."];
+  }
+
+  return ["Routing request...", "Selecting the right service...", "Preparing response..."];
 }

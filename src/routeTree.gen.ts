@@ -13,7 +13,11 @@ import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
+import { Route as LayoutPeopleRouteImport } from './routes/_layout.people'
+import { Route as LayoutItPortalRouteImport } from './routes/_layout.it-portal'
+import { Route as LayoutHrPortalRouteImport } from './routes/_layout.hr-portal'
 import { Route as LayoutConfigRouteImport } from './routes/_layout.config'
+import { Route as LayoutAdminPortalRouteImport } from './routes/_layout.admin-portal'
 import { Route as LayoutAdminRouteImport } from './routes/_layout.admin'
 
 const LayoutRoute = LayoutRouteImport.update({
@@ -35,9 +39,29 @@ const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutPeopleRoute = LayoutPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutItPortalRoute = LayoutItPortalRouteImport.update({
+  id: '/it-portal',
+  path: '/it-portal',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutHrPortalRoute = LayoutHrPortalRouteImport.update({
+  id: '/hr-portal',
+  path: '/hr-portal',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutConfigRoute = LayoutConfigRouteImport.update({
   id: '/config',
   path: '/config',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutAdminPortalRoute = LayoutAdminPortalRouteImport.update({
+  id: '/admin-portal',
+  path: '/admin-portal',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutAdminRoute = LayoutAdminRouteImport.update({
@@ -49,13 +73,21 @@ const LayoutAdminRoute = LayoutAdminRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
   '/admin': typeof LayoutAdminRoute
+  '/admin-portal': typeof LayoutAdminPortalRoute
   '/config': typeof LayoutConfigRoute
+  '/hr-portal': typeof LayoutHrPortalRoute
+  '/it-portal': typeof LayoutItPortalRoute
+  '/people': typeof LayoutPeopleRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
 }
 export interface FileRoutesByTo {
   '/admin': typeof LayoutAdminRoute
+  '/admin-portal': typeof LayoutAdminPortalRoute
   '/config': typeof LayoutConfigRoute
+  '/hr-portal': typeof LayoutHrPortalRoute
+  '/it-portal': typeof LayoutItPortalRoute
+  '/people': typeof LayoutPeopleRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
   '/': typeof LayoutIndexRoute
@@ -64,21 +96,47 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_layout': typeof LayoutRouteWithChildren
   '/_layout/admin': typeof LayoutAdminRoute
+  '/_layout/admin-portal': typeof LayoutAdminPortalRoute
   '/_layout/config': typeof LayoutConfigRoute
+  '/_layout/hr-portal': typeof LayoutHrPortalRoute
+  '/_layout/it-portal': typeof LayoutItPortalRoute
+  '/_layout/people': typeof LayoutPeopleRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
   '/_layout/': typeof LayoutIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin' | '/config' | '/settings' | '/team'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/admin-portal'
+    | '/config'
+    | '/hr-portal'
+    | '/it-portal'
+    | '/people'
+    | '/settings'
+    | '/team'
   fileRoutesByTo: FileRoutesByTo
-  to: '/admin' | '/config' | '/settings' | '/team' | '/'
+  to:
+    | '/admin'
+    | '/admin-portal'
+    | '/config'
+    | '/hr-portal'
+    | '/it-portal'
+    | '/people'
+    | '/settings'
+    | '/team'
+    | '/'
   id:
     | '__root__'
     | '/_layout'
     | '/_layout/admin'
+    | '/_layout/admin-portal'
     | '/_layout/config'
+    | '/_layout/hr-portal'
+    | '/_layout/it-portal'
+    | '/_layout/people'
     | '/_layout/settings'
     | '/_layout/team'
     | '/_layout/'
@@ -118,11 +176,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutSettingsRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/people': {
+      id: '/_layout/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof LayoutPeopleRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/it-portal': {
+      id: '/_layout/it-portal'
+      path: '/it-portal'
+      fullPath: '/it-portal'
+      preLoaderRoute: typeof LayoutItPortalRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/hr-portal': {
+      id: '/_layout/hr-portal'
+      path: '/hr-portal'
+      fullPath: '/hr-portal'
+      preLoaderRoute: typeof LayoutHrPortalRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/config': {
       id: '/_layout/config'
       path: '/config'
       fullPath: '/config'
       preLoaderRoute: typeof LayoutConfigRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/admin-portal': {
+      id: '/_layout/admin-portal'
+      path: '/admin-portal'
+      fullPath: '/admin-portal'
+      preLoaderRoute: typeof LayoutAdminPortalRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/admin': {
@@ -137,7 +223,11 @@ declare module '@tanstack/react-router' {
 
 interface LayoutRouteChildren {
   LayoutAdminRoute: typeof LayoutAdminRoute
+  LayoutAdminPortalRoute: typeof LayoutAdminPortalRoute
   LayoutConfigRoute: typeof LayoutConfigRoute
+  LayoutHrPortalRoute: typeof LayoutHrPortalRoute
+  LayoutItPortalRoute: typeof LayoutItPortalRoute
+  LayoutPeopleRoute: typeof LayoutPeopleRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
@@ -145,7 +235,11 @@ interface LayoutRouteChildren {
 
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminRoute: LayoutAdminRoute,
+  LayoutAdminPortalRoute: LayoutAdminPortalRoute,
   LayoutConfigRoute: LayoutConfigRoute,
+  LayoutHrPortalRoute: LayoutHrPortalRoute,
+  LayoutItPortalRoute: LayoutItPortalRoute,
+  LayoutPeopleRoute: LayoutPeopleRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,
   LayoutIndexRoute: LayoutIndexRoute,

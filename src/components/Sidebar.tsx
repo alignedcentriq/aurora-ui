@@ -16,6 +16,9 @@ import {
   Zap,
   Plus,
   Trash2,
+  CalendarDays,
+  Car,
+  Ticket,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -23,6 +26,7 @@ import { useAuth, Role } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/chat-store";
+import { AnnouncementBanner } from "./assistant/AnnouncementBanner";
 
 const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string }> = {
   Employee: { icon: Briefcase, color: "text-blue-400", label: "Employee" },
@@ -77,6 +81,12 @@ export function Sidebar() {
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
     {
+      to: "/people",
+      icon: Users,
+      label: "People",
+      show: ["HR", "PMO", "Admin", "Functional Manager"].includes(user.role),
+    },
+    {
       to: "/config",
       icon: Database,
       label: "Prompt Config",
@@ -89,6 +99,9 @@ export function Sidebar() {
       show: user.role === "Functional Manager",
     },
     { to: "/admin", icon: LayoutDashboard, label: "Analytics", show: user.role === "Admin" },
+    { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
+    { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
+    { to: "/it-portal", icon: Ticket, label: "IT Portal", show: user.role === "IT" },
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 
@@ -100,6 +113,7 @@ export function Sidebar() {
       <div className="flex h-16 items-center gap-3 px-6 border-b border-white/[0.06]">
         <Logo size="md" />
         <BrandName className="text-[15px] text-[var(--sidebar-foreground)]" withAI={true} />
+        <AnnouncementBanner />
       </div>
       
       {/* Navigation */}
@@ -141,6 +155,14 @@ export function Sidebar() {
               </span>
             </div>
             <div className="space-y-0.5">
+              <button
+                onClick={() => createThread()}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-primary hover:bg-primary/5 transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                <span>New Conversation</span>
+              </button>
+
               {Object.values(threads)
                 .filter((t) => t.turns.length > 0)
                 .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -181,14 +203,6 @@ export function Sidebar() {
                     </button>
                   );
                 })}
-
-              <button
-                onClick={() => createThread()}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-primary hover:bg-primary/5 transition-colors mt-2"
-              >
-                <Plus className="h-4 w-4" />
-                <span>New Conversation</span>
-              </button>
             </div>
           </>
         )}

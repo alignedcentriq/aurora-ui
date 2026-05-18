@@ -2,7 +2,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "80:80"   # change left side to use a custom port, e.g. "8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:

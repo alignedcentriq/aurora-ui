@@ -24,7 +24,7 @@ export const Route = createRootRoute({
       ...seo({
         title: "Centriq AI | Intelligent Workplace Assistant",
         description:
-          "Centriq is your intelligent workplace concierge, helping you manage HR tasks, IT requests, and payroll with ease.",
+          "Centriq is your intelligent workplace concierge, helping you manage HR tasks, IT requests, and admin services with ease.",
       }),
     ],
     links: [{ rel: "stylesheet", href: appCss }],
