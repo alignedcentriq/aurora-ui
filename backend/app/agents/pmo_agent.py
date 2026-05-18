@@ -1,11 +1,10 @@
-import re
 import uuid
-from typing import Annotated, List, TypedDict
+from typing import Annotated, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings
@@ -25,12 +24,13 @@ Rules:
 """
 
 
+# ── Tools (used by LLM for complex/ambiguous queries) ────────────────────────
+
 @tool
 def list_projects() -> str:
     """List all available project names in the system."""
     from app.database import SessionLocal
     from app.models import Project
-
     db = SessionLocal()
     try:
         projects = db.query(Project).all()
@@ -46,7 +46,6 @@ def get_project_status(project_name: str) -> str:
     """Get current status, completion percentage, next milestone, and owner for a project."""
     from app.database import SessionLocal
     from app.models import Project
-
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
@@ -68,7 +67,6 @@ def get_project_achievements(project_name: str) -> str:
     """Get the key achievements and successes for a specific project."""
     from app.database import SessionLocal
     from app.models import Project
-
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
@@ -87,14 +85,12 @@ def generate_project_report(project_name: str, report_type: str = "project_statu
     from app.document_generation.generator import generate_pdf
     from app.document_store import store_pdf
     from app.models import Project
-
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
         if not project:
             names = [p.name for p in db.query(Project).all()]
             return f"No project found matching '{project_name}'. Available: {', '.join(names)}"
-
         lines = [
             f"Project: {project.name}",
             f"Status: {project.status}",
@@ -104,7 +100,6 @@ def generate_project_report(project_name: str, report_type: str = "project_statu
         ]
         if project.achievements:
             lines += ["", "Achievements:", project.achievements]
-
         title = f"{project.name} - {report_type.replace('_', ' ').title()}"
         pdf_bytes = generate_pdf(
             doc_type=report_type,
@@ -112,7 +107,6 @@ def generate_project_report(project_name: str, report_type: str = "project_statu
             content="\n".join(lines),
             generated_by="Centriq PMO Agent",
         )
-
         file_id = str(uuid.uuid4())[:8]
         store_pdf(file_id, pdf_bytes, f"{project.name.replace(' ', '_')}_report")
         return f"PDF report generated for **{project.name}**.\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
@@ -132,7 +126,6 @@ def generate_multi_project_report(
     from app.document_generation.generator import generate_pdf
     from app.document_store import store_pdf
     from app.models import Project
-
     db = SessionLocal()
     try:
         if project_names.strip().lower() == "all":
@@ -140,24 +133,21 @@ def generate_multi_project_report(
         else:
             projects = []
             for name in [n.strip() for n in project_names.split(",") if n.strip()]:
-                project = db.query(Project).filter(Project.name.ilike(f"%{name}%")).first()
-                if project:
-                    projects.append(project)
-
+                p = db.query(Project).filter(Project.name.ilike(f"%{name}%")).first()
+                if p:
+                    projects.append(p)
         if not projects:
             names = [p.name for p in db.query(Project).all()]
             return f"No matching projects found. Available: {', '.join(names)}"
-
         lines = [f"Organization Project Report — {len(projects)} Projects", ""]
-        for project in projects:
+        for p in projects:
             lines += [
-                f"{project.name.upper()}:",
-                f"Status: {project.status} | Completion: {project.completion_pct}%",
-                f"Owner: {project.owner}",
-                f"Next Milestone: {project.next_milestone} ({project.next_milestone_date})",
+                f"{p.name.upper()}:",
+                f"Status: {p.status} | Completion: {p.completion_pct}%",
+                f"Owner: {p.owner}",
+                f"Next Milestone: {p.next_milestone} ({p.next_milestone_date})",
                 "",
             ]
-
         title = f"Organization Report - {len(projects)} Projects"
         pdf_bytes = generate_pdf(
             doc_type=report_type,
@@ -165,7 +155,6 @@ def generate_multi_project_report(
             content="\n".join(lines),
             generated_by="Centriq PMO Agent",
         )
-
         file_id = str(uuid.uuid4())[:8]
         store_pdf(file_id, pdf_bytes, "org_projects_report")
         names = ", ".join(p.name for p in projects)
@@ -176,14 +165,22 @@ def generate_multi_project_report(
         db.close()
 
 
+@tool
+def search_people_directory(query: str):
+    """Search employees by name, skill, designation, project history, experience, or manager.
+    Use for: 'Who worked on Project X?', 'Find Python developers', 'Who has 5+ years experience?'"""
+    from app.services.people_service import PeopleService
+    return PeopleService.search_people_text(query)
+
+
 pmo_tools = [
     list_projects,
     get_project_status,
     get_project_achievements,
     generate_project_report,
     generate_multi_project_report,
+    search_people_directory,
 ]
-
 
 pmo_llm = ChatOpenAI(
     base_url=settings.ROUTER_BASE_URL,
@@ -193,76 +190,84 @@ pmo_llm = ChatOpenAI(
     max_retries=3,
     timeout=120,
 )
-
 pmo_llm_with_tools = pmo_llm.bind_tools(pmo_tools)
 
+
+# ── State ─────────────────────────────────────────────────────────────────────
 
 class PMOState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     user_email: str
     feedback_context: str
+    sub_intent: Optional[str]   # passed from router
+    entities: Optional[dict]    # passed from router
 
 
-def pmo_assistant(state: PMOState):
-    messages = state["messages"]
-    if not any(isinstance(message, SystemMessage) for message in messages):
-        base_prompt = PromptService.get_system_prompt("pmo", PMO_SYSTEM_PROMPT)
-        guardrail = PromptService.get_guardrail("pmo")
-        feedback_ctx = state.get("feedback_context") or ""
-        messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
+# ── DB helpers (no LLM) ───────────────────────────────────────────────────────
+
+def _db_list_all_projects() -> dict:
+    from app.database import SessionLocal
+    from app.models import Project
+    db = SessionLocal()
     try:
-        return {"messages": [pmo_llm_with_tools.invoke(messages)]}
-    except Exception as exc:
-        print(f"PMO Agent LLM error: {exc}")
-        return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}
+        projects = db.query(Project).all()
+        if not projects:
+            return {"messages": [AIMessage(content="There are currently no projects in the system.")]}
+        lines = [
+            f"{i + 1}. **{p.name}** — {p.status} ({p.completion_pct}% complete)"
+            for i, p in enumerate(projects)
+        ]
+        body = f"Here are all **{len(projects)} projects** in the organization:\n\n" + "\n".join(lines)
+        return {"messages": [AIMessage(content=body)]}
+    finally:
+        db.close()
 
 
-PDF_KEYWORDS = {
-    "generate pdf", "generate a pdf", "create pdf", "create a pdf",
-    "generate report", "generate a report", "create report", "create a report",
-    "export pdf", "export report", "download report", "download pdf",
-    "make a report", "make a pdf", "write a report", "produce a report",
-}
+def _db_project_status(project_name: str) -> dict:
+    from app.database import SessionLocal
+    from app.models import Project
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
+        if not project:
+            all_names = [p.name for p in db.query(Project).all()]
+            return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
+        body = (
+            f"**{project.name}**\n"
+            f"- Status: {project.status}\n"
+            f"- Completion: {project.completion_pct}%\n"
+            f"- Owner: {project.owner}\n"
+            f"- Next Milestone: {project.next_milestone} ({project.next_milestone_date})"
+        )
+        return {"messages": [AIMessage(content=body)]}
+    finally:
+        db.close()
 
 
-def _is_pdf_request(message: str) -> bool:
-    msg_lower = message.lower()
-    return any(keyword in msg_lower for keyword in PDF_KEYWORDS)
+def _db_project_achievements(project_name: str) -> dict:
+    from app.database import SessionLocal
+    from app.models import Project
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
+        if not project:
+            all_names = [p.name for p in db.query(Project).all()]
+            return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
+        achievements = project.achievements or "No achievements recorded yet."
+        return {"messages": [AIMessage(content=f"**Achievements for {project.name}:**\n{achievements}")]}
+    finally:
+        db.close()
 
 
-def _extract_project_name(message: str) -> str:
-    match = re.search(
-        r"(?:for|of)\s+(?:project\s+)?([a-z][a-z0-9 _\-]+?)(?:\s+(?:report|pdf|document)|$)",
-        message.lower(),
-    )
-    return match.group(1).strip() if match else ""
-
-
-def pdf_interceptor(state: PMOState):
-    last_user = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        "",
-    )
-    if not _is_pdf_request(last_user):
-        return {}
-
-    msg_lower = last_user.lower()
-    is_multi = (
-        "all" in msg_lower
-        or "multiple" in msg_lower
-        or bool(re.search(r"\b\d+\s+project", msg_lower))
-        or msg_lower.count(",") >= 1
-    )
+def _inject_pdf_tool_call(project_name: str, scope: str) -> dict:
+    """Inject a PDF tool call directly — no LLM needed to make this decision."""
+    is_multi = scope == "multi" or not project_name or project_name.lower() == "all"
     if is_multi:
         tool_name = "generate_multi_project_report"
-        tool_args = {"project_names": "all", "report_type": "project_status_report"}
+        tool_args = {"project_names": project_name or "all", "report_type": "project_status_report"}
     else:
         tool_name = "generate_project_report"
-        tool_args = {
-            "project_name": _extract_project_name(last_user) or "all",
-            "report_type": "project_status_report",
-        }
-
+        tool_args = {"project_name": project_name, "report_type": "project_status_report"}
     return {
         "messages": [
             AIMessage(
@@ -278,22 +283,82 @@ def pdf_interceptor(state: PMOState):
     }
 
 
-def _after_interceptor(state: PMOState) -> str:
+# ── Smart dispatcher ──────────────────────────────────────────────────────────
+# Uses sub_intent + entities from the router to resolve directly from DB.
+# Falls through to the LLM only for genuinely ambiguous/complex queries.
+
+_REPORT_INTENTS = {"generate_report", "download_report", "pdf_report", "export_report", "create_report"}
+
+
+def smart_dispatcher(state: PMOState) -> dict:
+    sub_intent = (state.get("sub_intent") or "").lower().strip()
+    entities = state.get("entities") or {}
+    project_name = (
+        entities.get("project_name")
+        or entities.get("project")
+        or ""
+    )
+
+    if sub_intent == "list_projects":
+        return _db_list_all_projects()
+
+    if sub_intent == "project_status":
+        if project_name:
+            return _db_project_status(project_name)
+        # No specific project mentioned — list all
+        return _db_list_all_projects()
+
+    if sub_intent == "project_achievements":
+        if project_name:
+            return _db_project_achievements(project_name)
+        return _db_list_all_projects()
+
+    if sub_intent in _REPORT_INTENTS:
+        scope = "multi" if not project_name or project_name.lower() == "all" else "single"
+        return _inject_pdf_tool_call(project_name, scope)
+
+    # Unknown/complex — let LLM handle via pmo_assistant
+    return {}
+
+
+def _route_after_dispatcher(state: PMOState) -> str:
     last = state["messages"][-1]
+    if isinstance(last, HumanMessage):
+        # Dispatcher returned {} — LLM must handle this
+        return "pmo_assistant"
     if hasattr(last, "tool_calls") and last.tool_calls:
         return "tools"
-    return "pmo_assistant"
+    return "done"
 
+
+# ── LLM node (fallback for complex queries) ───────────────────────────────────
+
+def pmo_assistant(state: PMOState):
+    messages = state["messages"]
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        base_prompt = PromptService.get_system_prompt("pmo", PMO_SYSTEM_PROMPT)
+        guardrail = PromptService.get_guardrail("pmo")
+        feedback_ctx = state.get("feedback_context") or ""
+        messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
+    try:
+        return {"messages": [pmo_llm_with_tools.invoke(messages)]}
+    except Exception as exc:
+        print(f"PMO Agent LLM error: {exc}")
+        return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}
+
+
+# ── Workflow ───────────────────────────────────────────────────────────────────
 
 pmo_workflow = StateGraph(PMOState)
-pmo_workflow.add_node("pdf_interceptor", pdf_interceptor)
+pmo_workflow.add_node("smart_dispatcher", smart_dispatcher)
 pmo_workflow.add_node("pmo_assistant", pmo_assistant)
 pmo_workflow.add_node("tools", ToolNode(pmo_tools))
-pmo_workflow.set_entry_point("pdf_interceptor")
+
+pmo_workflow.set_entry_point("smart_dispatcher")
 pmo_workflow.add_conditional_edges(
-    "pdf_interceptor",
-    _after_interceptor,
-    {"tools": "tools", "pmo_assistant": "pmo_assistant"},
+    "smart_dispatcher",
+    _route_after_dispatcher,
+    {"done": END, "tools": "tools", "pmo_assistant": "pmo_assistant"},
 )
 pmo_workflow.add_conditional_edges("pmo_assistant", tools_condition)
 pmo_workflow.add_edge("tools", "pmo_assistant")

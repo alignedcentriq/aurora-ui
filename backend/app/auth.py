@@ -14,6 +14,7 @@ from fastapi import Depends, Header, HTTPException
 from app.config import settings
 
 VALID_ROLES = {"employee", "admin", "manager", "hr", "it", "pmo"}
+DOMAIN_MANAGER_ROLES = {"hr", "it", "pmo", "admin"}
 
 
 @dataclass
@@ -41,4 +42,25 @@ def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     """Dependency that rejects non-admin callers with 403."""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
+    return user
+
+
+def require_domain_manager(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows hr, it, pmo, and admin roles (domain config/announcement managers)."""
+    if user.role not in DOMAIN_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="Domain manager access required.")
+    return user
+
+
+def require_hr(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows hr and admin roles."""
+    if user.role not in {"hr", "admin"}:
+        raise HTTPException(status_code=403, detail="HR access required.")
+    return user
+
+
+def require_it(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows it and admin roles."""
+    if user.role not in {"it", "admin"}:
+        raise HTTPException(status_code=403, detail="IT access required.")
     return user

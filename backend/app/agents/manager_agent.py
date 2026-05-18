@@ -15,13 +15,22 @@ def get_my_team(manager_email: str):
     return ManagerService.get_reportees(manager_email)
 
 
+@tool
+def search_people_directory(query: str):
+    """Search employees by name, skill, designation, project history, experience, or reporting manager.
+    Use for: 'Find someone with Java skills', 'Who has 3+ years experience?',
+    'What did Alice work on last?', 'Find employees in the Finance function'."""
+    from app.services.people_service import PeopleService
+    return PeopleService.search_people_text(query)
+
+
 class ManagerState(TypedDict):
     messages: Annotated[List[BaseMessage], "The messages in the conversation"]
     user_email: str
     feedback_context: str
 
 
-tools = [get_my_team]
+tools = [get_my_team, search_people_directory]
 tool_node = ToolNode(tools)
 
 

@@ -154,5 +154,12 @@ class Config:
     SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Centriq AI")
     HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "poc@alignedautomation")
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "poc@alignedautomation")
+    HR_EMAIL = os.getenv("HR_EMAIL", os.getenv("ADMIN_EMAIL", "poc@alignedautomation.com"))
+    APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
+
+    # Power Automate — SharePoint/PowerApps complaint sync
+    # Set this to the HTTP trigger URL from your Power Automate flow.
+    # Leave empty to disable; complaints will still save locally and email admins.
+    POWER_AUTOMATE_WEBHOOK_URL = os.getenv("POWER_AUTOMATE_WEBHOOK_URL", "")
 
 settings = Config()

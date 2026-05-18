@@ -21,3 +21,5 @@ python-json-logger
 reportlab
 pdfplumber
 python-docx
+pandas
+openpyxl

@@ -39,6 +39,7 @@ from app.services.it_service import ITService
 from app.sharepoint_transfer_service import sharepoint_transfer_service
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
+from app.services.people_service import PeopleService
 from app.services.prompt_service import PromptService
 from app.services.feedback_service import FeedbackService
 
@@ -159,6 +160,14 @@ def find_skills_expert(skill: str):
     return EmployeeService.find_skills_expert(skill)
 
 @tool
+def search_people_directory(query: str):
+    """Search employees by name, skill, designation, project, experience, or reporting manager.
+    Returns detailed profiles including project history and experience.
+    Use this for questions like: 'Who has Python skills?', 'Find senior developers',
+    'Who reports to John?', 'List employees with 5+ years experience'."""
+    return PeopleService.search_people_text(query)
+
+@tool
 def get_department_headcount(function: str = ""):
     """Get headcount of active employees by function/department. Leave function blank for all departments."""
     return EmployeeService.get_department_headcount(function or None)
@@ -206,13 +215,129 @@ def update_hr_prompt(new_prompt: str):
     )
 
 
+# ── New HR Tools ──────────────────────────────────────────────────────────────
+
+@tool
+def get_team_absence(from_date: str = "", to_date: str = ""):
+    """Check who in your team is on leave during a date range.
+    Dates in YYYY-MM-DD format; leave blank for the current week.
+    Use for: 'who is on leave this week', 'team absence next week', 'is anyone off on Monday'."""
+    from app.hr_service import HRService
+    # user_email is injected by the agent via system prompt; the tool receives it from the LLM call
+    # We need a way to get the current user — use settings default here and override in agent call
+    return HRService.get_team_absence(settings.DEFAULT_USER_EMAIL, from_date, to_date)
+
+
+@tool
+def get_team_absence_for(manager_email: str, from_date: str = "", to_date: str = ""):
+    """Check team absence for a specific manager email. Dates YYYY-MM-DD; blank = current week."""
+    from app.hr_service import HRService
+    return HRService.get_team_absence(manager_email, from_date, to_date)
+
+
+@tool
+def generate_hr_document(doc_type: str, target_email: str = ""):
+    """Generate a downloadable HR document PDF.
+    doc_type: 'experience_certificate' or 'expense_summary'.
+    target_email: employee email (defaults to current user if blank)."""
+    import uuid
+    from app.database import SessionLocal
+    from app.models import Employee, Leave, Reimbursement
+    from app.document_generation.generator import generate_pdf
+    from app.document_store import store_pdf
+
+    email = target_email or settings.DEFAULT_USER_EMAIL
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            return f"Employee not found for email: {email}"
+
+        if doc_type == "experience_certificate":
+            joining = emp.joining_date.strftime("%d %B %Y") if emp.joining_date else "N/A"
+            content = (
+                f"To Whom It May Concern\n\n"
+                f"This is to certify that {emp.name} has been employed with Aligned Automation "
+                f"as {emp.designation or 'an employee'} in the {emp.department or 'N/A'} department "
+                f"since {joining}.\n\n"
+                f"During their tenure, they have demonstrated professional conduct and commitment. "
+                f"We wish them the very best in their future endeavours.\n\n"
+                f"Employee ID: {emp.employee_id}\n"
+                f"Location: {emp.location or 'N/A'}\n"
+                f"Employment Type: {emp.employment_type or 'Full-time'}"
+            )
+            title = f"Experience Certificate — {emp.name}"
+
+        elif doc_type == "expense_summary":
+            reimbursements = db.query(Reimbursement).filter(Reimbursement.employee_id == emp.id).all()
+            lines = [f"Expense Summary for {emp.name} ({emp.employee_id})\n"]
+            total = 0.0
+            for r in reimbursements:
+                lines.append(f"- {r.type}: INR {r.amount:,.2f} | Status: {r.status} | Ref #{r.id}")
+                if r.status == "Approved":
+                    total += r.amount
+            lines.append(f"\nTotal Approved: INR {total:,.2f}")
+            content = "\n".join(lines)
+            title = f"Expense Claim Summary — {emp.name}"
+
+        else:
+            return f"Unknown doc_type '{doc_type}'. Supported: experience_certificate, expense_summary."
+
+        pdf_bytes = generate_pdf(doc_type=doc_type, title=title, content=content, generated_by="Centriq HR")
+        file_id = str(uuid.uuid4())[:8]
+        store_pdf(file_id, pdf_bytes, title.replace(" ", "_"))
+        return f"Document ready: **{title}**\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
+    except Exception as exc:
+        return f"Failed to generate document: {exc}"
+    finally:
+        db.close()
+
+
+@tool
+def submit_grievance(category: str, description: str, is_anonymous: bool = False):
+    """Submit an HR grievance or concern.
+    category options: Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other.
+    Set is_anonymous=True to submit without revealing your identity.
+    Use for: 'raise a complaint', 'submit grievance', 'report harassment', 'anonymous HR concern'."""
+    from app.hr_service import HRService
+    return HRService.submit_grievance(settings.DEFAULT_USER_EMAIL, category, description, is_anonymous)
+
+
+@tool
+def submit_grievance_for(employee_email: str, category: str, description: str, is_anonymous: bool = False):
+    """Submit a grievance for a given employee email."""
+    from app.hr_service import HRService
+    return HRService.submit_grievance(employee_email, category, description, is_anonymous)
+
+
+@tool
+def trigger_onboarding_checklist(employee_email: str):
+    """Trigger onboarding checklist for a new joiner — emails IT, Admin, and HR with setup tasks.
+    HR/Admin role only. Use when a new employee joins."""
+    from app.hr_service import HRService
+    return HRService.trigger_onboarding(employee_email)
+
+
+@tool
+def trigger_offboarding_checklist(employee_email: str, last_working_day: str = ""):
+    """Trigger offboarding checklist for a departing employee — emails manager, IT, Admin, and HR.
+    HR/Admin role only. last_working_day in YYYY-MM-DD format."""
+    from app.hr_service import HRService
+    return HRService.trigger_offboarding(employee_email, last_working_day)
+
+
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     transfer_sharepoint_to_minio, list_minio_documents,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
+    search_people_directory,
     create_announcement, get_announcements, deactivate_announcement,
     update_hr_prompt,
+    get_team_absence, get_team_absence_for,
+    generate_hr_document,
+    submit_grievance, submit_grievance_for,
+    trigger_onboarding_checklist, trigger_offboarding_checklist,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -339,12 +464,18 @@ def hr_agent(state: AgentState):
             f"You are Centriq HR Assistant for Aligned Automation.\n"
             f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n\n"
             f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
-            f"1. Leave balance ('my leave balance', 'how many leaves do I have'): → call get_leave_balance immediately.\n"
-            f"2. Apply leave ('apply leave from X to Y', 'take 3 days off'): → call apply_leave immediately. "
-            f"Infer leave_type (default Casual) from context.\n"
-            f"3. Policy question ('WFH policy', 'sick leave rules', 'maternity leave'): → call search_hr_policies immediately.\n"
-            f"4. Employee search ('find John', 'who is in Finance', 'locate someone'): → call search_employee_directory immediately.\n"
-            f"5. Org chart / reporting ('who does Alice report to', 'team under Bob'): → call get_org_chart or get_team_roster immediately.\n\n"
+            f"1. Leave balance: → call get_leave_balance(email='{user_email}').\n"
+            f"2. Apply leave: → call apply_leave(email='{user_email}', ...). Infer leave_type (default Casual). "
+            f"Manager gets an email to approve/reject via clickable link.\n"
+            f"3. Policy question: → call search_hr_policies. Always cite the policy name and last-updated date in your answer.\n"
+            f"4. Employee search: → call search_employee_directory.\n"
+            f"5. Org chart / team: → call get_org_chart or get_team_roster.\n"
+            f"6. Team absence / 'who is on leave': → call get_team_absence_for(manager_email='{user_email}', ...).\n"
+            f"7. Generate document ('experience certificate', 'expense summary'): → call generate_hr_document(target_email='{user_email}', doc_type=...).\n"
+            f"8. Raise grievance / complaint: → call submit_grievance_for(employee_email='{user_email}', ...). "
+            f"Ask for category and description if missing; ask if they want to be anonymous.\n"
+            f"9. Onboarding checklist for new joiner: → call trigger_onboarding_checklist(employee_email=...).\n"
+            f"10. Offboarding checklist for departing employee: → call trigger_offboarding_checklist(employee_email=..., last_working_day=...).\n\n"
             f"RESPONSE STYLE: Act first. Only ask when a REQUIRED parameter is truly missing. "
             f"Never answer from training knowledge — use tools only.",
         )
@@ -365,6 +496,8 @@ async def pmo_agent_node(state: AgentState):
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
         "feedback_context": state.get("feedback_context") or "",
+        "sub_intent": state.get("sub_intent") or "",
+        "entities": state.get("entities") or {},
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
     return {"messages": [last_ai]}

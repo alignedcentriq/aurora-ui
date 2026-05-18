@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { X, Megaphone, ChevronDown, ChevronUp } from "lucide-react";
+import { X, Megaphone, ChevronDown, ChevronUp, Bell, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useAuth } from "@/lib/auth-store";
 
 interface Announcement {
   id: number;
@@ -10,6 +12,7 @@ interface Announcement {
   created_by: string;
   target_audience: string;
   is_active: boolean;
+  image_url: string | null;
   expires_at: string | null;
   created_at: string;
 }
@@ -38,12 +41,22 @@ const CATEGORY_COLORS: Record<string, string> = {
   General: "bg-muted text-muted-foreground",
 };
 
+const DOMAIN_MANAGER_ROLES = new Set(["HR", "IT", "PMO", "Admin"]);
+
 export function AnnouncementBanner() {
+  const { user } = useAuth();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<number[]>(getDismissed);
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  useEffect(() => {
+  const isDomainManager = user ? DOMAIN_MANAGER_ROLES.has(user.role) : false;
+
+  const authHeaders = {
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  const loadAnnouncements = () => {
     fetch("/api/announcements")
       .then((r) => r.json())
       .then((data: Announcement[]) => {
@@ -54,7 +67,9 @@ export function AnnouncementBanner() {
         }
       })
       .catch(() => {});
-  }, []);
+  };
+
+  useEffect(() => { loadAnnouncements(); }, []);
 
   const dismiss = (id: number) => {
     const updated = [...dismissed, id];
@@ -62,62 +77,111 @@ export function AnnouncementBanner() {
     saveDismissed(updated);
   };
 
-  const visible = announcements.filter((a) => !dismissed.includes(a.id));
+  const deleteAnnouncement = (id: number) => {
+    fetch(`/api/announcements/${id}`, { method: "DELETE", headers: authHeaders })
+      .then(() => loadAnnouncements())
+      .catch(() => {});
+  };
 
-  if (visible.length === 0) return null;
+  const visible = announcements.filter((a) => !dismissed.includes(a.id));
+  const unreadCount = visible.length;
 
   return (
-    <div className="mt-4 px-3">
-      <div className="mb-2 px-1 flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--sidebar-foreground)]/30">
-          Announcements
-        </span>
-      </div>
-      <div className="space-y-1.5">
-        {visible.slice(0, 3).map((a) => {
-          const isExpanded = expanded === a.id;
-          const colorClass = CATEGORY_COLORS[a.category] ?? CATEGORY_COLORS.General;
-          return (
-            <div
-              key={a.id}
-              className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 transition-colors hover:bg-white/[0.04]"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex flex-1 items-center gap-2 min-w-0">
-                  <Megaphone className="h-3.5 w-3.5 shrink-0 text-white/40" />
-                  <span className="text-[11px] font-semibold text-white/80 truncate">
-                    {a.title}
-                  </span>
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button
-                    onClick={() => setExpanded(isExpanded ? null : a.id)}
-                    className="flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-white/80 transition-colors"
-                  >
-                    {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  </button>
-                  <button
-                    onClick={() => dismiss(a.id)}
-                    className="flex h-5 w-5 items-center justify-center rounded text-white/30 hover:text-rose-400 transition-colors"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={cn("rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider shrink-0", colorClass)}>
-                  {a.category}
-                </span>
-              </div>
-              {isExpanded && (
-                <p className="mt-0.5 text-[10px] text-white/50 leading-relaxed">
-                  {a.body}
-                </p>
-              )}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button className="relative flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] transition-colors ml-auto text-[var(--sidebar-foreground)]">
+          <Bell className="h-4 w-4" />
+          {unreadCount > 0 && (
+            <span className="absolute right-1.5 top-1.5 flex h-2 w-2 rounded-full bg-rose-500">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75"></span>
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0 border-white/[0.06] bg-[#1a1f2e] shadow-2xl z-50" align="start" side="bottom">
+        <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+          <span className="text-sm font-semibold text-white">Notifications</span>
+          {unreadCount > 0 && (
+            <span className="rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-medium text-primary">
+              {unreadCount} new
+            </span>
+          )}
+        </div>
+        <div className="max-h-[400px] overflow-y-auto p-3 space-y-2 no-scrollbar">
+          {visible.length === 0 ? (
+            <div className="py-8 text-center text-sm text-white/40">
+              No new notifications
             </div>
-          );
-        })}
-      </div>
-    </div>
+          ) : (
+            visible.map((a) => {
+              const isExpanded = expanded === a.id;
+              const colorClass = CATEGORY_COLORS[a.category] ?? CATEGORY_COLORS.General;
+              return (
+                <div
+                  key={a.id}
+                  className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 transition-colors hover:bg-white/[0.04]"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-1 items-center gap-2 min-w-0">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.06] shrink-0">
+                        <Megaphone className="h-3 w-3 text-white/60" />
+                      </div>
+                      <span className="text-[13px] font-medium text-white/90 truncate">
+                        {a.title}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => setExpanded(isExpanded ? null : a.id)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-white/40 hover:bg-white/[0.08] hover:text-white transition-colors"
+                      >
+                        {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      </button>
+                      {isDomainManager ? (
+                        <button
+                          onClick={() => deleteAnnouncement(a.id)}
+                          className="flex h-6 w-6 items-center justify-center rounded text-white/40 hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+                          title="Delete for everyone"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => dismiss(a.id)}
+                          className="flex h-6 w-6 items-center justify-center rounded text-white/40 hover:bg-white/[0.08] hover:text-white/60 transition-colors"
+                          title="Dismiss"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={cn("rounded px-2 py-0.5 text-[10px] font-semibold tracking-wider shrink-0", colorClass)}>
+                      {a.category}
+                    </span>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-1 space-y-2">
+                      {a.image_url && (
+                        <img
+                          src={a.image_url}
+                          alt="Announcement"
+                          className="w-full rounded-lg object-cover max-h-36"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      )}
+                      <p className="text-[12px] text-white/60 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">
+                        {a.body}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

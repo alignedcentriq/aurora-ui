@@ -1,7 +1,15 @@
 import datetime
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import PromptConfig
+from app.models import PromptConfig, PromptDraft
+
+# Roles allowed to manage each domain's prompts
+ROLE_DOMAIN_MAP: dict[str, list[str]] = {
+    "hr": ["hr"],
+    "it": ["it_support"],
+    "pmo": ["pmo"],
+    "admin": ["hr", "admin", "it_support", "pmo", "functional_manager"],
+}
 
 UNIVERSAL_GUARDRAIL = """
 GROUNDING RULES — MANDATORY, NON-NEGOTIABLE:
@@ -82,6 +90,145 @@ class PromptService:
             return config.prompt_value if config else UNIVERSAL_GUARDRAIL
         finally:
             db.close()
+
+    @staticmethod
+    def delete_prompt(domain: str, prompt_key: str, deleted_by: str) -> str:
+        db = SessionLocal()
+        try:
+            config = db.query(PromptConfig).filter(
+                PromptConfig.agent_domain == domain,
+                PromptConfig.prompt_key == prompt_key,
+                PromptConfig.is_active == True,
+            ).order_by(PromptConfig.version.desc()).first()
+            if not config:
+                return "No active prompt found."
+            config.is_active = False
+            db.commit()
+            return f"Prompt deleted for {domain} ({prompt_key})."
+        finally:
+            db.close()
+
+    @staticmethod
+    def save_draft(domain: str, prompt_key: str, value: str, submitted_by: str) -> dict:
+        db = SessionLocal()
+        try:
+            existing = db.query(PromptDraft).filter(
+                PromptDraft.agent_domain == domain,
+                PromptDraft.prompt_key == prompt_key,
+                PromptDraft.submitted_by == submitted_by,
+                PromptDraft.status == "pending",
+            ).first()
+            if existing:
+                existing.draft_value = value
+                db.commit()
+                return {"id": existing.id, "message": "Draft updated — awaiting approval."}
+            draft = PromptDraft(
+                agent_domain=domain,
+                prompt_key=prompt_key,
+                draft_value=value,
+                submitted_by=submitted_by,
+            )
+            db.add(draft)
+            db.commit()
+            db.refresh(draft)
+            return {"id": draft.id, "message": "Draft submitted — awaiting a second approval."}
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_pending_drafts(domain: str = None, exclude_email: str = None) -> list:
+        db = SessionLocal()
+        try:
+            q = db.query(PromptDraft).filter(PromptDraft.status == "pending")
+            if domain:
+                q = q.filter(PromptDraft.agent_domain == domain)
+            if exclude_email:
+                q = q.filter(PromptDraft.submitted_by != exclude_email)
+            return [
+                {
+                    "id": d.id,
+                    "domain": d.agent_domain,
+                    "key": d.prompt_key,
+                    "value": d.draft_value,
+                    "submitted_by": d.submitted_by,
+                    "created_at": d.created_at.isoformat(),
+                }
+                for d in q.order_by(PromptDraft.created_at.desc()).all()
+            ]
+        finally:
+            db.close()
+
+    @staticmethod
+    def approve_draft(draft_id: int, reviewed_by: str) -> str:
+        db = SessionLocal()
+        try:
+            draft = db.query(PromptDraft).filter(PromptDraft.id == draft_id).first()
+            if not draft:
+                return "Draft not found."
+            if draft.status != "pending":
+                return f"Draft is already {draft.status}."
+            if draft.submitted_by == reviewed_by:
+                return "You cannot approve your own draft."
+
+            current = db.query(PromptConfig).filter(
+                PromptConfig.agent_domain == draft.agent_domain,
+                PromptConfig.prompt_key == draft.prompt_key,
+                PromptConfig.is_active == True,
+            ).order_by(PromptConfig.version.desc()).first()
+
+            new_version = (current.version + 1) if current else 1
+            if current:
+                current.is_active = False
+
+            db.add(PromptConfig(
+                agent_domain=draft.agent_domain,
+                prompt_key=draft.prompt_key,
+                prompt_value=draft.draft_value,
+                version=new_version,
+                is_active=True,
+                allowed_roles="admin,hr,it,pmo",
+                created_by=reviewed_by,
+            ))
+            draft.status = "approved"
+            draft.reviewed_by = reviewed_by
+            draft.reviewed_at = datetime.datetime.utcnow()
+            db.commit()
+            return f"Approved and applied as version {new_version}."
+        finally:
+            db.close()
+
+    @staticmethod
+    def reject_draft(draft_id: int, reviewed_by: str) -> str:
+        db = SessionLocal()
+        try:
+            draft = db.query(PromptDraft).filter(PromptDraft.id == draft_id).first()
+            if not draft:
+                return "Draft not found."
+            if draft.submitted_by == reviewed_by:
+                return "You cannot reject your own draft."
+            draft.status = "rejected"
+            draft.reviewed_by = reviewed_by
+            draft.reviewed_at = datetime.datetime.utcnow()
+            db.commit()
+            return "Draft rejected."
+        finally:
+            db.close()
+
+    @staticmethod
+    def test_prompt(domain: str, draft_value: str, test_query: str) -> str:
+        """Run a draft prompt against a test query without saving — returns raw LLM response."""
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from app.config import settings
+
+        llm = ChatOpenAI(
+            base_url=settings.AGENT_BASE_URL,
+            api_key=settings.AGENT_API_KEY,
+            model=settings.AGENT_MODEL_NAME,
+            temperature=0,
+        )
+        result = llm.invoke([SystemMessage(content=draft_value), HumanMessage(content=test_query)])
+        return result.content
 
     @staticmethod
     def list_prompts(domain: str = None):

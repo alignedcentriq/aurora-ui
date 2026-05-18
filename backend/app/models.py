@@ -59,12 +59,24 @@ class Attendance(Base):
 
 class Policy(Base):
     __tablename__ = "policies"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
     category = Column(String) # Leave, WFH, etc.
     content = Column(Text)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class PolicyChunk(Base):
+    """Each row is one chunk of a Policy document, optionally with an embedding vector."""
+    __tablename__ = "policy_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    policy_id = Column(Integer, ForeignKey("policies.id", ondelete="CASCADE"), index=True, nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    embedding = Column(Text, nullable=True)  # JSON-encoded list[float]; NULL until embedded
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 # New SharePoint Integration Tables (Aligned with enterprise_ai schema)
 class GraphSubscription(Base):
@@ -283,6 +295,51 @@ class PromptConfig(Base):
     created_by = Column(String)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+# ── Employee Allocation (from Allocation Data.xlsx) ───────────────────────────
+class EmployeeAllocation(Base):
+    __tablename__ = "employee_allocations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    zoho_record_id = Column(String, unique=True, nullable=True, index=True)
+    employee_id = Column(String, index=True)            # e.g. "AA-001"
+    employee_name = Column(String, index=True)
+    project_name = Column(String, index=True)
+    sub_project = Column(String, nullable=True)
+    project_lead = Column(String, nullable=True)
+    delivery_manager = Column(String, nullable=True)
+    completion_status = Column(String, nullable=True)   # Active / Completed
+    efforts_percent = Column(Float, nullable=True)
+    billability_percent = Column(Float, nullable=True)
+    allocation_date = Column(Date, nullable=True)
+    project_status = Column(String, nullable=True)
+    client_master = Column(String, nullable=True)
+    billing = Column(String, nullable=True)
+    project_type = Column(String, nullable=True)
+    reporting_manager = Column(String, nullable=True)
+    functional_manager = Column(String, nullable=True)
+    function = Column(String, nullable=True)
+    status = Column(String, nullable=True)              # Active / Inactive
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+# ── Prompt Drafts (pending approval workflow) ─────────────────────────────────
+class PromptDraft(Base):
+    __tablename__ = "prompt_drafts"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_domain = Column(String)           # hr, admin, it_support, pmo
+    prompt_key = Column(String)             # system_prompt, guardrail
+    draft_value = Column(Text)
+    submitted_by = Column(String)           # submitter email
+    status = Column(String, default="pending")  # pending, approved, rejected
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 # ── HITL Tracking ─────────────────────────
 class HITLRequest(Base):
     __tablename__ = "hitl_requests"
@@ -361,6 +418,7 @@ class Announcement(Base):
     created_by_domain = Column(String)            # hr, admin, it_support, functional_manager
     target_audience = Column(String, default="all")
     is_active = Column(Boolean, default=True)
+    image_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
 
@@ -379,6 +437,41 @@ class FoodComplaint(Base):
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
 
+
+
+class ApprovalToken(Base):
+    """One-time click-to-approve/reject token emailed to managers."""
+    __tablename__ = "approval_tokens"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(64), unique=True, index=True, nullable=False)
+    entity_type = Column(String(20))   # leave | reimbursement
+    entity_id = Column(Integer)
+    action = Column(String(10))        # approve | reject
+    approver_email = Column(String)
+    employee_email = Column(String)
+    used = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class Grievance(Base):
+    """HR grievance / complaint submitted by employees."""
+    __tablename__ = "grievances"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference_id = Column(String, unique=True, index=True)      # GRV-001
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    category = Column(String)   # Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other
+    description = Column(Text)
+    is_anonymous = Column(Boolean, default=False)
+    status = Column(String, default="Open")   # Open, Under Review, Resolved, Closed
+    resolved_by = Column(String, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
 
 
 class ChatFeedback(Base):

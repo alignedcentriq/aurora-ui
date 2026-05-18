@@ -36,6 +36,8 @@ import {
   Plus,
   Trash2,
   Loader2,
+  Sparkles,
+  Image,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -155,8 +157,9 @@ function AdminDashboard() {
   // Announcements
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [annLoading, setAnnLoading] = useState(true);
-  const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General" });
+  const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General", image_url: "" });
   const [creating, setCreating] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
@@ -180,23 +183,47 @@ function AdminDashboard() {
       .catch(() => {});
   };
 
+  const authHeaders = {
+    "Content-Type": "application/json",
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  const handleSuggestBody = async () => {
+    if (!newAnn.title.trim()) return;
+    setSuggesting(true);
+    try {
+      const res = await fetch("/api/announcements/suggest", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ title: newAnn.title, category: newAnn.category }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewAnn((p) => ({ ...p, body: data.body }));
+      }
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   const handleCreateAnnouncement = async () => {
     if (!newAnn.title.trim() || !newAnn.body.trim()) return;
     setCreating(true);
     try {
       await fetch("/api/announcements", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({
           title: newAnn.title,
           body: newAnn.body,
           category: newAnn.category,
-          created_by: user?.email ?? "admin@centriq.ai",
           created_by_domain: "admin",
           target_audience: "all",
+          image_url: newAnn.image_url.trim() || null,
         }),
       });
-      setNewAnn({ title: "", body: "", category: "General" });
+      setNewAnn({ title: "", body: "", category: "General", image_url: "" });
       setShowForm(false);
       refreshAnnouncements();
     } finally {
@@ -205,8 +232,9 @@ function AdminDashboard() {
   };
 
   const handleDeactivate = async (id: number) => {
-    await fetch(`/api/announcements/${id}?requested_by=${encodeURIComponent(user?.email ?? "admin")}`, {
+    await fetch(`/api/announcements/${id}`, {
       method: "DELETE",
+      headers: authHeaders,
     });
     refreshAnnouncements();
   };
@@ -587,21 +615,15 @@ function AdminDashboard() {
           {/* Create form */}
           {showForm && (
             <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-4 space-y-3">
-              <input
-                type="text"
-                placeholder="Title"
-                value={newAnn.title}
-                onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
-              />
-              <textarea
-                placeholder="Announcement body..."
-                rows={3}
-                value={newAnn.body}
-                onChange={(e) => setNewAnn((p) => ({ ...p, body: e.target.value }))}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 resize-none"
-              />
-              <div className="flex items-center gap-3">
+              {/* Title + category row */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Title"
+                  value={newAnn.title}
+                  onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
+                  className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
+                />
                 <select
                   value={newAnn.category}
                   onChange={(e) => setNewAnn((p) => ({ ...p, category: e.target.value }))}
@@ -611,6 +633,50 @@ function AdminDashboard() {
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Body + suggest */}
+              <div className="relative">
+                <textarea
+                  placeholder="Announcement body..."
+                  rows={4}
+                  value={newAnn.body}
+                  onChange={(e) => setNewAnn((p) => ({ ...p, body: e.target.value }))}
+                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 pr-28 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 resize-none"
+                />
+                <button
+                  onClick={handleSuggestBody}
+                  disabled={suggesting || !newAnn.title.trim()}
+                  title="Suggest body from title"
+                  className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-violet-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-violet-500 hover:bg-violet-500/20 disabled:opacity-40 transition-colors"
+                >
+                  {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  Suggest
+                </button>
+              </div>
+
+              {/* Image URL */}
+              <div className="flex items-center gap-2">
+                <Image className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <input
+                  type="url"
+                  placeholder="Image URL (optional) — paste a link to an image"
+                  value={newAnn.image_url}
+                  onChange={(e) => setNewAnn((p) => ({ ...p, image_url: e.target.value }))}
+                  className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
+                />
+              </div>
+              {newAnn.image_url.trim() && (
+                <img
+                  src={newAnn.image_url.trim()}
+                  alt="Preview"
+                  className="h-24 w-auto rounded-lg object-cover border border-[var(--border)]"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              )}
+
+              {/* Actions */}
+              <div className="flex items-center gap-3">
                 <button
                   onClick={handleCreateAnnouncement}
                   disabled={creating || !newAnn.title.trim() || !newAnn.body.trim()}
@@ -620,7 +686,7 @@ function AdminDashboard() {
                   Publish
                 </button>
                 <button
-                  onClick={() => setShowForm(false)}
+                  onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General", image_url: "" }); }}
                   className="rounded-lg border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Cancel

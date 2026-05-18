@@ -333,7 +333,16 @@ const startBackend = async () => {
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runCommand(
     venvPaths.uvicorn,
-    ["app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "app"],
+    [
+      "app.main:app",
+      "--host", "0.0.0.0",
+      "--port", "8080",
+      "--reload",
+      "--reload-dir", "app",
+      "--reload-exclude", "__pycache__",
+      "--reload-exclude", "*.pyc",
+      "--reload-delay", "0.5",
+    ],
     {
       env: {
         ...process.env,
@@ -343,10 +352,27 @@ const startBackend = async () => {
   );
 };
 
+const shutdownDockerInfra = () => {
+  if (process.env.SKIP_DOCKER === "true") return;
+  console.log("\n--- Stopping Docker infrastructure ---");
+  try {
+    const wslRepoRoot = getWslRepoRoot();
+    execFileSync(
+      "wsl",
+      ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "down"],
+      { stdio: "inherit", timeout: 30_000 }
+    );
+    console.log("--- Docker infrastructure stopped ---");
+  } catch (err) {
+    console.warn("Could not stop Docker infrastructure:", err.message);
+  }
+};
+
 startBackend().catch((err) => {
   console.error("Backend startup failed:");
   console.error(err.message);
   stopWslKeepAlive();
+  shutdownDockerInfra();
   process.exit(1);
 });
 

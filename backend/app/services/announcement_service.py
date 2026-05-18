@@ -4,9 +4,12 @@ All employees can read them via the Org agent.
 """
 
 import datetime
+import logging
 from typing import Optional
 from app.database import SessionLocal
 from app.models import Announcement
+
+logger = logging.getLogger("aurora-logger")
 
 ALLOWED_CATEGORIES = {
     "Policy Update", "Holiday", "Events", "Hiring", "Training", "General", "IT Alert"
@@ -24,6 +27,7 @@ class AnnouncementService:
         created_by_domain: str,
         target_audience: str = "all",
         expires_days: Optional[int] = None,
+        image_url: Optional[str] = None,
     ) -> str:
         db = SessionLocal()
         try:
@@ -42,11 +46,28 @@ class AnnouncementService:
                 created_by_domain=created_by_domain,
                 target_audience=target_audience,
                 is_active=True,
+                image_url=image_url,
                 expires_at=expires_at,
             )
             db.add(ann)
             db.commit()
             db.refresh(ann)
+
+            # Broadcast email notification
+            try:
+                from app.services.email_service import send_announcement_email
+                from app.config import settings
+                send_announcement_email(
+                    recipients=[settings.ADMIN_EMAIL],
+                    title=title,
+                    body=body,
+                    category=category,
+                    sent_by=created_by,
+                    image_url=image_url,
+                )
+            except Exception as e:
+                logger.warning(f"Announcement email failed: {e}")
+
             return (
                 f"Announcement '{title}' published successfully (ID: {ann.id}). "
                 f"Category: {category} | Audience: {target_audience}."
@@ -83,6 +104,33 @@ class AnnouncementService:
             db.close()
 
     @staticmethod
+    def update(
+        announcement_id: int,
+        updated_by: str,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        category: Optional[str] = None,
+        expires_days: Optional[int] = None,
+    ) -> str:
+        db = SessionLocal()
+        try:
+            ann = db.query(Announcement).filter(Announcement.id == announcement_id).first()
+            if not ann:
+                return f"Announcement #{announcement_id} not found."
+            if title is not None:
+                ann.title = title
+            if body is not None:
+                ann.body = body
+            if category is not None and category in ALLOWED_CATEGORIES:
+                ann.category = category
+            if expires_days is not None:
+                ann.expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expires_days)
+            db.commit()
+            return f"Announcement #{announcement_id} updated."
+        finally:
+            db.close()
+
+    @staticmethod
     def deactivate(announcement_id: int, requested_by: str) -> str:
         db = SessionLocal()
         try:
@@ -113,6 +161,7 @@ class AnnouncementService:
                     "created_by_domain": a.created_by_domain,
                     "target_audience": a.target_audience,
                     "is_active": a.is_active,
+                    "image_url": a.image_url,
                     "created_at": a.created_at.isoformat(),
                     "expires_at": a.expires_at.isoformat() if a.expires_at else None,
                 }

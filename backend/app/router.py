@@ -89,6 +89,12 @@ Example responses:
 {{"domain": "it_support", "confidence": 0.95, "reasoning": "User reports their system is heating up, which is a hardware/device issue handled by IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "overheating"}}}}
 {{"domain": "it_support", "confidence": 0.93, "reasoning": "User's laptop is slow/freezing, which is a device performance issue for IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "performance"}}}}
 {{"domain": "hr", "confidence": 0.95, "reasoning": "User is asking about their leave balance.", "sub_intent": "leave_balance", "entities": {{}}}}
+{{"domain": "pmo", "confidence": 0.98, "reasoning": "User wants to see all projects in the organization.", "sub_intent": "list_projects", "entities": {{}}}}
+{{"domain": "pmo", "confidence": 0.98, "reasoning": "User is asking which projects exist in the company.", "sub_intent": "list_projects", "entities": {{}}}}
+{{"domain": "pmo", "confidence": 0.97, "reasoning": "User wants the current status of a specific project.", "sub_intent": "project_status", "entities": {{"project_name": "Aurora UI"}}}}
+{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants to know achievements of a specific project.", "sub_intent": "project_achievements", "entities": {{"project_name": "Centriq AI"}}}}
+{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a downloadable PDF report for all projects.", "sub_intent": "generate_report", "entities": {{"project_name": "all"}}}}
+{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a PDF report for a specific project.", "sub_intent": "generate_report", "entities": {{"project_name": "HR Integration"}}}}
 {{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
 """
 

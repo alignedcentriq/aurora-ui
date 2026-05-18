@@ -1,27 +1,33 @@
 """
 Policy Ingestion & Search Service for Centriq AI.
 
-Reads PDFs and DOCX files from the OneDrive folder, extracts text,
-chunks it, and stores it in the Policy + PolicyChunk tables for
-keyword-based search by agents.
+Pipeline:
+  1. Ingest:  PDF/DOCX → extract text → store in Policy table
+  2. Chunk:   Policy.content → fixed-size overlapping chunks → PolicyChunk rows
+  3. Embed:   PolicyChunk.text → embedding vector (via configured model) → stored as JSON
+  4. Search:  query → embedding → cosine similarity over PolicyChunk.embedding
+              (falls back to keyword search on chunks if embedding model unavailable)
+
+All policy data lives in the DB — no runtime dependency on the PDF folder.
 """
 
+import json
+import math
 import os
 import re
 import datetime
 from pathlib import Path
-from sqlalchemy.orm import Session
+
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Policy
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-2026"
-CHUNK_SIZE = settings.POLICY_CHUNK_SIZE  # characters per chunk (roughly ~200 words)
-CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP  # overlap between consecutive chunks
-CHUNKING_MODEL_NAME = settings.CHUNKING_MODEL_NAME
+CHUNK_SIZE = settings.POLICY_CHUNK_SIZE
+CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP
 
-# ── Category mapping based on filename keywords ──────────────────────────────
+# ── Category mapping from filename ───────────────────────────────────────────
 CATEGORY_MAP = {
     "leave": "Leave & Attendance",
     "referral": "Recruitment",
@@ -52,7 +58,6 @@ CATEGORY_MAP = {
 
 
 def _categorize(filename: str) -> str:
-    """Determine the policy category from its filename."""
     lower = filename.lower()
     for keyword, category in CATEGORY_MAP.items():
         if keyword in lower:
@@ -61,107 +66,134 @@ def _categorize(filename: str) -> str:
 
 
 def _extract_text_from_pdf(filepath: str) -> str:
-    """Extract text from a PDF file using pdfplumber."""
     try:
         import pdfplumber
-        text_parts = []
+        parts = []
         with pdfplumber.open(filepath) as pdf:
             for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text_parts.append(page_text)
-        return "\n".join(text_parts)
+                t = page.extract_text()
+                if t:
+                    parts.append(t)
+        return "\n".join(parts)
     except Exception as e:
-        print(f"[PolicyService] Error reading PDF {filepath}: {e}")
+        print(f"[PolicyService] PDF read error {filepath}: {e}")
         return ""
 
 
 def _extract_text_from_docx(filepath: str) -> str:
-    """Extract text from a DOCX file using python-docx."""
     try:
         from docx import Document
         doc = Document(filepath)
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     except Exception as e:
-        print(f"[PolicyService] Error reading DOCX {filepath}: {e}")
+        print(f"[PolicyService] DOCX read error {filepath}: {e}")
         return ""
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list:
-    """Split text into overlapping chunks."""
     if not text:
         return []
-    
-    # Clean up whitespace
     text = re.sub(r'\s+', ' ', text).strip()
-    
-    chunks = []
-    start = 0
+    chunks, start = [], 0
     while start < len(text):
         end = start + chunk_size
-        chunk = text[start:end]
-        if chunk.strip():
-            chunks.append(chunk.strip())
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
         start = end - overlap
     return chunks
 
 
 class PolicyService:
+
+    # ── Synonym expansion for keyword fallback ────────────────────────────────
+    _SYNONYMS: dict = {
+        "hotel": ["accommodation", "hotel", "lodge", "stay", "lodging"],
+        "hotels": ["accommodation", "hotel", "hotels", "lodge", "stay", "lodging"],
+        "accommodation": ["accommodation", "hotel", "lodge", "stay"],
+        "travel": ["travel", "trip", "journey", "relocation"],
+        "reimburse": ["reimburse", "reimbursement", "claim", "expense"],
+        "reimbursement": ["reimburse", "reimbursement", "claim", "expense"],
+        "claim": ["claim", "reimburse", "reimbursement", "expense"],
+        "medical": ["medical", "health", "practo", "doctor"],
+        "cert": ["certification", "certificate", "training"],
+    }
+
+    # ── Embedding helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_embedding(text: str) -> list | None:
+        """Call the configured embedding model. Returns None on any failure."""
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                base_url=settings.EMBEDDING_BASE_URL,
+                api_key=settings.EMBEDDING_API_KEY,
+            )
+            resp = client.embeddings.create(
+                input=text[:2000],
+                model=settings.EMBEDDING_MODEL_NAME,
+            )
+            return resp.data[0].embedding
+        except Exception as e:
+            print(f"[PolicyService] Embedding skipped ({type(e).__name__}): {e}")
+            return None
+
+    @staticmethod
+    def _cosine(a: list, b: list) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        mag = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
+        return dot / mag if mag else 0.0
+
+    # ── Ingestion ─────────────────────────────────────────────────────────────
+
     @staticmethod
     def ingest_policies_from_folder(folder_path: str = None):
         """
-        Scan the OneDrive folder for policy documents, extract text,
-        and store them in the Policy table.
-        
-        Only ingests files that haven't been ingested yet (by title match).
+        Read PDFs/DOCXs from the OneDrive folder, store full text in Policy table,
+        then chunk + embed each new policy.
+        Only run when the folder exists (dev / first-time setup).
         """
         folder = Path(folder_path) if folder_path else POLICY_DIR
         if not folder.exists():
-            print(f"[PolicyService] Policy folder not found: {folder}")
+            print(f"[PolicyService] Folder not found (skipping file ingest): {folder}")
             return {"ingested": 0, "skipped": 0, "errors": []}
-        
+
         db = SessionLocal()
-        ingested = 0
-        skipped = 0
-        errors = []
-        
+        ingested, skipped, errors = 0, 0, []
         try:
             existing_titles = {p.title for p in db.query(Policy.title).all()}
-            
+
             for filepath in sorted(folder.iterdir()):
                 if filepath.suffix.lower() not in ('.pdf', '.docx'):
                     continue
-                
                 title = filepath.stem.strip()
-                
                 if title in existing_titles:
                     skipped += 1
                     continue
-                
-                # Extract text
+
                 if filepath.suffix.lower() == '.pdf':
                     content = _extract_text_from_pdf(str(filepath))
-                elif filepath.suffix.lower() == '.docx':
-                    content = _extract_text_from_docx(str(filepath))
                 else:
-                    continue
-                
+                    content = _extract_text_from_docx(str(filepath))
+
                 if not content or len(content) < 50:
                     errors.append(f"Empty/too short: {filepath.name}")
                     continue
-                
-                category = _categorize(filepath.name)
-                
-                # Store the full policy
+
                 policy = Policy(
                     title=title,
-                    category=category,
-                    content=content[:50000],  # cap at 50k chars
+                    category=_categorize(filepath.name),
+                    content=content[:50000],
                 )
                 db.add(policy)
+                db.flush()  # get policy.id before committing
                 ingested += 1
-                print(f"  ✓ Ingested: {title} ({category}) [{len(content)} chars]")
-            
+                print(f"  ✓ Ingested: {title} [{len(content)} chars]")
+
+                # Immediately chunk + embed the new policy
+                PolicyService._chunk_and_embed(policy, db)
+
             db.commit()
         except Exception as e:
             db.rollback()
@@ -169,80 +201,229 @@ class PolicyService:
             print(f"[PolicyService] Ingestion error: {e}")
         finally:
             db.close()
-        
+
         result = {"ingested": ingested, "skipped": skipped, "errors": errors}
-        print(f"[PolicyService] Done: {result}")
+        print(f"[PolicyService] Ingest done: {result}")
         return result
 
+    # ── Chunking & Embedding ──────────────────────────────────────────────────
+
     @staticmethod
-    def search_policies(query: str, limit: int = 3) -> str:
+    def _chunk_and_embed(policy: Policy, db):
         """
-        Search policies by keyword matching against title and content.
-        Returns the most relevant chunks for the agent to use.
+        Internal: chunk one Policy and store PolicyChunk rows in the given session.
+        Embedding is best-effort — chunks are stored even without embeddings.
         """
+        from app.models import PolicyChunk
+
+        db.query(PolicyChunk).filter(PolicyChunk.policy_id == policy.id).delete()
+
+        chunks = _chunk_text(policy.content or "")
+        for i, chunk_text in enumerate(chunks):
+            # Prepend the title so the embedding captures document context
+            embed_input = f"{policy.title}\n\n{chunk_text}"
+            emb = PolicyService._get_embedding(embed_input)
+            db.add(PolicyChunk(
+                policy_id=policy.id,
+                chunk_index=i,
+                text=chunk_text,
+                embedding=json.dumps(emb) if emb else None,
+            ))
+        return len(chunks)
+
+    @staticmethod
+    def embed_all_policies():
+        """
+        Chunk and embed every Policy that has no PolicyChunk rows yet.
+        Called once on startup to bootstrap existing data.
+        Embedding failures are silently tolerated — chunks are still stored.
+        """
+        from app.models import PolicyChunk
         db = SessionLocal()
         try:
-            query_lower = query.lower()
-            keywords = [w for w in query_lower.split() if len(w) > 2]
-            
             policies = db.query(Policy).all()
-            if not policies:
-                return "No policies found in the system."
-            
-            # Score each policy by keyword relevance
-            scored = []
+            total_chunks = 0
             for p in policies:
-                score = 0
-                title_lower = (p.title or "").lower()
-                content_lower = (p.content or "").lower()
-                
-                for kw in keywords:
-                    if kw in title_lower:
-                        score += 10  # title match weighted higher
-                    if kw in content_lower:
-                        score += content_lower.count(kw)
-                
-                if score > 0:
-                    scored.append((score, p))
-            
-            if not scored:
-                return f"No policies found matching '{query}'. Try different keywords."
-            
-            # Sort by score, take top results
-            scored.sort(key=lambda x: x[0], reverse=True)
-            top_policies = scored[:limit]
-            
-            results = []
-            for score, p in top_policies:
-                # Extract a relevant snippet (first 500 chars around first keyword match)
-                content = p.content or ""
-                snippet = ""
-                for kw in keywords:
-                    idx = content.lower().find(kw)
-                    if idx >= 0:
-                        start = max(0, idx - 100)
-                        end = min(len(content), idx + 400)
-                        snippet = "..." + content[start:end] + "..."
-                        break
-                
-                if not snippet:
-                    snippet = content[:500] + "..."
-                
-                results.append(f"**{p.title}** ({p.category}):\n{snippet}")
-            
-            return "\n\n---\n\n".join(results)
+                existing = db.query(PolicyChunk).filter(PolicyChunk.policy_id == p.id).count()
+                if existing:
+                    continue
+                n = PolicyService._chunk_and_embed(p, db)
+                total_chunks += n
+                print(f"  ✓ Chunked '{p.title}': {n} chunks")
+            db.commit()
+            print(f"[PolicyService] Bootstrap complete — {total_chunks} total chunks stored.")
+        except Exception as e:
+            db.rollback()
+            print(f"[PolicyService] embed_all_policies error: {e}")
+        finally:
+            db.close()
+
+    # ── Metadata chunk detection ──────────────────────────────────────────────
+
+    _METADATA_MARKERS = ["version", "review date", "owner", "approved by", "effective date", "document no", "document number"]
+
+    @staticmethod
+    def _is_metadata_chunk(text: str) -> bool:
+        """Return True if the chunk is a document-control table with no real policy content."""
+        lower = text.lower()
+        hits = sum(1 for m in PolicyService._METADATA_MARKERS if m in lower)
+        return hits >= 3 and len(text) < 600
+
+    # ── Search ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def search_policies(query: str, limit: int = 2) -> str:
+        """
+        Search policy chunks.
+        1. Try semantic search via cosine similarity on stored embeddings,
+           with a title-keyword boost so the best-named policy wins.
+        2. Fall back to keyword search on chunk text (synonyms expanded).
+        3. Last resort: keyword search on full Policy.content.
+        All data comes from the database — no file system access.
+        """
+        from app.models import PolicyChunk
+        db = SessionLocal()
+        try:
+            query_keywords = [w for w in query.lower().split() if len(w) > 2]
+            # Pre-load policy titles for cheap title-boost scoring
+            policy_title_map = {p.id: (p.title or "").lower() for p in db.query(Policy).all()}
+
+            # ── 1. Semantic search ────────────────────────────────────────────
+            query_emb = PolicyService._get_embedding(query)
+            if query_emb:
+                chunks = db.query(PolicyChunk).filter(PolicyChunk.embedding.isnot(None)).all()
+                if chunks:
+                    scored = []
+                    for c in chunks:
+                        if PolicyService._is_metadata_chunk(c.text):
+                            continue
+                        try:
+                            emb = json.loads(c.embedding)
+                            sim = PolicyService._cosine(query_emb, emb)
+                            if sim > 0.4:
+                                # Boost score when policy title contains a query keyword
+                                title = policy_title_map.get(c.policy_id, "")
+                                title_bonus = sum(0.2 for kw in query_keywords if kw in title)
+                                scored.append((sim + title_bonus, c))
+                        except Exception:
+                            continue
+
+                    scored.sort(key=lambda x: x[0], reverse=True)
+
+                    if scored:
+                        seen_policies: set = set()
+                        results = []
+                        for _, c in scored:
+                            if len(results) >= limit:
+                                break
+                            if c.policy_id in seen_policies:
+                                continue
+                            policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
+                            if policy:
+                                seen_policies.add(c.policy_id)
+                                updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                                results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
+
+                        if results:
+                            return "\n\n---\n\n".join(results)
+
+            # ── 2. Keyword search on chunks ───────────────────────────────────
+            chunks_all = db.query(PolicyChunk).all()
+            if chunks_all:
+                keywords = PolicyService._expand_keywords(query)
+                scored = []
+                for c in chunks_all:
+                    if PolicyService._is_metadata_chunk(c.text):
+                        continue
+                    lower = c.text.lower()
+                    # Title match counts heavily here too
+                    title = policy_title_map.get(c.policy_id, "")
+                    title_score = sum(10 if kw in title else 0 for kw in keywords)
+                    content_score = sum(lower.count(kw) for kw in keywords)
+                    score = title_score + content_score
+                    if score > 0:
+                        scored.append((score, c))
+
+                scored.sort(key=lambda x: x[0], reverse=True)
+
+                if scored:
+                    seen_policies: set = set()
+                    results = []
+                    for _, c in scored:
+                        if len(results) >= limit:
+                            break
+                        if c.policy_id in seen_policies:
+                            continue
+                        policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
+                        if policy:
+                            seen_policies.add(c.policy_id)
+                            updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                            results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
+
+                    if results:
+                        return "\n\n---\n\n".join(results)
+
+            # ── 3. Last resort: keyword search on full Policy.content ─────────
+            return PolicyService._fallback_policy_search(query, db, limit)
+
         finally:
             db.close()
 
     @staticmethod
+    def _expand_keywords(query: str) -> list:
+        query_lower = query.lower()
+        base = [w for w in query_lower.split() if len(w) > 2]
+        expanded = set(base)
+        for kw in base:
+            for syn in PolicyService._SYNONYMS.get(kw, []):
+                expanded.add(syn)
+        return list(expanded)
+
+    @staticmethod
+    def _fallback_policy_search(query: str, db, limit: int = 2) -> str:
+        """Keyword search directly on Policy.content — no chunks needed."""
+        keywords = PolicyService._expand_keywords(query)
+        policies = db.query(Policy).all()
+        if not policies:
+            return "No policies found in the system."
+
+        scored = []
+        for p in policies:
+            title_lower = (p.title or "").lower()
+            content_lower = (p.content or "").lower()
+            score = sum(10 if kw in title_lower else 0 for kw in keywords)
+            score += sum(content_lower.count(kw) for kw in keywords)
+            if score > 0:
+                scored.append((score, p))
+
+        if not scored:
+            return f"No policies found matching '{query}'."
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = []
+        for _, p in scored[:limit]:
+            content = p.content or ""
+            snippet = content[:500] + "..." if len(content) > 500 else content
+            for kw in keywords:
+                idx = content.lower().find(kw)
+                if idx >= 0:
+                    start = max(0, idx - 100)
+                    snippet = "..." + content[start:min(len(content), idx + 400)] + "..."
+                    break
+            updated = p.updated_at.strftime("%d %b %Y") if p.updated_at else "N/A"
+            results.append(f"**{p.title}** ({p.category} · Last updated: {updated}):\n{snippet}")
+
+        return "\n\n---\n\n".join(results)
+
+    # ── Utility ───────────────────────────────────────────────────────────────
+
+    @staticmethod
     def list_policies() -> str:
-        """List all available policy documents."""
         db = SessionLocal()
         try:
             policies = db.query(Policy).all()
             if not policies:
                 return "No policies found."
-            
             lines = [f"- {p.title} ({p.category})" for p in policies]
             return f"Available policies ({len(policies)} documents):\n" + "\n".join(lines)
         finally:

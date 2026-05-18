@@ -19,6 +19,11 @@ DOC_TYPE_LABELS = {
     "project_status_report": "Project Status Report",
     "sprint_summary": "Sprint Summary",
     "meeting_minutes": "Meeting Minutes",
+    "leave_application_letter": "Leave Application",
+    "experience_certificate": "Experience Certificate",
+    "expense_summary": "Expense Claim Summary",
+    "onboarding_checklist": "Onboarding Checklist",
+    "offboarding_checklist": "Offboarding Checklist",
 }
 
 

@@ -7,19 +7,24 @@ from app.models import (
     Leave,
     Attendance,
     Policy,
+    PolicyChunk,
     Project,
     Reimbursement,
     ITTicket,
     PromptConfig,
+    PromptDraft,
     HITLRequest,
     ParkingSticker,
     Accommodation,
     FacilityComplaint,
     FoodVendorFeedback,
     EmployeeZohoProfile,
+    EmployeeAllocation,
     Announcement,
     FoodComplaint,
     ChatFeedback,
+    ApprovalToken,
+    Grievance,
     SCHEMA,
 )
 from app.config import settings
@@ -44,6 +49,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def _background_embed_policies():
+    """Runs in a daemon thread — chunks + embeds all un-chunked policies."""
+    try:
+        from app.services.policy_service import PolicyService
+        PolicyService.embed_all_policies()
+    except Exception as e:
+        print(f"[background] Policy embedding failed: {e}")
+
 
 def init_db():
     # Ensure schema exists
@@ -70,6 +84,7 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_url VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -83,6 +98,8 @@ def init_db():
         # Check if we need to re-seed HR data
         if db.query(Employee).count() == 0:
             _seed_hr_data(db)
+        else:
+            _migrate_employee_names(db)
         
         # Check if we need to re-seed PMO data
         project_count = db.query(Project).count()
@@ -114,13 +131,26 @@ def init_db():
 
         # Ingest real policy documents from OneDrive folder (if not already done)
         policy_count = db.query(Policy).count()
-        if policy_count < 10:  # only 4 dummy policies from HR seed
+        if policy_count < 10:  # only 4 dummy seed policies
             try:
                 from app.services.policy_service import PolicyService
                 print("Ingesting policy documents from OneDrive folder...")
                 PolicyService.ingest_policies_from_folder()
             except Exception as e:
                 print(f"Policy ingestion notice: {e}")
+
+        # Chunk + embed all policies that don't have chunks yet (runs in background)
+        try:
+            chunk_count = db.query(PolicyChunk).count()
+            if chunk_count == 0:
+                import threading
+                print("Starting policy chunking + embedding in background...")
+                threading.Thread(
+                    target=_background_embed_policies,
+                    daemon=True,
+                ).start()
+        except Exception as e:
+            print(f"Policy chunking notice: {e}")
 
     except Exception as e:
         print(f"Error during init_db: {e}")
@@ -131,9 +161,73 @@ def init_db():
 
 
 
+def _migrate_employee_names(db):
+    """One-time rename: replace 'Employee N' generic names with realistic names."""
+    import re
+    generic = [
+        e for e in db.query(Employee).filter(Employee.name.like("Employee %")).all()
+        if re.match(r"^Employee \d+$", e.name)
+    ]
+    if not generic:
+        return
+    print(f"Migrating {len(generic)} generic employee names to realistic names...")
+    used: set = set(
+        e.name for e in db.query(Employee).all()
+        if not re.match(r"^Employee \d+$", e.name)
+    )
+
+    def _pick():
+        for _ in range(200):
+            n = f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+            if n not in used:
+                used.add(n)
+                return n
+        return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+
+    for emp in generic:
+        new_name = _pick()
+        emp.name = new_name
+        slug = new_name.lower().replace(" ", ".")
+        # Keep email unique — only update if it still looks generic
+        if re.match(r"^employee\d+@", emp.email):
+            # extract numeric suffix to preserve uniqueness
+            m = re.search(r"(\d+)@", emp.email)
+            suffix = m.group(1) if m else emp.id
+            emp.email = f"{slug}{suffix}@centriq.ai"
+
+        # Update linked zoho profile names
+        profile = db.query(EmployeeZohoProfile).filter(
+            EmployeeZohoProfile.employee_id == emp.id
+        ).first()
+        if profile:
+            parts = new_name.split(" ", 1)
+            profile.first_name = parts[0]
+            profile.last_name = parts[1] if len(parts) > 1 else ""
+            profile.official_email = emp.email
+
+    db.commit()
+    print("Employee name migration complete.")
+
+
+_FIRST_NAMES = [
+    "Aarav", "Aditi", "Aditya", "Akash", "Anil", "Anjali", "Arjun", "Ayesha",
+    "Bhavna", "Chetan", "Deepak", "Dhruv", "Divya", "Ekta", "Farhan", "Gaurav",
+    "Girish", "Harini", "Hemant", "Isha", "Ishaan", "Kavita", "Kiran", "Lakshmi",
+    "Manish", "Meera", "Mohan", "Naman", "Neha", "Nikhil", "Pallavi", "Pooja",
+    "Priya", "Rahul", "Rajesh", "Ravi", "Rekha", "Riya", "Rohit", "Sanjay",
+    "Shalini", "Shreya", "Suresh", "Tanvi", "Usha", "Varun", "Vikram", "Vijay",
+    "Vishal", "Yash",
+]
+_LAST_NAMES = [
+    "Agarwal", "Bhatt", "Chakraborty", "Desai", "Dubey", "Ghosh", "Gupta",
+    "Iyer", "Jain", "Joshi", "Kapoor", "Khanna", "Kumar", "Mehta", "Mishra",
+    "Nair", "Patel", "Pillai", "Raj", "Rao", "Reddy", "Sharma", "Singh", "Verma",
+]
+
+
 def _seed_hr_data(db):
     print("Seeding dummy HR data...")
-    
+
     departments = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
     locations = ["Mumbai", "Bangalore", "Gurgaon", "Pune", "Hyderabad"]
     designations = {
@@ -144,16 +238,28 @@ def _seed_hr_data(db):
         "Product": ["Product Manager", "UI/UX Designer"]
     }
 
+    used_names: set = set()
+
+    def _unique_name() -> str:
+        for _ in range(200):
+            name = f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+            if name not in used_names:
+                used_names.add(name)
+                return name
+        return f"{random.choice(_FIRST_NAMES)} {random.choice(_LAST_NAMES)}"
+
     # Create 50 employees
     employees = []
     for i in range(1, 51):
         dept = random.choice(departments)
         desig = random.choice(designations.get(dept, ["Associate"]))
-        
+        name = _unique_name()
+        slug = name.lower().replace(" ", ".")
+
         emp = Employee(
             employee_id=f"EMP{1000+i}",
-            name=f"Employee {i}",
-            email=f"employee{i}@centriq.ai",
+            name=name,
+            email=f"{slug}{i}@centriq.ai",
             department=dept,
             designation=desig,
             joining_date=datetime.date(2022, 1, 1) + datetime.timedelta(days=random.randint(0, 365*2)),
@@ -484,25 +590,5 @@ def _migrate_prompt_configs(db):
 
 
 def _seed_prompt_configs(db):
-    print("Seeding Prompt Configs...")
-    
-    prompts = [
-        ("hr", "system_prompt", "You are the HR Assistant for Aligned Automation. Help employees with leave management, WFH requests, and HR policies.", "admin,hr_manager"),
-        ("admin", "system_prompt", "You are the Admin Services Assistant for Aligned Automation. You have tools to handle ALL of these — ALWAYS call the right tool, never say you cannot help: parking sticker requests (request_parking_sticker — ask for vehicle_number, vehicle_make, vehicle_model, vehicle_type if missing), surrender parking sticker (surrender_parking_sticker), view parking info (get_parking_info), reimbursements travel/medical/certification/equipment (submit_reimbursement, check_reimbursement_status), accommodation guest-house/hotel (request_accommodation), facility complaints cleanliness/electrical/AC/plumbing/safety (file_facility_complaint), complaint status (check_complaint_status), food complaints (submit_food_complaint), food vendor ratings (submit_food_feedback, get_vendor_ratings). CRITICAL: If the user requests a parking sticker and details are missing, ASK for them — do NOT say you cannot help.", "admin,admin_manager"),
-        ("it_support", "system_prompt", "You are the IT Support Assistant. Help with software installation, hardware issues, network problems, and asset management.", "admin,it_admin"),
-        ("pmo", "system_prompt", "You are the PMO Assistant. Help with project status, sprint summaries, and team capacity queries.", "admin,pmo_manager"),
-        ("functional_manager", "system_prompt", "You are the Manager Assistant. Help managers find out who is on their team.", "admin,functional_manager")
-    ]
-    
-    for domain, key, value, roles in prompts:
-        db.add(PromptConfig(
-            agent_domain=domain,
-            prompt_key=key,
-            prompt_value=value,
-            allowed_roles=roles,
-            is_active=True,
-            created_by="System"
-        ))
-        
-    db.commit()
-    print("Prompt Configs seeding complete.")
+    # Prompts are configured by domain managers via the Config page — no defaults seeded.
+    pass

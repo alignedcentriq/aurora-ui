@@ -1,4 +1,5 @@
 import datetime
+import threading
 from app.database import SessionLocal
 from app.models import (
     Employee, Reimbursement, ParkingSticker,
@@ -7,6 +8,23 @@ from app.models import (
 
 
 class AdminService:
+
+    @staticmethod
+    def _notify_power_automate(payload: dict) -> None:
+        """Fire-and-forget POST to the Power Automate webhook. Errors are swallowed silently."""
+        from app.config import settings
+        url = settings.POWER_AUTOMATE_WEBHOOK_URL
+        if not url:
+            return
+
+        def _post():
+            try:
+                import requests as _requests
+                _requests.post(url, json=payload, timeout=10)
+            except Exception:
+                pass
+
+        threading.Thread(target=_post, daemon=True).start()
 
     @staticmethod
     def _get_or_create_employee(db, email: str) -> Employee:
@@ -277,6 +295,19 @@ class AdminService:
             except Exception:
                 pass
 
+            AdminService._notify_power_automate({
+                "complaint_type": "premises",
+                "ticket_id": ticket_id,
+                "category": category,
+                "description": description,
+                "location": location,
+                "priority": priority,
+                "status": "Open",
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+                "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            })
+
             return (
                 f"Facility complaint registered. **Ticket ID: {ticket_id}**. "
                 f"The facility team has been notified and will address it based on priority."
@@ -353,6 +384,18 @@ class AdminService:
                 )
             except Exception:
                 pass
+
+            AdminService._notify_power_automate({
+                "complaint_type": "food_vendor",
+                "ticket_id": str(new_c.id),
+                "vendor_name": vendor_name,
+                "category": complaint_type,
+                "description": description,
+                "status": "Open",
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+                "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            })
 
             return (
                 f"Food complaint submitted (#{new_c.id}) regarding '{vendor_name}' "

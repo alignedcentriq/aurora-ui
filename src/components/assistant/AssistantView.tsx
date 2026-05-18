@@ -1,10 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { QuickActions } from "./QuickActions";
 import { Composer } from "./Composer";
-import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles } from "lucide-react";
+import { Download, Sparkles, WifiOff, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -53,12 +51,12 @@ export function AssistantView() {
   const { user } = useAuth();
   const [input, setInput] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [activity, setActivity] = useState("");
+  const [vpnWarning, setVpnWarning] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +68,29 @@ export function AssistantView() {
       initialized.current = true;
     }
   }, [createThread, activeId]);
+
+  // Check LLM reachability on mount — surfaces VPN issue before the user tries to chat
+  useEffect(() => {
+    fetch("/api/health/llm")
+      .then((res) => { if (!res.ok) setVpnWarning(true); })
+      .catch(() => { /* backend itself unreachable — separate issue */ });
+  }, []);
+
+  // Poll health endpoint while VPN warning is active; auto-clear when VPN connects
+  useEffect(() => {
+    if (!vpnWarning) return;
+    const id = setInterval(() => {
+      fetch("/api/health/llm")
+        .then((res) => {
+          if (res.ok) {
+            setVpnWarning(false);
+            toast.success("VPN connected", { description: "You're back on the office network." });
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [vpnWarning]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
@@ -133,10 +154,15 @@ export function AssistantView() {
       })
         .then(async (res) => {
           if (!res.ok) {
-            const errorData = await res
-              .json()
-              .catch(() => ({ detail: "Failed to connect to the server" }));
-            throw new Error(errorData.detail || "Server Error");
+            const errorData = await res.json().catch(() => ({}));
+            const detail = errorData.detail;
+            if (detail && typeof detail === "object" && detail.code === "VPN_REQUIRED") {
+              setVpnWarning(true);
+              const err = new Error(detail.message) as Error & { code: string };
+              err.code = "VPN_REQUIRED";
+              throw err;
+            }
+            throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
           }
           return res.json();
         })
@@ -152,22 +178,32 @@ export function AssistantView() {
             interactive: data.interactive ?? undefined,
           });
         })
-        .catch((err) => {
+        .catch((err: Error & { code?: string }) => {
           console.error("Backend Error:", err);
-          const message =
-            err.name === "AbortError"
-              ? "The request timed out after 90 seconds."
-              : err.message || "Please try again later.";
+          const isVpn = err.code === "VPN_REQUIRED";
+          const isTimeout = err.name === "AbortError";
+
           addTurn(activeId, {
             role: "ai",
-            text:
-              err.name === "AbortError"
-                ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
-                : "I couldn't complete that request right now. Please try again in a moment.",
+            text: isVpn
+              ? "I can't reach the AI service right now.\n\n**You appear to be outside the office network.** Please connect to the VPN and try again."
+              : isTimeout
+              ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
+              : "I couldn't complete that request right now. Please try again in a moment.",
           });
-          toast.error("Service unavailable", {
-            description: message,
-          });
+
+          if (isVpn) {
+            toast.error("VPN not connected", {
+              description: "Connect to the office VPN to use Centriq AI.",
+              duration: 8000,
+            });
+          } else {
+            toast.error("Service unavailable", {
+              description: isTimeout
+                ? "The request timed out after 90 seconds."
+                : err.message || "Please try again later.",
+            });
+          }
         })
         .finally(() => {
           window.clearTimeout(timeoutId);
@@ -270,6 +306,21 @@ export function AssistantView() {
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
+        {vpnWarning && (
+          <div className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            <span>
+              <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
+            </span>
+            <button
+              onClick={() => setVpnWarning(false)}
+              className="ml-auto shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40"
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
           <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
             {activeThread.turns.length === 0 ? (
@@ -291,9 +342,6 @@ export function AssistantView() {
                   />
                 </div>
 
-                <div className="w-full max-w-5xl mt-4">
-                  <QuickActions onPick={(p) => !thinking && send(p)} />
-                </div>
               </section>
             ) : (
               <section className="space-y-10 pb-10">
