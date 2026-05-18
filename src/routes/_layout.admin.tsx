@@ -791,7 +791,7 @@ function AdminDashboard() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <a
-              href="http://localhost:3001"
+              href={`${window.location.protocol}//${window.location.hostname}:3001/dashboards`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
@@ -804,7 +804,7 @@ function AdminDashboard() {
             </a>
 
             <a
-              href="http://localhost:3003"
+              href={`${window.location.protocol}//${window.location.hostname}:3003`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
