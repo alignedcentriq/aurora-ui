@@ -18,6 +18,9 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    allowedHosts: true,
+  },
   resolve: {
     tsconfigPaths: true,
     alias: {
