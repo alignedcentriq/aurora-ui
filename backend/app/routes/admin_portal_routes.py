@@ -6,7 +6,8 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_admin
 from app.database import get_db
-from app.models import Reimbursement, ParkingSticker, FacilityComplaint, Employee
+from app.models import Reimbursement, ParkingSticker, FacilityComplaint, FoodComplaint, Employee
+from app.services.email_service import send_facility_complaint_status_email, send_food_complaint_status_email
 
 router = APIRouter(prefix="/api/portal/admin", tags=["Admin Portal"])
 
@@ -158,7 +159,7 @@ def list_complaints(
             "priority": c.priority,
             "status": c.status,
             "assigned_to": c.assigned_to,
-            "resolution_notes": c.resolution_notes,
+            "closure_comment": c.resolution_notes,
             "created_at": c.created_at.isoformat(),
         }
         for c, emp in rows
@@ -167,8 +168,7 @@ def list_complaints(
 
 class UpdateComplaintBody(BaseModel):
     status: str
-    assigned_to: Optional[str] = None
-    resolution_notes: Optional[str] = None
+    closure_comment: Optional[str] = None
 
 
 @router.put("/complaints/{ticket_id}/status")
@@ -178,18 +178,106 @@ def update_complaint_status(
     _: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    valid_statuses = {"Open", "In Progress", "Resolved", "Closed"}
+    valid_statuses = {"In Progress", "Closed"}
     if body.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Use: {', '.join(valid_statuses)}")
-    c = db.query(FacilityComplaint).filter(FacilityComplaint.ticket_id == ticket_id).first()
-    if not c:
+    row = db.query(FacilityComplaint, Employee).join(Employee, FacilityComplaint.employee_id == Employee.id).filter(FacilityComplaint.ticket_id == ticket_id).first()
+    if not row:
         raise HTTPException(status_code=404, detail="Complaint not found.")
+    c, emp = row
     c.status = body.status
-    if body.assigned_to is not None:
-        c.assigned_to = body.assigned_to
-    if body.resolution_notes is not None:
-        c.resolution_notes = body.resolution_notes
-    if body.status in {"Resolved", "Closed"}:
+    if body.closure_comment:
+        c.resolution_notes = body.closure_comment
+    if body.status == "Closed":
         c.resolved_at = datetime.datetime.utcnow()
     db.commit()
+    send_facility_complaint_status_email(
+        employee_name=emp.name,
+        employee_email=emp.email,
+        ticket_id=c.ticket_id,
+        category=c.category,
+        new_status=body.status,
+        closure_comment=body.closure_comment if body.status == "Closed" else None,
+    )
     return {"message": f"Complaint {ticket_id} updated to {body.status}."}
+
+
+# ── Food Complaints ───────────────────────────────────────────────────────────
+
+@router.get("/food-complaints")
+def list_food_complaints(
+    status: Optional[str] = None,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    q = db.query(FoodComplaint, Employee).join(Employee, FoodComplaint.employee_id == Employee.id)
+    if status:
+        q = q.filter(FoodComplaint.status == status)
+    rows = q.order_by(FoodComplaint.submitted_at.desc()).all()
+    return [
+        {
+            "id": c.id,
+            "ticket_id": c.ticket_id or f"FD-{c.id:06d}",
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "vendor_name": c.vendor_name,
+            "complaint_type": c.complaint_type,
+            "description": c.description,
+            "status": c.status,
+            "closure_comment": c.closure_comment,
+            "submitted_at": c.submitted_at.isoformat(),
+        }
+        for c, emp in rows
+    ]
+
+
+class UpdateFoodComplaintBody(BaseModel):
+    status: str
+    closure_comment: Optional[str] = None
+
+
+@router.put("/food-complaints/{ticket_id}/status")
+def update_food_complaint_status(
+    ticket_id: str,
+    body: UpdateFoodComplaintBody,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    valid_statuses = {"In Progress", "Closed"}
+    if body.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Use: {', '.join(valid_statuses)}")
+    row = (
+        db.query(FoodComplaint, Employee)
+        .join(Employee, FoodComplaint.employee_id == Employee.id)
+        .filter(FoodComplaint.ticket_id == ticket_id)
+        .first()
+    )
+    if not row and ticket_id.startswith("FD-"):
+        try:
+            fallback_id = int(ticket_id[3:])
+            row = (
+                db.query(FoodComplaint, Employee)
+                .join(Employee, FoodComplaint.employee_id == Employee.id)
+                .filter(FoodComplaint.id == fallback_id)
+                .first()
+            )
+        except ValueError:
+            pass
+    if not row:
+        raise HTTPException(status_code=404, detail="Food complaint not found.")
+    c, emp = row
+    c.status = body.status
+    if body.closure_comment:
+        c.closure_comment = body.closure_comment
+    if body.status == "Closed":
+        c.resolved_at = datetime.datetime.utcnow()
+    db.commit()
+    send_food_complaint_status_email(
+        employee_name=emp.name,
+        employee_email=emp.email,
+        ticket_id=c.ticket_id or f"FD-{c.id:06d}",
+        vendor_name=c.vendor_name,
+        new_status=body.status,
+        closure_comment=body.closure_comment if body.status == "Closed" else None,
+    )
+    return {"message": f"Food complaint {ticket_id} updated to {body.status}."}

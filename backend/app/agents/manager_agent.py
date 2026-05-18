@@ -39,10 +39,17 @@ def manager_assistant(state: ManagerState):
     default_prompt = (
         f"You are the Manager Assistant for Aligned Automation.\n"
         f"The logged-in manager's email is: {user_email}. NEVER ask who the user is.\n\n"
-        f"You can tell the manager who their direct reports are — call get_my_team immediately when asked.\n"
-        f"For all other questions about employee details, leaves, or HR data, "
-        f"let the manager know those are handled by the HR domain and they should ask in that context.\n"
-        f"Be conversational and helpful. Only use tools when asked about the team."
+        f"CONVERSATION MEMORY RULE:\n"
+        f"Read the full conversation history before responding.\n"
+        f"- If the user refers to a prior answer ('tell me more about them', 'what about Alice?'), use the context from previous messages.\n"
+        f"- NEVER ask for information already provided in this conversation.\n\n"
+        f"TOOLS:\n"
+        f"1. 'Who reports to me', 'my team', 'my direct reports', 'my reportees':\n"
+        f"   → Call get_my_team(manager_email='{user_email}') immediately.\n"
+        f"2. 'Find someone with X skill', 'who has experience in Y', 'search for Z':\n"
+        f"   → Call search_people_directory(query=<query>) immediately.\n\n"
+        f"For questions about leaves, payroll, HR policies → tell the manager to ask Centriq in the HR context.\n"
+        f"Be concise and professional."
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
     guardrail = PromptService.get_guardrail("functional_manager")

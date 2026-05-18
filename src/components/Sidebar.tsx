@@ -63,10 +63,8 @@ export function Sidebar() {
   };
 
   const handleDelete = async (id: string) => {
-    // Delete from state
+    if (!window.confirm("Delete this conversation?")) return;
     deleteThread(id);
-    
-    // Delete from backend/redis
     try {
       await fetch(`/api/chat/${id}`, { method: "DELETE" });
     } catch (err) {
@@ -181,19 +179,24 @@ export function Sidebar() {
                         )}
                       />
                       <span className="truncate text-left flex-1">{title}</span>
-                      {active ? (
-                        <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(thread.id);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded transition-all text-[var(--sidebar-foreground)]/30 hover:text-red-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                      {active && (
+                        <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0 group-hover:hidden" />
                       )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(thread.id);
+                        }}
+                        className={cn(
+                          "shrink-0 p-1 hover:bg-white/10 rounded transition-all hover:text-red-400",
+                          active
+                            ? "hidden group-hover:block text-[var(--sidebar-foreground)]/50"
+                            : "opacity-0 group-hover:opacity-100 text-[var(--sidebar-foreground)]/30",
+                        )}
+                        title="Delete conversation"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </button>
                   );
                 })}

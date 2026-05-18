@@ -85,6 +85,9 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_url VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -571,20 +574,16 @@ def _seed_announcements(db):
 
 
 def _migrate_prompt_configs(db):
-    """Update existing prompt configs that still have the old generic text."""
-    updates = {
-        "admin": "You are the Admin Services Assistant for Aligned Automation. You handle: parking stickers, reimbursements, accommodation, facility complaints, food complaints and ratings. For every request, call the matching tool. If required details are missing (e.g. vehicle number for a parking sticker), ask the user for them. Never refuse a request you have a tool for.",
-    }
-    for domain, new_value in updates.items():
-        config = db.query(PromptConfig).filter(
-            PromptConfig.agent_domain == domain,
-            PromptConfig.prompt_key == "system_prompt",
-            PromptConfig.is_active == True,
-        ).order_by(PromptConfig.version.desc()).first()
-        if config and config.prompt_value != new_value:
-            config.prompt_value = new_value
-            print(f"Migrated system_prompt for domain: {domain}")
-    db.commit()
+    """Disable any DB-stored admin system prompt so the detailed hardcoded one in admin_agent.py is used."""
+    config = db.query(PromptConfig).filter(
+        PromptConfig.agent_domain == "admin",
+        PromptConfig.prompt_key == "system_prompt",
+        PromptConfig.is_active == True,
+    ).first()
+    if config:
+        config.is_active = False
+        db.commit()
+        print("Disabled DB-stored admin system_prompt — using hardcoded detailed prompt with multi-turn RULE 5/6 logic.")
 
 
 def _seed_prompt_configs(db):

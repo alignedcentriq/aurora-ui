@@ -434,11 +434,13 @@ class FoodComplaint(Base):
     __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(String, unique=True, index=True, nullable=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     vendor_name = Column(String)
     complaint_type = Column(String)  # Quality, Hygiene, Pricing, Variety, Service, Foreign Object, Other
     description = Column(Text)
-    status = Column(String, default="Open")  # Open, Acknowledged, Resolved
+    status = Column(String, default="Open")  # Open, Acknowledged, Resolved, Closed
+    closure_comment = Column(Text, nullable=True)
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
 
