@@ -104,6 +104,7 @@ backend/app/
 │   ├── announcement_routes.py  # REST: /api/announcements; GET=auth-required; POST/DELETE=admin-only
 │   ├── employee_routes.py      # REST: /api/employees search/profile/org-chart/skills
 │   ├── it_routes.py            # REST: /api/it; all endpoints auth-guarded; HITL=admin-only
+│   ├── people_routes.py        # REST: /api/people search/import; HR, PMO, Admin, Functional Manager roles allowed
 │   └── prompt_routes.py        # REST: /api/prompts; PUT=admin-only (role from token, not body)
 └── services/
     ├── admin_service.py        # Parking, reimbursement, accommodation, facility, food complaints
@@ -113,6 +114,7 @@ backend/app/
     ├── feedback_service.py     # record(), get_relevant_feedback(), build_feedback_prompt(), get_stats() for ChatFeedback
     ├── it_service.py           # IT tickets, software requests, asset assignments; HITL approval (no passwords)
     ├── manager_service.py      # get_reportees() only — uses Employee.manager_id (NOT reporting_manager_id)
+    ├── people_service.py       # Import from Excel (employees/allocations/projects) and search
     ├── policy_service.py       # Ingest policies from OneDrive; RAG search
     └── prompt_service.py       # get_system_prompt(), get_guardrail(), update_prompt(), list_prompts()
 ```
@@ -127,7 +129,7 @@ backend/app/
 @dataclass
 class CurrentUser:
     email: str
-    role: str  # "employee" | "admin" | "manager" | "hr" | "it" | "pmo"
+    role: str  # "employee" | "admin" | "manager" | "hr" | "it" | "pmo" | "functional manager"
 
 def get_current_user(x_user_email, x_user_role) -> CurrentUser
 # Reads headers set by frontend from verified MSAL token claims.
@@ -408,7 +410,9 @@ src/
 │   ├── _layout.admin.tsx       # /admin — Admin Dashboard
 │   ├── _layout.config.tsx      # /config — live prompt config editor (admin/manager only)
 │   ├── _layout.settings.tsx    # /settings — user preferences
-│   └── _layout.team.tsx        # /team — employee directory (placeholder, no content yet)
+│   ├── _layout.settings.tsx    # /settings — user preferences
+│   ├── _layout.people.tsx      # /people — directory of skills, certifications, projects
+│   └── _layout.team.tsx        # /team — employee directory (original placeholder / team tasks)
 ├── components/assistant/
 │   ├── AssistantView.tsx       # Chat orchestrator; sends x-user-email/x-user-role headers on all API calls
 │   ├── Message.tsx             # UserMessage + AIMessage (domain badge chip) + AnswerCard
@@ -530,6 +534,14 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
   - `PUT /api/prompts/{domain}/{key}` → admin-only; `user_role` no longer accepted from request body
 - HITL simplified: `mark_admin_password_provided` → `approve_hitl_request`; `request_type` changed from `"admin_password"` → `"software_approval"`; all password language removed from messages
 - Frontend `AssistantView.tsx`: sends `x-user-email` + `x-user-role` headers from MSAL account on every API call
+- Added `functional manager` to VALID_ROLES and SEARCH_ROLES to allow directory access without 403s.
+
+**Phase 10 — Role refinement & People Directory Enhancements:**
+- Removed the "Team Management" tab from Functional Manager role, as leave approvals and similar activities are performed by direct reporting managers (not HR or FM).
+- Resolved 403 errors on the People search tab for Functional Manager role by adding the role to both `VALID_ROLES` (in `auth.py`) and `SEARCH_ROLES` (in `people_routes.py`).
+- Enhanced `people_service.py` to return rich fields: primary skills (`skill_set`), secondary skills (`expertise`), certifications (`tags`), can teach (`expertise`), designation, reporting manager, and full project allocation attributes.
+- Revamped `/people` directory view with highly premium aesthetics: multi-colored badges representing various levels of expertise, inline reporting manager, bio/about segment, level/grade indicator, and rich allocation history including billability percentages.
+- Verified PMO role has full, unrestricted access to the enhanced People search.
 
 ---
 
@@ -560,3 +572,4 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 | `user_role` could be set to "admin" by anyone via request body | `prompt_routes.py` | Removed from `PromptUpdate` body; derived from auth token only |
 | `DATABASE_URL=auto` caused SQLAlchemy parse error | `create_db.py` | Uses `settings.DATABASE_URL` (resolved URL) |
 | Loki `--- Logging error ---` spam when Loki not running | `main.py` | `_SilentLokiHandler` overrides `handleError` as no-op |
+| 403 Forbidden for People Directory for Functional Manager role | `auth.py`, `people_routes.py` | Added `"functional manager"` to `VALID_ROLES` in `auth.py` (preventing silent role downgrade to `"employee"`) and to `SEARCH_ROLES` in `people_routes.py`. |

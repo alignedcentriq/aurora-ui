@@ -6,7 +6,7 @@ from app.services.people_service import PeopleService
 
 router = APIRouter(prefix="/api/people", tags=["People"])
 
-SEARCH_ROLES = {"hr", "pmo", "admin", "manager"}
+SEARCH_ROLES = {"hr", "pmo", "admin", "manager", "functional manager"}
 
 
 def require_search_access(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

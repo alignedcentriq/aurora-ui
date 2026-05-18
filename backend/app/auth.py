@@ -13,7 +13,7 @@ from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
 
-VALID_ROLES = {"employee", "admin", "manager", "hr", "it", "pmo"}
+VALID_ROLES = {"employee", "admin", "manager", "hr", "it", "pmo", "functional manager"}
 DOMAIN_MANAGER_ROLES = {"hr", "it", "pmo", "admin"}
 
 
