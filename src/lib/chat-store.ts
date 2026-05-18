@@ -77,10 +77,14 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           const newThreads = { ...state.threads };
           delete newThreads[id];
-          return {
-            threads: newThreads,
-            activeId: state.activeId === id ? null : state.activeId,
-          };
+          let newActiveId = state.activeId;
+          if (state.activeId === id) {
+            const next = Object.values(newThreads)
+              .filter((t) => t.turns.length > 0)
+              .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+            newActiveId = next?.id ?? null;
+          }
+          return { threads: newThreads, activeId: newActiveId };
         }),
     }),
     {

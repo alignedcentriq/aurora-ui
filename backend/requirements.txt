@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+watchfiles
 langgraph
 langchain
 langchain-core

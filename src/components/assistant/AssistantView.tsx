@@ -60,14 +60,12 @@ export function AssistantView() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize a new thread ONLY if one doesn't exist (persistence will restore activeId)
-  const initialized = useRef(false);
+  // Create a thread whenever there is no active one (first load or after last thread deleted)
   useEffect(() => {
-    if (!initialized.current && !activeId) {
+    if (!activeId) {
       createThread();
-      initialized.current = true;
     }
-  }, [createThread, activeId]);
+  }, [activeId, createThread]);
 
   // Check LLM reachability on mount — surfaces VPN issue before the user tries to chat
   useEffect(() => {

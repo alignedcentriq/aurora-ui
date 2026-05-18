@@ -361,7 +361,9 @@ class AdminService:
         try:
             emp = AdminService._get_or_create_employee(db, email)
 
+            ticket_id = f"FD-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_c = FoodComplaint(
+                ticket_id=ticket_id,
                 employee_id=emp.id,
                 vendor_name=vendor_name,
                 complaint_type=complaint_type,
@@ -380,7 +382,7 @@ class AdminService:
                     vendor_name=vendor_name,
                     complaint_type=complaint_type,
                     description=description,
-                    complaint_id=new_c.id,
+                    ticket_id=ticket_id,
                 )
             except Exception:
                 pass
@@ -398,8 +400,8 @@ class AdminService:
             })
 
             return (
-                f"Food complaint submitted (#{new_c.id}) regarding '{vendor_name}' "
-                f"for '{complaint_type}'. The admin team has been notified."
+                f"Food complaint submitted. **Ticket ID: {ticket_id}**. "
+                f"Vendor: {vendor_name}, Type: {complaint_type}. The admin team has been notified."
             )
         finally:
             db.close()

@@ -169,17 +169,17 @@ def send_food_complaint_email(
     vendor_name: str,
     complaint_type: str,
     description: str,
-    complaint_id: int,
+    ticket_id: str,
 ) -> bool:
-    subject = f"[Admin] Food Complaint — {vendor_name} | #{complaint_id}"
+    subject = f"[Admin] Food Complaint — {vendor_name} | {ticket_id}"
 
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#e53935;">Food / Cafeteria Complaint — Centriq AI</h2>
       <table cellpadding="8" style="border-collapse:collapse; width:100%; max-width:600px;">
-        <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Complaint ID</td><td>#{complaint_id}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{ticket_id}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Reported By</td><td>{employee_name} ({employee_email})</td></tr>
-        <tr><td style="background:#f5f5f5;font-weight:bold;">Vendor</td><td>{vendor_name}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Vendor / Source</td><td>{vendor_name}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Complaint Type</td><td>{complaint_type}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
             <td>{_nl2br(description)}</td></tr>
@@ -187,7 +187,7 @@ def send_food_complaint_email(
       <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
     </body></html>
     """
-    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body)
+    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
 
 
 def send_facility_complaint_email(
@@ -217,6 +217,80 @@ def send_facility_complaint_email(
     </body></html>
     """
     return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
+
+
+def send_facility_complaint_status_email(
+    employee_name: str,
+    employee_email: str,
+    ticket_id: str,
+    category: str,
+    new_status: str,
+    closure_comment: Optional[str] = None,
+) -> bool:
+    color = "#16a34a" if new_status == "Closed" else "#7c3aed"
+    subject = f"[Facility Complaint {ticket_id}] Status updated to {new_status}"
+    closure_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Closure Comment</td>'
+        f'<td>{_nl2br(html.escape(closure_comment))}</td></tr>'
+        if closure_comment else ""
+    )
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#f57c00;padding:20px 24px;">
+        <h2 style="color:#fff;margin:0;font-size:18px;">Facility Complaint Update — Centriq AI</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>Hi {html.escape(employee_name)},</p>
+        <p>Your facility complaint has been updated.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Category</td><td>{html.escape(category)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">New Status</td>
+              <td style="color:{color};font-weight:bold;">{html.escape(new_status)}</td></tr>
+          {closure_row}
+        </table>
+        <p style="color:#888;font-size:12px;">This is an automated notification from Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(to=employee_email, subject=subject, html_body=html_body)
+
+
+def send_food_complaint_status_email(
+    employee_name: str,
+    employee_email: str,
+    ticket_id: str,
+    vendor_name: str,
+    new_status: str,
+    closure_comment: Optional[str] = None,
+) -> bool:
+    color = "#16a34a" if new_status == "Closed" else "#7c3aed"
+    subject = f"[Food Complaint {ticket_id}] Status updated to {new_status}"
+    closure_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Closure Comment</td>'
+        f'<td>{_nl2br(html.escape(closure_comment))}</td></tr>'
+        if closure_comment else ""
+    )
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#e53935;padding:20px 24px;">
+        <h2 style="color:#fff;margin:0;font-size:18px;">Food Complaint Update — Centriq AI</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>Hi {html.escape(employee_name)},</p>
+        <p>Your food / cafeteria complaint has been updated.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Vendor / Source</td><td>{html.escape(vendor_name)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">New Status</td>
+              <td style="color:{color};font-weight:bold;">{html.escape(new_status)}</td></tr>
+          {closure_row}
+        </table>
+        <p style="color:#888;font-size:12px;">This is an automated notification from Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(to=employee_email, subject=subject, html_body=html_body)
 
 
 def send_reimbursement_email(

@@ -51,12 +51,6 @@ DOMAIN_REGISTRY = {
                        "my direct reports, team members, reportees, org structure",
         "status": "active",
     },
-    "general": {
-        "description": "General conversation — greetings, small talk, unclear requests, "
-                       "questions about the AI assistant itself (Centriq), capabilities inquiry, thank you, goodbye. "
-                       "NOT for questions about company projects, internal tools, or employee matters.",
-        "status": "active",
-    },
 }
 
 

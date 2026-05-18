@@ -111,7 +111,7 @@ const shutdownDockerInfra = () => {
     execFileSync(
       "wsl",
       ["--cd", wslPath, "docker", "compose", "-f", infraComposeFile, "down"],
-      { stdio: "inherit", timeout: 5_000 }
+      { stdio: "inherit", timeout: 30_000 }
     );
     console.log("--- Docker infrastructure stopped ---");
   } catch (err) {

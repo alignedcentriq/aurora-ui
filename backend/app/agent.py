@@ -355,11 +355,11 @@ agent_llm = ChatOpenAI(
     timeout=120,
 )
 
-# General LLM — used for non-technical chat (Greetings, Announcements)
+# General LLM — uses the same tool-capable agent model (GENERAL_MODEL_NAME does not support tools)
 general_llm_base = ChatOpenAI(
     base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
-    model=settings.GENERAL_MODEL_NAME,
+    model=settings.AGENT_MODEL_NAME,
     temperature=0.7,
     max_retries=3,
     timeout=30,
@@ -384,6 +384,17 @@ summary_llm = ChatOpenAI(
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. GRAPH NODES
 # ═══════════════════════════════════════════════════════════════════════════════
+
+_STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager"}
+
+
+def _last_ai_message(messages: list) -> str:
+    """Return the content of the most recent AIMessage, or empty string."""
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            return msg.content or ""
+    return ""
+
 
 def intent_router(state: AgentState):
     """Entry node — classifies intent, extracts sub-intent + entities, routes to domain."""
@@ -419,6 +430,21 @@ def intent_router(state: AgentState):
     if "five project name" in last_human.lower():
         return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected.",
                 "sub_intent": "test", "entities": {}}
+
+    # Sticky domain: if the previous AI message asked a question and the user's reply is short,
+    # stay in the same domain rather than re-classifying a context-free answer.
+    existing_domain = state.get("domain")
+    if existing_domain in _STICKY_DOMAINS:
+        last_ai = _last_ai_message(state.get("messages", []))
+        if "?" in last_ai and len(last_human.strip()) < 120:
+            print(f"[Router] Sticky domain: {existing_domain} (follow-up reply to agent question)")
+            return {
+                "domain": existing_domain,
+                "route_confidence": 0.95,
+                "route_reasoning": f"Short reply to an agent question — staying in {existing_domain}.",
+                "sub_intent": "followup",
+                "entities": {},
+            }
 
     try:
         result = classify_intent(last_human)

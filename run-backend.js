@@ -293,6 +293,36 @@ const syncPythonDependencies = async (pythonCmd, venvPaths) => {
   fs.writeFileSync(venvPaths.depsMarker, new Date().toISOString());
 };
 
+let uvicornShuttingDown = false;
+
+const runUvicornWithRestart = async (uvicornPath) => {
+  const args = [
+    "app.main:app",
+    "--host", "0.0.0.0",
+    "--port", "8080",
+    "--reload",
+    "--reload-dir", "app",
+    "--reload-exclude", "__pycache__",
+    "--reload-exclude", "*.pyc",
+    "--reload-delay", "0.5",
+  ];
+  const env = { ...process.env, LANGFUSE_OTEL: "false" };
+
+  while (!uvicornShuttingDown) {
+    try {
+      await runCommand(uvicornPath, args, { env });
+      // Clean exit (code 0) — don't restart.
+      break;
+    } catch (err) {
+      if (uvicornShuttingDown) break;
+      console.error("--- Backend process crashed ---");
+      console.error(err.message);
+      console.log("--- Restarting uvicorn in 2s (infra already running) ---");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+};
+
 const startBackend = async () => {
   if (!isWindows) {
     throw new Error(`This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`);
@@ -331,57 +361,25 @@ const startBackend = async () => {
   await runCommand(venvPaths.python, ["init_db_script.py"]);
 
   console.log("--- Starting backend on http://localhost:8080 ---");
-  await runCommand(
-    venvPaths.uvicorn,
-    [
-      "app.main:app",
-      "--host", "0.0.0.0",
-      "--port", "8080",
-      "--reload",
-      "--reload-dir", "app",
-      "--reload-exclude", "__pycache__",
-      "--reload-exclude", "*.pyc",
-      "--reload-delay", "0.5",
-    ],
-    {
-      env: {
-        ...process.env,
-        LANGFUSE_OTEL: "false",
-      },
-    }
-  );
+  await runUvicornWithRestart(venvPaths.uvicorn);
 };
 
-const shutdownDockerInfra = () => {
-  if (process.env.SKIP_DOCKER === "true") return;
-  console.log("\n--- Stopping Docker infrastructure ---");
-  try {
-    const wslRepoRoot = getWslRepoRoot();
-    execFileSync(
-      "wsl",
-      ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "down"],
-      { stdio: "inherit", timeout: 30_000 }
-    );
-    console.log("--- Docker infrastructure stopped ---");
-  } catch (err) {
-    console.warn("Could not stop Docker infrastructure:", err.message);
-  }
-};
 
 startBackend().catch((err) => {
   console.error("Backend startup failed:");
   console.error(err.message);
   stopWslKeepAlive();
-  shutdownDockerInfra();
   process.exit(1);
 });
 
 process.on("SIGINT", () => {
+  uvicornShuttingDown = true;
   stopWslKeepAlive();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
+  uvicornShuttingDown = true;
   stopWslKeepAlive();
   process.exit(0);
 });
