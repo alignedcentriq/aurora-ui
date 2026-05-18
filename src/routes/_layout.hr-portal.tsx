@@ -31,7 +31,7 @@ const STATUS_BADGE: Record<string, string> = {
   Cancelled: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
 };
 
-export default function HRPortal() {
+function HRPortal() {
   const { user } = useAuth();
   const [filter, setFilter] = useState<LeaveStatus>("Pending");
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);

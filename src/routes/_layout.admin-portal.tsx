@@ -32,7 +32,7 @@ const PRIORITY_BADGE: Record<string, string> = {
   Critical: "text-rose-400",
 };
 
-export default function AdminPortal() {
+function AdminPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("reimbursements");
 

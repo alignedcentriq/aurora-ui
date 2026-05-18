@@ -373,8 +373,19 @@ class PeopleService:
                     "designation": p.designation,
                     "function": p.function,
                     "location": p.sub_location,
-                    "skills": p.skill_set,
-                    "expertise": p.expertise,
+                    # Skills
+                    "skills": p.skill_set,            # backward compat alias
+                    "primary_skills": p.skill_set,    # Primary Skills from Excel
+                    "secondary_skills": p.expertise,  # Skill Set Board / secondary skills
+                    "expertise": p.expertise,          # backward compat alias
+                    "can_teach": p.expertise,          # same field — "what they can teach others"
+                    # Certifications stored in tags column
+                    "certifications": p.tags,
+                    # Profile extras
+                    "about_me": p.about_me,
+                    "language_known": p.language_known,
+                    "level": p.level,
+                    "grade": p.grade,
                     "total_experience": p.total_experience,
                     "joining_date": p.date_of_joining.isoformat() if p.date_of_joining else None,
                     "reporting_manager": p.reporting_manager,
@@ -387,8 +398,12 @@ class PeopleService:
                             "client": a.client_master,
                             "status": a.completion_status or a.project_status,
                             "efforts_pct": a.efforts_percent,
+                            "billability_pct": a.billability_percent,
                             "date": a.allocation_date.isoformat() if a.allocation_date else None,
                             "delivery_manager": a.delivery_manager,
+                            "project_lead": a.project_lead,
+                            "project_type": a.project_type,
+                            "billing": a.billing,
                         }
                         for a in allocations
                     ],

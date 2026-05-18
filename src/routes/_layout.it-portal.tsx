@@ -32,7 +32,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 const TICKET_STATUSES = ["Open", "Awaiting Approval", "In Progress", "Resolved", "Closed"];
 
-export default function ITPortal() {
+function ITPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("tickets");
 

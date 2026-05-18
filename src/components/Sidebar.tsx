@@ -90,12 +90,6 @@ export function Sidebar() {
       label: "Prompt Config",
       show: ["Admin", "HR", "IT", "PMO"].includes(user.role),
     },
-    {
-      to: "/team",
-      icon: Users,
-      label: "Team Management",
-      show: user.role === "Functional Manager",
-    },
     { to: "/admin", icon: LayoutDashboard, label: "Analytics", show: user.role === "Admin" },
     { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
     { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
