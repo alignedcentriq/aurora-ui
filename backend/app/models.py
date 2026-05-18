@@ -11,6 +11,7 @@ SCHEMA = "enterprise_ai"
 
 class Employee(Base):
     __tablename__ = "employees"
+    __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(String, unique=True, index=True)
@@ -18,7 +19,7 @@ class Employee(Base):
     email = Column(String, unique=True, index=True)
     department = Column(String)
     designation = Column(String)
-    manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
     joining_date = Column(Date)
     employment_type = Column(String) # Full-time, Contract
     location = Column(String)
@@ -33,9 +34,10 @@ class Employee(Base):
 
 class Leave(Base):
     __tablename__ = "leaves"
+    __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     leave_type = Column(String) # Casual, Sick, Earned, Optional
     start_date = Column(Date)
     end_date = Column(Date)
@@ -47,9 +49,10 @@ class Leave(Base):
 
 class Attendance(Base):
     __tablename__ = "attendance"
+    __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     date = Column(Date)
     check_in = Column(DateTime, nullable=True)
     check_out = Column(DateTime, nullable=True)
@@ -59,6 +62,7 @@ class Attendance(Base):
 
 class Policy(Base):
     __tablename__ = "policies"
+    __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
@@ -70,9 +74,10 @@ class Policy(Base):
 class PolicyChunk(Base):
     """Each row is one chunk of a Policy document, optionally with an embedding vector."""
     __tablename__ = "policy_chunks"
+    __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
-    policy_id = Column(Integer, ForeignKey("policies.id", ondelete="CASCADE"), index=True, nullable=False)
+    policy_id = Column(Integer, ForeignKey(f"{SCHEMA}.policies.id", ondelete="CASCADE"), index=True, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding = Column(Text, nullable=True)  # JSON-encoded list[float]; NULL until embedded
@@ -159,7 +164,7 @@ class Reimbursement(Base):
     __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     type = Column(String)  # Travel, Medical, Certification, Equipment
     amount = Column(Float)
     receipt_url = Column(String, nullable=True)
@@ -174,7 +179,7 @@ class ParkingSticker(Base):
     __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     vehicle_type = Column(String)  # 2-wheeler, 4-wheeler
     vehicle_number = Column(String)
     vehicle_make = Column(String, nullable=True)   # e.g. Honda, Maruti
@@ -189,7 +194,7 @@ class Accommodation(Base):
     __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     type = Column(String)  # Guest House, Hotel
     check_in = Column(Date)
     check_out = Column(Date)
@@ -204,7 +209,7 @@ class FacilityComplaint(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     ticket_id = Column(String, unique=True, index=True)  # FC-001
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     category = Column(String)  # Housekeeping, Electrical, Plumbing, AC, Cafeteria, Other
     description = Column(Text)
     location = Column(String)
@@ -220,7 +225,7 @@ class FoodVendorFeedback(Base):
     __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     vendor_name = Column(String)
     rating = Column(Integer)  # 1-5
     food_quality = Column(Integer)  # 1-5
@@ -236,7 +241,7 @@ class ITTicket(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     ticket_id = Column(String, unique=True, index=True)  # IT-001
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     category = Column(String)  # Software Install, Hardware, Network, Access, Security
     subject = Column(String)
     description = Column(Text)
@@ -254,7 +259,7 @@ class SoftwareRequest(Base):
     __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     it_ticket_id = Column(Integer, ForeignKey(f"{SCHEMA}.it_tickets.id"))
     software_name = Column(String)
     version = Column(String, nullable=True)
@@ -269,7 +274,7 @@ class AssetAssignment(Base):
     __table_args__ = {"schema": SCHEMA}
     
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     asset_type = Column(String)  # Laptop, Monitor, Keyboard, Mouse, Headset
     asset_tag = Column(String, unique=True)
     brand = Column(String)
@@ -362,7 +367,7 @@ class EmployeeZohoProfile(Base):
     __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"), unique=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), unique=True)
     zoho_link_id = Column(String, unique=True, nullable=True)
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
@@ -429,7 +434,7 @@ class FoodComplaint(Base):
     __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, ForeignKey("employees.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     vendor_name = Column(String)
     complaint_type = Column(String)  # Quality, Hygiene, Pricing, Variety, Service, Foreign Object, Other
     description = Column(Text)
@@ -463,7 +468,7 @@ class Grievance(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     reference_id = Column(String, unique=True, index=True)      # GRV-001
-    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
     category = Column(String)   # Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other
     description = Column(Text)
     is_anonymous = Column(Boolean, default=False)

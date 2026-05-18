@@ -189,10 +189,7 @@ class PolicyService:
                 db.add(policy)
                 db.flush()  # get policy.id before committing
                 ingested += 1
-                print(f"  ✓ Ingested: {title} [{len(content)} chars]")
-
-                # Immediately chunk + embed the new policy
-                PolicyService._chunk_and_embed(policy, db)
+                print(f"  [OK] Ingested: {title} [{len(content)} chars]")
 
             db.commit()
         except Exception as e:
@@ -249,7 +246,7 @@ class PolicyService:
                     continue
                 n = PolicyService._chunk_and_embed(p, db)
                 total_chunks += n
-                print(f"  ✓ Chunked '{p.title}': {n} chunks")
+                print(f"  [OK] Chunked '{p.title}': {n} chunks")
             db.commit()
             print(f"[PolicyService] Bootstrap complete — {total_chunks} total chunks stored.")
         except Exception as e:

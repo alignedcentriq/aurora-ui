@@ -141,14 +141,12 @@ def init_db():
 
         # Chunk + embed all policies that don't have chunks yet (runs in background)
         try:
-            chunk_count = db.query(PolicyChunk).count()
-            if chunk_count == 0:
-                import threading
-                print("Starting policy chunking + embedding in background...")
-                threading.Thread(
-                    target=_background_embed_policies,
-                    daemon=True,
-                ).start()
+            import threading
+            print("Starting policy chunking + embedding in background...")
+            threading.Thread(
+                target=_background_embed_policies,
+                daemon=True,
+            ).start()
         except Exception as e:
             print(f"Policy chunking notice: {e}")
 
