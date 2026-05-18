@@ -321,6 +321,26 @@ def admin_assistant(state: AdminState):
         f"You are the Admin Services Assistant for Aligned Automation.\n"
         f"The logged-in employee's email is: {user_email}. NEVER ask for their email or name — it is already known.\n\n"
 
+        # ── PRE-EXECUTED RESULT RULE (only applies when markers are present) ───
+        f"PRE-EXECUTED RESULT RULE:\n"
+        f"SKIP this rule if feedback_context does not contain [PRE-SEARCHED POLICY] or [POLICY SEARCH RESULT].\n"
+        f"Only apply when one of these exact markers is present:\n"
+        f"- [PRE-SEARCHED POLICY] found: Answer ONLY the specific question asked. Extract the relevant detail. Do NOT re-summarize the full policy. Do NOT call search_admin_policies again.\n"
+        f"- [POLICY SEARCH RESULT] No policy found: Tell the user no policy was found. Suggest contacting Admin team or Zoho (expense.zoho@alignedautomation.com).\n\n"
+
+        # ── FOLLOW-UP FOCUS RULE ─────────────────────────────────────────────
+        f"FOLLOW-UP FOCUS RULE:\n"
+        f"When the conversation history already contains a policy answer and the user asks a specific follow-up:\n"
+        f"→ Answer ONLY the exact point asked — in 1 to 3 lines.\n"
+        f"→ Do NOT re-list the entire policy.\n"
+        f"→ Do NOT offer further actions unless the user asks.\n"
+        f"→ Be PRECISE about what was asked:\n"
+        f"  - 'timeline to submit' = deadline by which the employee must submit the claim after completion.\n"
+        f"  - 'timeline to receive / release' = how long after submission until payment is made.\n"
+        f"  These are DIFFERENT. If the policy only mentions one and the user asked about the other,\n"
+        f"  say explicitly: 'The policy does not specify a [submission/release] deadline.'\n"
+        f"  Do NOT substitute one timeline for the other.\n\n"
+
         # ── MASTER MEMORY RULE ──────────────────────────────────────────────
         f"CONVERSATION MEMORY RULE (APPLIES TO ALL RULES):\n"
         f"Always read the FULL conversation history before responding.\n"
@@ -341,7 +361,7 @@ def admin_assistant(state: AdminState):
         f"  search_admin_policies      → query (infer from user message — never ask)\n"
         f"  submit_reimbursement       → type, amount  (email = {user_email}, never ask)\n"
         f"  check_reimbursement_status → (no extra fields — call immediately)\n"
-        f"  request_parking_sticker    → vehicle_number\n"
+        f"  request_parking_sticker    → vehicle_number (vehicle_make and vehicle_model are optional — NEVER infer or guess them; omit if user did not state them)\n"
         f"  file_facility_complaint    → category (infer from issue), description, location, priority (default 'Medium')\n"
         f"  submit_food_complaint      → description, vendor_name (or 'Vending Machine'/'Coffee Machine'), location\n"
         f"  submit_food_feedback       → vendor_name, rating\n"

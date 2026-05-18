@@ -22,7 +22,6 @@ class Employee(Base):
     manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
     joining_date = Column(Date)
     employment_type = Column(String) # Full-time, Contract
-    location = Column(String)
     pf_number = Column(String)
     insurance_plan = Column(String)
     tax_regime = Column(String) # Old, New
@@ -492,4 +491,5 @@ class ChatFeedback(Base):
     ai_response = Column(Text, nullable=True)
     rating = Column(Integer, nullable=True)          # 1 = thumbs up / helpful, -1 = thumbs down / unhelpful
     feedback_text = Column(String, nullable=True)   # optional free-text comment
+    user_message_embedding = Column(Text, nullable=True)  # JSON-encoded embedding of user_message for cosine retrieval
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

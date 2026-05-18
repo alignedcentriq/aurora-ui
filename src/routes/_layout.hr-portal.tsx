@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Check, X, Clock, Users, CalendarDays, Loader2, RefreshCw } from "lucide-react";
+import { Check, X, Clock, CalendarDays, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -36,7 +36,6 @@ function HRPortal() {
   const [filter, setFilter] = useState<LeaveStatus>("Pending");
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [acting, setActing] = useState<number | null>(null);
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -60,26 +59,6 @@ function HRPortal() {
 
   useEffect(() => { fetchLeaves(); }, [fetchLeaves]);
 
-  const action = async (id: number, type: "approve" | "reject") => {
-    setActing(id);
-    try {
-      const res = await fetch(`/api/portal/hr/leaves/${id}/${type}`, {
-        method: "PUT",
-        headers: authHeaders,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Action failed");
-      }
-      toast.success(type === "approve" ? "Leave approved" : "Leave rejected");
-      fetchLeaves();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Action failed");
-    } finally {
-      setActing(null);
-    }
-  };
-
   if (user?.role !== "HR" && user?.role !== "Admin") {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -98,7 +77,7 @@ function HRPortal() {
       <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">HR Portal</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">Review and manage employee leave requests</p>
+          <p className="text-[13px] text-muted-foreground mt-0.5">View employee leave requests</p>
         </div>
         <button
           onClick={fetchLeaves}
@@ -161,7 +140,7 @@ function HRPortal() {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                {["Employee", "Leave Type", "From", "To", "Days", "Reason", "Applied On", "Status", "Actions"].map((h) => (
+                {["Employee", "Leave Type", "From", "To", "Days", "Reason", "Applied On", "Status"].map((h) => (
                   <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
                     {h}
                   </th>
@@ -185,30 +164,6 @@ function HRPortal() {
                     <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", STATUS_BADGE[l.status] ?? "bg-zinc-500/10 text-zinc-400")}>
                       {l.status}
                     </span>
-                  </td>
-                  <td className="py-3.5">
-                    {l.status === "Pending" ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => action(l.id, "approve")}
-                          disabled={acting === l.id}
-                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-                        >
-                          {acting === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => action(l.id, "reject")}
-                          disabled={acting === l.id}
-                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
-                        >
-                          <X className="h-3 w-3" />
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground/40 text-[12px]">—</span>
-                    )}
                   </td>
                 </tr>
               ))}

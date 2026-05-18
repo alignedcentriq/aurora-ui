@@ -1,15 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Search,
   Users,
   Briefcase,
-  MapPin,
   Clock,
   ChevronDown,
   ChevronUp,
-  Upload,
   Loader2,
   Shield,
   X,
@@ -51,7 +49,6 @@ interface Person {
   email: string;
   designation: string | null;
   function: string | null;
-  location: string | null;
   // Skills
   skills: string | null;
   primary_skills: string | null;
@@ -142,7 +139,6 @@ function PersonCard({ person }: { person: Person }) {
 
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
               {person.function && <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" />{person.function}</span>}
-              {person.location && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{person.location}</span>}
               {person.total_experience && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{person.total_experience} yrs</span>}
               {person.reporting_manager && <span className="flex items-center gap-1"><UserCheck className="h-3 w-3" />{person.reporting_manager}</span>}
             </div>
@@ -328,11 +324,6 @@ function PeoplePage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const empFileRef = useRef<HTMLInputElement>(null);
-  const allocFileRef = useRef<HTMLInputElement>(null);
-  const projFileRef = useRef<HTMLInputElement>(null);
-  const [importing, setImporting] = useState<string | null>(null);
-
   const authHeaders = {
     ...(user?.email ? { "x-user-email": user.email } : {}),
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
@@ -368,26 +359,6 @@ function PeoplePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const handleImport = async (endpoint: string, file: File, label: string) => {
-    setImporting(label);
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      const res = await fetch(`/api/people/import/${endpoint}`, {
-        method: "POST",
-        headers: authHeaders,
-        body: form,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Import failed");
-      toast.success(data.message);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Import failed");
-    } finally {
-      setImporting(null);
-    }
-  };
-
   const clearFilter = (setter: (v: string) => void) => setter("");
 
   if (!user || !SEARCH_ROLES.has(user.role)) {
@@ -402,49 +373,17 @@ function PeoplePage() {
     );
   }
 
-  const isManager = ["HR", "Admin"].includes(user.role);
   const activeFilters = [skill, designation, func, manager, minExp].filter(Boolean).length;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">People</h1>
-            <p className="text-[13px] text-muted-foreground mt-0.5">
-              Search employees by skills, experience, projects, and reporting structure.
-            </p>
-          </div>
-
-          {/* Import buttons — HR and Admin only */}
-          {isManager && (
-            <div className="flex items-center gap-2">
-              <input ref={empFileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImport("employees", f, "employees"); e.target.value = ""; }} />
-              <input ref={allocFileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImport("allocations", f, "allocations"); e.target.value = ""; }} />
-              <input ref={projFileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImport("projects", f, "projects"); e.target.value = ""; }} />
-
-              {[
-                { label: "employees", ref: empFileRef, tip: "Import Employee Data.xlsx" },
-                { label: "allocations", ref: allocFileRef, tip: "Import Allocation Data.xlsx" },
-                { label: "projects", ref: projFileRef, tip: "Import Project Details.xlsx" },
-              ].map(({ label, ref, tip }) => (
-                <button
-                  key={label}
-                  onClick={() => ref.current?.click()}
-                  disabled={importing === label}
-                  title={tip}
-                  className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-3 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-all disabled:opacity-50 capitalize"
-                >
-                  {importing === label ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+        <div>
+          <h1 className="text-xl font-semibold text-foreground tracking-tight">People</h1>
+          <p className="text-[13px] text-muted-foreground mt-0.5">
+            Search employees by skills, experience, projects, and reporting structure.
+          </p>
         </div>
       </div>
 
@@ -526,7 +465,6 @@ function PeoplePage() {
               <p className="text-[15px] font-medium text-foreground">Search your people directory</p>
               <p className="text-[13px] text-muted-foreground mt-1 max-w-sm">
                 Find employees by skill, experience, project history, or reporting manager.
-                {isManager && " Use the import buttons above to load data from Excel files."}
               </p>
             </div>
           </div>
@@ -538,7 +476,7 @@ function PeoplePage() {
               <Search className="h-12 w-12 text-muted-foreground/20 mx-auto mb-4" />
               <p className="text-[15px] font-medium text-foreground">No results found</p>
               <p className="text-[13px] text-muted-foreground mt-1">
-                Try different keywords or import employee data using the buttons above.
+                Try different keywords or adjust your filters.
               </p>
             </div>
           </div>

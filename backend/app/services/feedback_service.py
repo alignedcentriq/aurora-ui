@@ -1,6 +1,25 @@
+import json
+import math
 import re
 from app.database import SessionLocal
 from app.models import ChatFeedback
+
+
+def _cosine(a: list, b: list) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    mag = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
+    return dot / mag if mag else 0.0
+
+
+def _get_embedding(text: str) -> list | None:
+    try:
+        from openai import OpenAI
+        from app.config import settings
+        client = OpenAI(base_url=settings.EMBEDDING_BASE_URL, api_key=settings.EMBEDDING_API_KEY)
+        resp = client.embeddings.create(input=text[:2000], model=settings.EMBEDDING_MODEL_NAME)
+        return resp.data[0].embedding
+    except Exception:
+        return None
 
 
 _STOP_WORDS = {
@@ -31,6 +50,7 @@ class FeedbackService:
         rating: int,
         feedback_text: str = "",
     ) -> str:
+        emb = _get_embedding(user_message) if user_message else None
         db = SessionLocal()
         try:
             entry = ChatFeedback(
@@ -40,6 +60,7 @@ class FeedbackService:
                 ai_response=ai_response,
                 rating=rating,
                 feedback_text=feedback_text or "",
+                user_message_embedding=json.dumps(emb) if emb else None,
             )
             db.add(entry)
             db.commit()
@@ -70,12 +91,12 @@ class FeedbackService:
     @staticmethod
     def get_relevant_feedback(domain: str, query: str, limit: int = 3) -> dict:
         """
-        Find past feedback whose user_message overlaps with the current query.
-        Uses keyword intersection (no embeddings required).
+        Find past feedback semantically similar to the current query.
+        1. Cosine similarity on stored user_message_embedding (preferred).
+        2. Falls back to keyword intersection for records without stored embeddings.
         Returns {"negative": [...], "positive": [...]}
         """
-        query_kw = _keywords(query)
-        if not query_kw:
+        if not query:
             return {"negative": [], "positive": []}
 
         db = SessionLocal()
@@ -83,15 +104,34 @@ class FeedbackService:
             q = db.query(ChatFeedback)
             if domain and domain not in ("unknown", ""):
                 q = q.filter(ChatFeedback.domain == domain)
-
             rows = q.all()
+            if not rows:
+                return {"negative": [], "positive": []}
 
-            def overlap_score(fb: ChatFeedback) -> int:
-                return len(query_kw & _keywords(fb.user_message or ""))
+            query_emb = _get_embedding(query)
+            query_kw = _keywords(query)
 
-            scored = [(overlap_score(fb), fb) for fb in rows]
-            scored = [(s, fb) for s, fb in scored if s > 0]
+            scored = []
+            for fb in rows:
+                if query_emb and fb.user_message_embedding:
+                    try:
+                        fb_emb = json.loads(fb.user_message_embedding)
+                        score = _cosine(query_emb, fb_emb)
+                    except Exception:
+                        score = len(query_kw & _keywords(fb.user_message or "")) * 0.1
+                else:
+                    # keyword fallback for records that predate embedding storage
+                    overlap = len(query_kw & _keywords(fb.user_message or ""))
+                    score = overlap * 0.1
+
+                if score > 0:
+                    scored.append((score, fb))
+
             scored.sort(key=lambda x: x[0], reverse=True)
+
+            # Use 0.3 threshold only when embeddings are available; keyword fallback has no threshold
+            threshold = 0.3 if query_emb else 0.0
+            scored = [(s, fb) for s, fb in scored if s >= threshold]
 
             negative = [
                 {

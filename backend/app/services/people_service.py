@@ -23,7 +23,6 @@ EMPLOYEE_COL = {
     "Designation": "designation",
     "Function": "function",
     "Subfunction": "subfunction",
-    "Location": "location",
     "Gender": "gender",
     "Status-Active/Inactive": "employee_status",
     "Joining Date": "date_of_joining",
@@ -176,7 +175,6 @@ class PeopleService:
                 profile.zoho_link_id = emp_id_str
                 profile.designation = _safe(row.get("Designation"))
                 profile.function = _safe(row.get("Function"))
-                profile.sub_location = _safe(row.get("Location"))
                 profile.gender = _safe(row.get("Gender"))
                 profile.employee_status = _safe(row.get("Status-Active/Inactive"))
                 profile.date_of_joining = _safe_date(row.get("Joining Date"))
@@ -372,7 +370,6 @@ class PeopleService:
                     "email": p.official_email,
                     "designation": p.designation,
                     "function": p.function,
-                    "location": p.sub_location,
                     # Skills
                     "skills": p.skill_set,            # backward compat alias
                     "primary_skills": p.skill_set,    # Primary Skills from Excel

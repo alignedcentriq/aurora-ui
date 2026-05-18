@@ -130,12 +130,11 @@ def list_minio_documents(prefix: str = ""):
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
 
 @tool
-def search_employee_directory(query: str, function: str = "", location: str = "", designation: str = ""):
-    """Search the employee directory by name, skill, function, designation, or location."""
+def search_employee_directory(query: str, function: str = "", designation: str = ""):
+    """Search the employee directory by name, skill, function, or designation."""
     return EmployeeService.search_directory(
         query=query,
         function=function or None,
-        location=location or None,
         designation=designation or None,
     )
 
@@ -263,7 +262,6 @@ def generate_hr_document(doc_type: str, target_email: str = ""):
                 f"During their tenure, they have demonstrated professional conduct and commitment. "
                 f"We wish them the very best in their future endeavours.\n\n"
                 f"Employee ID: {emp.employee_id}\n"
-                f"Location: {emp.location or 'N/A'}\n"
                 f"Employment Type: {emp.employment_type or 'Full-time'}"
             )
             title = f"Experience Certificate — {emp.name}"
@@ -431,17 +429,33 @@ def intent_router(state: AgentState):
         return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected.",
                 "sub_intent": "test", "entities": {}}
 
-    # Sticky domain: if the previous AI message asked a question and the user's reply is short,
-    # stay in the same domain rather than re-classifying a context-free answer.
+    # Sticky domain: keep the same domain for follow-up messages that reference prior context.
+    # Triggers on: (a) short reply to an agent question, OR (b) short message with context-reference
+    # words after a substantive AI answer (e.g. "is there any timeline for applying it").
     existing_domain = state.get("domain")
     if existing_domain in _STICKY_DOMAINS:
         last_ai = _last_ai_message(state.get("messages", []))
-        if "?" in last_ai and len(last_human.strip()) < 120:
-            print(f"[Router] Sticky domain: {existing_domain} (follow-up reply to agent question)")
+        msg_len = len(last_human.strip())
+        _CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "the", "about", "any"}
+        _QUESTION_PHRASES = {
+            "could you", "can you", "please provide", "please share", "let me know",
+            "what is", "which floor", "which area", "what type", "please tell",
+            "kindly", "may i know", "please mention", "please specify",
+        }
+        last_ai_lower = last_ai.lower()
+        words = set(last_human.lower().split())
+        ai_asked = "?" in last_ai or any(p in last_ai_lower for p in _QUESTION_PHRASES)
+        is_agent_question_reply = ai_asked and msg_len < 120
+        is_context_followup = bool(words & _CONTEXT_REFS) and msg_len < 200 and len(last_ai) > 30
+        # Very short messages (<60 chars) after any substantive AI response are almost always follow-ups
+        is_very_short_followup = msg_len < 60 and len(last_ai) > 30
+        if is_agent_question_reply or is_context_followup or is_very_short_followup:
+            reason = "follow-up to agent question" if is_agent_question_reply else "short/context follow-up"
+            print(f"[Router] Sticky domain: {existing_domain} ({reason})")
             return {
                 "domain": existing_domain,
                 "route_confidence": 0.95,
-                "route_reasoning": f"Short reply to an agent question — staying in {existing_domain}.",
+                "route_reasoning": f"Follow-up in context of {existing_domain} — staying sticky.",
                 "sub_intent": "followup",
                 "entities": {},
             }
@@ -491,7 +505,8 @@ def hr_agent(state: AgentState):
             f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n\n"
             f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
             f"1. Leave balance: → call get_leave_balance(email='{user_email}').\n"
-            f"2. Apply leave: → call apply_leave(email='{user_email}', ...). Infer leave_type (default Casual). "
+            f"2. Apply leave: → call apply_leave(email='{user_email}', start_date, end_date, leave_type). "
+            f"Infer leave_type (default Casual). DO NOT ask for reason — it defaults to 'Applied via AI Assistant'. "
             f"Manager gets an email to approve/reject via clickable link.\n"
             f"3. Policy question: → call search_hr_policies. Always cite the policy name and last-updated date in your answer.\n"
             f"4. Employee search: → call search_employee_directory.\n"
@@ -503,7 +518,27 @@ def hr_agent(state: AgentState):
             f"9. Onboarding checklist for new joiner: → call trigger_onboarding_checklist(employee_email=...).\n"
             f"10. Offboarding checklist for departing employee: → call trigger_offboarding_checklist(employee_email=..., last_working_day=...).\n\n"
             f"RESPONSE STYLE: Act first. Only ask when a REQUIRED parameter is truly missing. "
-            f"Never answer from training knowledge — use tools only.",
+            f"Never answer from training knowledge — use tools only.\n\n"
+            f"CONVERSATION MEMORY RULES:\n"
+            f"- Always read the FULL conversation history before responding.\n"
+            f"- If the user refers to something mentioned earlier ('that policy', 'same dates', 'as I said'), look it up in prior messages.\n"
+            f"- NEVER ask for information the user already provided in this conversation.\n"
+            f"- NEVER repeat a question already asked in this conversation.\n\n"
+            f"FOLLOW-UP FOCUS RULE:\n"
+            f"- When the user asks a specific follow-up about a tool result already in the conversation, answer ONLY that point in 1-3 lines.\n"
+            f"- Do NOT re-list the full policy/balance/document. Extract the specific detail asked.\n"
+            f"- Be precise: 'timeline to submit' ≠ 'timeline to receive'. If policy only mentions one, say the other is not specified.\n\n"
+            f"GRIEVANCE DATA COLLECTION (strict multi-turn — follow this order):\n"
+            f"Step 1 — Infer category from message. Valid: Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other.\n"
+            f"Step 2 — If description missing → ask ONLY: 'Could you describe what happened?'\n"
+            f"Step 3 — After description provided → ask ONLY: 'Would you like to remain anonymous?'\n"
+            f"Step 4 — ONLY after category + description + anonymity are all confirmed → call submit_grievance_for.\n"
+            f"NEVER skip step 3. NEVER call the tool before the user has answered the anonymity question.\n"
+            f"NEVER call the tool with empty or placeholder description.\n\n"
+            f"OUTPUT FORMATTING:\n"
+            f"- NEVER output markdown tables (no | pipe characters).\n"
+            f"- NEVER output HTML tags.\n"
+            f"- Use plain bullet points (- ) or numbered lists (1. 2. 3.) only.",
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
@@ -529,12 +564,54 @@ async def pmo_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
+_ADMIN_POLICY_KEYWORDS = {"policy", "reimbursement", "reimburse", "claim", "expense", "certification", "travel", "medical"}
+
+
 async def admin_agent_node(state: AgentState):
     """Admin Agent - handles reimbursement, parking, etc."""
+    sub_intent = state.get("sub_intent") or ""
+    entities = state.get("entities") or {}
+    feedback_ctx = state.get("feedback_context") or ""
+
+    # Execute-first for policy queries: search embeddings/chunks at Python level,
+    # avoiding an unreliable LLM tool-calling round-trip.
+    if "policy" in sub_intent:
+        topic = (
+            entities.get("policy_topic")
+            or entities.get("topic")
+            or next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+        )
+        policy_result = HRService.search_policies(str(topic), limit=2)
+        if policy_result and "No policies found" not in policy_result:
+            feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
+        else:
+            feedback_ctx = (
+                f"[POLICY SEARCH RESULT]\nNo policy found for: '{topic}'. "
+                f"Tell the user no policy was found and suggest contacting the Admin team "
+                f"or raising it via Zoho (expense.zoho@alignedautomation.com).\n[END]\n\n{feedback_ctx}"
+            )
+    elif sub_intent == "followup":
+        # For follow-up questions, re-inject raw policy text if prior conversation was policy-related.
+        # The parent graph only persists the last AIMessage per turn, so the LLM only sees a
+        # summarized response — not the raw policy. Re-searching lets it extract specific details
+        # (e.g. "timeline to submit") that may have been omitted from the summary.
+        human_msgs = [m for m in state["messages"] if isinstance(m, HumanMessage)]
+        prior_text = " ".join(m.content for m in human_msgs[:-1]).lower()
+        if any(kw in prior_text for kw in _ADMIN_POLICY_KEYWORDS):
+            original_topic = next(
+                (m.content for m in state["messages"]
+                 if isinstance(m, HumanMessage) and any(kw in m.content.lower() for kw in _ADMIN_POLICY_KEYWORDS)),
+                "",
+            )
+            if original_topic:
+                policy_result = HRService.search_policies(str(original_topic), limit=2)
+                if policy_result and "No policies found" not in policy_result:
+                    feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
+
     result = await admin_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": state.get("feedback_context") or "",
+        "feedback_context": feedback_ctx,
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Admin request."))
     return {"messages": [last_ai]}
@@ -603,13 +680,21 @@ def general_agent(state: AgentState):
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
-        "You handle greetings, small talk, company announcements, and general HR policy questions. "
-        "You have two tools: get_announcements (call with no arguments to fetch all active company announcements) "
+        "You handle greetings, small talk, company announcements, and general policy questions. "
+        "You have two tools: get_announcements (fetch all active announcements) "
         "and search_hr_policies (search for policy details by topic). "
         "Always call get_announcements when the user asks about news, updates, or announcements. "
-        "Always call search_hr_policies when the user asks about a policy. "
-        "For all other domain questions (leave, parking, IT tickets, projects), direct the user to the right team. "
-        "IMPORTANT: Do NOT answer company-specific questions from your own knowledge — use tools only.",
+        "Always call search_hr_policies when the user asks about a policy — use tools first, never guess. "
+        "If the user asks a follow-up about a policy already discussed, answer from the conversation history — extract only the specific detail asked, do NOT re-summarize the full policy. "
+        "Be precise: 'timeline to submit' (submission deadline) and 'timeline to receive/release' (processing time) are different — if the policy only mentions one, say so rather than substituting the other. "
+        "Only suggest contacting the HR or Admin team if the tools return no results. "
+        "Do NOT offer further assistance or solicit next actions unless the user asks. "
+        "CONVERSATION MEMORY RULES: Always read the FULL conversation history before responding. "
+        "If the user refers to something mentioned earlier ('it', 'that policy', 'the timeline'), look it up in prior messages. "
+        "NEVER ask for information the user already provided. NEVER repeat a question already asked. "
+        "OUTPUT FORMATTING: NEVER output markdown tables (no | pipe characters). "
+        "NEVER output HTML tags. Use plain bullet points (- ) or numbered lists only. "
+        "Keep responses concise — answer what was asked, do not re-summarize the full policy if a specific detail was requested.",
     )
     guardrail = PromptService.get_guardrail("general")
     feedback_ctx = state.get("feedback_context") or ""
