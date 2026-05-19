@@ -53,13 +53,28 @@ def approve_reimbursement(
     r.approved_by = user.email
     r.updated_at = datetime.datetime.utcnow()
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    if emp:
+        from app.services.admin_service import AdminService
+        from app.config import settings
+        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {
+            "event": "reimbursement_decision",
+            "reimbursement_id": r.id,
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "type": r.type,
+            "amount": float(r.amount),
+            "decision": "Approved",
+            "decided_by": user.email,
+            "decided_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
     return {"message": "Reimbursement approved."}
 
 
 @router.put("/reimbursements/{id}/reject")
 def reject_reimbursement(
     id: int,
-    _: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     r = db.query(Reimbursement).filter(Reimbursement.id == id).first()
@@ -68,6 +83,21 @@ def reject_reimbursement(
     r.status = "Rejected"
     r.updated_at = datetime.datetime.utcnow()
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == r.employee_id).first()
+    if emp:
+        from app.services.admin_service import AdminService
+        from app.config import settings
+        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {
+            "event": "reimbursement_decision",
+            "reimbursement_id": r.id,
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "type": r.type,
+            "amount": float(r.amount),
+            "decision": "Rejected",
+            "decided_by": user.email,
+            "decided_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
     return {"message": "Reimbursement rejected."}
 
 
@@ -109,7 +139,7 @@ class ApproveParkingBody(BaseModel):
 def approve_parking(
     id: int,
     body: ApproveParkingBody,
-    _: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     s = db.query(ParkingSticker).filter(ParkingSticker.id == id).first()
@@ -118,13 +148,29 @@ def approve_parking(
     s.status = "Active"
     s.sticker_number = body.sticker_number
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == s.employee_id).first()
+    if emp:
+        from app.services.admin_service import AdminService
+        from app.config import settings
+        AdminService._fire_webhook(settings.PA_WEBHOOK_PARKING_ACTIVATED, {
+            "event": "parking_sticker_activated",
+            "sticker_number": body.sticker_number,
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "vehicle_type": s.vehicle_type,
+            "vehicle_number": s.vehicle_number,
+            "vehicle_make": s.vehicle_make or "",
+            "vehicle_model": s.vehicle_model or "",
+            "valid_from": s.valid_from.isoformat() if s.valid_from else "",
+            "valid_until": s.valid_until.isoformat() if s.valid_until else "",
+        })
     return {"message": "Parking sticker approved and issued."}
 
 
 @router.put("/parking/{id}/revoke")
 def revoke_parking(
     id: int,
-    _: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     s = db.query(ParkingSticker).filter(ParkingSticker.id == id).first()
@@ -132,6 +178,19 @@ def revoke_parking(
         raise HTTPException(status_code=404, detail="Parking sticker not found.")
     s.status = "Surrendered"
     db.commit()
+    emp = db.query(Employee).filter(Employee.id == s.employee_id).first()
+    if emp:
+        from app.services.admin_service import AdminService
+        from app.config import settings
+        AdminService._fire_webhook(settings.PA_WEBHOOK_PARKING_REVOKED, {
+            "event": "parking_sticker_revoked",
+            "sticker_id": s.id,
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "vehicle_number": s.vehicle_number,
+            "revoked_by": user.email,
+            "revoked_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
     return {"message": "Parking sticker revoked."}
 
 

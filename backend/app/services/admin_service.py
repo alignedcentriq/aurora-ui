@@ -1,6 +1,7 @@
 import datetime
 import threading
 from app.database import SessionLocal
+from app.config import settings
 from app.models import (
     Employee, Reimbursement, ParkingSticker,
     Accommodation, FacilityComplaint, FoodVendorFeedback, FoodComplaint
@@ -10,10 +11,8 @@ from app.models import (
 class AdminService:
 
     @staticmethod
-    def _notify_power_automate(payload: dict) -> None:
-        """Fire-and-forget POST to the Power Automate webhook. Errors are swallowed silently."""
-        from app.config import settings
-        url = settings.POWER_AUTOMATE_WEBHOOK_URL
+    def _fire_webhook(url: str, payload: dict) -> None:
+        """Fire-and-forget POST to a Power Automate webhook. Errors are swallowed silently."""
         if not url:
             return
 
@@ -78,6 +77,20 @@ class AdminService:
                 )
             except Exception:
                 pass
+
+            # Notify PA — triggers Teams approval card for admin
+            AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_SUBMITTED, {
+                "event": "reimbursement_submitted",
+                "reimbursement_id": new_r.id,
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+                "type": type,
+                "amount": float(amount),
+                "reason": reason,
+                "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+                "approve_callback_url": f"{settings.APP_BASE_URL}/api/pa/callback/reimbursement/{new_r.id}/approve",
+                "reject_callback_url": f"{settings.APP_BASE_URL}/api/pa/callback/reimbursement/{new_r.id}/reject",
+            })
 
             return (
                 f"Reimbursement request of INR {amount:,.2f} for {type} submitted successfully "
@@ -294,7 +307,7 @@ class AdminService:
             except Exception:
                 pass
 
-            AdminService._notify_power_automate({
+            AdminService._fire_webhook(settings.POWER_AUTOMATE_WEBHOOK_URL, {
                 "complaint_type": "premises",
                 "ticket_id": ticket_id,
                 "category": category,
@@ -386,7 +399,7 @@ class AdminService:
             except Exception:
                 pass
 
-            AdminService._notify_power_automate({
+            AdminService._fire_webhook(settings.POWER_AUTOMATE_WEBHOOK_URL, {
                 "complaint_type": "food_vendor",
                 "ticket_id": str(new_c.id),
                 "vendor_name": vendor_name,

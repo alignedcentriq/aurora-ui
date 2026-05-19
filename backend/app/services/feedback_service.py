@@ -1,14 +1,6 @@
-import json
-import math
 import re
 from app.database import SessionLocal
 from app.models import ChatFeedback
-
-
-def _cosine(a: list, b: list) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    mag = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
-    return dot / mag if mag else 0.0
 
 
 def _get_embedding(text: str) -> list | None:
@@ -60,7 +52,7 @@ class FeedbackService:
                 ai_response=ai_response,
                 rating=rating,
                 feedback_text=feedback_text or "",
-                user_message_embedding=json.dumps(emb) if emb else None,
+                user_message_embedding=emb,
             )
             db.add(entry)
             db.commit()
@@ -92,8 +84,8 @@ class FeedbackService:
     def get_relevant_feedback(domain: str, query: str, limit: int = 3) -> dict:
         """
         Find past feedback semantically similar to the current query.
-        1. Cosine similarity on stored user_message_embedding (preferred).
-        2. Falls back to keyword intersection for records without stored embeddings.
+        Uses pgvector cosine distance when embeddings are available;
+        falls back to keyword intersection otherwise.
         Returns {"negative": [...], "positive": [...]}
         """
         if not query:
@@ -101,37 +93,34 @@ class FeedbackService:
 
         db = SessionLocal()
         try:
-            q = db.query(ChatFeedback)
+            base_q = db.query(ChatFeedback)
             if domain and domain not in ("unknown", ""):
-                q = q.filter(ChatFeedback.domain == domain)
-            rows = q.all()
-            if not rows:
-                return {"negative": [], "positive": []}
+                base_q = base_q.filter(ChatFeedback.domain == domain)
 
             query_emb = _get_embedding(query)
-            query_kw = _keywords(query)
-
-            scored = []
-            for fb in rows:
-                if query_emb and fb.user_message_embedding:
-                    try:
-                        fb_emb = json.loads(fb.user_message_embedding)
-                        score = _cosine(query_emb, fb_emb)
-                    except Exception:
-                        score = len(query_kw & _keywords(fb.user_message or "")) * 0.1
-                else:
-                    # keyword fallback for records that predate embedding storage
-                    overlap = len(query_kw & _keywords(fb.user_message or ""))
-                    score = overlap * 0.1
-
-                if score > 0:
-                    scored.append((score, fb))
-
-            scored.sort(key=lambda x: x[0], reverse=True)
-
-            # Use 0.3 threshold only when embeddings are available; keyword fallback has no threshold
-            threshold = 0.3 if query_emb else 0.0
-            scored = [(s, fb) for s, fb in scored if s >= threshold]
+            if query_emb:
+                dist_expr = ChatFeedback.user_message_embedding.cosine_distance(query_emb)
+                rows = (
+                    base_q
+                    .filter(
+                        ChatFeedback.user_message_embedding.isnot(None),
+                        dist_expr < 0.7,
+                    )
+                    .order_by(dist_expr)
+                    .limit(limit * 4)
+                    .all()
+                )
+            else:
+                query_kw = _keywords(query)
+                all_rows = base_q.all()
+                scored = [
+                    (len(query_kw & _keywords(fb.user_message or "")), fb)
+                    for fb in all_rows
+                    if fb.user_message
+                ]
+                scored = [(s, fb) for s, fb in scored if s > 0]
+                scored.sort(key=lambda x: x[0], reverse=True)
+                rows = [fb for _, fb in scored[: limit * 4]]
 
             negative = [
                 {
@@ -139,7 +128,7 @@ class FeedbackService:
                     "bad_answer": fb.ai_response,
                     "reason": fb.feedback_text or "User marked this answer as unhelpful",
                 }
-                for _, fb in scored
+                for fb in rows
                 if fb.rating == -1
             ][:limit]
 
@@ -148,7 +137,7 @@ class FeedbackService:
                     "question": fb.user_message,
                     "good_answer": fb.ai_response,
                 }
-                for _, fb in scored
+                for fb in rows
                 if fb.rating == 1
             ][:limit]
 
