@@ -32,6 +32,7 @@ from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
+from app.routes.company_settings_routes import router as company_settings_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -96,6 +97,7 @@ app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pa_callback_router)
+app.include_router(company_settings_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -391,6 +393,22 @@ async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None))
             final_message = raw_ai_message
             download_url = None
             interactive = None
+            policy_images: list = []
+
+            # Extract policy image keys from ToolMessages (never from the AI response)
+            _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
+            for msg in result.get("messages", []):
+                if hasattr(msg, 'content') and isinstance(msg.content, str):
+                    m = _policy_img_re.search(msg.content)
+                    if m:
+                        try:
+                            from app.minio_client import minio_client
+                            for key in m.group(1).split("||"):
+                                key = key.strip()
+                                if key:
+                                    policy_images.append(minio_client.get_presigned_url(key))
+                        except Exception as _img_e:
+                            print(f"[chat] image presign skipped: {_img_e}")
 
             # Extract interactive email draft marker before any cleanup
             email_draft_pattern = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
@@ -448,6 +466,7 @@ async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None))
             "processing_time": f"{time.time() - start_time:.2f}s",
             "download_url": download_url,
             "interactive": interactive,
+            "images": policy_images if policy_images else None,
         }
 
     except Exception as e:

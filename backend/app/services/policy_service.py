@@ -63,6 +63,111 @@ def _categorize(filename: str) -> str:
     return "General"
 
 
+def _safe_title(title: str) -> str:
+    """Sanitize a policy title for use in a MinIO object key."""
+    return re.sub(r'[^\w\-]', '_', title)[:60]
+
+
+def _extract_images_from_pdf_bytes(data: bytes) -> list:
+    """
+    Return list of (page_index, image_bytes, ext) tuples.
+    Skips images smaller than 4 KB (likely icons/decorations).
+    Requires pymupdf (pip install pymupdf).
+    """
+    try:
+        import fitz  # pymupdf
+        images = []
+        doc = fitz.open(stream=data, filetype="pdf")
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            for img in page.get_images(full=True):
+                xref = img[0]
+                base = doc.extract_image(xref)
+                img_bytes = base["image"]
+                if len(img_bytes) < 4096:
+                    continue  # skip tiny decorative images
+                images.append((page_num, img_bytes, base.get("ext", "png")))
+        doc.close()
+        return images
+    except Exception as e:
+        print(f"[PolicyService] PDF image extraction error: {e}")
+        return []
+
+
+def _extract_images_from_docx_bytes(data: bytes) -> list:
+    """
+    Return list of (position_ratio, image_bytes, ext) tuples.
+    position_ratio is 0.0–1.0 indicating where in the document the image sits.
+    Skips images smaller than 4 KB.
+    """
+    try:
+        import zipfile
+        import io as _io
+        results = []
+        with zipfile.ZipFile(_io.BytesIO(data)) as z:
+            media = [n for n in z.namelist() if n.startswith("word/media/")]
+            total = len(media)
+            for idx, name in enumerate(sorted(media)):
+                img_bytes = z.read(name)
+                if len(img_bytes) < 4096:
+                    continue
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+                position_ratio = idx / max(total, 1)
+                results.append((position_ratio, img_bytes, ext))
+        return results
+    except Exception as e:
+        print(f"[PolicyService] DOCX image extraction error: {e}")
+        return []
+
+
+def _upload_policy_images(policy_id: int, title: str, raw_images: list, is_docx: bool = False) -> list:
+    """
+    Upload images to MinIO under policy-images/{safe_title}/.
+    raw_images: list of (page_or_ratio, bytes, ext)
+    Returns list of MinIO object keys.
+    """
+    from app.minio_client import minio_client
+    safe = _safe_title(title)
+    keys = []
+    content_type_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                        "gif": "image/gif", "webp": "image/webp"}
+    for idx, (_, img_bytes, ext) in enumerate(raw_images):
+        key = f"policy-images/{safe}/{idx}.{ext}"
+        ct = content_type_map.get(ext, "image/png")
+        try:
+            minio_client.upload_bytes(img_bytes, key, content_type=ct)
+            keys.append(key)
+        except Exception as e:
+            print(f"[PolicyService] Image upload failed ({key}): {e}")
+    return keys
+
+
+def _assign_images_to_chunks(raw_images: list, num_chunks: int, is_docx: bool = False) -> dict:
+    """
+    Map chunk_index → list of raw_image list indices.
+    For PDFs: images are keyed by page_num; we distribute chunks proportionally across pages.
+    For DOCXs: images carry a position_ratio; we use that directly.
+    Returns {chunk_index: [image_list_idx, ...]}
+    """
+    assignment: dict = {i: [] for i in range(num_chunks)}
+    if num_chunks == 0 or not raw_images:
+        return assignment
+
+    if is_docx:
+        for img_idx, (ratio, _, _) in enumerate(raw_images):
+            chunk_idx = min(int(ratio * num_chunks), num_chunks - 1)
+            assignment[chunk_idx].append(img_idx)
+    else:
+        # PDF: assume pages are distributed evenly across chunks
+        max_page = max(p for p, _, _ in raw_images) if raw_images else 0
+        for img_idx, (page_num, _, _) in enumerate(raw_images):
+            ratio = page_num / max(max_page, 1)
+            chunk_idx = min(int(ratio * num_chunks), num_chunks - 1)
+            assignment[chunk_idx].append(img_idx)
+
+    return assignment
+
+
 def _extract_text_from_pdf(filepath: str) -> str:
     try:
         import pdfplumber
@@ -189,10 +294,13 @@ class PolicyService:
                     skipped += 1
                     continue
 
-                if filepath.suffix.lower() == '.pdf':
+                is_pdf = filepath.suffix.lower() == '.pdf'
+                if is_pdf:
                     content = _extract_text_from_pdf(str(filepath))
+                    file_bytes = filepath.read_bytes()
                 else:
                     content = _extract_text_from_docx(str(filepath))
+                    file_bytes = filepath.read_bytes()
 
                 if not content or len(content) < 50:
                     errors.append(f"Empty/too short: {filepath.name}")
@@ -204,9 +312,30 @@ class PolicyService:
                     content=content[:50000],
                 )
                 db.add(policy)
-                db.flush()  # get policy.id before committing
+                db.flush()
+
+                raw_images = (
+                    _extract_images_from_pdf_bytes(file_bytes)
+                    if is_pdf
+                    else _extract_images_from_docx_bytes(file_bytes)
+                )
+                if raw_images:
+                    img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
+                    chunks_preview = _chunk_text(content[:50000])
+                    assignment = _assign_images_to_chunks(
+                        raw_images, len(chunks_preview), is_docx=not is_pdf
+                    )
+                    chunk_images = {
+                        ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
+                        for ci, idxs in assignment.items()
+                        if idxs
+                    }
+                    PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+                    print(f"  [OK] Ingested: {title} [{len(content)} chars, {len(img_keys)} images]")
+                else:
+                    print(f"  [OK] Ingested: {title} [{len(content)} chars, no images]")
+
                 ingested += 1
-                print(f"  [OK] Ingested: {title} [{len(content)} chars]")
 
             db.commit()
         except Exception as e:
@@ -260,24 +389,49 @@ class PolicyService:
                     errors.append(f"Download failed ({filename}): {e}")
                     continue
 
+                is_pdf = ext == "pdf"
                 content = (
                     _extract_text_from_pdf_bytes(file_bytes)
-                    if ext == "pdf"
+                    if is_pdf
                     else _extract_text_from_docx_bytes(file_bytes)
                 )
                 if not content or len(content) < 50:
                     errors.append(f"Empty/too short: {filename}")
                     continue
 
-                db.add(Policy(
+                policy = Policy(
                     title=title,
                     category=_categorize(filename),
                     content=content[:50000],
-                ))
+                )
+                db.add(policy)
                 db.flush()
+
+                # Extract images and assign to chunks
+                raw_images = (
+                    _extract_images_from_pdf_bytes(file_bytes)
+                    if is_pdf
+                    else _extract_images_from_docx_bytes(file_bytes)
+                )
+                if raw_images:
+                    img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
+                    chunks_preview = _chunk_text(content[:50000])
+                    assignment = _assign_images_to_chunks(
+                        raw_images, len(chunks_preview), is_docx=not is_pdf
+                    )
+                    # Translate image list indices → actual MinIO keys
+                    chunk_images = {
+                        ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
+                        for ci, idxs in assignment.items()
+                        if idxs
+                    }
+                    PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+                    print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars, {len(img_keys)} images]")
+                else:
+                    print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars, no images]")
+
                 existing_titles.add(title)
                 ingested += 1
-                print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars]")
 
             db.commit()
         except Exception as e:
@@ -294,10 +448,11 @@ class PolicyService:
     # ── Chunking & Embedding ──────────────────────────────────────────────────
 
     @staticmethod
-    def _chunk_and_embed(policy: Policy, db):
+    def _chunk_and_embed(policy: Policy, db, chunk_images: dict = None):
         """
         Internal: chunk one Policy and store PolicyChunk rows in the given session.
         Embedding is best-effort — chunks are stored even without embeddings.
+        chunk_images: optional {chunk_index: [minio_key, ...]} mapping
         """
         from app.models import PolicyChunk
 
@@ -305,14 +460,15 @@ class PolicyService:
 
         chunks = _chunk_text(policy.content or "")
         for i, chunk_text in enumerate(chunks):
-            # Prepend the title so the embedding captures document context
             embed_input = f"{policy.title}\n\n{chunk_text}"
             emb = PolicyService._get_embedding(embed_input)
+            img_keys = (chunk_images or {}).get(i) or None
             db.add(PolicyChunk(
                 policy_id=policy.id,
                 chunk_index=i,
                 text=chunk_text,
                 embedding=emb,
+                image_urls=img_keys if img_keys else None,
             ))
         return len(chunks)
 
@@ -347,6 +503,19 @@ class PolicyService:
             print(f"[PolicyService] embed_all_policies error: {e}")
         finally:
             db.close()
+
+    # ── Image helpers ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _append_image_marker(text: str, image_keys: list) -> str:
+        """
+        Append a [POLICY_IMG:key1||key2] marker to the result string when images exist.
+        This marker lives in the ToolMessage (not the final AI response) so main.py
+        can extract presigned URLs without them leaking into rendered chat text.
+        """
+        if not image_keys:
+            return text
+        return text + "\n\n[POLICY_IMG:" + "||".join(image_keys) + "]"
 
     # ── Metadata chunk detection ──────────────────────────────────────────────
 
@@ -405,6 +574,7 @@ class PolicyService:
                 if scored:
                     seen_policies: set = set()
                     results = []
+                    all_image_keys: list = []
                     for _, c in scored:
                         if len(results) >= limit:
                             break
@@ -415,9 +585,12 @@ class PolicyService:
                             seen_policies.add(c.policy_id)
                             updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
                             results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
+                            if c.image_urls:
+                                all_image_keys.extend(c.image_urls)
 
                     if results:
-                        return "\n\n---\n\n".join(results)
+                        text = "\n\n---\n\n".join(results)
+                        return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 2. Keyword search on chunks ───────────────────────────────────
             chunks_all = db.query(PolicyChunk).all()
@@ -428,7 +601,6 @@ class PolicyService:
                     if PolicyService._is_metadata_chunk(c.text):
                         continue
                     lower = c.text.lower()
-                    # Title match counts heavily here too
                     title = policy_title_map.get(c.policy_id, "")
                     title_score = sum(10 if kw in title else 0 for kw in keywords)
                     content_score = sum(lower.count(kw) for kw in keywords)
@@ -441,6 +613,7 @@ class PolicyService:
                 if scored:
                     seen_policies: set = set()
                     results = []
+                    all_image_keys: list = []
                     for _, c in scored:
                         if len(results) >= limit:
                             break
@@ -451,9 +624,12 @@ class PolicyService:
                             seen_policies.add(c.policy_id)
                             updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
                             results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
+                            if c.image_urls:
+                                all_image_keys.extend(c.image_urls)
 
                     if results:
-                        return "\n\n---\n\n".join(results)
+                        text = "\n\n---\n\n".join(results)
+                        return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 3. Last resort: keyword search on full Policy.content ─────────
             return PolicyService._fallback_policy_search(query, db, limit)

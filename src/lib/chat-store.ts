@@ -20,6 +20,7 @@ export interface Turn {
   downloadTitle?: string;
   domain?: string;
   interactive?: InteractivePayload;
+  images?: string[];
 }
 
 export interface Thread {
@@ -89,7 +90,18 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: "aurora-chat-storage",
-      partialize: (state) => ({ threads: state.threads, activeId: state.activeId }),
+      partialize: (state) => ({
+        activeId: state.activeId,
+        threads: Object.fromEntries(
+          Object.entries(state.threads).map(([id, thread]) => [
+            id,
+            {
+              ...thread,
+              turns: thread.turns.map(({ images: _images, ...turn }) => turn),
+            },
+          ])
+        ),
+      }),
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.setThinking(false);

@@ -1,8 +1,36 @@
 from fastapi import APIRouter
 from typing import Optional
 from app.services.employee_service import EmployeeService
+from app.database import SessionLocal
+from app.models import Employee
+from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
+
+
+@router.get("/autocomplete")
+def autocomplete_employees(q: str = "", limit: int = 8):
+    db = SessionLocal()
+    try:
+        query = db.query(Employee)
+        if q:
+            term = f"%{q}%"
+            query = query.filter(
+                or_(Employee.name.ilike(term), Employee.email.ilike(term))
+            )
+        results = query.limit(limit).all()
+        return [
+            {
+                "id": e.id,
+                "name": e.name,
+                "email": e.email,
+                "department": e.department or "",
+                "designation": e.designation or "",
+            }
+            for e in results
+        ]
+    finally:
+        db.close()
 
 
 @router.get("/search")
