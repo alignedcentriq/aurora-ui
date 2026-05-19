@@ -1,5 +1,5 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -65,6 +65,14 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
 tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets]
 tool_node = ToolNode(tools)
 
+_it_llm = ChatOpenAI(
+    base_url=settings.ROUTER_BASE_URL,
+    api_key=settings.ROUTER_API_KEY,
+    model=settings.ROUTER_MODEL_NAME,
+    temperature=settings.AGENT_TEMPERATURE,
+    timeout=120,
+).bind_tools(tools)
+
 
 # -- Agent Node ---------------------------------------------------------------
 
@@ -123,15 +131,8 @@ def it_assistant(state: ITState):
     feedback_ctx = state.get("feedback_context") or ""
     system_prompt = base_prompt + guardrail + feedback_ctx
 
-    messages = [HumanMessage(content=system_prompt)] + state["messages"]
-    model = ChatOpenAI(
-        base_url=settings.ROUTER_BASE_URL,
-        api_key=settings.ROUTER_API_KEY,
-        model=settings.ROUTER_MODEL_NAME,
-        temperature=settings.AGENT_TEMPERATURE,
-        timeout=120,
-    ).bind_tools(tools)
-    return {"messages": [model.invoke(messages)]}
+    messages = [SystemMessage(content=system_prompt)] + state["messages"]
+    return {"messages": [_it_llm.invoke(messages)]}
 
 
 def should_continue(state: ITState):
