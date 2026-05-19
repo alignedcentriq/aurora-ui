@@ -7,9 +7,11 @@ Used by:
   - HR Agent  → sends announcement broadcast emails
 """
 
+import json
 import smtplib
 import logging
 import html
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -568,6 +570,39 @@ def send_offboarding_checklist(
     ok3 = _send(to=admin_email, subject=f"[Admin] {subject}", html_body=html_body)
     ok4 = _send(to=hr_email, subject=f"[HR] {subject}", html_body=html_body)
     return ok1 or ok2 or ok3 or ok4
+
+
+def send_notification_event(event_type: str, subject_suffix: str, data: dict) -> None:
+    """Send a structured notification email to NOTIFICATION_EMAIL for PA monitoring. Fire-and-forget."""
+    if not settings.NOTIFICATION_EMAIL:
+        return
+
+    def _send_async():
+        subject = f"[AURORA] {event_type} — {subject_suffix}"
+        rows = "".join(
+            f'<tr><td style="background:#f5f5f5;font-weight:bold;width:160px;padding:8px;">'
+            f'{html.escape(str(k))}</td>'
+            f'<td style="padding:8px;">{html.escape(str(v))}</td></tr>'
+            for k, v in data.items()
+        )
+        import base64 as _b64
+        json_str = json.dumps({"event": event_type, **data}, default=str)
+        json_b64 = _b64.b64encode(json_str.encode()).decode()
+        html_body = f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+  <div style="background:#0A2540;padding:16px 24px;">
+    <h2 style="color:#00D4AA;margin:0;font-size:16px;">[AURORA] {html.escape(event_type)}</h2>
+  </div>
+  <div style="padding:24px;">
+    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:550px;">
+      {rows}
+    </table>
+  </div>
+  <div id="pa-data" style="display:none;overflow:hidden;line-height:0;max-height:0;">PAJSON:{json_b64}:ENDJSON</div>
+</body></html>"""
+        _send(to=settings.NOTIFICATION_EMAIL, subject=subject, html_body=html_body)
+
+    threading.Thread(target=_send_async, daemon=True).start()
 
 
 def send_announcement_email(

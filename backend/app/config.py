@@ -155,6 +155,7 @@ class Config:
     HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "poc@alignedautomation")
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "poc@alignedautomation")
     HR_EMAIL = os.getenv("HR_EMAIL", os.getenv("ADMIN_EMAIL", "poc@alignedautomation.com"))
+    NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "poc@alignedautomation.com")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
     # Power Automate — SharePoint/PowerApps complaint sync

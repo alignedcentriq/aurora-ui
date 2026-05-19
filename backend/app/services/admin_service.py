@@ -78,6 +78,24 @@ class AdminService:
             except Exception:
                 pass
 
+            # Notify PA monitoring mailbox
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    "reimbursement_submitted",
+                    f"{emp.name} — INR {amount:,.0f} ({type})",
+                    {
+                        "reimbursement_id": new_r.id,
+                        "employee_name": emp.name,
+                        "employee_email": emp.email,
+                        "type": type,
+                        "amount": float(amount),
+                        "reason": reason,
+                    }
+                )
+            except Exception:
+                pass
+
             # Notify PA — triggers Teams approval card for admin
             AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_SUBMITTED, {
                 "event": "reimbursement_submitted",
@@ -307,6 +325,23 @@ class AdminService:
             except Exception:
                 pass
 
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    "facility_complaint",
+                    f"[{priority}] {category} at {location}",
+                    {
+                        "ticket_id": ticket_id,
+                        "category": category,
+                        "location": location,
+                        "priority": priority,
+                        "employee_name": emp.name,
+                        "employee_email": emp.email,
+                    }
+                )
+            except Exception:
+                pass
+
             AdminService._fire_webhook(settings.POWER_AUTOMATE_WEBHOOK_URL, {
                 "complaint_type": "premises",
                 "ticket_id": ticket_id,
@@ -395,6 +430,23 @@ class AdminService:
                     complaint_type=complaint_type,
                     description=description,
                     ticket_id=ticket_id,
+                )
+            except Exception:
+                pass
+
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    "food_complaint",
+                    f"{vendor_name} — {complaint_type}",
+                    {
+                        "ticket_id": ticket_id,
+                        "vendor_name": vendor_name,
+                        "complaint_type": complaint_type,
+                        "description": description[:200],
+                        "employee_name": emp.name,
+                        "employee_email": emp.email,
+                    }
                 )
             except Exception:
                 pass

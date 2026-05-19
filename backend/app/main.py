@@ -332,6 +332,21 @@ async def process_approval(token: str):
                         })
                     except Exception:
                         pass
+                    try:
+                        from app.services.email_service import send_notification_event
+                        send_notification_event(
+                            "leave_approved",
+                            f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
+                            {
+                                "employee_email": tok.employee_email,
+                                "leave_type": leave.leave_type,
+                                "start_date": str(leave.start_date),
+                                "end_date": str(leave.end_date),
+                                "approved_by": tok.approver_email,
+                            }
+                        )
+                    except Exception:
+                        pass
 
                 color = "#16a34a" if tok.action == "approve" else "#dc2626"
                 return HTMLResponse(_approval_html(

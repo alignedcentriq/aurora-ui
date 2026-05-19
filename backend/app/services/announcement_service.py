@@ -68,6 +68,24 @@ class AnnouncementService:
             except Exception as e:
                 logger.warning(f"Announcement email failed: {e}")
 
+            # Notify PA monitoring mailbox
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    "announcement_created",
+                    f"[{category}] {title}",
+                    {
+                        "announcement_id": ann.id,
+                        "title": title,
+                        "body_preview": body[:300],
+                        "category": category,
+                        "target_audience": target_audience,
+                        "created_by": created_by,
+                    }
+                )
+            except Exception:
+                pass
+
             # Notify PA — triggers Teams channel post
             try:
                 from app.services.admin_service import AdminService

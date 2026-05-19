@@ -57,8 +57,8 @@ def approve_reimbursement(
     if emp:
         from app.services.admin_service import AdminService
         from app.config import settings
-        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {
-            "event": "reimbursement_decision",
+        from app.services.email_service import send_notification_event
+        _payload = {
             "reimbursement_id": r.id,
             "employee_name": emp.name,
             "employee_email": emp.email,
@@ -66,8 +66,12 @@ def approve_reimbursement(
             "amount": float(r.amount),
             "decision": "Approved",
             "decided_by": user.email,
-            "decided_at": datetime.datetime.utcnow().isoformat() + "Z",
-        })
+        }
+        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {"event": "reimbursement_decision", "decided_at": datetime.datetime.utcnow().isoformat() + "Z", **_payload})
+        try:
+            send_notification_event("reimbursement_decision", f"Approved: {emp.name} — INR {r.amount:,.0f}", _payload)
+        except Exception:
+            pass
     return {"message": "Reimbursement approved."}
 
 
@@ -87,8 +91,8 @@ def reject_reimbursement(
     if emp:
         from app.services.admin_service import AdminService
         from app.config import settings
-        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {
-            "event": "reimbursement_decision",
+        from app.services.email_service import send_notification_event
+        _payload = {
             "reimbursement_id": r.id,
             "employee_name": emp.name,
             "employee_email": emp.email,
@@ -96,8 +100,12 @@ def reject_reimbursement(
             "amount": float(r.amount),
             "decision": "Rejected",
             "decided_by": user.email,
-            "decided_at": datetime.datetime.utcnow().isoformat() + "Z",
-        })
+        }
+        AdminService._fire_webhook(settings.PA_WEBHOOK_REIMBURSEMENT_DECISION, {"event": "reimbursement_decision", "decided_at": datetime.datetime.utcnow().isoformat() + "Z", **_payload})
+        try:
+            send_notification_event("reimbursement_decision", f"Rejected: {emp.name} — INR {r.amount:,.0f}", _payload)
+        except Exception:
+            pass
     return {"message": "Reimbursement rejected."}
 
 
@@ -152,6 +160,7 @@ def approve_parking(
     if emp:
         from app.services.admin_service import AdminService
         from app.config import settings
+        from app.services.email_service import send_notification_event
         AdminService._fire_webhook(settings.PA_WEBHOOK_PARKING_ACTIVATED, {
             "event": "parking_sticker_activated",
             "sticker_number": body.sticker_number,
@@ -164,6 +173,21 @@ def approve_parking(
             "valid_from": s.valid_from.isoformat() if s.valid_from else "",
             "valid_until": s.valid_until.isoformat() if s.valid_until else "",
         })
+        try:
+            send_notification_event(
+                "parking_activated",
+                f"Sticker issued to {emp.name}",
+                {
+                    "employee_name": emp.name,
+                    "employee_email": emp.email,
+                    "vehicle_number": s.vehicle_number,
+                    "vehicle_type": s.vehicle_type,
+                    "sticker_number": body.sticker_number,
+                    "valid_until": s.valid_until.isoformat() if s.valid_until else "",
+                }
+            )
+        except Exception:
+            pass
     return {"message": "Parking sticker approved and issued."}
 
 
@@ -182,6 +206,7 @@ def revoke_parking(
     if emp:
         from app.services.admin_service import AdminService
         from app.config import settings
+        from app.services.email_service import send_notification_event
         AdminService._fire_webhook(settings.PA_WEBHOOK_PARKING_REVOKED, {
             "event": "parking_sticker_revoked",
             "sticker_id": s.id,
@@ -191,6 +216,19 @@ def revoke_parking(
             "revoked_by": user.email,
             "revoked_at": datetime.datetime.utcnow().isoformat() + "Z",
         })
+        try:
+            send_notification_event(
+                "parking_revoked",
+                f"Sticker revoked for {emp.name}",
+                {
+                    "employee_name": emp.name,
+                    "employee_email": emp.email,
+                    "vehicle_number": s.vehicle_number,
+                    "revoked_by": user.email,
+                }
+            )
+        except Exception:
+            pass
     return {"message": "Parking sticker revoked."}
 
 
