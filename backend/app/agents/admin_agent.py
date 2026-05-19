@@ -183,6 +183,14 @@ tools = [
 
 tool_node = ToolNode(tools)
 
+_admin_llm = ChatOpenAI(
+    base_url=settings.ROUTER_BASE_URL,
+    api_key=settings.ROUTER_API_KEY,
+    model=settings.ROUTER_MODEL_NAME,
+    temperature=settings.AGENT_TEMPERATURE,
+    timeout=120,
+)
+
 
 # def admin_assistant(state: AdminState):
 #     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
@@ -473,15 +481,13 @@ def admin_assistant(state: AdminState):
     feedback_ctx = state.get("feedback_context") or ""
     system_prompt = base_prompt + guardrail + feedback_ctx
 
+    # If policy was already pre-fetched by the parent graph node, strip search_admin_policies
+    # from the tools list so the LLM cannot trigger a redundant second embedding + tool call.
+    pre_fetched = "[PRE-SEARCHED POLICY]" in feedback_ctx or "[POLICY SEARCH RESULT]" in feedback_ctx
+    active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
+
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    model = ChatOpenAI(
-        base_url=settings.ROUTER_BASE_URL,
-        api_key=settings.ROUTER_API_KEY,
-        model=settings.ROUTER_MODEL_NAME,
-        temperature=settings.AGENT_TEMPERATURE,
-        timeout=120,
-    ).bind_tools(tools)
-    response = model.invoke(messages)
+    response = _admin_llm.bind_tools(active_tools).invoke(messages)
     return {"messages": [response]}
 
 

@@ -105,7 +105,7 @@ def apply_leave(
 @tool
 def search_hr_policies(query: str):
     """Search HR policy documents for a specific topic."""
-    return HRService.search_policies(query)
+    return HRService.search_policies(query, limit=1)
 
 @tool
 def transfer_sharepoint_to_minio(site_name: str, folder_path: str, minio_prefix: str = ""):

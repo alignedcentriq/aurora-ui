@@ -221,7 +221,11 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                   key={item.to}
                   to={item.to}
                   title={!showLabels ? item.label : undefined}
-                  onClick={mobileOpen ? onMobileClose : undefined}
+                  onClick={() => {
+                    if (mobileOpen) onMobileClose();
+                    // When collapsed on desktop and clicking Chat, expand so history is visible
+                    if (isCollapsed && item.to === "/") toggle();
+                  }}
                   className={cn(
                     "flex items-center rounded-lg py-2.5 text-[13px] font-medium transition-all duration-150",
                     showLabels ? "gap-3 px-3" : "justify-center px-0",
@@ -238,6 +242,17 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                 </Link>
               );
             })}
+
+          {/* New conversation shortcut — collapsed desktop only */}
+          {isCollapsed && !mobileOpen && isActive("/") && (
+            <button
+              onClick={() => createThread()}
+              title="New Conversation"
+              className="flex w-full items-center justify-center rounded-lg py-2.5 text-[var(--sidebar-foreground)]/50 hover:bg-white/[0.04] hover:text-primary transition-all duration-150"
+            >
+              <Plus className="h-[18px] w-[18px] shrink-0" />
+            </button>
+          )}
 
           {/* Recent Chats — only when labels are visible */}
           {showLabels && isActive("/") && (

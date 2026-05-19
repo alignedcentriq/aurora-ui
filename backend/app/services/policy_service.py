@@ -238,31 +238,50 @@ class PolicyService:
         "hotels": ["accommodation", "hotel", "hotels", "lodge", "stay", "lodging"],
         "accommodation": ["accommodation", "hotel", "lodge", "stay"],
         "travel": ["travel", "trip", "journey", "relocation"],
-        "reimburse": ["reimburse", "reimbursement", "claim", "expense", "certification", "certificate"],
-        "reimbursement": ["reimburse", "reimbursement", "claim", "expense", "certification", "certificate"],
+        "reimburse": ["reimburse", "reimbursement", "claim", "expense"],
+        "reimbursement": ["reimburse", "reimbursement", "claim", "expense"],
         "claim": ["claim", "reimburse", "reimbursement", "expense"],
         "medical": ["medical", "health", "practo", "doctor"],
-        "cert": ["certification", "certificate", "training", "reimbursement", "reimburse"],
-        "certification": ["certification", "certificate", "cert", "training", "reimbursement", "reimburse"],
-        "certificate": ["certificate", "certification", "cert", "training", "reimbursement", "reimburse"],
+        "cert": ["certification", "certificate", "training", "course"],
+        "certification": ["certification", "certificate", "cert", "training", "course"],
+        "certificate": ["certificate", "certification", "cert", "training", "course"],
     }
 
     # ── Embedding helpers ─────────────────────────────────────────────────────
 
-    @staticmethod
-    def _get_embedding(text: str) -> list | None:
-        """Call the configured embedding model. Returns None on any failure."""
-        try:
+    _embedding_client = None
+    _embedding_cache: dict = {}
+    _embedding_cache_max: int = 512
+
+    @classmethod
+    def _get_embedding_client(cls):
+        if cls._embedding_client is None:
             from openai import OpenAI
-            client = OpenAI(
+            cls._embedding_client = OpenAI(
                 base_url=settings.EMBEDDING_BASE_URL,
                 api_key=settings.EMBEDDING_API_KEY,
             )
-            resp = client.embeddings.create(
-                input=text[:2000],
+        return cls._embedding_client
+
+    @classmethod
+    def _get_embedding(cls, text: str) -> list | None:
+        """Call the configured embedding model. Returns None on any failure."""
+        key = text[:2000]
+        if key in cls._embedding_cache:
+            return cls._embedding_cache[key]
+        try:
+            resp = cls._get_embedding_client().embeddings.create(
+                input=key,
                 model=settings.EMBEDDING_MODEL_NAME,
             )
-            return resp.data[0].embedding
+            result = resp.data[0].embedding
+            if len(cls._embedding_cache) >= cls._embedding_cache_max:
+                # evict oldest half when full
+                drop = list(cls._embedding_cache.keys())[:cls._embedding_cache_max // 2]
+                for k in drop:
+                    del cls._embedding_cache[k]
+            cls._embedding_cache[key] = result
+            return result
         except Exception as e:
             print(f"[PolicyService] Embedding skipped ({type(e).__name__}): {e}")
             return None
@@ -555,7 +574,7 @@ class PolicyService:
                     db.query(PolicyChunk, dist_expr.label("dist"))
                     .filter(
                         PolicyChunk.embedding.isnot(None),
-                        dist_expr < 0.7,
+                        dist_expr < 0.55,
                     )
                     .order_by(dist_expr)
                     .limit(limit * 10)
@@ -566,7 +585,7 @@ class PolicyService:
                     if PolicyService._is_metadata_chunk(c.text):
                         continue
                     title = policy_title_map.get(c.policy_id, "")
-                    title_bonus = sum(0.2 for kw in query_keywords if kw in title)
+                    title_bonus = sum(0.5 for kw in query_keywords if kw in title and kw not in ("policy", "what", "the", "for", "and"))
                     scored.append((1 - distance + title_bonus, c))
 
                 scored.sort(key=lambda x: x[0], reverse=True)

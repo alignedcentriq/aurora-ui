@@ -101,26 +101,26 @@ function SettingsPage() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
-        <h1 className="text-xl font-semibold text-foreground tracking-tight">Settings</h1>
-        <p className="text-[13px] text-muted-foreground mt-0.5">
+      <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5">
+        <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight">Settings</h1>
+        <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
           Manage your preferences and personalization
         </p>
       </div>
 
-      <div className="flex-1 p-8">
-        <div className="mx-auto max-w-3xl space-y-8">
+      <div className="flex-1 p-4 sm:p-8">
+        <div className="mx-auto max-w-3xl space-y-6 sm:space-y-8">
           {/* Profile Card */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-            <div className="flex items-center gap-5">
+          <div className="rounded-2xl border border-[var(--border)] bg-card p-4 sm:p-6">
+            <div className="flex items-center gap-3 sm:gap-5">
               {user.avatarUrl ? (
                 <img
                   src={user.avatarUrl}
                   alt={user.name}
-                  className="h-16 w-16 rounded-2xl object-cover shadow-md"
+                  className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover shadow-md shrink-0"
                 />
               ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-xl font-bold text-primary shadow-sm">
+                <div className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-primary/10 text-lg sm:text-xl font-bold text-primary shadow-sm shrink-0">
                   {user.name
                     .split(" ")
                     .map((n) => n[0])
@@ -128,15 +128,15 @@ function SettingsPage() {
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-semibold text-foreground">{user.name}</h2>
-                <p className="text-[13px] text-muted-foreground">{user.email}</p>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                <h2 className="text-base sm:text-lg font-semibold text-foreground truncate">{user.name}</h2>
+                <p className="text-[11px] sm:text-[13px] text-muted-foreground truncate">{user.email}</p>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-primary">
                     <Shield className="h-3 w-3" />
                     {user.role}
                   </span>
                   {user.department && (
-                    <span className="text-[11px] text-muted-foreground">{user.department}</span>
+                    <span className="text-[10px] sm:text-[11px] text-muted-foreground">{user.department}</span>
                   )}
                 </div>
               </div>
@@ -145,14 +145,14 @@ function SettingsPage() {
 
           {/* Appearance */}
           <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--border)]">
-              <h3 className="text-[15px] font-semibold text-foreground flex items-center gap-2">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
+              <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
                 <Palette className="h-4 w-4 text-violet-500" /> Appearance
               </h3>
             </div>
-            <div className="p-6 space-y-2">
-              <p className="text-[13px] font-medium text-foreground mb-3">Theme</p>
-              <div className="grid grid-cols-3 gap-3">
+            <div className="p-4 sm:p-6 space-y-2">
+              <p className="text-[12px] sm:text-[13px] font-medium text-foreground mb-3">Theme</p>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 {themeOptions.map((opt) => {
                   const Icon = opt.icon;
                   const isSelected = theme === opt.value;
@@ -161,7 +161,7 @@ function SettingsPage() {
                       key={opt.value}
                       onClick={() => setTheme(opt.value)}
                       className={cn(
-                        "flex flex-col items-center gap-2 rounded-xl border-2 px-4 py-4 transition-all duration-150",
+                        "flex flex-col items-center gap-1.5 sm:gap-2 rounded-xl border-2 px-2 py-3 sm:px-4 sm:py-4 transition-all duration-150",
                         isSelected
                           ? "border-primary bg-primary/5"
                           : "border-[var(--border)] hover:border-[var(--border-strong)]",
@@ -169,13 +169,13 @@ function SettingsPage() {
                     >
                       <Icon
                         className={cn(
-                          "h-5 w-5",
+                          "h-4 w-4 sm:h-5 sm:w-5",
                           isSelected ? "text-primary" : "text-muted-foreground",
                         )}
                       />
                       <span
                         className={cn(
-                          "text-xs font-medium",
+                          "text-[11px] sm:text-xs font-medium",
                           isSelected ? "text-primary" : "text-muted-foreground",
                         )}
                       >

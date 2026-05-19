@@ -85,7 +85,7 @@ export function AIMessage({
       <div className="group flex max-w-[85%] gap-3">
         <Logo size="sm" className="mt-1 shadow-sm shrink-0" />
 
-        <div className="flex-1 space-y-1.5">
+        <div className="flex-1 min-w-0 space-y-1.5">
           <div className="chat-bubble-assistant">
             <div className="relative">{children}</div>
           </div>
@@ -102,9 +102,9 @@ export function AIMessage({
             )}
           </div>
 
-          {/* Action bar — copy + feedback, revealed on hover */}
+          {/* Action bar — copy + feedback; always visible on mobile, hover-revealed on desktop */}
           {!live && (
-            <div className="flex items-center gap-1 px-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <div className="flex items-center gap-1 px-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity duration-150">
               {/* Copy */}
               {text && (
                 <button

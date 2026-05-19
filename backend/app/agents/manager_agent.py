@@ -1,5 +1,5 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
@@ -32,6 +32,14 @@ class ManagerState(TypedDict):
 
 tools = [get_my_team, search_people_directory]
 tool_node = ToolNode(tools)
+
+_manager_llm = ChatOpenAI(
+    base_url=settings.ROUTER_BASE_URL,
+    api_key=settings.ROUTER_API_KEY,
+    model=settings.ROUTER_MODEL_NAME,
+    temperature=settings.AGENT_TEMPERATURE,
+    timeout=120,
+).bind_tools(tools)
 
 
 def manager_assistant(state: ManagerState):
@@ -66,16 +74,8 @@ def manager_assistant(state: ManagerState):
     feedback_ctx = state.get("feedback_context") or ""
     system_prompt = base_prompt + guardrail + feedback_ctx
 
-    messages = [HumanMessage(content=system_prompt)] + state["messages"]
-    model = ChatOpenAI(
-        base_url=settings.ROUTER_BASE_URL,
-        api_key=settings.ROUTER_API_KEY,
-        model=settings.ROUTER_MODEL_NAME,
-        temperature=settings.AGENT_TEMPERATURE,
-        timeout=120,
-    ).bind_tools(tools)
-    response = model.invoke(messages)
-    return {"messages": [response]}
+    messages = [SystemMessage(content=system_prompt)] + state["messages"]
+    return {"messages": [_manager_llm.invoke(messages)]}
 
 
 def should_continue(state: ManagerState):
