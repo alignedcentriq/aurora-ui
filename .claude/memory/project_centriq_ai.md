@@ -451,8 +451,8 @@ headers: {
 | `DEFAULT_USER_EMAIL` | `employee1@centriq.ai` | Dev fallback when x-user-email header absent |
 | `PORT` | `8080` | Backend port |
 | `SMTP_HOST/PORT/USER/PASS` | `smtp.gmail.com/587` | Email |
-| `HELPDESK_EMAIL` | `helpdesk@alignedautomation.com` | IT tickets destination |
-| `ADMIN_EMAIL` | `admin@alignedautomation.com` | Admin notifications |
+| `HELPDESK_EMAIL` | `poc@alignedautomation.com` | IT tickets destination |
+| `ADMIN_EMAIL` | `poc@alignedautomation.com` | Admin notifications |
 | `GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | — | Azure AD for SharePoint Graph API |
 
 ---
@@ -543,6 +543,9 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 - Revamped `/people` directory view with highly premium aesthetics: multi-colored badges representing various levels of expertise, inline reporting manager, bio/about segment, level/grade indicator, and rich allocation history including billability percentages.
 - Verified PMO role has full, unrestricted access to the enhanced People search.
 
+**Phase 11 — Route Optimization & Code-Splitting Fixes:**
+- Resolved TanStack Router compilation and bundle size warnings by removing the `export default` statements from the core page components (`ITPortal`, `HRPortal`, and `AdminPortal`) defined in `src/routes/_layout.it-portal.tsx`, `src/routes/_layout.hr-portal.tsx`, and `src/routes/_layout.admin-portal.tsx`. This allows the bundler to successfully code-split them into separate lazy-loaded chunks, optimizing the initial load bundle size.
+
 ---
 
 ## What Does NOT Exist Yet (Future Work)
@@ -573,3 +576,4 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 | `DATABASE_URL=auto` caused SQLAlchemy parse error | `create_db.py` | Uses `settings.DATABASE_URL` (resolved URL) |
 | Loki `--- Logging error ---` spam when Loki not running | `main.py` | `_SilentLokiHandler` overrides `handleError` as no-op |
 | 403 Forbidden for People Directory for Functional Manager role | `auth.py`, `people_routes.py` | Added `"functional manager"` to `VALID_ROLES` in `auth.py` (preventing silent role downgrade to `"employee"`) and to `SEARCH_ROLES` in `people_routes.py`. |
+| TanStack Router bundle size warning / code-splitting disabled for IT, HR, and Admin Portals | `src/routes/_layout.it-portal.tsx`, `src/routes/_layout.hr-portal.tsx`, `src/routes/_layout.admin-portal.tsx` | Removed `export default` from the page component declarations. Without the export statement, the router compiler can successfully code-split the route components into distinct lazy-loaded chunk files, reducing initial bundle sizes. |

@@ -1,7 +1,5 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -9,196 +7,320 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 5 },
+            { "color": "red", "value": 15 }
+          ]}
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "displayLabels": ["percent"],
-        "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT status, count(*) FROM reimbursements GROUP BY status"
-        }
-      ],
-      "title": "Reimbursement by Status",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 6,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT count(*) FROM parking_stickers WHERE status='Active'"
-        }
-      ],
-      "title": "Active Parking Stickers",
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.it_tickets WHERE status='Open'",
+        "refId": "A"
+      }],
+      "title": "Open IT Tickets",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 3 },
+            { "color": "red", "value": 10 }
+          ]}
         },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT count(*) FROM facility_complaints WHERE status IN ('Open','In Progress')"
-        }
-      ],
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.facility_complaints WHERE status IN ('Open', 'In Progress')",
+        "refId": "A"
+      }],
       "title": "Open Facility Complaints",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 5 },
+            { "color": "red", "value": 20 }
+          ]}
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 0
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
       },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.reimbursements WHERE status='Pending'",
+        "refId": "A"
+      }],
+      "title": "Pending Reimbursements",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 }
+          ]}
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "id": 4,
       "options": {
-        "footer": {
-          "fields": "",
-          "reducer": ["sum"],
-          "show": false
-        },
-        "showHeader": true
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT vendor_name, avg(rating) as rating FROM food_vendor_feedback GROUP BY vendor_name"
-        }
-      ],
-      "title": "Food Vendor Ratings",
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.parking_stickers WHERE status='Pending'",
+        "refId": "A"
+      }],
+      "title": "Pending Parking Stickers",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.6, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "auto", "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -15
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT COALESCE(category, 'Other') as category, count(*) as count FROM enterprise_ai.it_tickets GROUP BY category ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "IT Tickets by Category",
       "type": "barchart"
     },
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 8
-      },
-      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
       "options": {
-        "footer": {
-          "fields": "",
-          "reducer": ["sum"],
-          "show": false
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT status, count(*) as count FROM enterprise_ai.it_tickets GROUP BY status",
+        "refId": "A"
+      }],
+      "title": "IT Tickets by Status",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 7,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.6, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "horizontal", "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT COALESCE(category, 'Other') as category, count(*) as count FROM enterprise_ai.facility_complaints GROUP BY category ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "Facility Complaints by Category",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 8,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.6, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "auto", "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -15
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT COALESCE(type, 'Other') as type, count(*) as count FROM enterprise_ai.reimbursements GROUP BY type ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "Reimbursements by Type",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 9,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.6, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "auto", "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -15
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT vendor_name, ROUND(AVG(rating)::numeric, 1) as avg_rating FROM enterprise_ai.food_vendor_feedback GROUP BY vendor_name ORDER BY avg_rating DESC",
+        "refId": "A"
+      }],
+      "title": "Food Vendor Avg Rating",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1 },
+            { "color": "red", "value": 5 }
+          ]}
         },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+      "id": 10,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.hitl_requests WHERE status='Pending'",
+        "refId": "A"
+      }],
+      "title": "HITL Pending Approvals",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "id": 11,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.parking_stickers WHERE status='Active'",
+        "refId": "A"
+      }],
+      "title": "Active Parking Stickers",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "id": 12,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
         "showHeader": true
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT sr.software_name, e.name as requested_by, sr.status, sr.requires_admin FROM software_requests sr JOIN employees e ON sr.employee_id=e.id WHERE sr.status='Pending' ORDER BY sr.id DESC"
-        }
-      ],
-      "title": "Software Installation Queue",
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT ticket_id as \"Ticket ID\", subject as \"Subject\", category as \"Category\", priority as \"Priority\", status as \"Status\", created_at as \"Created\" FROM enterprise_ai.it_tickets ORDER BY created_at DESC LIMIT 20",
+        "refId": "A"
+      }],
+      "title": "Recent IT Tickets",
       "type": "table"
     }
   ],
@@ -206,15 +328,10 @@
   "schemaVersion": 38,
   "style": "dark",
   "tags": ["admin", "it", "operations"],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-6h",
-    "to": "now"
-  },
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
   "timezone": "",
-  "title": "Centriq Admin & IT Operations Dashboard",
+  "title": "Centriq Admin & IT Operations",
   "uid": "admin_operations",
   "version": 1
 }

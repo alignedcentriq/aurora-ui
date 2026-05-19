@@ -28,7 +28,7 @@ def get_langfuse_client() -> Langfuse | None:
         _client = Langfuse(
             public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-1234567890"),
             secret_key=os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-1234567890"),
-            host=os.environ.get("LANGFUSE_HOST", "http://localhost:3002"),
+            host=os.environ.get("LANGFUSE_HOST", "http://localhost:3003"),
         )
         return _client
     except Exception as e:

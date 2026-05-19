@@ -159,6 +159,30 @@ class PromptService:
             db.close()
 
     @staticmethod
+    def list_own_drafts(email: str) -> list:
+        db = SessionLocal()
+        try:
+            drafts = (
+                db.query(PromptDraft)
+                .filter(PromptDraft.status == "pending", PromptDraft.submitted_by == email)
+                .order_by(PromptDraft.created_at.desc())
+                .all()
+            )
+            return [
+                {
+                    "id": d.id,
+                    "domain": d.agent_domain,
+                    "key": d.prompt_key,
+                    "value": d.draft_value,
+                    "submitted_by": d.submitted_by,
+                    "created_at": d.created_at.isoformat(),
+                }
+                for d in drafts
+            ]
+        finally:
+            db.close()
+
+    @staticmethod
     def approve_draft(draft_id: int, reviewed_by: str) -> str:
         db = SessionLocal()
         try:

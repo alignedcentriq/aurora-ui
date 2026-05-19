@@ -19,7 +19,6 @@ class ITService:
                 designation="Employee",
                 joining_date=datetime.date.today(),
                 employment_type="Full-time",
-                location="Mumbai",
                 shift_type="Day",
             )
             db.add(emp)

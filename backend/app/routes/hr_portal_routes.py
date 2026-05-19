@@ -38,37 +38,6 @@ def list_leaves(
     ]
 
 
-@router.put("/leaves/{leave_id}/approve")
-def approve_leave(
-    leave_id: int,
-    user: CurrentUser = Depends(require_hr),
-    db: Session = Depends(get_db),
-):
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
-    if not leave:
-        raise HTTPException(status_code=404, detail="Leave not found.")
-    if leave.status != "Pending":
-        raise HTTPException(status_code=400, detail=f"Leave is already {leave.status}.")
-    leave.status = "Approved"
-    db.commit()
-    return {"message": "Leave approved."}
-
-
-@router.put("/leaves/{leave_id}/reject")
-def reject_leave(
-    leave_id: int,
-    user: CurrentUser = Depends(require_hr),
-    db: Session = Depends(get_db),
-):
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
-    if not leave:
-        raise HTTPException(status_code=404, detail="Leave not found.")
-    if leave.status != "Pending":
-        raise HTTPException(status_code=400, detail=f"Leave is already {leave.status}.")
-    leave.status = "Rejected"
-    db.commit()
-    return {"message": "Leave rejected."}
-
 
 # ── Grievances ────────────────────────────────────────────────────────────────
 

@@ -9,14 +9,12 @@ router = APIRouter(prefix="/api/employees", tags=["employees"])
 def search_employees(
     q: str = "",
     function: Optional[str] = None,
-    location: Optional[str] = None,
     designation: Optional[str] = None,
     limit: int = 20,
 ):
     result = EmployeeService.search_directory(
         query=q,
         function=function,
-        location=location,
         designation=designation,
         limit=limit,
     )

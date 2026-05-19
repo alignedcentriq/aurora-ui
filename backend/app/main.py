@@ -462,6 +462,126 @@ async def get_admin_stats(_: CurrentUser = Depends(require_admin)):
         db.close()
 
 
+@app.get("/api/admin/analytics")
+async def get_admin_analytics(_: CurrentUser = Depends(require_admin)):
+    """Comprehensive analytics endpoint — all charts powered by real DB data."""
+    from app.models import (
+        Employee, ITTicket, FacilityComplaint, Reimbursement, Leave,
+        ChatFeedback, FoodComplaint, Project, FoodVendorFeedback,
+    )
+    from sqlalchemy import func as sqlfunc
+    db = SessionLocal()
+    try:
+        dept_rows = (
+            db.query(Employee.department, sqlfunc.count(Employee.id))
+            .group_by(Employee.department)
+            .order_by(sqlfunc.count(Employee.id).desc())
+            .all()
+        )
+        ticket_cat_rows = (
+            db.query(ITTicket.category, sqlfunc.count(ITTicket.id))
+            .group_by(ITTicket.category)
+            .order_by(sqlfunc.count(ITTicket.id).desc())
+            .all()
+        )
+        ticket_status_rows = (
+            db.query(ITTicket.status, sqlfunc.count(ITTicket.id))
+            .group_by(ITTicket.status)
+            .all()
+        )
+        leave_rows = (
+            db.query(Leave.leave_type, Leave.status, sqlfunc.count(Leave.id))
+            .group_by(Leave.leave_type, Leave.status)
+            .all()
+        )
+        reimb_rows = (
+            db.query(
+                Reimbursement.type, Reimbursement.status,
+                sqlfunc.count(Reimbursement.id),
+                sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0),
+            )
+            .group_by(Reimbursement.type, Reimbursement.status)
+            .all()
+        )
+        facility_cat_rows = (
+            db.query(FacilityComplaint.category, sqlfunc.count(FacilityComplaint.id))
+            .group_by(FacilityComplaint.category)
+            .order_by(sqlfunc.count(FacilityComplaint.id).desc())
+            .all()
+        )
+        feedback_rows = (
+            db.query(ChatFeedback.domain, ChatFeedback.rating, sqlfunc.count(ChatFeedback.id))
+            .group_by(ChatFeedback.domain, ChatFeedback.rating)
+            .all()
+        )
+        total_feedback = db.query(ChatFeedback).count()
+        helpful = db.query(ChatFeedback).filter(ChatFeedback.rating == 1).count()
+        unhelpful = db.query(ChatFeedback).filter(ChatFeedback.rating == -1).count()
+        project_status_rows = (
+            db.query(Project.status, sqlfunc.count(Project.id))
+            .group_by(Project.status)
+            .all()
+        )
+        avg_completion = db.query(sqlfunc.avg(Project.completion_pct)).scalar() or 0.0
+        vendor_rows = (
+            db.query(
+                FoodVendorFeedback.vendor_name,
+                sqlfunc.avg(FoodVendorFeedback.rating),
+                sqlfunc.count(FoodVendorFeedback.id),
+            )
+            .group_by(FoodVendorFeedback.vendor_name)
+            .order_by(sqlfunc.avg(FoodVendorFeedback.rating).desc())
+            .limit(5)
+            .all()
+        )
+        return {
+            "employees": {
+                "total": db.query(Employee).count(),
+                "by_department": [{"dept": r[0] or "Unknown", "count": r[1]} for r in dept_rows],
+            },
+            "it_tickets": {
+                "total": db.query(ITTicket).count(),
+                "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
+                "by_category": [{"category": r[0] or "Other", "count": r[1]} for r in ticket_cat_rows],
+                "by_status": [{"status": r[0], "count": r[1]} for r in ticket_status_rows],
+            },
+            "leaves": {
+                "total": db.query(Leave).count(),
+                "by_type_status": [{"type": r[0], "status": r[1], "count": r[2]} for r in leave_rows],
+            },
+            "reimbursements": {
+                "total": db.query(Reimbursement).count(),
+                "total_amount": float(db.query(sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0)).scalar()),
+                "by_type_status": [
+                    {"type": r[0], "status": r[1], "count": r[2], "amount": float(r[3])}
+                    for r in reimb_rows
+                ],
+            },
+            "facility_complaints": {
+                "total": db.query(FacilityComplaint).count(),
+                "by_category": [{"category": r[0], "count": r[1]} for r in facility_cat_rows],
+            },
+            "feedback": {
+                "total": total_feedback,
+                "helpful": helpful,
+                "unhelpful": unhelpful,
+                "score_pct": round(helpful / total_feedback * 100) if total_feedback else 0,
+                "by_domain": [{"domain": r[0], "rating": r[1], "count": r[2]} for r in feedback_rows],
+            },
+            "projects": {
+                "total": db.query(Project).count(),
+                "avg_completion": round(float(avg_completion), 1),
+                "by_status": [{"status": r[0], "count": r[1]} for r in project_status_rows],
+            },
+            "food_vendors": [
+                {"vendor": r[0], "avg_rating": round(float(r[1]), 1), "reviews": r[2]}
+                for r in vendor_rows
+            ],
+        }
+    finally:
+        db.close()
+
+
 @app.get("/api/hr/dashboard")
 async def get_hr_dashboard(user: CurrentUser = Depends(get_current_user)):
     db = SessionLocal()

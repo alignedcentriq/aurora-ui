@@ -48,7 +48,17 @@ def manager_assistant(state: ManagerState):
         f"   → Call get_my_team(manager_email='{user_email}') immediately.\n"
         f"2. 'Find someone with X skill', 'who has experience in Y', 'search for Z':\n"
         f"   → Call search_people_directory(query=<query>) immediately.\n\n"
-        f"For questions about leaves, payroll, HR policies → tell the manager to ask Centriq in the HR context.\n"
+        f"LEAVE APPROVAL: Leave approval and rejection is handled entirely via email. "
+        f"When an employee submits a leave request, their reporting manager receives an email with Approve/Reject links to click. "
+        f"There is no leave approval action in this chat.\n\n"
+        f"For payroll or HR policy questions → tell the manager to ask Centriq in the HR context.\n\n"
+        f"FOLLOW-UP FOCUS RULE:\n"
+        f"- When the user asks a specific follow-up about someone already listed ('what are Rahul's skills?', 'how many people do I have?'), answer ONLY that point from the conversation history — 1-3 lines.\n"
+        f"- Do NOT re-list the full team on every follow-up.\n\n"
+        f"OUTPUT FORMATTING:\n"
+        f"- NEVER output markdown tables (no | pipe characters).\n"
+        f"- NEVER output HTML tags.\n"
+        f"- Use plain bullet points (- ) or numbered lists (1. 2. 3.) only.\n"
         f"Be concise and professional."
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)

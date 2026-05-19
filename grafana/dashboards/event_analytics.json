@@ -1,7 +1,5 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -9,95 +7,193 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "editorMode": "builder",
-          "expr": "sum(count_over_time({application=\"aurora-backend\"} | json | event_name != \"\" [$__interval]))",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Total Custom Events Over Time",
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.projects",
+        "refId": "A"
+      }],
+      "title": "Total Projects",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "max": 100,
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "yellow", "value": 40 },
+            { "color": "green", "value": 75 }
+          ]},
+          "unit": "percent"
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 8
-      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "id": 2,
       "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": true,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
+        "minVizHeight": 75, "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "{application=\"aurora-backend\"} | json | event_name != \"\"",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Raw Event JSON Logs",
-      "type": "logs"
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT ROUND(AVG(completion_pct)::numeric, 1) FROM enterprise_ai.projects",
+        "refId": "A"
+      }],
+      "title": "Avg Completion",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.projects WHERE status='Completed'",
+        "refId": "A"
+      }],
+      "title": "Completed Projects",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.projects WHERE status='In Progress'",
+        "refId": "A"
+      }],
+      "title": "In Progress",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 10, "x": 0, "y": 4 },
+      "id": 5,
+      "options": {
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT COALESCE(status, 'Unknown') as status, count(*) as count FROM enterprise_ai.projects GROUP BY status",
+        "refId": "A"
+      }],
+      "title": "Projects by Status",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "continuous-GrYlRd" }, "unit": "percent" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 14, "x": 10, "y": 4 },
+      "id": 6,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.7, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "horizontal", "showValue": "always",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT name, completion_pct FROM enterprise_ai.projects ORDER BY completion_pct DESC LIMIT 15",
+        "refId": "A"
+      }],
+      "title": "Completion % by Project",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 12 },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT p.name as \"Project\", p.status as \"Status\", p.completion_pct as \"Completion %\", p.start_date as \"Start\", p.end_date as \"End\", COUNT(ea.id) as \"Team Size\" FROM enterprise_ai.projects p LEFT JOIN enterprise_ai.employee_allocations ea ON ea.project_id = p.id GROUP BY p.id, p.name, p.status, p.completion_pct, p.start_date, p.end_date ORDER BY p.completion_pct DESC",
+        "refId": "A"
+      }],
+      "title": "All Projects",
+      "type": "table"
     }
   ],
-  "refresh": "10s",
+  "refresh": "5m",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
+  "tags": ["pmo", "projects"],
+  "templating": { "list": [] },
+  "time": { "from": "now-90d", "to": "now" },
   "timezone": "",
-  "title": "Custom Event Analytics (Loki JSON)",
+  "title": "Centriq PMO — Projects",
   "uid": "event_analytics",
   "version": 1
 }

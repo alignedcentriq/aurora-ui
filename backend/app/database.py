@@ -65,7 +65,7 @@ def init_db():
         with engine.connect() as conn:
             conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
             conn.commit()
-        
+
     Base.metadata.create_all(bind=engine)
 
     # Drop removed tables
@@ -88,6 +88,7 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS user_message_embedding TEXT',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -230,7 +231,6 @@ def _seed_hr_data(db):
     print("Seeding dummy HR data...")
 
     departments = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
-    locations = ["Mumbai", "Bangalore", "Gurgaon", "Pune", "Hyderabad"]
     designations = {
         "Engineering": ["SDE I", "SDE II", "Senior SDE", "Engineering Manager"],
         "HR": ["HR Associate", "HR Manager", "Talent Acquisition"],
@@ -265,7 +265,6 @@ def _seed_hr_data(db):
             designation=desig,
             joining_date=datetime.date(2022, 1, 1) + datetime.timedelta(days=random.randint(0, 365*2)),
             employment_type="Full-time",
-            location=random.choice(locations),
             pf_number=f"PF{random.randint(100000, 999999)}",
             insurance_plan=random.choice(["Gold", "Silver", "Platinum"]),
             tax_regime=random.choice(["Old", "New"]),

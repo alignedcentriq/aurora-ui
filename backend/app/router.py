@@ -89,6 +89,9 @@ Example responses:
 {{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants to know achievements of a specific project.", "sub_intent": "project_achievements", "entities": {{"project_name": "Centriq AI"}}}}
 {{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a downloadable PDF report for all projects.", "sub_intent": "generate_report", "entities": {{"project_name": "all"}}}}
 {{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a PDF report for a specific project.", "sub_intent": "generate_report", "entities": {{"project_name": "HR Integration"}}}}
+{{"domain": "admin", "confidence": 0.95, "reasoning": "User asking about certification reimbursement policy — admin handles reimbursement policy information.", "sub_intent": "policy_query", "entities": {{"policy_topic": "certification reimbursement"}}}}
+{{"domain": "admin", "confidence": 0.93, "reasoning": "User asking about travel expense policy — admin handles expense and reimbursement policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "travel expense"}}}}
+{{"domain": "hr", "confidence": 0.94, "reasoning": "User asking about leave policy — HR handles leave and attendance policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "leave"}}}}
 {{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
 """
 

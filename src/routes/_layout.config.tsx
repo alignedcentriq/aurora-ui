@@ -67,10 +67,17 @@ const ROLE_DOMAINS: Record<string, string[]> = {
   admin: ["hr", "admin", "it_support", "pmo", "functional_manager"],
 };
 
-const PROMPT_KEYS = [
-  { key: "system_prompt", label: "System Prompt", description: "Core instructions and persona for this domain." },
-  { key: "guardrail", label: "Guardrail", description: "Anti-hallucination and scope constraints appended after the system prompt." },
-];
+const KNOWN_PROMPT_METADATA: Record<string, { label: string; description: string }> = {
+  system_prompt: { label: "System Prompt", description: "Core instructions and persona for this domain." },
+  guardrail: { label: "Guardrail", description: "Anti-hallucination and scope constraints appended after the system prompt." },
+};
+
+function promptLabel(key: string) {
+  return KNOWN_PROMPT_METADATA[key]?.label ?? key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function promptDescription(key: string) {
+  return KNOWN_PROMPT_METADATA[key]?.description ?? "";
+}
 
 const ANNOUNCEMENT_CATEGORIES = [
   "General", "Policy Update", "Holiday", "Events", "Hiring", "Training", "IT Alert",
@@ -102,7 +109,15 @@ function ConfigPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [pendingDrafts, setPendingDrafts] = useState<PendingDraft[]>([]);
   const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [myDrafts, setMyDrafts] = useState<PendingDraft[]>([]);
+  const [forceApprovingId, setForceApprovingId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+
+  // Add new prompt
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [savingNew, setSavingNew] = useState(false);
 
   // Test prompt state
   const [testOpen, setTestOpen] = useState<string | null>(null);
@@ -162,6 +177,13 @@ function ConfigPage() {
     } catch {}
   }, [user?.email, user?.role]);
 
+  const fetchMyDrafts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/prompts/drafts/mine", { headers });
+      if (res.ok) setMyDrafts(await res.json());
+    } catch {}
+  }, [user?.email, user?.role]);
+
   const fetchAnnouncements = useCallback(async () => {
     try {
       const res = await fetch("/api/announcements", { headers });
@@ -174,6 +196,7 @@ function ConfigPage() {
       setActiveDomain(allowed[0]);
       fetchPrompts(allowed[0]);
       fetchDrafts();
+      fetchMyDrafts();
       fetchAnnouncements();
     }
   }, [role]);
@@ -181,6 +204,9 @@ function ConfigPage() {
   useEffect(() => {
     if (allowed.length === 0) return;
     fetchPrompts(activeDomain);
+    setShowAddForm(false);
+    setNewKey("");
+    setNewValue("");
   }, [activeDomain]);
 
   const handleSave = async (domain: string, promptKey: string) => {
@@ -201,6 +227,7 @@ function ConfigPage() {
       if (data.mode === "draft") {
         toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
         fetchDrafts();
+        fetchMyDrafts();
       } else {
         toast.success("Saved successfully");
         await fetchPrompts(domain);
@@ -209,6 +236,36 @@ function ConfigPage() {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setSaving(null);
+    }
+  };
+
+  const handleSaveNew = async () => {
+    const key = newKey.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key || !newValue.trim()) { toast.error("Key and value are required"); return; }
+    setSavingNew(true);
+    try {
+      const res = await fetch(`/api/prompts/${activeDomain}/${key}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ value: newValue }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Save failed");
+      if (data.mode === "draft") {
+        toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
+        fetchDrafts();
+        fetchMyDrafts();
+      } else {
+        toast.success("Saved successfully");
+        await fetchPrompts(activeDomain);
+      }
+      setShowAddForm(false);
+      setNewKey("");
+      setNewValue("");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingNew(false);
     }
   };
 
@@ -267,6 +324,23 @@ function ConfigPage() {
       toast.error(err instanceof Error ? err.message : "Approval failed");
     } finally {
       setApprovingId(null);
+    }
+  };
+
+  const handleForceApprove = async (draftId: number) => {
+    setForceApprovingId(draftId);
+    try {
+      const res = await fetch(`/api/prompts/drafts/${draftId}/force-approve`, { method: "POST", headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Force approval failed");
+      toast.success(data.message, { description: "Applied via test override." });
+      fetchMyDrafts();
+      fetchDrafts();
+      fetchPrompts(activeDomain);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Force approval failed");
+    } finally {
+      setForceApprovingId(null);
     }
   };
 
@@ -458,23 +532,71 @@ function ConfigPage() {
               <div className="flex items-center gap-2 mb-2">
                 <span className={cn("h-2.5 w-2.5 rounded-full", activeDomainMeta?.color?.replace("text-", "bg-"))} />
                 <h2 className="text-[15px] font-semibold text-foreground">{activeDomainMeta?.label} Prompts</h2>
-                <button
-                  onClick={() => fetchPrompts(activeDomain)}
-                  disabled={loading}
-                  className="ml-auto flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-all disabled:opacity-50"
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-                  Refresh
-                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => { setShowAddForm((v) => !v); setNewKey(""); setNewValue(""); }}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary hover:bg-primary/20 transition-all"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {showAddForm ? "Cancel" : "Add Prompt"}
+                  </button>
+                  <button
+                    onClick={() => fetchPrompts(activeDomain)}
+                    disabled={loading}
+                    className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                    Refresh
+                  </button>
+                </div>
               </div>
+
+              {/* Add new prompt form */}
+              {showAddForm && (
+                <div className="rounded-2xl border border-primary/30 bg-primary/[0.03] p-5 space-y-3">
+                  <p className="text-[13px] font-semibold text-foreground">New Prompt</p>
+                  <div className="flex gap-2">
+                    <input
+                      value={newKey}
+                      onChange={(e) => setNewKey(e.target.value)}
+                      placeholder="Prompt key (e.g. onboarding_prompt)"
+                      className="w-56 rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[12px] font-mono text-foreground outline-none focus:border-primary/50"
+                    />
+                    <span className="text-[11px] text-muted-foreground self-center">Spaces will be converted to underscores</span>
+                  </div>
+                  <textarea
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    placeholder="Enter prompt instructions..."
+                    className="w-full min-h-[140px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[12px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleSaveNew}
+                      disabled={savingNew || !newKey.trim() || !newValue.trim()}
+                      className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[12px] font-medium text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {savingNew ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      {savingNew ? "Saving..." : isAdmin ? "Save" : "Submit for Approval"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {loading ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               ) : (
-                PROMPT_KEYS.map(({ key, label, description }) => {
+                (() => {
+                  const fetchedKeys = Object.keys(prompts)
+                    .filter((k) => k.startsWith(`${activeDomain}::`))
+                    .map((k) => k.slice(`${activeDomain}::`.length));
+                  const allKeys = [...new Set(["system_prompt", "guardrail", ...fetchedKeys])];
+                  return allKeys.map((key) => {
                   const compositeKey = `${activeDomain}::${key}`;
+                  const label = promptLabel(key);
+                  const description = promptDescription(key);
                   const row = prompts[compositeKey];
                   const currentEdit = edits[compositeKey] ?? "";
                   const isDirty = row ? currentEdit !== row.value : currentEdit.trim() !== "";
@@ -581,7 +703,57 @@ function ConfigPage() {
                       </div>
                     </div>
                   );
-                })
+                  });
+                })()
+              )}
+
+              {/* My submitted drafts — test override section */}
+              {myDrafts.filter((d) => allowed.includes(d.domain)).length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FlaskConical className="h-4 w-4 text-amber-500" />
+                    <h3 className="text-[14px] font-semibold text-foreground">My Submitted Drafts</h3>
+                    <span className="ml-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                      awaiting peer review
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-muted-foreground">
+                    These drafts are waiting for a peer to approve. Use <strong>Force Approve</strong> to bypass peer review during testing.
+                  </p>
+                  {myDrafts
+                    .filter((d) => allowed.includes(d.domain))
+                    .map((draft) => {
+                      const draftMeta = ALL_DOMAINS.find((d) => d.id === draft.domain);
+                      return (
+                        <div key={draft.id} className="rounded-2xl border border-amber-200/60 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/30 p-5 space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className={cn("text-[11px] font-semibold px-2 py-0.5 rounded-full", draftMeta?.color?.replace("text-", "bg-") + "/10", draftMeta?.color)}>
+                                  {draftMeta?.label ?? draft.domain}
+                                </span>
+                                <span className="text-[11px] text-muted-foreground capitalize">{draft.key.replace("_", " ")}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground/70 mt-1">
+                                Submitted on {new Date(draft.created_at).toLocaleString()}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleForceApprove(draft.id)}
+                              disabled={forceApprovingId === draft.id}
+                              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                            >
+                              {forceApprovingId === draft.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+                              Force Approve (Test)
+                            </button>
+                          </div>
+                          <pre className="rounded-lg bg-background border border-[var(--border)] px-4 py-3 text-[11px] font-mono text-foreground/70 leading-relaxed overflow-x-auto whitespace-pre-wrap max-h-40">
+                            {draft.value}
+                          </pre>
+                        </div>
+                      );
+                    })}
+                </div>
               )}
 
               {/* Pending approvals section */}

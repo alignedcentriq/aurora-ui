@@ -1,20 +1,5 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
-      }
-    ]
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -22,242 +7,246 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
-      },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT count(*) FROM employees"
-        }
-      ],
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.employees",
+        "refId": "A"
+      }],
       "title": "Total Employees",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
-      },
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": []
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 10 },
+            { "color": "red", "value": 25 }
+          ]}
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 9,
-        "x": 6,
-        "y": 0
-      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "id": 2,
       "options": {
-        "displayLabels": [
-          "percent"
-        ],
-        "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT department, count(*) as count FROM employees GROUP BY department"
-        }
-      ],
-      "title": "Department Distribution",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 9,
-        "x": 15,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "mean"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT avg(net_salary) FROM payroll"
-        }
-      ],
-      "title": "Average Net Salary",
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.leaves WHERE status='Pending'",
+        "refId": "A"
+      }],
+      "title": "Pending Leave Requests",
       "type": "stat"
     },
     {
-      "datasource": {
-        "type": "postgres",
-        "uid": "PostgreSQL"
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "yellow", "value": 50 },
+            { "color": "green", "value": 75 }
+          ]},
+          "unit": "percent"
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 8
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "background", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
       },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT ROUND(100.0 * COUNT(CASE WHEN status='Approved' THEN 1 END) / NULLIF(COUNT(*), 0), 1) FROM enterprise_ai.leaves",
+        "refId": "A"
+      }],
+      "title": "Leave Approval Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]}
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "id": 4,
       "options": {
-        "footer": {
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
+        "colorMode": "value", "graphMode": "none", "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT count(*) FROM enterprise_ai.grievances WHERE status='Open'",
+        "refId": "A"
+      }],
+      "title": "Open Grievances",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "options": {
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT department, count(*) as count FROM enterprise_ai.employees GROUP BY department ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "Employees by Department",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "options": {
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT COALESCE(employment_type, 'Unknown') as employment_type, count(*) as count FROM enterprise_ai.employees GROUP BY employment_type ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "Employment Type Distribution",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 7,
+      "options": {
+        "barRadius": 0.1, "barWidth": 0.6, "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "orientation": "auto", "showValue": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -15
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT leave_type, count(*) as count FROM enterprise_ai.leaves GROUP BY leave_type ORDER BY count DESC",
+        "refId": "A"
+      }],
+      "title": "Leave Requests by Type",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 8,
+      "options": {
+        "displayLabels": ["percent", "name"],
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "pie",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT status, count(*) as count FROM enterprise_ai.leaves GROUP BY status",
+        "refId": "A"
+      }],
+      "title": "Leave Status Breakdown",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
         "showHeader": true
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "PostgreSQL"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "refId": "A",
-          "sql": "SELECT e.name, l.leave_type, l.start_date, l.status FROM leaves l JOIN employees e ON l.employee_id = e.id ORDER BY l.start_date DESC LIMIT 10"
-        }
-      ],
+      "targets": [{
+        "datasource": { "type": "postgres", "uid": "PostgreSQL" },
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT e.name as \"Employee\", l.leave_type as \"Type\", l.start_date as \"From\", l.end_date as \"To\", l.status as \"Status\", l.created_at as \"Submitted\" FROM enterprise_ai.leaves l JOIN enterprise_ai.employees e ON l.employee_id = e.id ORDER BY l.created_at DESC LIMIT 25",
+        "refId": "A"
+      }],
       "title": "Recent Leave Requests",
       "type": "table"
     }
   ],
-  "refresh": "",
+  "refresh": "5m",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-6h",
-    "to": "now"
-  },
-  "timepicker": {},
+  "tags": ["hr", "people", "leaves"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
   "timezone": "",
-  "title": "HR Insights Dashboard",
+  "title": "Centriq HR & People",
   "uid": "hr_insights",
-  "version": 1,
-  "weekStart": ""
+  "version": 1
 }

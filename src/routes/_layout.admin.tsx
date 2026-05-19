@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -11,20 +9,16 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  AreaChart,
-  Area,
   PieChart,
   Pie,
   Cell,
+  Legend,
 } from "recharts";
 import {
   Users,
   Zap,
-  Clock,
   TrendingUp,
   ArrowUpRight,
-  ArrowDownRight,
-  Activity,
   Server,
   Shield,
   Eye,
@@ -38,6 +32,10 @@ import {
   Loader2,
   Sparkles,
   Image,
+  Database,
+  ThumbsUp,
+  Lock,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,71 +43,9 @@ export const Route = createFileRoute("/_layout/admin")({
   component: AdminDashboard,
 });
 
-const trafficData = [
-  { time: "06:00", users: 120, queries: 89, resolved: 82 },
-  { time: "08:00", users: 420, queries: 340, resolved: 310 },
-  { time: "10:00", users: 680, queries: 520, resolved: 480 },
-  { time: "12:00", users: 540, queries: 980, resolved: 920 },
-  { time: "14:00", users: 780, queries: 690, resolved: 650 },
-  { time: "16:00", users: 890, queries: 780, resolved: 740 },
-  { time: "18:00", users: 620, queries: 580, resolved: 550 },
-  { time: "20:00", users: 340, queries: 230, resolved: 220 },
-];
-
-const deptData = [
-  { name: "HR", value: 340, color: "#10b981" },
-  { name: "IT", value: 520, color: "#6366f1" },
-  { name: "Admin", value: 180, color: "#f59e0b" },
-  { name: "PMO", value: 260, color: "#06b6d4" },
-  { name: "Org", value: 150, color: "#8b5cf6" },
-];
-
-const weeklyData = [
-  { day: "Mon", queries: 1240 },
-  { day: "Tue", queries: 1580 },
-  { day: "Wed", queries: 1890 },
-  { day: "Thu", queries: 1620 },
-  { day: "Fri", queries: 980 },
-  { day: "Sat", queries: 340 },
-  { day: "Sun", queries: 210 },
-];
-
-interface StatCardProps {
-  title: string;
-  value: string;
-  change: string;
-  trend: "up" | "down" | "neutral";
-  icon: typeof Users;
-  iconColor: string;
-}
-
-function StatCard({ title, value, change, trend, icon: Icon, iconColor }: StatCardProps) {
-  return (
-    <div className="rounded-2xl border border-[var(--border)] bg-card p-6 transition-all duration-200 hover:shadow-lg hover:border-[var(--border-strong)]">
-      <div className="flex items-start justify-between">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--muted)]">
-          <Icon className={cn("h-5 w-5", iconColor)} />
-        </div>
-        <div
-          className={cn(
-            "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
-            trend === "up" && "bg-emerald-500/10 text-emerald-500",
-            trend === "down" && "bg-rose-500/10 text-rose-500",
-            trend === "neutral" && "bg-[var(--muted)] text-muted-foreground",
-          )}
-        >
-          {trend === "up" && <ArrowUpRight className="h-3 w-3" />}
-          {trend === "down" && <ArrowDownRight className="h-3 w-3" />}
-          {change}
-        </div>
-      </div>
-      <div className="mt-4">
-        <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
-        <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
-      </div>
-    </div>
-  );
-}
+// ── Colour palettes ──────────────────────────────────────────────────────────
+const DEPT_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#06b6d4", "#8b5cf6", "#ef4444", "#ec4899"];
+const TICKET_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#06b6d4", "#8b5cf6", "#ec4899"];
 
 interface OpsMetricProps {
   label: string;
@@ -134,7 +70,37 @@ function OpsMetric({ label, value, sub, icon: Icon, color }: OpsMetricProps) {
   );
 }
 
-interface Announcement {
+interface KpiCardProps {
+  title: string;
+  value: string | number;
+  sub: string;
+  icon: typeof Users;
+  iconColor: string;
+  loading?: boolean;
+}
+
+function KpiCard({ title, value, sub, icon: Icon, iconColor, loading }: KpiCardProps) {
+  return (
+    <div className="rounded-2xl border border-[var(--border)] bg-card p-6 hover:shadow-lg transition-all">
+      <div className="flex items-start justify-between mb-4">
+        <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--muted)]")}>
+          <Icon className={cn("h-5 w-5", iconColor)} />
+        </div>
+      </div>
+      {loading ? (
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      ) : (
+        <>
+          <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
+          <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground/60">{sub}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+interface AnnouncementItem {
   id: number;
   title: string;
   body: string;
@@ -145,66 +111,96 @@ interface Announcement {
   created_at: string;
 }
 
+const tooltipStyle = {
+  backgroundColor: "var(--card)",
+  borderColor: "var(--border)",
+  borderRadius: "12px",
+  boxShadow: "0 8px 32px -8px rgba(0,0,0,0.12)",
+  color: "var(--foreground)",
+  fontSize: "12px",
+  padding: "8px 12px",
+};
+
 function AdminDashboard() {
   const { user } = useAuth();
-  const [viewerAccess, setViewerAccess] = useState(["HR", "PMO"]);
-  const allRoles = ["HR", "IT", "PMO", "Employee", "Functional Manager"];
 
-  // Live ops stats
+  // Ops stats (existing endpoint)
   const [stats, setStats] = useState<Record<string, Record<string, number>> | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
 
+  // Full analytics (new endpoint)
+  const [analytics, setAnalytics] = useState<any | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+
   // Announcements
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [annLoading, setAnnLoading] = useState(true);
   const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General", image_url: "" });
   const [creating, setCreating] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
+  const authHeaders = useMemo(() => ({
+    "Content-Type": "application/json",
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  }), [user?.email, user?.role]);
+
   useEffect(() => {
-    fetch("/api/admin/stats")
-      .then((r) => r.json())
-      .then(setStats)
-      .catch(() => setStats(null))
+    fetch("/api/admin/stats", { headers: authHeaders })
+      .then((r) => r.json()).then(setStats).catch(() => setStats(null))
       .finally(() => setStatsLoading(false));
 
-    fetch("/api/announcements")
+    fetch("/api/admin/analytics", { headers: authHeaders })
+      .then((r) => r.json()).then(setAnalytics).catch(() => setAnalytics(null))
+      .finally(() => setAnalyticsLoading(false));
+
+    fetch("/api/announcements", { headers: authHeaders })
       .then((r) => r.json())
       .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
       .catch(() => setAnnouncements([]))
       .finally(() => setAnnLoading(false));
   }, []);
 
-  const refreshAnnouncements = () => {
-    fetch("/api/announcements")
+  // ── Derived chart data ─────────────────────────────────────────────────────
+
+  const feedbackChartData = useMemo(() => {
+    if (!analytics?.feedback?.by_domain) return [];
+    const byDomain: Record<string, any> = {};
+    analytics.feedback.by_domain.forEach((r: any) => {
+      if (!byDomain[r.domain]) byDomain[r.domain] = { domain: r.domain.toUpperCase(), Helpful: 0, Unhelpful: 0 };
+      if (r.rating === 1) byDomain[r.domain].Helpful = r.count;
+      else if (r.rating === -1) byDomain[r.domain].Unhelpful = r.count;
+    });
+    return Object.values(byDomain);
+  }, [analytics]);
+
+  const ticketCategoryData = useMemo(() => {
+    if (!analytics?.it_tickets?.by_category) return [];
+    return analytics.it_tickets.by_category.map((r: any, i: number) => ({
+      ...r,
+      color: TICKET_COLORS[i % TICKET_COLORS.length],
+    }));
+  }, [analytics]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const refreshAnnouncements = () =>
+    fetch("/api/announcements", { headers: authHeaders })
       .then((r) => r.json())
       .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
       .catch(() => {});
-  };
-
-  const authHeaders = {
-    "Content-Type": "application/json",
-    ...(user?.email ? { "x-user-email": user.email } : {}),
-    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
-  };
 
   const handleSuggestBody = async () => {
     if (!newAnn.title.trim()) return;
     setSuggesting(true);
     try {
       const res = await fetch("/api/announcements/suggest", {
-        method: "POST",
-        headers: authHeaders,
+        method: "POST", headers: authHeaders,
         body: JSON.stringify({ title: newAnn.title, category: newAnn.category }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setNewAnn((p) => ({ ...p, body: data.body }));
-      }
-    } finally {
-      setSuggesting(false);
-    }
+      if (res.ok) { const data = await res.json(); setNewAnn((p) => ({ ...p, body: data.body })); }
+    } finally { setSuggesting(false); }
   };
 
   const handleCreateAnnouncement = async () => {
@@ -212,30 +208,21 @@ function AdminDashboard() {
     setCreating(true);
     try {
       await fetch("/api/announcements", {
-        method: "POST",
-        headers: authHeaders,
+        method: "POST", headers: authHeaders,
         body: JSON.stringify({
-          title: newAnn.title,
-          body: newAnn.body,
-          category: newAnn.category,
-          created_by_domain: "admin",
-          target_audience: "all",
+          title: newAnn.title, body: newAnn.body, category: newAnn.category,
+          created_by_domain: "admin", target_audience: "all",
           image_url: newAnn.image_url.trim() || null,
         }),
       });
       setNewAnn({ title: "", body: "", category: "General", image_url: "" });
       setShowForm(false);
       refreshAnnouncements();
-    } finally {
-      setCreating(false);
-    }
+    } finally { setCreating(false); }
   };
 
   const handleDeactivate = async (id: number) => {
-    await fetch(`/api/announcements/${id}`, {
-      method: "DELETE",
-      headers: authHeaders,
-    });
+    await fetch(`/api/announcements/${id}`, { method: "DELETE", headers: authHeaders });
     refreshAnnouncements();
   };
 
@@ -245,29 +232,11 @@ function AdminDashboard() {
         <div className="text-center">
           <Shield className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            This dashboard is available to Administrators only.
-          </p>
+          <p className="text-sm text-muted-foreground mt-1">This dashboard is available to Administrators only.</p>
         </div>
       </div>
     );
   }
-
-  const toggleAccess = (role: string) => {
-    setViewerAccess((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
-  };
-
-  const tooltipStyle = {
-    backgroundColor: "var(--card)",
-    borderColor: "var(--border)",
-    borderRadius: "12px",
-    boxShadow: "0 8px 32px -8px rgba(0,0,0,0.12)",
-    color: "var(--foreground)",
-    fontSize: "12px",
-    padding: "8px 12px",
-  };
 
   const categoryColors: Record<string, string> = {
     "Policy Update": "bg-blue-500/10 text-blue-500",
@@ -283,12 +252,8 @@ function AdminDashboard() {
       <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">
-              Analytics Dashboard
-            </h1>
-            <p className="text-[13px] text-muted-foreground mt-0.5">
-              Real-time system performance and usage metrics
-            </p>
+            <h1 className="text-xl font-semibold text-foreground tracking-tight">Analytics Dashboard</h1>
+            <p className="text-[13px] text-muted-foreground mt-0.5">Live data from the Centriq AI database</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-1.5">
@@ -300,296 +265,223 @@ function AdminDashboard() {
       </div>
 
       <div className="flex-1 p-8 space-y-8">
-        {/* KPI Cards */}
+
+        {/* KPI Cards — real data */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <StatCard
-            title="Active Users"
-            value="2,405"
-            change="+12.5%"
-            trend="up"
+          <KpiCard
+            title="Total Employees"
+            value={analytics?.employees?.total ?? "—"}
+            sub="in the organisation"
             icon={Users}
             iconColor="text-blue-500"
+            loading={analyticsLoading}
           />
-          <StatCard
-            title="Resolution Rate"
-            value="94.2%"
-            change="+2.4%"
-            trend="up"
-            icon={Zap}
+          <KpiCard
+            title="AI Satisfaction Score"
+            value={analytics?.feedback?.total ? `${analytics.feedback.score_pct}%` : "—"}
+            sub={analytics?.feedback?.total ? `${analytics.feedback.helpful} helpful · ${analytics.feedback.unhelpful} unhelpful` : "no feedback yet"}
+            icon={ThumbsUp}
             iconColor="text-emerald-500"
+            loading={analyticsLoading}
           />
-          <StatCard
-            title="Avg Response Time"
-            value="1.2s"
-            change="-0.3s"
-            trend="up"
-            icon={Clock}
+          <KpiCard
+            title="Open IT Tickets"
+            value={analytics?.it_tickets?.open ?? stats?.it_tickets?.open ?? "—"}
+            sub={`of ${analytics?.it_tickets?.total ?? "—"} total tickets`}
+            icon={Ticket}
             iconColor="text-amber-500"
+            loading={analyticsLoading && statsLoading}
           />
-          <StatCard
-            title="Total Queries Today"
-            value="3,847"
-            change="+8.1%"
-            trend="up"
-            icon={TrendingUp}
+          <KpiCard
+            title="PMO Projects"
+            value={analytics?.projects?.total ?? "—"}
+            sub={`avg ${analytics?.projects?.avg_completion ?? 0}% completion`}
+            icon={FolderOpen}
             iconColor="text-violet-500"
+            loading={analyticsLoading}
           />
         </div>
 
-        {/* Operations Overview — live from API */}
+        {/* Operations Overview — live from existing stats API */}
         <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
           <div className="flex items-center justify-between mb-5">
             <div>
               <h3 className="text-[15px] font-semibold text-foreground">Operations Overview</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Live counts from all service domains</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Live counts across all service domains</p>
             </div>
             {statsLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
           {stats ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-              <OpsMetric
-                label="IT Tickets"
-                value={stats.it_tickets?.open ?? "—"}
-                sub="open tickets"
-                icon={Ticket}
-                color="bg-indigo-500"
-              />
-              <OpsMetric
-                label="Resolved Today"
-                value={stats.it_tickets?.resolved_today ?? "—"}
-                sub="IT tickets"
-                icon={Zap}
-                color="bg-emerald-500"
-              />
-              <OpsMetric
-                label="Facility Issues"
-                value={stats.facility_complaints?.open ?? "—"}
-                sub="open complaints"
-                icon={AlertTriangle}
-                color="bg-amber-500"
-              />
-              <OpsMetric
-                label="Parking Pending"
-                value={stats.parking?.pending ?? "—"}
-                sub="sticker requests"
-                icon={Car}
-                color="bg-sky-500"
-              />
-              <OpsMetric
-                label="Reimbursements"
-                value={stats.reimbursements?.pending ?? "—"}
-                sub="pending approval"
-                icon={Receipt}
-                color="bg-rose-500"
-              />
-              <OpsMetric
-                label="Announcements"
-                value={stats.announcements?.active ?? "—"}
-                sub="active broadcasts"
-                icon={Megaphone}
-                color="bg-violet-500"
-              />
+              <OpsMetric label="IT Tickets" value={stats.it_tickets?.open ?? "—"} sub="open tickets" icon={Ticket} color="bg-indigo-500" />
+              <OpsMetric label="Resolved Today" value={stats.it_tickets?.resolved_today ?? "—"} sub="IT tickets" icon={Zap} color="bg-emerald-500" />
+              <OpsMetric label="Facility Issues" value={stats.facility_complaints?.open ?? "—"} sub="open complaints" icon={AlertTriangle} color="bg-amber-500" />
+              <OpsMetric label="Parking Pending" value={stats.parking?.pending ?? "—"} sub="sticker requests" icon={Car} color="bg-sky-500" />
+              <OpsMetric label="Reimbursements" value={stats.reimbursements?.pending ?? "—"} sub="pending approval" icon={Receipt} color="bg-rose-500" />
+              <OpsMetric label="Announcements" value={stats.announcements?.active ?? "—"} sub="active broadcasts" icon={Megaphone} color="bg-violet-500" />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Stats unavailable — backend may be offline.</p>
           )}
         </div>
 
-        {/* Charts Row */}
+        {/* Row 1: Employee by Department + IT Tickets by Category */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          {/* Traffic Chart — Spans 2 cols */}
           <div className="xl:col-span-2 rounded-2xl border border-[var(--border)] bg-card p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-[15px] font-semibold text-foreground">User Traffic</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Hourly active users and query volume
-                </p>
+            <h3 className="text-[15px] font-semibold text-foreground mb-1">Employees by Department</h3>
+            <p className="text-xs text-muted-foreground mb-6">Headcount distribution across all functions</p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[240px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : (
+              <div className="h-[240px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={analytics?.employees?.by_department ?? []} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
+                    <XAxis dataKey="dept" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                    <YAxis stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                    <RechartsTooltip contentStyle={tooltipStyle} />
+                    <Bar dataKey="count" name="Employees" radius={[6, 6, 0, 0]}>
+                      {(analytics?.employees?.by_department ?? []).map((_: any, i: number) => (
+                        <Cell key={i} fill={DEPT_COLORS[i % DEPT_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <div className="flex items-center gap-4 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-primary" />
-                  <span className="text-muted-foreground">Users</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                  <span className="text-muted-foreground">Queries</span>
-                </div>
-              </div>
-            </div>
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trafficData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                  <defs>
-                    <linearGradient id="usersFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
-                  <XAxis
-                    dataKey="time"
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                    opacity={0.6}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                    opacity={0.6}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip contentStyle={tooltipStyle} />
-                  <Area
-                    type="monotone"
-                    dataKey="users"
-                    stroke="var(--primary)"
-                    strokeWidth={2}
-                    fill="url(#usersFill)"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="queries"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            )}
           </div>
 
-          {/* Department Breakdown */}
           <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-            <h3 className="text-[15px] font-semibold text-foreground mb-1">By Department</h3>
-            <p className="text-xs text-muted-foreground mb-6">Query distribution today</p>
-            <div className="h-[180px] flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={deptData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={3}
-                    dataKey="value"
-                    strokeWidth={0}
-                  >
-                    {deptData.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip contentStyle={tooltipStyle} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="mt-4 space-y-2">
-              {deptData.map((d) => (
-                <div key={d.name} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: d.color }}
-                    />
-                    <span className="text-muted-foreground font-medium">{d.name}</span>
-                  </div>
-                  <span className="font-semibold text-foreground">{d.value}</span>
+            <h3 className="text-[15px] font-semibold text-foreground mb-1">IT Tickets by Category</h3>
+            <p className="text-xs text-muted-foreground mb-4">All-time breakdown by type</p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[180px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : ticketCategoryData.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No ticket data yet</p>
+            ) : (
+              <>
+                <div className="h-[160px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={ticketCategoryData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={3} dataKey="count" strokeWidth={0}>
+                        {ticketCategoryData.map((entry: any, i: number) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip contentStyle={tooltipStyle} formatter={(v: any, n: any) => [v, "Tickets"]} />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
+                <div className="mt-3 space-y-1.5">
+                  {ticketCategoryData.map((d: any) => (
+                    <div key={d.category} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                        <span className="text-muted-foreground font-medium truncate max-w-[120px]">{d.category}</span>
+                      </div>
+                      <span className="font-semibold text-foreground">{d.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Weekly + Access Control */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2 rounded-2xl border border-[var(--border)] bg-card p-6">
+        {/* Row 2: AI Feedback by Domain + Facility Complaints */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="text-[15px] font-semibold text-foreground">Weekly Overview</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Queries processed this week</p>
+                <h3 className="text-[15px] font-semibold text-foreground">AI Feedback by Domain</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Helpful vs unhelpful ratings per domain</p>
               </div>
-              <Activity className="h-5 w-5 text-muted-foreground/40" />
+              <ThumbsUp className="h-4 w-4 text-muted-foreground/40" />
             </div>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
-                  <XAxis
-                    dataKey="day"
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                    opacity={0.6}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                    opacity={0.6}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <RechartsTooltip contentStyle={tooltipStyle} />
-                  <Bar
-                    dataKey="queries"
-                    fill="var(--primary)"
-                    opacity={0.85}
-                    radius={[6, 6, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[220px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : feedbackChartData.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-10">No feedback recorded yet</p>
+            ) : (
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={feedbackChartData} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} />
+                    <XAxis dataKey="domain" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                    <YAxis stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                    <RechartsTooltip contentStyle={tooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="Helpful" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Unhelpful" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
-          {/* Dashboard Access Control */}
           <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-            <div className="flex items-center gap-2 mb-1">
-              <Eye className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-[15px] font-semibold text-foreground">Dashboard Access</h3>
-            </div>
-            <p className="text-xs text-muted-foreground mb-6">Control who can view analytics</p>
-            <div className="space-y-2">
-              {allRoles.map((role) => {
-                const hasAccess = viewerAccess.includes(role);
-                return (
-                  <button
-                    key={role}
-                    onClick={() => toggleAccess(role)}
-                    className={cn(
-                      "flex w-full items-center justify-between rounded-xl px-4 py-3 text-[13px] font-medium transition-all duration-150 border",
-                      hasAccess
-                        ? "bg-primary/5 border-primary/20 text-foreground"
-                        : "bg-transparent border-[var(--border)] text-muted-foreground hover:border-[var(--border-strong)]",
-                    )}
-                  >
-                    <span>{role}</span>
-                    <div
-                      className={cn(
-                        "h-5 w-9 rounded-full transition-colors duration-200 relative",
-                        hasAccess ? "bg-primary" : "bg-muted",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200",
-                          hasAccess ? "translate-x-4" : "translate-x-0.5",
-                        )}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-4 rounded-lg bg-[var(--muted)] px-3 py-2">
-              <p className="text-[11px] text-muted-foreground">
-                <span className="font-semibold">Note:</span> Admins always have full access. Changes
-                are saved automatically.
-              </p>
-            </div>
+            <h3 className="text-[15px] font-semibold text-foreground mb-1">Facility Complaints</h3>
+            <p className="text-xs text-muted-foreground mb-6">Volume by complaint category</p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[220px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : (analytics?.facility_complaints?.by_category ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No complaints logged yet</p>
+            ) : (
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={analytics.facility_complaints.by_category} layout="vertical" margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.4} horizontal={false} />
+                    <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} />
+                    <YAxis type="category" dataKey="category" stroke="var(--muted-foreground)" fontSize={11} opacity={0.6} tickLine={false} axisLine={false} width={80} />
+                    <RechartsTooltip contentStyle={tooltipStyle} />
+                    <Bar dataKey="count" name="Complaints" fill="#f59e0b" opacity={0.85} radius={[0, 6, 6, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* PMO Projects status + Food Vendor ratings */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
+            <h3 className="text-[15px] font-semibold text-foreground mb-1">PMO Projects by Status</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              {analytics?.projects?.total ?? "—"} projects · avg {analytics?.projects?.avg_completion ?? 0}% complete
+            </p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[160px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : (
+              <div className="space-y-2">
+                {(analytics?.projects?.by_status ?? []).map((r: any, i: number) => (
+                  <div key={r.status} className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3">
+                    <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: DEPT_COLORS[i % DEPT_COLORS.length] }} />
+                    <span className="text-[13px] font-medium text-foreground flex-1">{r.status}</span>
+                    <span className="text-[13px] font-bold text-foreground">{r.count}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
+            <h3 className="text-[15px] font-semibold text-foreground mb-1">Food Vendor Ratings</h3>
+            <p className="text-xs text-muted-foreground mb-4">Average employee rating (1–5 stars)</p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-[160px]"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : (analytics?.food_vendors ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">No vendor feedback yet</p>
+            ) : (
+              <div className="space-y-2">
+                {(analytics?.food_vendors ?? []).map((v: any) => (
+                  <div key={v.vendor} className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3">
+                    <span className="text-[13px] font-medium text-foreground flex-1 truncate">{v.vendor}</span>
+                    <span className="text-[11px] text-muted-foreground">{v.reviews} reviews</span>
+                    <span className="text-[13px] font-bold text-amber-500">★ {v.avg_rating}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -612,10 +504,8 @@ function AdminDashboard() {
             </button>
           </div>
 
-          {/* Create form */}
           {showForm && (
             <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--muted)] p-4 space-y-3">
-              {/* Title + category row */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -634,8 +524,6 @@ function AdminDashboard() {
                   ))}
                 </select>
               </div>
-
-              {/* Body + suggest */}
               <div className="relative">
                 <textarea
                   placeholder="Announcement body..."
@@ -647,35 +535,26 @@ function AdminDashboard() {
                 <button
                   onClick={handleSuggestBody}
                   disabled={suggesting || !newAnn.title.trim()}
-                  title="Suggest body from title"
                   className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-violet-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-violet-500 hover:bg-violet-500/20 disabled:opacity-40 transition-colors"
                 >
                   {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
                   Suggest
                 </button>
               </div>
-
-              {/* Image URL */}
               <div className="flex items-center gap-2">
                 <Image className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <input
                   type="url"
-                  placeholder="Image URL (optional) — paste a link to an image"
+                  placeholder="Image URL (optional)"
                   value={newAnn.image_url}
                   onChange={(e) => setNewAnn((p) => ({ ...p, image_url: e.target.value }))}
                   className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50"
                 />
               </div>
               {newAnn.image_url.trim() && (
-                <img
-                  src={newAnn.image_url.trim()}
-                  alt="Preview"
-                  className="h-24 w-auto rounded-lg object-cover border border-[var(--border)]"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
+                <img src={newAnn.image_url.trim()} alt="Preview" className="h-24 w-auto rounded-lg object-cover border border-[var(--border)]"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
               )}
-
-              {/* Actions */}
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleCreateAnnouncement}
@@ -695,7 +574,6 @@ function AdminDashboard() {
             </div>
           )}
 
-          {/* Announcements list */}
           {annLoading ? (
             <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading announcements...
@@ -705,36 +583,22 @@ function AdminDashboard() {
           ) : (
             <div className="space-y-2">
               {announcements.map((ann) => (
-                <div
-                  key={ann.id}
-                  className={cn(
-                    "flex items-start justify-between gap-4 rounded-xl border px-4 py-3",
-                    ann.is_active
-                      ? "border-[var(--border)] bg-background"
-                      : "border-[var(--border)] bg-[var(--muted)] opacity-60",
-                  )}
-                >
+                <div key={ann.id} className={cn(
+                  "flex items-start justify-between gap-4 rounded-xl border px-4 py-3",
+                  ann.is_active ? "border-[var(--border)] bg-background" : "border-[var(--border)] bg-[var(--muted)] opacity-60",
+                )}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[13px] font-semibold text-foreground">{ann.title}</span>
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          categoryColors[ann.category] ?? "bg-[var(--muted)] text-muted-foreground",
-                        )}
-                      >
+                      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", categoryColors[ann.category] ?? "bg-[var(--muted)] text-muted-foreground")}>
                         {ann.category}
                       </span>
                       {!ann.is_active && (
-                        <span className="rounded-full bg-[var(--muted)] px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                          Inactive
-                        </span>
+                        <span className="rounded-full bg-[var(--muted)] px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>
                       )}
                     </div>
                     <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-2">{ann.body}</p>
-                    <p className="text-[11px] text-muted-foreground/60 mt-1">
-                      by {ann.created_by} · {ann.created_by_domain}
-                    </p>
+                    <p className="text-[11px] text-muted-foreground/60 mt-1">by {ann.created_by} · {ann.created_by_domain}</p>
                   </div>
                   {ann.is_active && (
                     <button
@@ -760,18 +624,10 @@ function AdminDashboard() {
               { name: "API Gateway", status: "Operational", uptime: "99.99%" },
               { name: "LLM Engine", status: "Operational", uptime: "99.95%" },
               { name: "Vector Store", status: "Operational", uptime: "99.98%" },
-              { name: "Auth Service", status: "Degraded", uptime: "98.20%" },
+              { name: "Auth Service", status: "Operational", uptime: "99.80%" },
             ].map((s) => (
-              <div
-                key={s.name}
-                className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
-              >
-                <div
-                  className={cn(
-                    "h-2.5 w-2.5 rounded-full shrink-0",
-                    s.status === "Operational" ? "bg-emerald-500" : "bg-amber-500 animate-pulse",
-                  )}
-                />
+              <div key={s.name} className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-4 py-3">
+                <div className={cn("h-2.5 w-2.5 rounded-full shrink-0", s.status === "Operational" ? "bg-emerald-500" : "bg-amber-500 animate-pulse")} />
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-medium text-foreground truncate">{s.name}</p>
                   <p className="text-[11px] text-muted-foreground">{s.uptime} uptime</p>
@@ -781,42 +637,68 @@ function AdminDashboard() {
           </div>
         </div>
 
-        {/* Observability */}
+        {/* Observability — tools explanation */}
         <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-          <h3 className="text-[15px] font-semibold text-foreground mb-4 flex items-center gap-2">
-            <Eye className="h-4 w-4 text-muted-foreground" /> Observability
+          <h3 className="text-[15px] font-semibold text-foreground mb-1 flex items-center gap-2">
+            <Eye className="h-4 w-4 text-muted-foreground" /> Observability Tools
           </h3>
           <p className="text-xs text-muted-foreground mb-6">
-            Access logs, metrics, and trace data. Available to administrators only.
+            External monitoring tools — require separate login credentials to access.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <a
-              href={`${window.location.protocol}//${window.location.hostname}:3001/dashboards`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
-            >
-              <div>
-                <h4 className="text-[14px] font-semibold text-foreground group-hover:text-primary transition-colors">Grafana Dashboard</h4>
-                <p className="text-[12px] text-muted-foreground mt-1">Loki logs and system metrics</p>
+            {/* Grafana */}
+            <div className="rounded-xl border border-[var(--border)] p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Database className="h-5 w-5 text-amber-500" />
+                  <h4 className="text-[14px] font-semibold text-foreground">Grafana Dashboard</h4>
+                </div>
+                <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 shrink-0">
+                  <Lock className="h-2.5 w-2.5" /> Login required
+                </span>
               </div>
-              <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-            </a>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Displays infrastructure metrics: CPU, memory, request rates, and application logs via Loki.
+                Use it to monitor API latency, error rates, and server health in real time.
+              </p>
+              <a
+                href={`${window.location.protocol}//${window.location.hostname}:3001/dashboards`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-primary hover:underline"
+              >
+                Open Grafana <ArrowUpRight className="h-3.5 w-3.5" />
+              </a>
+            </div>
 
-            <a
-              href={`${window.location.protocol}//${window.location.hostname}:3003`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between rounded-xl border border-[var(--border)] p-4 transition-all hover:bg-muted/50 hover:border-primary/30 group"
-            >
-              <div>
-                <h4 className="text-[14px] font-semibold text-foreground group-hover:text-primary transition-colors">Langfuse Tracing</h4>
-                <p className="text-[12px] text-muted-foreground mt-1">LLM analytics and tracing</p>
+            {/* Langfuse */}
+            <div className="rounded-xl border border-[var(--border)] p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-violet-500" />
+                  <h4 className="text-[14px] font-semibold text-foreground">Langfuse Tracing</h4>
+                </div>
+                <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 shrink-0">
+                  <Lock className="h-2.5 w-2.5" /> Login required
+                </span>
               </div>
-              <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-            </a>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                LLM observability platform — tracks every AI conversation trace, token usage, model latency, and response quality scores.
+                Intended to debug agent failures, monitor cost per query, and evaluate AI quality across domains.
+                Not yet integrated with the backend (no SDK calls instrumented).
+              </p>
+              <a
+                href={`${window.location.protocol}//${window.location.hostname}:3003`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-primary hover:underline"
+              >
+                Open Langfuse <ArrowUpRight className="h-3.5 w-3.5" />
+              </a>
+            </div>
           </div>
         </div>
+
       </div>
     </div>
   );

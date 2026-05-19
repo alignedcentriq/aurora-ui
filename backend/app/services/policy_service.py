@@ -112,11 +112,13 @@ class PolicyService:
         "hotels": ["accommodation", "hotel", "hotels", "lodge", "stay", "lodging"],
         "accommodation": ["accommodation", "hotel", "lodge", "stay"],
         "travel": ["travel", "trip", "journey", "relocation"],
-        "reimburse": ["reimburse", "reimbursement", "claim", "expense"],
-        "reimbursement": ["reimburse", "reimbursement", "claim", "expense"],
+        "reimburse": ["reimburse", "reimbursement", "claim", "expense", "certification", "certificate"],
+        "reimbursement": ["reimburse", "reimbursement", "claim", "expense", "certification", "certificate"],
         "claim": ["claim", "reimburse", "reimbursement", "expense"],
         "medical": ["medical", "health", "practo", "doctor"],
-        "cert": ["certification", "certificate", "training"],
+        "cert": ["certification", "certificate", "training", "reimbursement", "reimburse"],
+        "certification": ["certification", "certificate", "cert", "training", "reimbursement", "reimburse"],
+        "certificate": ["certificate", "certification", "cert", "training", "reimbursement", "reimburse"],
     }
 
     # ── Embedding helpers ─────────────────────────────────────────────────────
@@ -297,7 +299,7 @@ class PolicyService:
                         try:
                             emb = json.loads(c.embedding)
                             sim = PolicyService._cosine(query_emb, emb)
-                            if sim > 0.4:
+                            if sim > 0.3:
                                 # Boost score when policy title contains a query keyword
                                 title = policy_title_map.get(c.policy_id, "")
                                 title_bonus = sum(0.2 for kw in query_keywords if kw in title)

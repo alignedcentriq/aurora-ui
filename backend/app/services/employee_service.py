@@ -13,7 +13,7 @@ class EmployeeService:
 
     @staticmethod
     def search_directory(query: str, function: Optional[str] = None,
-                         location: Optional[str] = None, designation: Optional[str] = None,
+                         designation: Optional[str] = None,
                          limit: int = 10) -> str:
         """Full-text search across name, function, designation, skill_set, expertise."""
         db = SessionLocal()
@@ -34,8 +34,6 @@ class EmployeeService:
                 ))
             if function:
                 q = q.filter(EmployeeZohoProfile.function.ilike(f"%{function}%"))
-            if location:
-                q = q.filter(EmployeeZohoProfile.sub_location.ilike(f"%{location}%"))
             if designation:
                 q = q.filter(EmployeeZohoProfile.designation.ilike(f"%{designation}%"))
 
@@ -46,11 +44,10 @@ class EmployeeService:
             lines = []
             for p in results:
                 name = f"{p.first_name or ''} {p.last_name or ''}".strip()
-                loc = p.sub_location or "N/A"
                 mgr = p.reporting_manager or "N/A"
                 lines.append(
                     f"• **{name}** | {p.designation or 'N/A'} | {p.function or 'N/A'} | "
-                    f"{loc} | Reporting to: {mgr} | Email: {p.official_email or 'N/A'}"
+                    f"Reporting to: {mgr} | Email: {p.official_email or 'N/A'}"
                 )
             return f"Found {len(results)} employee(s):\n" + "\n".join(lines)
         finally:
@@ -80,7 +77,6 @@ class EmployeeService:
                 f"• **Function:** {profile.function or 'N/A'}",
                 f"• **Level / Grade:** {profile.level or 'N/A'} / {profile.grade or 'N/A'}",
                 f"• **Employment Type:** {profile.employment_type or 'N/A'}",
-                f"• **Location:** {profile.sub_location or 'N/A'}",
                 f"• **Work Phone:** {profile.work_phone or 'N/A'} (Ext: {profile.extension or 'N/A'})",
                 f"• **Reporting Manager:** {profile.reporting_manager or 'N/A'}",
                 f"• **Functional Manager:** {profile.functional_manager or 'N/A'}",
@@ -159,7 +155,7 @@ class EmployeeService:
             for r in reports:
                 name = f"{r.first_name or ''} {r.last_name or ''}".strip()
                 lines.append(
-                    f"  • {name} | {r.designation or 'N/A'} | {r.sub_location or 'N/A'} | {r.official_email or 'N/A'}"
+                    f"  • {name} | {r.designation or 'N/A'} | {r.official_email or 'N/A'}"
                 )
             return "\n".join(lines)
         finally:

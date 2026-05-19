@@ -63,6 +63,21 @@ def test_draft_prompt(req: TestPromptRequest, user: CurrentUser = Depends(requir
     return {"response": response}
 
 
+@router.get("/drafts/mine")
+def list_my_drafts(user: CurrentUser = Depends(require_domain_manager)):
+    """Return pending drafts submitted by the current user (for self-testing)."""
+    return PromptService.list_own_drafts(user.email)
+
+
+@router.post("/drafts/{draft_id}/force-approve")
+def force_approve_draft(draft_id: int, user: CurrentUser = Depends(require_domain_manager)):
+    """Test-only: approve own draft using a synthetic reviewer identity."""
+    result = PromptService.approve_draft(draft_id, "test-reviewer@centriq.ai")
+    if any(w in result.lower() for w in ("not found", "already")):
+        raise HTTPException(status_code=400, detail=result)
+    return {"message": result}
+
+
 @router.get("/{domain}")
 def get_domain_prompts(domain: str, user: CurrentUser = Depends(get_current_user)):
     allowed = ROLE_DOMAIN_MAP.get(user.role, [])
