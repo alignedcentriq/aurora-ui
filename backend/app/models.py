@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, D
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 import datetime
 
 Base = declarative_base()
@@ -79,7 +80,7 @@ class PolicyChunk(Base):
     policy_id = Column(Integer, ForeignKey(f"{SCHEMA}.policies.id", ondelete="CASCADE"), index=True, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
-    embedding = Column(Text, nullable=True)  # JSON-encoded list[float]; NULL until embedded
+    embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 # New SharePoint Integration Tables (Aligned with enterprise_ai schema)
@@ -491,5 +492,5 @@ class ChatFeedback(Base):
     ai_response = Column(Text, nullable=True)
     rating = Column(Integer, nullable=True)          # 1 = thumbs up / helpful, -1 = thumbs down / unhelpful
     feedback_text = Column(String, nullable=True)   # optional free-text comment
-    user_message_embedding = Column(Text, nullable=True)  # JSON-encoded embedding of user_message for cosine retrieval
+    user_message_embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

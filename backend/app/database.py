@@ -60,10 +60,10 @@ def _background_embed_policies():
 
 
 def init_db():
-    # Ensure schema exists
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
             conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
 
     Base.metadata.create_all(bind=engine)
@@ -88,13 +88,54 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
-                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS user_message_embedding TEXT',
             ]:
                 try:
                     conn.execute(text(stmt))
                     conn.commit()
                 except Exception as e:
                     print(f"Migration notice: {e}")
+
+    # pgvector column migrations: convert TEXT embeddings to vector(768)
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            # policy_chunks.embedding: TEXT → vector(768)
+            row = conn.execute(text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = 'policy_chunks' AND column_name = 'embedding'"
+            ), {"s": SCHEMA}).fetchone()
+            if row and row[0] == "text":
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks DROP COLUMN embedding'))
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Migrated policy_chunks.embedding to vector(768)")
+
+            # chat_feedback.user_message_embedding: add as vector(768) or convert from TEXT
+            row = conn.execute(text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = 'chat_feedback' AND column_name = 'user_message_embedding'"
+            ), {"s": SCHEMA}).fetchone()
+            if row is None:
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Added chat_feedback.user_message_embedding as vector(768)")
+            elif row[0] == "text":
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback DROP COLUMN user_message_embedding'))
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Migrated chat_feedback.user_message_embedding to vector(768)")
+
+            # HNSW indexes for fast approximate nearest-neighbour search
+            for idx_stmt in [
+                f'CREATE INDEX IF NOT EXISTS idx_policy_chunks_embedding_hnsw ON "{SCHEMA}".policy_chunks '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                f'CREATE INDEX IF NOT EXISTS idx_chat_feedback_embedding_hnsw ON "{SCHEMA}".chat_feedback '
+                f'USING hnsw (user_message_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+            ]:
+                try:
+                    conn.execute(text(idx_stmt))
+                    conn.commit()
+                except Exception as e:
+                    print(f"[init_db] Index notice: {e}")
 
     db = SessionLocal()
 
@@ -133,13 +174,19 @@ def init_db():
             _seed_announcements(db)
         _ = db.query(ChatFeedback).count()
 
-        # Ingest real policy documents from OneDrive folder (if not already done)
+        # Ingest policy documents: MinIO (SharePoint-sourced) preferred, local folder fallback
         policy_count = db.query(Policy).count()
-        if policy_count < 10:  # only 4 dummy seed policies
+        if policy_count < 10:
             try:
                 from app.services.policy_service import PolicyService
-                print("Ingesting policy documents from OneDrive folder...")
-                PolicyService.ingest_policies_from_folder()
+                from app.minio_client import minio_client
+                minio_objects = minio_client.list_objects(prefix="policies/")
+                if minio_objects:
+                    print("Ingesting policy documents from MinIO...")
+                    PolicyService.ingest_from_minio(prefix="policies/")
+                else:
+                    print("No MinIO policies found, trying local OneDrive folder...")
+                    PolicyService.ingest_policies_from_folder()
             except Exception as e:
                 print(f"Policy ingestion notice: {e}")
 

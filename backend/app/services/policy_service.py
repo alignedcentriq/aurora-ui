@@ -11,8 +11,6 @@ Pipeline:
 All policy data lives in the DB — no runtime dependency on the PDF folder.
 """
 
-import json
-import math
 import os
 import re
 import datetime
@@ -90,6 +88,29 @@ def _extract_text_from_docx(filepath: str) -> str:
         return ""
 
 
+def _extract_text_from_pdf_bytes(data: bytes) -> str:
+    try:
+        import io as _io
+        import pdfplumber
+        with pdfplumber.open(_io.BytesIO(data)) as pdf:
+            parts = [page.extract_text() for page in pdf.pages if page.extract_text()]
+        return "\n".join(parts)
+    except Exception as e:
+        print(f"[PolicyService] PDF bytes read error: {e}")
+        return ""
+
+
+def _extract_text_from_docx_bytes(data: bytes) -> str:
+    try:
+        import io as _io
+        from docx import Document
+        doc = Document(_io.BytesIO(data))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        print(f"[PolicyService] DOCX bytes read error: {e}")
+        return ""
+
+
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list:
     if not text:
         return []
@@ -140,12 +161,6 @@ class PolicyService:
         except Exception as e:
             print(f"[PolicyService] Embedding skipped ({type(e).__name__}): {e}")
             return None
-
-    @staticmethod
-    def _cosine(a: list, b: list) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
-        mag = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
-        return dot / mag if mag else 0.0
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
 
@@ -205,6 +220,77 @@ class PolicyService:
         print(f"[PolicyService] Ingest done: {result}")
         return result
 
+    @staticmethod
+    def ingest_from_minio(prefix: str = "policies/") -> dict:
+        """
+        List all PDF/DOCX objects under `prefix` in MinIO, download each,
+        extract text, and upsert as Policy rows.
+        Skips files already ingested (matched by title).
+        Does not chunk/embed — call embed_all_policies() after.
+        """
+        from app.minio_client import minio_client
+
+        db = SessionLocal()
+        ingested, skipped, errors = 0, 0, []
+        try:
+            existing_titles = {p.title for p in db.query(Policy.title).all()}
+            objects = minio_client.list_objects(prefix=prefix)
+
+            if not objects:
+                print(f"[PolicyService] No objects found in MinIO under '{prefix}'")
+                return {"ingested": 0, "skipped": 0, "errors": []}
+
+            for obj in objects:
+                object_name = obj["Key"]
+                filename = object_name.split("/")[-1]
+                if not filename:
+                    continue
+                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                if ext not in ("pdf", "docx"):
+                    continue
+
+                title = filename.rsplit(".", 1)[0].strip()
+                if title in existing_titles:
+                    skipped += 1
+                    continue
+
+                try:
+                    file_bytes = minio_client.download_file(object_name)
+                except Exception as e:
+                    errors.append(f"Download failed ({filename}): {e}")
+                    continue
+
+                content = (
+                    _extract_text_from_pdf_bytes(file_bytes)
+                    if ext == "pdf"
+                    else _extract_text_from_docx_bytes(file_bytes)
+                )
+                if not content or len(content) < 50:
+                    errors.append(f"Empty/too short: {filename}")
+                    continue
+
+                db.add(Policy(
+                    title=title,
+                    category=_categorize(filename),
+                    content=content[:50000],
+                ))
+                db.flush()
+                existing_titles.add(title)
+                ingested += 1
+                print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars]")
+
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            errors.append(str(e))
+            print(f"[PolicyService] MinIO ingest error: {e}")
+        finally:
+            db.close()
+
+        result = {"ingested": ingested, "skipped": skipped, "errors": errors}
+        print(f"[PolicyService] MinIO ingest done: {result}")
+        return result
+
     # ── Chunking & Embedding ──────────────────────────────────────────────────
 
     @staticmethod
@@ -226,16 +312,15 @@ class PolicyService:
                 policy_id=policy.id,
                 chunk_index=i,
                 text=chunk_text,
-                embedding=json.dumps(emb) if emb else None,
+                embedding=emb,
             ))
         return len(chunks)
 
     @staticmethod
     def embed_all_policies():
         """
-        Chunk and embed every Policy that has no PolicyChunk rows yet.
-        Called once on startup to bootstrap existing data.
-        Embedding failures are silently tolerated — chunks are still stored.
+        Chunk and embed every Policy whose chunks are missing embeddings.
+        Called once on startup. Tolerates embedding failures — chunks stored regardless.
         """
         from app.models import PolicyChunk
         db = SessionLocal()
@@ -243,9 +328,15 @@ class PolicyService:
             policies = db.query(Policy).all()
             total_chunks = 0
             for p in policies:
-                existing = db.query(PolicyChunk).filter(PolicyChunk.policy_id == p.id).count()
-                if existing:
-                    continue
+                total = db.query(PolicyChunk).filter(PolicyChunk.policy_id == p.id).count()
+                embedded = db.query(PolicyChunk).filter(
+                    PolicyChunk.policy_id == p.id,
+                    PolicyChunk.embedding.isnot(None),
+                ).count()
+                if total > 0 and embedded == total:
+                    continue  # all chunks already embedded
+                # Delete chunks without embeddings and re-chunk+embed from scratch
+                db.query(PolicyChunk).filter(PolicyChunk.policy_id == p.id).delete()
                 n = PolicyService._chunk_and_embed(p, db)
                 total_chunks += n
                 print(f"  [OK] Chunked '{p.title}': {n} chunks")
@@ -287,44 +378,46 @@ class PolicyService:
             # Pre-load policy titles for cheap title-boost scoring
             policy_title_map = {p.id: (p.title or "").lower() for p in db.query(Policy).all()}
 
-            # ── 1. Semantic search ────────────────────────────────────────────
+            # ── 1. Semantic search via pgvector ───────────────────────────────
             query_emb = PolicyService._get_embedding(query)
             if query_emb:
-                chunks = db.query(PolicyChunk).filter(PolicyChunk.embedding.isnot(None)).all()
-                if chunks:
-                    scored = []
-                    for c in chunks:
-                        if PolicyService._is_metadata_chunk(c.text):
+                dist_expr = PolicyChunk.embedding.cosine_distance(query_emb)
+                candidates = (
+                    db.query(PolicyChunk, dist_expr.label("dist"))
+                    .filter(
+                        PolicyChunk.embedding.isnot(None),
+                        dist_expr < 0.7,
+                    )
+                    .order_by(dist_expr)
+                    .limit(limit * 10)
+                    .all()
+                )
+                scored = []
+                for c, distance in candidates:
+                    if PolicyService._is_metadata_chunk(c.text):
+                        continue
+                    title = policy_title_map.get(c.policy_id, "")
+                    title_bonus = sum(0.2 for kw in query_keywords if kw in title)
+                    scored.append((1 - distance + title_bonus, c))
+
+                scored.sort(key=lambda x: x[0], reverse=True)
+
+                if scored:
+                    seen_policies: set = set()
+                    results = []
+                    for _, c in scored:
+                        if len(results) >= limit:
+                            break
+                        if c.policy_id in seen_policies:
                             continue
-                        try:
-                            emb = json.loads(c.embedding)
-                            sim = PolicyService._cosine(query_emb, emb)
-                            if sim > 0.3:
-                                # Boost score when policy title contains a query keyword
-                                title = policy_title_map.get(c.policy_id, "")
-                                title_bonus = sum(0.2 for kw in query_keywords if kw in title)
-                                scored.append((sim + title_bonus, c))
-                        except Exception:
-                            continue
+                        policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
+                        if policy:
+                            seen_policies.add(c.policy_id)
+                            updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                            results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
 
-                    scored.sort(key=lambda x: x[0], reverse=True)
-
-                    if scored:
-                        seen_policies: set = set()
-                        results = []
-                        for _, c in scored:
-                            if len(results) >= limit:
-                                break
-                            if c.policy_id in seen_policies:
-                                continue
-                            policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
-                            if policy:
-                                seen_policies.add(c.policy_id)
-                                updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
-                                results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
-
-                        if results:
-                            return "\n\n---\n\n".join(results)
+                    if results:
+                        return "\n\n---\n\n".join(results)
 
             # ── 2. Keyword search on chunks ───────────────────────────────────
             chunks_all = db.query(PolicyChunk).all()

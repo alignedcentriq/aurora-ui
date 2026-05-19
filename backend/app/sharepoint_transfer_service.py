@@ -1,4 +1,5 @@
 import logging
+import threading
 from app.graph_sync import graph_client
 from app.minio_client import minio_client
 import os
@@ -51,6 +52,16 @@ class SharePointTransferService:
                     })
                     logger.info(f"Successfully transferred {file_name} to MinIO")
             
+            # Trigger policy ingest + embedding in background for any transferred files
+            if transferred_files:
+                ingest_prefix = minio_prefix.rstrip("/") + "/" if minio_prefix else "policies/"
+                threading.Thread(
+                    target=self._ingest_and_embed,
+                    args=(ingest_prefix,),
+                    daemon=True,
+                ).start()
+                logger.info(f"Triggered background ingest from MinIO prefix: {ingest_prefix}")
+
             return {
                 "status": "success",
                 "transferred_count": len(transferred_files),
@@ -63,5 +74,14 @@ class SharePointTransferService:
                 "status": "error",
                 "message": str(e)
             }
+
+    @staticmethod
+    def _ingest_and_embed(prefix: str):
+        try:
+            from app.services.policy_service import PolicyService
+            PolicyService.ingest_from_minio(prefix=prefix)
+            PolicyService.embed_all_policies()
+        except Exception as e:
+            logger.error(f"[SharePointTransfer] Ingest/embed error: {e}")
 
 sharepoint_transfer_service = SharePointTransferService()

@@ -31,6 +31,7 @@ from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
+from app.routes.pa_callback_routes import router as pa_callback_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -94,6 +95,7 @@ app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
+app.include_router(pa_callback_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -317,6 +319,35 @@ async def process_approval(token: str):
                 except Exception as e:
                     print(f"[Approval] Notification email error: {e}")
 
+                if decision == "Approved":
+                    try:
+                        from app.services.admin_service import AdminService
+                        AdminService._fire_webhook(settings.PA_WEBHOOK_LEAVE_APPROVED, {
+                            "event": "leave_approved",
+                            "employee_email": tok.employee_email,
+                            "leave_type": leave.leave_type,
+                            "start_date": str(leave.start_date),
+                            "end_date": str(leave.end_date),
+                            "approved_by": tok.approver_email,
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        from app.services.email_service import send_notification_event
+                        send_notification_event(
+                            "leave_approved",
+                            f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
+                            {
+                                "employee_email": tok.employee_email,
+                                "leave_type": leave.leave_type,
+                                "start_date": str(leave.start_date),
+                                "end_date": str(leave.end_date),
+                                "approved_by": tok.approver_email,
+                            }
+                        )
+                    except Exception:
+                        pass
+
                 color = "#16a34a" if tok.action == "approve" else "#dc2626"
                 return HTMLResponse(_approval_html(
                     f"Leave {decision}",
@@ -456,6 +487,107 @@ async def get_admin_stats(_: CurrentUser = Depends(require_admin)):
             },
             "food_complaints": {
                 "open": db.query(FoodComplaint).filter(FoodComplaint.status == "Open").count(),
+            },
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/overdue")
+async def get_overdue_items(_: CurrentUser = Depends(require_admin)):
+    """Items breaching SLA thresholds — for Power Automate escalation flows."""
+    from app.models import Grievance, FacilityComplaint, ITTicket, Employee
+
+    def _business_days(start: datetime.datetime) -> int:
+        d = start.date() if isinstance(start, datetime.datetime) else start
+        today = datetime.date.today()
+        count = 0
+        while d < today:
+            if d.weekday() < 5:
+                count += 1
+            d += datetime.timedelta(days=1)
+        return count
+
+    now = datetime.datetime.utcnow()
+    db = SessionLocal()
+    try:
+        # Grievances open >= 5 business days
+        grievances_raw = (
+            db.query(Grievance, Employee)
+            .outerjoin(Employee, Grievance.employee_id == Employee.id)
+            .filter(Grievance.status.in_(["Open", "Under Review"]))
+            .all()
+        )
+        grievances = [
+            {
+                "reference_id": g.reference_id,
+                "category": g.category,
+                "business_days_open": _business_days(g.created_at),
+                "status": g.status,
+                "employee_name": emp.name if emp else "Anonymous",
+                "is_anonymous": g.is_anonymous,
+            }
+            for g, emp in grievances_raw
+            if _business_days(g.created_at) >= 5
+        ]
+
+        # High/Critical facility complaints open >= 24h
+        complaints_raw = (
+            db.query(FacilityComplaint, Employee)
+            .join(Employee, FacilityComplaint.employee_id == Employee.id)
+            .filter(
+                FacilityComplaint.priority.in_(["High", "Critical"]),
+                FacilityComplaint.status.in_(["Open", "In Progress"]),
+            )
+            .all()
+        )
+        facility_complaints = [
+            {
+                "ticket_id": c.ticket_id,
+                "category": c.category,
+                "priority": c.priority,
+                "hours_open": round((now - c.created_at).total_seconds() / 3600, 1),
+                "status": c.status,
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+            }
+            for c, emp in complaints_raw
+            if (now - c.created_at).total_seconds() / 3600 >= 24
+        ]
+
+        # IT tickets open >= 72h
+        tickets_raw = (
+            db.query(ITTicket, Employee)
+            .join(Employee, ITTicket.employee_id == Employee.id)
+            .filter(ITTicket.status.in_(["Open", "In Progress"]))
+            .all()
+        )
+        it_tickets = [
+            {
+                "ticket_id": t.ticket_id,
+                "subject": t.subject,
+                "priority": t.priority,
+                "hours_open": round((now - t.created_at).total_seconds() / 3600, 1),
+                "status": t.status,
+                "assigned_to": t.assigned_to,
+                "employee_name": emp.name,
+                "employee_email": emp.email,
+            }
+            for t, emp in tickets_raw
+            if (now - t.created_at).total_seconds() / 3600 >= 72
+        ]
+
+        return {
+            "generated_at": now.isoformat() + "Z",
+            "overdue": {
+                "grievances": grievances,
+                "facility_complaints": facility_complaints,
+                "it_tickets": it_tickets,
+                "totals": {
+                    "grievances": len(grievances),
+                    "facility_complaints": len(facility_complaints),
+                    "it_tickets": len(it_tickets),
+                },
             },
         }
     finally:

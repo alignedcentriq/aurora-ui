@@ -68,6 +68,42 @@ class AnnouncementService:
             except Exception as e:
                 logger.warning(f"Announcement email failed: {e}")
 
+            # Notify PA monitoring mailbox
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    "announcement_created",
+                    f"[{category}] {title}",
+                    {
+                        "announcement_id": ann.id,
+                        "title": title,
+                        "body_preview": body[:300],
+                        "category": category,
+                        "target_audience": target_audience,
+                        "created_by": created_by,
+                    }
+                )
+            except Exception:
+                pass
+
+            # Notify PA — triggers Teams channel post
+            try:
+                from app.services.admin_service import AdminService
+                from app.config import settings as _s
+                AdminService._fire_webhook(_s.PA_WEBHOOK_ANNOUNCEMENT_CREATED, {
+                    "event": "announcement_created",
+                    "announcement_id": ann.id,
+                    "title": title,
+                    "body": body[:300],
+                    "category": category,
+                    "target_audience": target_audience,
+                    "created_by": created_by,
+                    "image_url": image_url or "",
+                    "created_at": ann.created_at.isoformat() + "Z",
+                })
+            except Exception:
+                pass
+
             return (
                 f"Announcement '{title}' published successfully (ID: {ann.id}). "
                 f"Category: {category} | Audience: {target_audience}."

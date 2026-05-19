@@ -112,7 +112,7 @@ class Config:
 
     # ── Embedding + Chunking Models (semantic search / RAG ingestion) ──
     EMBEDDING_BASE_URL = _resolve_llm_base_url("EMBEDDING_BASE_URL", "LLM_BASE_URL")
-    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "gpt-oss:latest")
+    EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
 
     CHUNKING_BASE_URL = _resolve_llm_base_url("CHUNKING_BASE_URL", "EMBEDDING_BASE_URL")
@@ -155,11 +155,20 @@ class Config:
     HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "poc@alignedautomation")
     ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "poc@alignedautomation")
     HR_EMAIL = os.getenv("HR_EMAIL", os.getenv("ADMIN_EMAIL", "poc@alignedautomation.com"))
+    NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "poc@alignedautomation.com")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
     # Power Automate — SharePoint/PowerApps complaint sync
     # Set this to the HTTP trigger URL from your Power Automate flow.
     # Leave empty to disable; complaints will still save locally and email admins.
     POWER_AUTOMATE_WEBHOOK_URL = os.getenv("POWER_AUTOMATE_WEBHOOK_URL", "")
+    # Per-use-case PA webhook URLs — empty string disables that hook; local flows still run
+    PA_WEBHOOK_REIMBURSEMENT_DECISION  = os.getenv("PA_WEBHOOK_REIMBURSEMENT_DECISION", "")
+    PA_WEBHOOK_PARKING_ACTIVATED       = os.getenv("PA_WEBHOOK_PARKING_ACTIVATED", "")
+    PA_WEBHOOK_PARKING_REVOKED         = os.getenv("PA_WEBHOOK_PARKING_REVOKED", "")
+    PA_WEBHOOK_LEAVE_APPROVED          = os.getenv("PA_WEBHOOK_LEAVE_APPROVED", "")
+    PA_WEBHOOK_ANNOUNCEMENT_CREATED    = os.getenv("PA_WEBHOOK_ANNOUNCEMENT_CREATED", "")
+    PA_WEBHOOK_REIMBURSEMENT_SUBMITTED = os.getenv("PA_WEBHOOK_REIMBURSEMENT_SUBMITTED", "")
+    PA_CALLBACK_SECRET                 = os.getenv("PA_CALLBACK_SECRET", "")
 
 settings = Config()
