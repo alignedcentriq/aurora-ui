@@ -67,6 +67,14 @@ const ROLE_DOMAINS: Record<string, string[]> = {
   admin: ["hr", "admin", "it_support", "pmo", "functional_manager"],
 };
 
+const ROLE_TO_DOMAIN: Record<string, string> = {
+  hr: "hr",
+  it: "it_support",
+  pmo: "pmo",
+  admin: "admin",
+  functional_manager: "functional_manager",
+};
+
 const KNOWN_PROMPT_METADATA: Record<string, { label: string; description: string }> = {
   system_prompt: { label: "System Prompt", description: "Core instructions and persona for this domain." },
   guardrail: { label: "Guardrail", description: "Anti-hallucination and scope constraints appended after the system prompt." },
@@ -101,7 +109,7 @@ function ConfigPage() {
   const role = user?.role?.toLowerCase() ?? "";
   const allowed = userDomains(role);
 
-  const [tab, setTab] = useState<"prompts" | "announcements">("prompts");
+  const [tab, setTab] = useState<"prompts" | "announcements" | "company">("prompts");
   const [activeDomain, setActiveDomain] = useState(allowed[0] ?? "hr");
   const [prompts, setPrompts] = useState<Record<string, PromptRow>>({});
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -124,6 +132,12 @@ function ConfigPage() {
   const [testQuery, setTestQuery] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState<string | null>(null);
+
+  // Company context state
+  const [companyContext, setCompanyContext] = useState("");
+  const [companyContextEdit, setCompanyContextEdit] = useState("");
+  const [loadingCompany, setLoadingCompany] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
 
   // Announcement state
   const [annTitle, setAnnTitle] = useState("");
@@ -191,6 +205,20 @@ function ConfigPage() {
     } catch {}
   }, [user?.email, user?.role]);
 
+  const fetchCompanyContext = useCallback(async () => {
+    setLoadingCompany(true);
+    try {
+      const res = await fetch("/api/admin/company-settings", { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setCompanyContext(data.value ?? "");
+        setCompanyContextEdit(data.value ?? "");
+      }
+    } catch {} finally {
+      setLoadingCompany(false);
+    }
+  }, [user?.email, user?.role]);
+
   useEffect(() => {
     if (allowed.length > 0) {
       setActiveDomain(allowed[0]);
@@ -198,6 +226,7 @@ function ConfigPage() {
       fetchDrafts();
       fetchMyDrafts();
       fetchAnnouncements();
+      if (role === "admin") fetchCompanyContext();
     }
   }, [role]);
 
@@ -359,6 +388,24 @@ function ConfigPage() {
     }
   };
 
+  const handleSaveCompanyContext = async () => {
+    setSavingCompany(true);
+    try {
+      const res = await fetch("/api/admin/company-settings", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ value: companyContextEdit }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setCompanyContext(companyContextEdit);
+      toast.success("Company context saved — all assistants will use it from the next message.");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingCompany(false);
+    }
+  };
+
   const handleSuggestBody = async () => {
     if (!annTitle.trim()) { toast.error("Enter a title first"); return; }
     setSuggesting(true);
@@ -392,7 +439,7 @@ function ConfigPage() {
           title: annTitle,
           body: annBody,
           category: annCategory,
-          created_by_domain: activeDomain,
+          created_by_domain: ROLE_TO_DOMAIN[role] ?? activeDomain,
           expires_days: annExpires ? parseInt(annExpires) : null,
           image_url: annImageUrl.trim() || null,
         }),
@@ -498,6 +545,14 @@ function ConfigPage() {
               >
                 Announcements
               </button>
+              {isAdmin && (
+                <button
+                  onClick={() => { setTab("company"); fetchCompanyContext(); }}
+                  className={cn("rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all", tab === "company" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")}
+                >
+                  Company
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -875,6 +930,53 @@ function ConfigPage() {
                   })}
                 </div>
               )}
+            </div>
+          ) : tab === "company" ? (
+            /* ── Company Context Tab ──────────────────────────────────── */
+            <div className="p-8 space-y-6 max-w-3xl">
+              <div className="rounded-2xl border border-[var(--border)] bg-card p-6 space-y-4">
+                <div>
+                  <h3 className="text-[15px] font-semibold text-foreground">Company Context</h3>
+                  <p className="text-[12px] text-muted-foreground mt-1">
+                    This text is prepended to every assistant's system prompt. Use it to describe what your company does, where it is located, and any general facts the AI should always know.
+                  </p>
+                </div>
+                {loadingCompany ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <textarea
+                    value={companyContextEdit}
+                    onChange={(e) => setCompanyContextEdit(e.target.value)}
+                    placeholder={"Example:\nAligned Automation is a B2B SaaS company headquartered in Pune, India.\nWe build enterprise AI tools for HR, IT, and operations teams.\nOur main product is Centriq AI, an internal assistant platform."}
+                    className="w-full min-h-[260px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[13px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
+                  />
+                )}
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-muted-foreground/60">
+                    {companyContextEdit.length > 0 ? `${companyContextEdit.length} characters` : "Empty — no context injected"}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {companyContextEdit !== companyContext && (
+                      <button
+                        onClick={() => setCompanyContextEdit(companyContext)}
+                        className="text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Discard
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSaveCompanyContext}
+                      disabled={savingCompany || companyContextEdit === companyContext}
+                      className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[12px] font-medium text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      {savingCompany ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      {savingCompany ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             /* ── Announcements Tab ──────────────────────────────────── */

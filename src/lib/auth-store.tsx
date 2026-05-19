@@ -42,40 +42,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
   
   const isInteracting = inProgress !== InteractionStatus.None;
+  const hasAutoRedirected = React.useRef(false);
 
   useEffect(() => {
-    const checkAccount = () => {
+    const checkAccount = async () => {
       // Only update user state when not in the middle of an interaction
       if (inProgress === InteractionStatus.None) {
         if (accounts.length > 0) {
           const account = accounts[0];
           const idTokenClaims = account.idTokenClaims as any;
           const role = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
-          
+
           console.log("✅ MSAL Authentication Successful!");
           console.log("👤 User Account Details:", account);
           console.log("🔑 ID Token Claims:", idTokenClaims);
-          
+
           setUser({
             id: account.localAccountId,
             name: account.name || account.username || "User",
             email: account.username,
             role: role as Role,
-            avatarUrl: "/avatar.png",
+            avatarUrl: undefined,
             team: [
               { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
               { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
             ],
           });
-        } else {
-          setUser(null);
+          setIsLoading(false);
+        } else if (!hasAutoRedirected.current) {
+          hasAutoRedirected.current = true;
+          try {
+            await instance.ssoSilent(loginRequest);
+            // accounts will update, triggering another render
+          } catch {
+            try {
+              await instance.loginRedirect(loginRequest);
+              // navigates away — isLoading stays true (spinner shown)
+            } catch (e: any) {
+              if (e.name !== "BrowserAuthError" || e.errorCode !== "interaction_in_progress") {
+                console.error("Auto-login failed:", e);
+              }
+              setIsLoading(false); // show fallback button
+            }
+          }
         }
-        setIsLoading(false);
       }
     };
 
     checkAccount();
-  }, [accounts, inProgress]);
+  }, [accounts, inProgress, instance]);
 
   // Fetch actual profile photo from Microsoft Graph
   useEffect(() => {

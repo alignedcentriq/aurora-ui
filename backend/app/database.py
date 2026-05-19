@@ -25,6 +25,7 @@ from app.models import (
     ChatFeedback,
     ApprovalToken,
     Grievance,
+    CompanySettings,
     SCHEMA,
 )
 from app.config import settings
@@ -88,6 +89,11 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS image_urls JSONB',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".company_settings ('
+                f'  key VARCHAR PRIMARY KEY, value TEXT NOT NULL DEFAULT \'\','
+                f'  updated_at TIMESTAMP, updated_by VARCHAR'
+                f')',
             ]:
                 try:
                     conn.execute(text(stmt))

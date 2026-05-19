@@ -25,6 +25,9 @@ GROUNDING RULES — MANDATORY, NON-NEGOTIABLE:
 class PromptService:
     @staticmethod
     def get_system_prompt(domain: str, default_prompt: str = "") -> str:
+        from app.services.company_settings_service import CompanySettingsService
+        company_context = CompanySettingsService.get_company_context()
+
         db = SessionLocal()
         try:
             config = db.query(PromptConfig).filter(
@@ -32,12 +35,14 @@ class PromptService:
                 PromptConfig.prompt_key == "system_prompt",
                 PromptConfig.is_active == True
             ).order_by(PromptConfig.version.desc()).first()
-            
-            if config:
-                return config.prompt_value
-            return default_prompt
+
+            base = config.prompt_value if config else default_prompt
         finally:
             db.close()
+
+        if company_context:
+            return f"COMPANY CONTEXT:\n{company_context}\n\n{base}"
+        return base
 
     @staticmethod
     def update_prompt(domain: str, prompt_key: str, value: str, updated_by: str, user_role: str):

@@ -1,5 +1,5 @@
 import { Send, Paperclip, Plus, Mic, MicOff, FileText, X, Loader2, Car, Monitor, Headphones, Wifi, Package, Receipt } from "lucide-react";
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -27,6 +27,14 @@ interface AttachedFile {
   text: string;
 }
 
+interface MentionUser {
+  id: number;
+  name: string;
+  email: string;
+  department: string;
+  designation: string;
+}
+
 export function Composer({
   value,
   onChange,
@@ -46,6 +54,14 @@ export function Composer({
   const [attached, setAttached] = useState<AttachedFile | null>(null);
   const [isListening, setIsListening] = useState(false);
 
+  // @mention state
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const [mentionResults, setMentionResults] = useState<MentionUser[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [loadingMentions, setLoadingMentions] = useState(false);
+  const mentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -56,6 +72,54 @@ export function Composer({
   useEffect(() => {
     return () => { recognitionRef.current?.stop(); };
   }, []);
+
+  const fetchMentions = useCallback(async (q: string) => {
+    setLoadingMentions(true);
+    try {
+      const res = await fetch(`/api/employees/autocomplete?q=${encodeURIComponent(q)}&limit=6`);
+      if (res.ok) {
+        const data: MentionUser[] = await res.json();
+        setMentionResults(data);
+        setMentionIndex(0);
+      }
+    } catch {
+      setMentionResults([]);
+    } finally {
+      setLoadingMentions(false);
+    }
+  }, []);
+
+  const detectMention = useCallback((text: string, cursor: number) => {
+    const before = text.slice(0, cursor);
+    const match = before.match(/@(\w*)$/);
+    if (match) {
+      const q = match[1];
+      setMentionStart(cursor - match[0].length);
+      setMentionIndex(0);
+      setMentionQuery(q);
+      if (mentionTimerRef.current) clearTimeout(mentionTimerRef.current);
+      mentionTimerRef.current = setTimeout(() => fetchMentions(q), 150);
+    } else {
+      setMentionQuery(null);
+      setMentionResults([]);
+    }
+  }, [fetchMentions]);
+
+  const selectMention = useCallback((user: MentionUser) => {
+    const cursor = ref.current?.selectionStart ?? value.length;
+    const before = value.slice(0, mentionStart);
+    const after = value.slice(cursor);
+    const inserted = `@${user.name} `;
+    const newValue = before + inserted + after;
+    onChange(newValue);
+    setMentionQuery(null);
+    setMentionResults([]);
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      const pos = before.length + inserted.length;
+      ref.current?.setSelectionRange(pos, pos);
+    });
+  }, [value, mentionStart, onChange]);
 
   const toggleListening = () => {
     if (isListening) {
@@ -191,11 +255,55 @@ export function Composer({
       />
 
       <div className="relative flex flex-col rounded-[24px] border border-[var(--border)] bg-card/40 backdrop-blur-2xl shadow-2xl transition-all focus-within:border-primary/30 p-2">
+
+        {/* @mention dropdown */}
+        {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
+          <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-[var(--border)] bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+            {loadingMentions && mentionResults.length === 0 ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : mentionResults.length === 0 ? (
+              <div className="px-4 py-3 text-[13px] text-muted-foreground">No users found for &quot;{mentionQuery}&quot;</div>
+            ) : (
+              mentionResults.map((user, i) => (
+                <button
+                  key={user.id}
+                  onMouseDown={(e) => { e.preventDefault(); selectMention(user); }}
+                  className={cn(
+                    "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
+                    i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50"
+                  )}
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
+                    {user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-foreground truncate">{user.name}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{user.designation}{user.department ? ` · ${user.department}` : ""}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
         <textarea
           ref={ref}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            const text = e.target.value;
+            const cursor = e.target.selectionStart ?? text.length;
+            onChange(text);
+            detectMention(text, cursor);
+          }}
           onKeyDown={(e) => {
+            if (mentionQuery !== null && mentionResults.length > 0) {
+              if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1)); return; }
+              if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
+              if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectMention(mentionResults[mentionIndex]); return; }
+              if (e.key === "Escape") { e.preventDefault(); setMentionQuery(null); setMentionResults([]); return; }
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               handleSubmit();
@@ -299,8 +407,9 @@ export function Composer({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-center gap-1 text-center text-[11px] font-medium text-muted-foreground/50 uppercase tracking-widest">
-        <BrandName withAI plain /> <span className="lowercase">can make mistakes. Consider checking important information.</span>
+      <div className="mt-4 text-center text-[11px] font-medium text-muted-foreground/50 tracking-wide px-4">
+        <span className="uppercase tracking-widest whitespace-nowrap"><BrandName withAI plain /></span>
+        <span className="normal-case"> can make mistakes. Consider checking important information.</span>
       </div>
     </div>
   );

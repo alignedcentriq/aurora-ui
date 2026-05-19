@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -81,7 +81,18 @@ class PolicyChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding = Column(Vector(768), nullable=True)
+    image_urls = Column(JSON, nullable=True)  # list of MinIO object keys for images near this chunk
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class CompanySettings(Base):
+    __tablename__ = "company_settings"
+    __table_args__ = {"schema": SCHEMA}
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+
 
 # New SharePoint Integration Tables (Aligned with enterprise_ai schema)
 class GraphSubscription(Base):

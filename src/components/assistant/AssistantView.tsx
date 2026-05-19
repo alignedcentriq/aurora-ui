@@ -19,8 +19,30 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
+import { ThinkingBuddy } from "./ThinkingBuddy";
 
 import type { Turn } from "@/lib/chat-store";
+
+function getGreeting(name: string): { heading: string; subheading: string } {
+  const firstName = name.split(" ")[0];
+  const hour = new Date().getHours();
+
+  if (hour >= 5 && hour < 9) {
+    return { heading: `Early start, ${firstName}.`, subheading: "Let's make the most of the morning." };
+  } else if (hour >= 9 && hour < 12) {
+    return { heading: `Good morning, ${firstName}.`, subheading: "What can I help you with today?" };
+  } else if (hour >= 12 && hour < 14) {
+    return { heading: `Good afternoon, ${firstName}.`, subheading: "What's on your plate?" };
+  } else if (hour >= 14 && hour < 17) {
+    return { heading: `Afternoon, ${firstName}.`, subheading: "How can I help you power through the day?" };
+  } else if (hour >= 17 && hour < 20) {
+    return { heading: `Good evening, ${firstName}.`, subheading: "Wrapping up or just getting started?" };
+  } else if (hour >= 20 && hour < 23) {
+    return { heading: `Night owl mode, ${firstName}.`, subheading: "I'm here. What's on your mind?" };
+  } else {
+    return { heading: `Up late, ${firstName}.`, subheading: "The quiet hours. What do you need?" };
+  }
+}
 
 interface ThreadData {
   id: string;
@@ -174,6 +196,7 @@ export function AssistantView() {
             downloadTitle: data.download_title ?? undefined,
             domain: data.domain ?? undefined,
             interactive: data.interactive ?? undefined,
+            images: Array.isArray(data.images) && data.images.length > 0 ? data.images : undefined,
           });
         })
         .catch((err: Error & { code?: string }) => {
@@ -323,9 +346,17 @@ export function AssistantView() {
           <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
             {activeThread.turns.length === 0 ? (
               <section className="flex w-full flex-col items-center justify-center text-center animate-[fade-in_.6s_ease-out_both] max-w-5xl mx-auto">
-                <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-12">
-                  Hi, how can I help you?
-                </h1>
+                {(() => {
+                  const { heading, subheading } = getGreeting(user?.name || "there");
+                  return (
+                    <>
+                      <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-3">
+                        {heading}
+                      </h1>
+                      <p className="text-lg text-muted-foreground mb-12">{subheading}</p>
+                    </>
+                  );
+                })()}
                 
                 <div className="w-full max-w-3xl mb-12">
                   <Composer
@@ -352,11 +383,25 @@ export function AssistantView() {
                       {t.text}
                     </UserMessage>
                   ) : (
-                    <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined}>
+                    <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined} text={t.text}>
                       <div className="space-y-4">
                         {t.text && (
                           <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
                             {renderInline(t.text)}
+                          </div>
+                        )}
+                        {t.images && t.images.length > 0 && (
+                          <div className="mt-3 flex flex-col gap-3">
+                            {t.images.map((url, imgIdx) => (
+                              <a key={imgIdx} href={url} target="_blank" rel="noopener noreferrer">
+                                <img
+                                  src={url}
+                                  alt={`Policy image ${imgIdx + 1}`}
+                                  className="max-w-full rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow cursor-zoom-in"
+                                  loading="lazy"
+                                />
+                              </a>
+                            ))}
                           </div>
                         )}
                         {t.downloadUrl && (
@@ -415,23 +460,7 @@ export function AssistantView() {
 
                 {thinking && (
                   <AIMessage live>
-                    <div className="flex items-center gap-3 py-2 text-sm text-muted-foreground">
-                      <div className="flex gap-1.5">
-                        <div
-                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                          style={{ animationDelay: "0ms" }}
-                        />
-                        <div
-                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                          style={{ animationDelay: "150ms" }}
-                        />
-                        <div
-                          className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                          style={{ animationDelay: "300ms" }}
-                        />
-                      </div>
-                      <span>{activity || "Working..."}</span>
-                    </div>
+                    <ThinkingBuddy />
                   </AIMessage>
                 )}
               </section>
