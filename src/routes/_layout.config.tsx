@@ -67,6 +67,14 @@ const ROLE_DOMAINS: Record<string, string[]> = {
   admin: ["hr", "admin", "it_support", "pmo", "functional_manager"],
 };
 
+const ROLE_TO_DOMAIN: Record<string, string> = {
+  hr: "hr",
+  it: "it_support",
+  pmo: "pmo",
+  admin: "admin",
+  functional_manager: "functional_manager",
+};
+
 const KNOWN_PROMPT_METADATA: Record<string, { label: string; description: string }> = {
   system_prompt: { label: "System Prompt", description: "Core instructions and persona for this domain." },
   guardrail: { label: "Guardrail", description: "Anti-hallucination and scope constraints appended after the system prompt." },
@@ -431,7 +439,7 @@ function ConfigPage() {
           title: annTitle,
           body: annBody,
           category: annCategory,
-          created_by_domain: activeDomain,
+          created_by_domain: ROLE_TO_DOMAIN[role] ?? activeDomain,
           expires_days: annExpires ? parseInt(annExpires) : null,
           image_url: annImageUrl.trim() || null,
         }),
