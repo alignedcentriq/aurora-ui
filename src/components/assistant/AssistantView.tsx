@@ -72,6 +72,7 @@ export function AssistantView() {
   const { theme } = useSettings();
   const { user } = useAuth();
   const [input, setInput] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
@@ -88,6 +89,11 @@ export function AssistantView() {
       createThread();
     }
   }, [activeId, createThread]);
+
+  // Clear suggestion chips whenever the active thread changes
+  useEffect(() => {
+    setSuggestions([]);
+  }, [activeId]);
 
   // Check LLM reachability on mount — surfaces VPN issue before the user tries to chat
   useEffect(() => {
@@ -140,6 +146,7 @@ export function AssistantView() {
         return;
       }
 
+      setSuggestions([]);
       addTurn(activeId, { role: "user", text });
       setInput("");
       setThinking(true);
@@ -150,7 +157,7 @@ export function AssistantView() {
       }));
 
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 180000);
       const activitySteps = getActivitySteps(text);
       setActivity(activitySteps[0]);
       const activityTimers = activitySteps
@@ -198,6 +205,26 @@ export function AssistantView() {
             interactive: data.interactive ?? undefined,
             images: Array.isArray(data.images) && data.images.length > 0 ? data.images : undefined,
           });
+          // Fire-and-forget: fetch contextual follow-up suggestions
+          fetch("/api/suggestions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(user?.email ? { "x-user-email": user.email } : {}),
+            },
+            body: JSON.stringify({
+              message: text,
+              response: responseText,
+              domain: data.domain ?? "general",
+            }),
+          })
+            .then((r) => (r.ok ? r.json() : { suggestions: [] }))
+            .then((d) => {
+              if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
+                setSuggestions(d.suggestions);
+              }
+            })
+            .catch(() => {});
         })
         .catch((err: Error & { code?: string }) => {
           console.error("Backend Error:", err);
@@ -368,6 +395,8 @@ export function AssistantView() {
                       toast("Attachments", { description: "This feature is currently in preview." })
                     }
                     onQuickAction={(p) => !thinking && send(p)}
+                    suggestions={suggestions}
+                    onSuggestionSelect={(t) => !thinking && send(t)}
                   />
                 </div>
 
@@ -482,6 +511,8 @@ export function AssistantView() {
                 }
                 onQuickAction={(p) => !thinking && send(p)}
                 onGenerateDoc={openDocModal}
+                suggestions={suggestions}
+                onSuggestionSelect={(t) => !thinking && send(t)}
               />
             </div>
           </footer>

@@ -35,6 +35,7 @@ from app.agents.pmo_agent import pmo_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
+from app.agents.deeplink_agent import get_deeplink_agent
 from app.services.it_service import ITService
 from app.sharepoint_transfer_service import sharepoint_transfer_service
 from app.services.employee_service import EmployeeService
@@ -45,6 +46,87 @@ from app.services.feedback_service import FeedbackService
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
+
+
+# ── Zoho Leave Fast-Path ───────────────────────────────────────────────────────
+# Bypasses all LLM calls for standard leave requests (0 LLM = <2s response).
+
+_FP_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2,
+    "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5,
+    "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+_FP_LEAVE_TYPES = [
+    (re.compile(r'\b(sick|sl|medical)\b', re.I), "Sick"),
+    (re.compile(r'\b(earned|el|annual)\b', re.I), "Earned"),
+    (re.compile(r'\b(optional|ol)\b', re.I), "Optional"),
+    (re.compile(r'\b(casual|cl)\b', re.I), "Casual"),
+]
+_FP_INTENT_RE = re.compile(
+    r'\b(apply|book|take|want|need|request|submit)\b.*?\bleave\b',
+    re.IGNORECASE | re.DOTALL,
+)
+_FP_MN = (
+    r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?'
+    r'|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+)
+_FP_DN = r'\d{1,2}(?:st|nd|rd|th)?'
+_FP_DATE = r'(?:\d{4}-\d{2}-\d{2}|' + _FP_DN + r'\s+' + _FP_MN + r'|' + _FP_MN + r'\s+' + _FP_DN + r')'
+_FP_RANGE_RE = re.compile(
+    r'(?:from\s+)?(' + _FP_DATE + r')\s+to\s+(' + _FP_DATE + r'|\d{1,2}(?:st|nd|rd|th)?)',
+    re.IGNORECASE,
+)
+
+
+def _fp_parse_month(s: str) -> int:
+    s = s.lower().strip()
+    return _FP_MONTHS.get(s) or _FP_MONTHS.get(s[:3]) or 0
+
+
+def _fp_parse_date(token: str, fallback_month: int = 0, year: int = 2026) -> str:
+    token = re.sub(r'(\d+)(?:st|nd|rd|th)', r'\1', token.strip())
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})$', token)
+    if m:
+        return token
+    m = re.match(r'^(\d{1,2})\s+([a-zA-Z]+)$', token)
+    if m:
+        mo = _fp_parse_month(m.group(2))
+        if mo:
+            return f"{year}-{mo:02d}-{int(m.group(1)):02d}"
+    m = re.match(r'^([a-zA-Z]+)\s+(\d{1,2})$', token)
+    if m:
+        mo = _fp_parse_month(m.group(1))
+        if mo:
+            return f"{year}-{mo:02d}-{int(m.group(2)):02d}"
+    m = re.match(r'^(\d{1,2})$', token)
+    if m and fallback_month:
+        return f"{year}-{fallback_month:02d}-{int(m.group(1)):02d}"
+    return ""
+
+
+def _try_extract_leave_params(message: str) -> Optional[dict]:
+    """Return leave params dict if the message is a clear Zoho leave request; None otherwise."""
+    if not _FP_INTENT_RE.search(message):
+        return None
+    m = _FP_RANGE_RE.search(message)
+    if not m:
+        return None
+    start_date = _fp_parse_date(m.group(1).strip(), year=2026)
+    if not start_date:
+        return None
+    fallback_month = int(start_date.split("-")[1])
+    end_date = _fp_parse_date(m.group(2).strip(), fallback_month=fallback_month, year=2026)
+    if not end_date:
+        return None
+    leave_type = "Casual"
+    for pattern, lt in _FP_LEAVE_TYPES:
+        if pattern.search(message):
+            leave_type = lt
+            break
+    return {"start_date": start_date, "end_date": end_date, "leave_type": leave_type, "reason": ""}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -460,6 +542,18 @@ def intent_router(state: AgentState):
                 "entities": {},
             }
 
+    # Fast-path: bypass LLM entirely for unambiguous leave requests
+    leave_params = _try_extract_leave_params(last_human)
+    if leave_params:
+        print(f"[Router] Fast-path Zoho leave: {leave_params}")
+        return {
+            "domain": "deeplink",
+            "route_confidence": 1.0,
+            "route_reasoning": "Zoho leave params extracted without LLM.",
+            "sub_intent": "zoho_leave_fastpath",
+            "entities": leave_params,
+        }
+
     try:
         result = classify_intent(last_human)
         print(
@@ -550,6 +644,35 @@ def hr_agent(state: AgentState):
         return {"messages": [AIMessage(content="I'm sorry, the HR system is currently unreachable.")]}
 
     return {"messages": [response]}
+
+async def deeplink_agent_node(state: AgentState):
+    """Deep-Link Agent — automates Zoho leave, PowerApps complaints, and Payroll via Playwright."""
+    # Fast-path: params already extracted by regex — call tool directly, 0 LLM calls
+    if state.get("sub_intent") == "zoho_leave_fastpath":
+        entities = state.get("entities") or {}
+        if entities.get("start_date") and entities.get("end_date"):
+            try:
+                from app.agents.deeplink_agent import submit_zoho_leave
+                result_json = submit_zoho_leave.invoke(entities)
+                result_data = json.loads(result_json)
+                if result_data.get("success"):
+                    return {"messages": [AIMessage(content=result_data["message"])]}
+                # Session not set up or not configured — fall through to LLM agent
+            except Exception as _fp_err:
+                print(f"[deeplink] fast-path error: {_fp_err}")
+
+    agent = get_deeplink_agent()
+    result = await agent.ainvoke({
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": state.get("feedback_context") or "",
+    })
+    last_ai = next(
+        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)),
+        AIMessage(content="I could not complete the external portal request."),
+    )
+    return {"messages": [last_ai]}
+
 
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
@@ -766,6 +889,7 @@ INSTRUCTIONS:
 def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
     status = get_domain_status(domain)
+    if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
     if domain == "admin": return "admin_agent"
     if domain == "it_support": return "it_agent"
@@ -810,6 +934,7 @@ workflow.add_node("pmo_agent", pmo_agent_node)
 workflow.add_node("admin_agent", admin_agent_node)
 workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
+workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
@@ -829,6 +954,7 @@ workflow.add_edge("pmo_agent", END)
 workflow.add_edge("admin_agent", END)
 workflow.add_edge("it_agent", END)
 workflow.add_edge("manager_agent", END)
+workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 

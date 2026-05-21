@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { toast } from "sonner";
+import { SuggestionChips } from "./SuggestionChips";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const SpeechRecognitionAPI: (new () => SpeechRecognition) | undefined =
@@ -20,6 +21,8 @@ type Props = {
   onQuickAction?: (prompt: string) => void;
   onGenerateDoc?: () => void;
   disabled?: boolean;
+  suggestions?: string[];
+  onSuggestionSelect?: (text: string) => void;
 };
 
 interface AttachedFile {
@@ -43,6 +46,8 @@ export function Composer({
   onQuickAction,
   onGenerateDoc,
   disabled,
+  suggestions,
+  onSuggestionSelect,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -232,6 +237,14 @@ export function Composer({
 
   return (
     <div className="relative w-full max-w-4xl mx-auto">
+      {/* Contextual suggestion chips */}
+      {suggestions && suggestions.length > 0 && (
+        <SuggestionChips
+          suggestions={suggestions}
+          onSelect={onSuggestionSelect ?? (() => {})}
+        />
+      )}
+
       {/* Attached file chip */}
       {attached && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-card px-3 py-2 w-fit">

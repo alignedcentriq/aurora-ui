@@ -16,10 +16,10 @@ from app.config import settings
 
 DOMAIN_REGISTRY = {
     "hr": {
-        "description": "Human Resources — leave management, leave balance, leave applications, "
-                       "attendance, HR policies, employee benefits, "
-                       "onboarding, offboarding, referral bonuses, appraisals, PIP, "
-                       "performance reviews, work from home policy, holidays, comp-off",
+        "description": "Human Resources — leave balance (how many leaves do I have), attendance, "
+                       "HR policies, employee benefits, onboarding, offboarding, referral bonuses, "
+                       "appraisals, PIP, performance reviews, work from home policy, holidays, comp-off. "
+                       "Do NOT use for actually applying/submitting/requesting leave — that goes through Zoho (deeplink).",
         "status": "active",
     },
     "admin": {
@@ -49,6 +49,15 @@ DOMAIN_REGISTRY = {
     "functional_manager": {
         "description": "Functional Manager & Team Lead — who is on my team, who reports to me, "
                        "my direct reports, team members, reportees, org structure",
+        "status": "active",
+    },
+    "deeplink": {
+        "description": "External portal automation — use for: "
+                       "(1) Applying/submitting/requesting leave of any type (casual, sick, earned, optional) — these go through Zoho People; "
+                       "(2) Filing a formal complaint via the PowerApps complaints app; "
+                       "(3) Retrieving a payslip from the payroll portal; "
+                       "(4) Setup commands: 'setup zoho session', 'setup powerapps session', 'setup payroll session'. "
+                       "This is the ONLY domain for leave applications/submissions — HR only handles leave balance and policy queries.",
         "status": "active",
     },
 }
@@ -92,6 +101,9 @@ Example responses:
 {{"domain": "admin", "confidence": 0.95, "reasoning": "User asking about certification reimbursement policy — admin handles reimbursement policy information.", "sub_intent": "policy_query", "entities": {{"policy_topic": "certification reimbursement"}}}}
 {{"domain": "admin", "confidence": 0.93, "reasoning": "User asking about travel expense policy — admin handles expense and reimbursement policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "travel expense"}}}}
 {{"domain": "hr", "confidence": 0.94, "reasoning": "User asking about leave policy — HR handles leave and attendance policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "leave"}}}}
+{{"domain": "deeplink", "confidence": 0.97, "reasoning": "User wants to apply casual leave — leave applications are submitted via Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "casual", "start_date": "2025-06-10", "end_date": "2025-06-12"}}}}
+{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User wants to apply sick leave — leave submissions go through Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "sick"}}}}
+{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to take earned leave — leave applications use Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "earned"}}}}
 {{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
 """
 

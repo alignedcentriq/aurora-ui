@@ -17,6 +17,8 @@ from typing import List, Optional
 
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
+from app.mcp_client import load_mcp_tools, shutdown_mcp_client
+from app.agents.deeplink_agent import get_deeplink_agent
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings, ALIGNED_LLM_HOST
@@ -178,6 +180,19 @@ async def startup_event():
                 print(f"Failed to renew subscriptions: {e}")
 
     asyncio.create_task(periodic_renew())
+
+    try:
+        await load_mcp_tools()
+        get_deeplink_agent()
+        print("MCP deep-link tools loaded.")
+    except Exception as e:
+        print(f"[MCP] Deep-link tools failed to load: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await shutdown_mcp_client()
+
 
 @app.get("/")
 async def root():
@@ -472,6 +487,48 @@ async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None))
     except Exception as e:
         print(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class SuggestionsRequest(BaseModel):
+    message: str
+    response: str
+    domain: str = "general"
+
+@app.post("/api/suggestions")
+async def get_suggestions(request: SuggestionsRequest):
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            base_url=settings.AGENT_BASE_URL,
+            api_key=settings.AGENT_API_KEY,
+        )
+        system_prompt = (
+            "You are a helpful assistant. Given a user question and an AI response, "
+            "generate exactly 3 short follow-up questions the user might ask next. "
+            "Each question must be under 10 words. "
+            "Return ONLY a valid JSON array of 3 strings, no explanation, no markdown."
+        )
+        user_content = f"User question: {request.message}\n\nAI response: {request.response[:800]}"
+        completion = await client.chat.completions.create(
+            model=settings.AGENT_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0,
+            max_tokens=200,
+        )
+        raw = completion.choices[0].message.content or "[]"
+        # Strip markdown code fences if present
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+        suggestions = json.loads(raw)
+        if isinstance(suggestions, list):
+            suggestions = [str(s) for s in suggestions[:3] if s]
+        else:
+            suggestions = []
+        return {"suggestions": suggestions}
+    except Exception as e:
+        print(f"[suggestions] error: {e}")
+        return {"suggestions": []}
 
 @app.get("/api/admin/stats")
 async def get_admin_stats(_: CurrentUser = Depends(require_admin)):

@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+_ROOT = Path(__file__).resolve().parent.parent.parent  # aurora-ui/
+load_dotenv(_ROOT / ".env.local", override=True)
+load_dotenv()  # fallback: .env
 
 ALIGNED_LLM_BASE_URL = "http://ml01.alignedautomation.com:11434/v1"
 AUTO_BASE_URL_VALUES = {"", "auto", "platform"}
@@ -170,5 +173,10 @@ class Config:
     PA_WEBHOOK_ANNOUNCEMENT_CREATED    = os.getenv("PA_WEBHOOK_ANNOUNCEMENT_CREATED", "")
     PA_WEBHOOK_REIMBURSEMENT_SUBMITTED = os.getenv("PA_WEBHOOK_REIMBURSEMENT_SUBMITTED", "")
     PA_CALLBACK_SECRET                 = os.getenv("PA_CALLBACK_SECRET", "")
+
+    # ── External Portal Automation (Playwright MCP) ───────────────────────────
+    ZOHO_PEOPLE_URL    = os.getenv("ZOHO_PEOPLE_URL", "")
+    POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
+    PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
 
 settings = Config()
