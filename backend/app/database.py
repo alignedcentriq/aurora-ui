@@ -30,6 +30,7 @@ from app.models import (
     ApprovalToken,
     Grievance,
     CompanySettings,
+    LeaveBalanceCache,
     SCHEMA,
 )
 from app.config import settings

@@ -16,10 +16,10 @@ from app.config import settings
 
 DOMAIN_REGISTRY = {
     "hr": {
-        "description": "Human Resources — leave balance (how many leaves do I have), attendance, "
-                       "HR policies, employee benefits, onboarding, offboarding, referral bonuses, "
-                       "appraisals, PIP, performance reviews, work from home policy, holidays, comp-off. "
-                       "Do NOT use for actually applying/submitting/requesting leave — that goes through Zoho (deeplink).",
+        "description": "Human Resources — attendance, HR policies, employee benefits, onboarding, "
+                       "offboarding, referral bonuses, appraisals, PIP, performance reviews, "
+                       "work from home policy, holidays, comp-off. "
+                       "Do NOT use for leave balance queries or leave applications — both go through Zoho (deeplink).",
         "status": "active",
     },
     "admin": {
@@ -54,12 +54,14 @@ DOMAIN_REGISTRY = {
     "deeplink": {
         "description": "External portal automation — use for: "
                        "(1) Applying/submitting/requesting leave of any type (casual, sick, earned, optional) — these go through Zoho People; "
-                       "(2) Raising/filing/submitting/logging a complaint or ticket in the PowerApps Admin Action Tracker — "
+                       "(2) Checking leave balance — 'how many leaves do I have', 'my leave balance', 'remaining leaves', "
+                       "'leave status' — fetches live data from Zoho People (headless); "
+                       "(3) Raising/filing/submitting/logging a complaint or ticket in the PowerApps Admin Action Tracker — "
                        "any message where the user wants to formally raise a complaint, report a premises/facility/office issue, "
                        "or submit a ticket; "
-                       "(3) Retrieving a payslip from the payroll portal; "
-                       "(4) Setup commands: 'setup zoho session', 'setup powerapps session', 'setup payroll session'. "
-                       "This is the ONLY domain for leave applications/submissions — HR only handles leave balance and policy queries.",
+                       "(4) Retrieving a payslip from the payroll portal; "
+                       "(5) Setup commands: 'setup zoho session', 'setup powerapps session', 'setup payroll session'. "
+                       "This is the ONLY domain for all Zoho People interactions (leave applications AND leave balance).",
         "status": "active",
     },
 }
@@ -93,7 +95,7 @@ Example responses:
 {{"domain": "it_support", "confidence": 0.97, "reasoning": "User wants to install Node.js, which is a software installation request.", "sub_intent": "software_install", "entities": {{"software_name": "Node.js"}}}}
 {{"domain": "it_support", "confidence": 0.95, "reasoning": "User reports their system is heating up, which is a hardware/device issue handled by IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "overheating"}}}}
 {{"domain": "it_support", "confidence": 0.93, "reasoning": "User's laptop is slow/freezing, which is a device performance issue for IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "performance"}}}}
-{{"domain": "hr", "confidence": 0.95, "reasoning": "User is asking about their leave balance.", "sub_intent": "leave_balance", "entities": {{}}}}
+{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User is asking about their leave balance — fetched live from Zoho People (deeplink).", "sub_intent": "leave_balance", "entities": {{}}}}
 {{"domain": "pmo", "confidence": 0.98, "reasoning": "User wants to see all projects in the organization.", "sub_intent": "list_projects", "entities": {{}}}}
 {{"domain": "pmo", "confidence": 0.98, "reasoning": "User is asking which projects exist in the company.", "sub_intent": "list_projects", "entities": {{}}}}
 {{"domain": "pmo", "confidence": 0.97, "reasoning": "User wants the current status of a specific project.", "sub_intent": "project_status", "entities": {{"project_name": "Aurora UI"}}}}

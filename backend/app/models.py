@@ -508,3 +508,22 @@ class ChatFeedback(Base):
     feedback_text = Column(String, nullable=True)   # optional free-text comment
     user_message_embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class LeaveBalanceCache(Base):
+    """Stores the most recent leave balance scraped from Zoho People for each user.
+    Refreshed in the background every LEAVE_BALANCE_SYNC_INTERVAL_SECONDS (default 30 min).
+    """
+    __tablename__ = "leave_balance_cache"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    # Full balance list: [{"type": "Casual Leave", "total": 12, "used": 3, "balance": 9}, ...]
+    balances_json = Column(JSON, nullable=True)
+    # Raw page text — fallback when structured scrape fails, LLM can parse it
+    raw_text = Column(Text, nullable=True)
+    # "ok" | "session_expired" | "error"
+    sync_status = Column(String, default="ok")
+    sync_error = Column(Text, nullable=True)
+    last_synced_at = Column(DateTime, default=datetime.datetime.utcnow)
