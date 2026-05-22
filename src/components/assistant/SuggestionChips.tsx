@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ClipboardList, ArrowRight } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 type Props = {
   suggestions: string[];
@@ -21,29 +22,43 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
   };
 
   return (
-    <div className="flex items-center justify-end gap-2 mb-2 flex-wrap animate-[fade-in_.3s_ease-out_both]">
-      {inline.map((s) => (
-        <button
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+      className="flex items-center justify-end gap-2 mb-2 flex-wrap"
+    >
+      {inline.map((s, i) => (
+        <motion.button
           key={s}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: i * 0.08, type: "spring", stiffness: 400, damping: 25 }}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.95 }}
           onClick={() => handleSelect(s)}
           className={cn(
-            "rounded-full border border-[var(--border)] bg-card/60 px-3 py-1.5",
-            "text-[12px] font-medium text-foreground hover:bg-secondary",
-            "transition-colors max-w-[220px] truncate shrink-0"
+            "rounded-full border border-border bg-card/60 backdrop-blur-sm px-3 py-1.5",
+            "text-[12px] font-medium text-foreground hover:bg-secondary hover:border-primary/20",
+            "transition-colors max-w-[220px] truncate shrink-0 shadow-sm"
           )}
           title={s}
         >
           {s}
-        </button>
+        </motion.button>
       ))}
 
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button
+          <motion.button
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.16, type: "spring", stiffness: 400, damping: 25 }}
+            whileTap={{ scale: 0.95 }}
             className={cn(
-              "flex items-center gap-1.5 rounded-full border border-[var(--border)]",
-              "bg-card/60 px-3 py-1.5 text-[12px] font-medium text-muted-foreground",
-              "hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+              "flex items-center gap-1.5 rounded-full border border-border",
+              "bg-card/60 backdrop-blur-sm px-3 py-1.5 text-[12px] font-medium text-muted-foreground",
+              "hover:bg-secondary hover:text-foreground hover:border-primary/20 transition-colors shrink-0 shadow-sm"
             )}
             title="View prompts"
           >
@@ -52,10 +67,10 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
             <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white leading-none">
               {suggestions.length}
             </span>
-          </button>
+          </motion.button>
         </PopoverTrigger>
         <PopoverContent
-          className="w-80 p-0 overflow-hidden rounded-2xl border-[var(--border)] bg-card/95 backdrop-blur-xl shadow-2xl"
+          className="w-80 p-0 overflow-hidden rounded-2xl border-border bg-card/95 backdrop-blur-xl shadow-2xl"
           align="end"
           side="top"
           sideOffset={12}
@@ -63,7 +78,7 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
           <p className="px-4 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
             Suggested follow-ups
           </p>
-          <div className="flex flex-col divide-y divide-[var(--border)]">
+          <div className="flex flex-col divide-y divide-border">
             {suggestions.map((s) => (
               <button
                 key={s}
@@ -78,6 +93,6 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
           <div className="h-1" />
         </PopoverContent>
       </Popover>
-    </div>
+    </motion.div>
   );
 }

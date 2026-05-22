@@ -368,28 +368,69 @@ class PolicyService:
         print(f"[PolicyService] Ingest done: {result}")
         return result
 
+    # Canonical source bucket and prefixes for all policy documents
+    POLICIES_BUCKET = "policies-bucket"
+    POLICIES_PREFIXES = ("admin/", "it-support/", "hr/")
+
+    # Maps MinIO folder prefix → fallback category when filename keywords don't match
+    _PREFIX_CATEGORY = {
+        "admin/": "Admin",
+        "it-support/": "IT",
+        "hr/": "HR General",
+    }
+
     @staticmethod
-    def ingest_from_minio(prefix: str = "policies/") -> dict:
+    def sync_from_minio_buckets() -> dict:
         """
-        List all PDF/DOCX objects under `prefix` in MinIO, download each,
-        extract text, and upsert as Policy rows.
-        Skips files already ingested (matched by title).
-        Does not chunk/embed — call embed_all_policies() after.
+        Incremental sync across all policy bucket prefixes.
+        Detects new files (never seen) and changed files (ETag differs) and re-ingests them.
+        Returns aggregate counts: new, updated, skipped, errors.
+        """
+        total: dict = {"new": 0, "updated": 0, "skipped": 0, "errors": []}
+        for prefix in PolicyService.POLICIES_PREFIXES:
+            result = PolicyService.ingest_from_minio(prefix=prefix, bucket=PolicyService.POLICIES_BUCKET)
+            total["new"] += result.get("new", 0)
+            total["updated"] += result.get("updated", 0)
+            total["skipped"] += result.get("skipped", 0)
+            total["errors"] += result.get("errors", [])
+        if total["new"] or total["updated"]:
+            print(f"[PolicyService] Sync complete — new={total['new']} updated={total['updated']} skipped={total['skipped']}")
+            # Embed any chunks that were added without embeddings
+            PolicyService.embed_all_policies()
+        return total
+
+    @staticmethod
+    def ingest_from_minio(prefix: str = "policies/", bucket: str = None) -> dict:
+        """
+        Incremental ingest from MinIO.
+        - New file   (minio_key not in DB)         → ingest + chunk + embed
+        - Changed file (ETag differs from stored)  → delete old policy+chunks, re-ingest
+        - Unchanged file (same ETag)               → skip
         """
         from app.minio_client import minio_client
 
-        db = SessionLocal()
-        ingested, skipped, errors = 0, 0, []
-        try:
-            existing_titles = {p.title for p in db.query(Policy.title).all()}
-            objects = minio_client.list_objects(prefix=prefix)
+        if bucket is None:
+            bucket = settings.MINIO_BUCKET_NAME
 
+        prefix_category = PolicyService._PREFIX_CATEGORY.get(prefix)
+
+        db = SessionLocal()
+        new_count, updated_count, skipped, errors = 0, 0, 0, []
+        try:
+            # Build a lookup: minio_key → (policy_id, stored_etag)
+            rows = db.query(Policy.id, Policy.minio_key, Policy.minio_etag).filter(
+                Policy.minio_key.isnot(None)
+            ).all()
+            existing: dict = {r.minio_key: (r.id, r.minio_etag) for r in rows}
+
+            objects = minio_client.list_objects(prefix=prefix, bucket=bucket)
             if not objects:
-                print(f"[PolicyService] No objects found in MinIO under '{prefix}'")
-                return {"ingested": 0, "skipped": 0, "errors": []}
+                print(f"[PolicyService] No objects in bucket='{bucket}' prefix='{prefix}'")
+                return {"new": 0, "updated": 0, "skipped": 0, "errors": []}
 
             for obj in objects:
                 object_name = obj["Key"]
+                etag = obj.get("ETag", "").strip('"')
                 filename = object_name.split("/")[-1]
                 if not filename:
                     continue
@@ -397,13 +438,22 @@ class PolicyService:
                 if ext not in ("pdf", "docx"):
                     continue
 
-                title = filename.rsplit(".", 1)[0].strip()
-                if title in existing_titles:
+                is_new = object_name not in existing
+                is_changed = (not is_new) and (existing[object_name][1] != etag)
+
+                if not is_new and not is_changed:
                     skipped += 1
                     continue
 
+                # Delete stale policy rows before re-ingesting (CASCADE removes chunks)
+                if is_changed:
+                    stale_id = existing[object_name][0]
+                    db.query(Policy).filter(Policy.id == stale_id).delete()
+                    db.flush()
+                    print(f"  [UPDATE] ETag changed — replacing: {filename}")
+
                 try:
-                    file_bytes = minio_client.download_file(object_name)
+                    file_bytes = minio_client.download_file(object_name, bucket=bucket)
                 except Exception as e:
                     errors.append(f"Download failed ({filename}): {e}")
                     continue
@@ -418,10 +468,18 @@ class PolicyService:
                     errors.append(f"Empty/too short: {filename}")
                     continue
 
+                title = filename.rsplit(".", 1)[0].strip()
+                category = _categorize(filename)
+                if category == "General" and prefix_category:
+                    category = prefix_category
+
                 policy = Policy(
                     title=title,
-                    category=_categorize(filename),
+                    category=category,
                     content=content[:50000],
+                    minio_key=object_name,
+                    minio_etag=etag,
+                    updated_at=datetime.datetime.utcnow(),
                 )
                 db.add(policy)
                 db.flush()
@@ -432,25 +490,28 @@ class PolicyService:
                     if is_pdf
                     else _extract_images_from_docx_bytes(file_bytes)
                 )
+                chunk_images: dict = {}
                 if raw_images:
                     img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
                     chunks_preview = _chunk_text(content[:50000])
                     assignment = _assign_images_to_chunks(
                         raw_images, len(chunks_preview), is_docx=not is_pdf
                     )
-                    # Translate image list indices → actual MinIO keys
                     chunk_images = {
                         ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
                         for ci, idxs in assignment.items()
                         if idxs
                     }
-                    PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
-                    print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars, {len(img_keys)} images]")
-                else:
-                    print(f"  [OK] Ingested from MinIO: {title} [{len(content)} chars, no images]")
 
-                existing_titles.add(title)
-                ingested += 1
+                PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+                img_count = len(raw_images) if raw_images else 0
+                action = "NEW" if is_new else "UPDATED"
+                print(f"  [{action}] {title} [{len(content)} chars, {img_count} images]")
+
+                if is_new:
+                    new_count += 1
+                else:
+                    updated_count += 1
 
             db.commit()
         except Exception as e:
@@ -460,8 +521,8 @@ class PolicyService:
         finally:
             db.close()
 
-        result = {"ingested": ingested, "skipped": skipped, "errors": errors}
-        print(f"[PolicyService] MinIO ingest done: {result}")
+        result = {"new": new_count, "updated": updated_count, "skipped": skipped, "errors": errors}
+        print(f"[PolicyService] Ingest '{prefix}': {result}")
         return result
 
     # ── Chunking & Embedding ──────────────────────────────────────────────────

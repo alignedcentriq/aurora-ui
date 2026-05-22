@@ -48,11 +48,7 @@ ZOHO_REASON_SEL      = "textarea[name='Reasonforleave']"
 ZOHO_SUBMIT_SEL      = "#zp_forms_add_btn"
 ZOHO_CONFIRM_SEL     = "TODO: selector for success message / reference number after submit"
 
-# PowerApps complaints app
-POWERAPPS_CATEGORY_SEL = "TODO: selector for category field in PowerApps complaints form"
-POWERAPPS_DESC_SEL     = "TODO: selector for description field"
-POWERAPPS_SUBMIT_SEL   = "TODO: selector for submit button"
-POWERAPPS_CONFIRM_SEL  = "TODO: selector for confirmation/reference after submit"
+# PowerApps complaints app — selectors live in _powerapps_fill.py
 
 # Payroll portal
 PAYROLL_MONTH_SEL   = "TODO: selector for month picker/input"
@@ -255,69 +251,63 @@ async def submit_zoho_leave(
 
 @mcp.tool()
 async def submit_powerapps_complaint(
-    category: str,
-    description: str = "",
+    action_item: str,
+    priority: str = "Medium",
+    location: str = "",
 ) -> str:
     """
-    Log into the PowerApps complaints app using a saved SSO session and file a complaint.
+    Open the PowerApps complaints app in Edge with the form pre-filled.
+    The user reviews, attaches files if needed, and clicks "Submit Ticket" themselves.
+    Returns immediately — the browser stays open for 10 minutes.
 
     Args:
-        category:    Complaint category (e.g. "Facility", "Food", "IT", "HR").
-        description: Optional description of the complaint.
+        action_item: Description of the issue / action required.
+        priority:    Urgency level — one of "High", "Medium", or "Low". Default "Medium".
+        location:    Office location where the issue was found.
+                     Valid values: "T-1 6th Floor", "T-2 10th Floor", "T-3 6th Floor",
+                     "T-3 8th Floor", "Bangalore Office", "Indore Office", "Other".
 
     Returns:
-        JSON string with success status and reference number or error details.
+        JSON string indicating the browser was opened, or an error.
     """
     if not POWERAPPS_URL:
         return _not_configured_response("powerapps", "POWERAPPS_URL")
 
-    if "TODO" in POWERAPPS_CATEGORY_SEL:
-        return json.dumps({
-            "success": False,
-            "error": "PowerApps selectors not yet configured",
-            "instruction": "The portal selectors need to be updated in mcp_server/server.py after inspecting the PowerApps complaints app.",
-        })
+    profile_dir = SESSIONS_DIR / "powerapps_profile"
+    if not profile_dir.exists():
+        return _session_expired_response("powerapps")
 
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(channel="msedge", headless=True)
-            context = await browser.new_context()
+    # Normalise priority capitalisation
+    priority_map = {"high": "High", "medium": "Medium", "low": "Low"}
+    priority = priority_map.get(priority.lower(), "Medium")
 
-            has_session = await _load_cookies(context, "powerapps")
-            if not has_session:
-                await browser.close()
-                return _session_expired_response("powerapps")
+    fill_script = Path(__file__).parent / "_powerapps_fill.py"
+    subprocess.Popen(
+        [
+            sys.executable, str(fill_script),
+            action_item,
+            priority,
+            location or "Other",
+            str(SESSIONS_DIR),
+            POWERAPPS_URL,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
 
-            page = await context.new_page()
-            await page.goto(POWERAPPS_URL, wait_until="networkidle", timeout=30_000)
-
-            if _is_login_page(page.url):
-                await browser.close()
-                return _session_expired_response("powerapps")
-
-            await page.wait_for_selector(POWERAPPS_CATEGORY_SEL, timeout=20_000)
-            await page.select_option(POWERAPPS_CATEGORY_SEL, label=category)
-            if description:
-                await page.fill(POWERAPPS_DESC_SEL, description)
-
-            await page.click(POWERAPPS_SUBMIT_SEL)
-            await page.wait_for_selector(POWERAPPS_CONFIRM_SEL, timeout=15_000)
-
-            confirmation = await page.text_content(POWERAPPS_CONFIRM_SEL)
-            await _save_cookies(context, "powerapps")
-            await browser.close()
-
-        return json.dumps({
-            "success": True,
-            "message": f"Complaint filed in PowerApps: [{category}] {description[:60]}{'...' if len(description) > 60 else ''}",
-            "confirmation": confirmation.strip() if confirmation else "",
-        })
-
-    except Exception as e:
-        return json.dumps({
-            "success": False,
-            "error": f"PowerApps complaint submission failed: {str(e)}",
-        })
+    loc_note = f" at {location}" if location else ""
+    return json.dumps({
+        "success": True,
+        "action_required": "user_submit",
+        "message": (
+            f"Opening the PowerApps complaints form in Edge: "
+            f"{priority} priority complaint{loc_note}. "
+            "The browser is opening now — please review the pre-filled form, "
+            "attach any photos if needed, and click Submit Ticket. "
+            "The window closes automatically after 10 minutes."
+        ),
+    })
 
 
 @mcp.tool()

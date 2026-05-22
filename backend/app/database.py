@@ -1,4 +1,8 @@
 
+import os
+import time
+import threading
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.models import (
@@ -60,6 +64,27 @@ def _background_embed_policies():
         print(f"[background] Policy embedding failed: {e}")
 
 
+# How often (seconds) the background thread polls MinIO for new/changed policies.
+# Override via env var POLICY_SYNC_INTERVAL_SECONDS (default 10 min).
+_POLICY_SYNC_INTERVAL = int(os.getenv("POLICY_SYNC_INTERVAL_SECONDS", "600"))
+
+
+def _policy_sync_loop():
+    """
+    Daemon thread: polls policies-bucket every POLICY_SYNC_INTERVAL seconds.
+    Picks up new or modified files automatically via ETag comparison.
+    """
+    while True:
+        time.sleep(_POLICY_SYNC_INTERVAL)
+        try:
+            from app.services.policy_service import PolicyService
+            result = PolicyService.sync_from_minio_buckets()
+            if result["new"] or result["updated"]:
+                print(f"[policy_sync] {result}")
+        except Exception as e:
+            print(f"[policy_sync] error: {e}")
+
+
 def init_db():
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
@@ -94,6 +119,8 @@ def init_db():
                 f'  key VARCHAR PRIMARY KEY, value TEXT NOT NULL DEFAULT \'\','
                 f'  updated_at TIMESTAMP, updated_by VARCHAR'
                 f')',
+                f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -180,32 +207,27 @@ def init_db():
             _seed_announcements(db)
         _ = db.query(ChatFeedback).count()
 
-        # Ingest policy documents: MinIO (SharePoint-sourced) preferred, local folder fallback
-        policy_count = db.query(Policy).count()
-        if policy_count < 10:
-            try:
-                from app.services.policy_service import PolicyService
-                from app.minio_client import minio_client
-                minio_objects = minio_client.list_objects(prefix="policies/")
-                if minio_objects:
-                    print("Ingesting policy documents from MinIO...")
-                    PolicyService.ingest_from_minio(prefix="policies/")
-                else:
-                    print("No MinIO policies found, trying local OneDrive folder...")
-                    PolicyService.ingest_policies_from_folder()
-            except Exception as e:
-                print(f"Policy ingestion notice: {e}")
-
-        # Chunk + embed all policies that don't have chunks yet (runs in background)
+        # Incremental sync from policies-bucket on every startup (ETag-aware — skips unchanged files)
         try:
-            import threading
-            print("Starting policy chunking + embedding in background...")
-            threading.Thread(
-                target=_background_embed_policies,
-                daemon=True,
-            ).start()
+            from app.services.policy_service import PolicyService
+            print("[init_db] Syncing policy documents from policies-bucket...")
+            PolicyService.sync_from_minio_buckets()
         except Exception as e:
-            print(f"Policy chunking notice: {e}")
+            print(f"[init_db] Policy sync notice: {e}")
+
+        # Background thread: embeds any chunks still missing vectors
+        try:
+            print("[init_db] Starting background embedding pass...")
+            threading.Thread(target=_background_embed_policies, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Embedding thread notice: {e}")
+
+        # Background thread: polls MinIO every {_POLICY_SYNC_INTERVAL}s for new/changed files
+        try:
+            print(f"[init_db] Starting policy sync loop (interval={_POLICY_SYNC_INTERVAL}s)...")
+            threading.Thread(target=_policy_sync_loop, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Policy sync loop notice: {e}")
 
     except Exception as e:
         print(f"Error during init_db: {e}")

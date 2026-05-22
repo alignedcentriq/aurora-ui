@@ -1,5 +1,6 @@
 import { Sparkles, Users, Wrench, FileText, Megaphone, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 export type SuggestionCategory = "hr" | "it" | "admin" | "org" | "all";
 
@@ -71,43 +72,62 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
   const finalItems = filtered.slice(0, 4);
 
   return (
-    <div className="flex flex-col gap-3 animate-[fade-in_.3s_ease-out_both]">
+    <div className="flex flex-col gap-3">
       {/* Category Navigation */}
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
         {CATEGORIES.map((cat) => {
           const Icon = cat.icon;
           const isActive = activeCategory === cat.id;
           return (
-            <button
+            <motion.button
               key={cat.id}
+              whileTap={{ scale: 0.93 }}
               onClick={() => onCategoryChange(cat.id as SuggestionCategory)}
               className={cn(
-                "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-all active:scale-95",
+                "relative flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[11px] font-bold transition-colors z-10",
                 isActive
-                  ? "bg-primary text-white shadow-sm"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  ? "text-white"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Icon className={cn("h-3.5 w-3.5", isActive ? "text-white" : "text-primary")} />
-              {cat.label}
-            </button>
+              {isActive && (
+                <motion.div
+                  layoutId="suggestion-cat"
+                  className="absolute inset-0 rounded-full bg-primary shadow-sm shadow-primary/20"
+                  transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                />
+              )}
+              <Icon className={cn("relative z-10 h-3.5 w-3.5", isActive ? "text-white" : "text-primary")} />
+              <span className="relative z-10">{cat.label}</span>
+            </motion.button>
           );
         })}
       </div>
 
       {/* Curated Suggestions */}
-      <div className="flex flex-wrap items-center gap-2">
+      <motion.div
+        key={activeCategory}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="flex flex-wrap items-center gap-2"
+      >
         {finalItems.map((s, idx) => (
-          <button
-            key={idx}
+          <motion.button
+            key={s.id}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: idx * 0.05, type: "spring", stiffness: 400, damping: 25 }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => onSelect(s.text)}
-            className="flex h-9 items-center rounded-xl border border-[var(--border)] bg-card/40 px-4 text-xs font-semibold text-foreground/70 transition-all hover:border-primary/40 hover:bg-card/80 hover:text-primary active:scale-95 shadow-sm whitespace-nowrap"
+            className="flex h-9 items-center rounded-xl border border-[var(--border)] bg-card/40 backdrop-blur-sm px-4 text-xs font-semibold text-foreground/70 transition-all hover:border-primary/40 hover:bg-card/80 hover:text-primary shadow-sm whitespace-nowrap"
           >
             {s.text.includes("Cabin") && <MapPin className="mr-1.5 h-3 w-3 text-emerald-500" />}
             {s.text}
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
     </div>
   );
 }

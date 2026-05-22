@@ -35,10 +35,11 @@ class MinioClient:
         self.s3.upload_fileobj(file_obj, self.bucket_name, object_name)
         return f"{self.endpoint}/{self.bucket_name}/{object_name}"
 
-    def download_file(self, object_name: str) -> bytes:
+    def download_file(self, object_name: str, bucket: str = None) -> bytes:
         """Download an object from MinIO and return its raw bytes."""
+        bucket = bucket or self.bucket_name
         buf = io.BytesIO()
-        self.s3.download_fileobj(self.bucket_name, object_name, buf)
+        self.s3.download_fileobj(bucket, object_name, buf)
         return buf.getvalue()
 
     def upload_bytes(self, data: bytes, object_name: str, content_type: str = "image/png") -> str:
@@ -59,8 +60,9 @@ class MinioClient:
             ExpiresIn=expiry,
         )
 
-    def list_objects(self, prefix=''):
-        response = self.s3.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
+    def list_objects(self, prefix='', bucket: str = None):
+        bucket = bucket or self.bucket_name
+        response = self.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
         return response.get('Contents', [])
 
 minio_client = MinioClient()

@@ -54,7 +54,9 @@ DOMAIN_REGISTRY = {
     "deeplink": {
         "description": "External portal automation — use for: "
                        "(1) Applying/submitting/requesting leave of any type (casual, sick, earned, optional) — these go through Zoho People; "
-                       "(2) Filing a formal complaint via the PowerApps complaints app; "
+                       "(2) Raising/filing/submitting/logging a complaint or ticket in the PowerApps Admin Action Tracker — "
+                       "any message where the user wants to formally raise a complaint, report a premises/facility/office issue, "
+                       "or submit a ticket; "
                        "(3) Retrieving a payslip from the payroll portal; "
                        "(4) Setup commands: 'setup zoho session', 'setup powerapps session', 'setup payroll session'. "
                        "This is the ONLY domain for leave applications/submissions — HR only handles leave balance and policy queries.",
@@ -104,6 +106,10 @@ Example responses:
 {{"domain": "deeplink", "confidence": 0.97, "reasoning": "User wants to apply casual leave — leave applications are submitted via Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "casual", "start_date": "2025-06-10", "end_date": "2025-06-12"}}}}
 {{"domain": "deeplink", "confidence": 0.96, "reasoning": "User wants to apply sick leave — leave submissions go through Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "sick"}}}}
 {{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to take earned leave — leave applications use Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "earned"}}}}
+{{"domain": "deeplink", "confidence": 0.97, "reasoning": "User wants to raise/file a complaint — formal complaints go through the PowerApps Admin Action Tracker (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "AC not working", "location": "T-1 6th Floor"}}}}
+{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User wants to submit a ticket for a premises issue — Admin Action Tracker is the portal for formal complaints (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "washroom tap leaking"}}}}
+{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to log a complaint about an office/facility problem — this goes through PowerApps Admin Action Tracker (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "lights not working", "location": "T-3 8th Floor"}}}}
+{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to raise a ticket for a premises complaint — deeplink handles formal complaints via PowerApps.", "sub_intent": "powerapps_complaint", "entities": {{"issue": "cleanliness issue near reception"}}}}
 {{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
 """
 

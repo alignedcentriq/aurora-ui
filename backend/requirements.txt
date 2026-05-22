@@ -21,6 +21,7 @@ python-logging-loki
 python-json-logger
 reportlab
 pdfplumber
+pymupdf
 python-docx
 pandas
 openpyxl
