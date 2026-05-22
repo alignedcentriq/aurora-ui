@@ -69,6 +69,9 @@ class Policy(Base):
     category = Column(String) # Leave, WFH, etc.
     content = Column(Text)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # MinIO source tracking for incremental sync
+    minio_key = Column(String, nullable=True, unique=True)   # e.g. "admin/Leave Policy.pdf"
+    minio_etag = Column(String, nullable=True)               # S3 ETag; changes when file changes
 
 
 class PolicyChunk(Base):

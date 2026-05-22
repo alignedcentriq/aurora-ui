@@ -1,9 +1,10 @@
-import { Send, Paperclip, Plus, Mic, MicOff, FileText, X, Loader2, Car, Monitor, Headphones, Wifi, Package, Receipt } from "lucide-react";
+import { Send, Plus, Mic, MicOff, FileText, X, Loader2 } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { toast } from "sonner";
+import { SuggestionChips } from "./SuggestionChips";
+import { motion, AnimatePresence } from "framer-motion";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const SpeechRecognitionAPI: (new () => SpeechRecognition) | undefined =
@@ -20,6 +21,8 @@ type Props = {
   onQuickAction?: (prompt: string) => void;
   onGenerateDoc?: () => void;
   disabled?: boolean;
+  suggestions?: string[];
+  onSuggestionSelect?: (text: string) => void;
 };
 
 interface AttachedFile {
@@ -43,16 +46,18 @@ export function Composer({
   onQuickAction,
   onGenerateDoc,
   disabled,
+  suggestions,
+  onSuggestionSelect,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const baseTextRef = useRef("");
   const finalTranscriptRef = useRef("");
-  const [isOpen, setIsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attached, setAttached] = useState<AttachedFile | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   // @mention state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -183,12 +188,13 @@ export function Composer({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Reset input so same file can be reselected
     e.target.value = "";
 
-    const allowed = ["application/pdf", "text/plain", "text/csv"];
-    if (!allowed.includes(file.type) && !file.name.endsWith(".txt") && !file.name.endsWith(".pdf")) {
-      toast.error("Only PDF and text files are supported");
+    const allowedExtensions = [".pdf", ".txt", ".csv", ".json", ".md", ".xml", ".log"];
+    const allowedMime = ["application/pdf", "text/plain", "text/csv", "application/json", "text/markdown", "application/xml", "text/xml"];
+    const hasValidExt = allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+    if (!allowedMime.includes(file.type) && !hasValidExt) {
+      toast.error("Supported formats: PDF, TXT, CSV, JSON, MD, XML, LOG");
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -197,7 +203,6 @@ export function Composer({
     }
 
     setUploading(true);
-    setIsOpen(false);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -230,184 +235,192 @@ export function Composer({
     }
   };
 
+  const hasContent = value.trim() || attached;
+
   return (
     <div className="relative w-full max-w-4xl mx-auto">
-      {/* Attached file chip */}
-      {attached && (
-        <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-card px-3 py-2 w-fit">
-          <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
-          <span className="text-[12px] font-medium text-foreground truncate max-w-[240px]">{attached.filename}</span>
-          <button
-            onClick={() => setAttached(null)}
-            className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-rose-500 transition-colors"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+      {/* Contextual suggestion chips */}
+      {suggestions && suggestions.length > 0 && (
+        <SuggestionChips
+          suggestions={suggestions}
+          onSelect={onSuggestionSelect ?? (() => {})}
+        />
       )}
+
+      {/* Attached file chip */}
+      <AnimatePresence>
+        {attached && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 w-fit"
+          >
+            <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+            <span className="text-[12px] font-medium text-foreground truncate max-w-[240px]">{attached.filename}</span>
+            <button
+              onClick={() => setAttached(null)}
+              className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-rose-500 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.txt,.csv,text/plain,application/pdf"
+        accept=".pdf,.txt,.csv,.json,.md,.xml,.log,text/plain,application/pdf,text/csv,application/json,text/markdown,application/xml,text/xml"
         className="hidden"
         onChange={handleFileChange}
       />
 
-      <div className="relative flex flex-col rounded-[24px] border border-[var(--border)] bg-card/40 backdrop-blur-2xl shadow-2xl transition-all focus-within:border-primary/30 p-2">
-
-        {/* @mention dropdown */}
-        {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
-          <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-[var(--border)] bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
-            {loadingMentions && mentionResults.length === 0 ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              </div>
-            ) : mentionResults.length === 0 ? (
-              <div className="px-4 py-3 text-[13px] text-muted-foreground">No users found for &quot;{mentionQuery}&quot;</div>
-            ) : (
-              mentionResults.map((user, i) => (
-                <button
-                  key={user.id}
-                  onMouseDown={(e) => { e.preventDefault(); selectMention(user); }}
-                  className={cn(
-                    "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
-                    i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50"
-                  )}
-                >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
-                    {user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-foreground truncate">{user.name}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{user.designation}{user.department ? ` · ${user.department}` : ""}</p>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-
-        <textarea
-          ref={ref}
-          value={value}
-          onChange={(e) => {
-            const text = e.target.value;
-            const cursor = e.target.selectionStart ?? text.length;
-            onChange(text);
-            detectMention(text, cursor);
+      {/* Composer with animated gradient border on focus */}
+      <div className="relative">
+        {/* Gradient glow layer */}
+        <div
+          className={cn(
+            "absolute -inset-[1px] rounded-[25px] transition-opacity duration-500",
+            isFocused ? "opacity-100" : "opacity-0",
+          )}
+          style={{
+            background: "linear-gradient(135deg, var(--primary), var(--accent-cyan), var(--accent-indigo), var(--primary))",
+            backgroundSize: "300% 300%",
+            animation: isFocused ? "gradient-shift 4s ease infinite" : "none",
           }}
-          onKeyDown={(e) => {
-            if (mentionQuery !== null && mentionResults.length > 0) {
-              if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1)); return; }
-              if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
-              if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectMention(mentionResults[mentionIndex]); return; }
-              if (e.key === "Escape") { e.preventDefault(); setMentionQuery(null); setMentionResults([]); return; }
-            }
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit();
-            }
-          }}
-          placeholder="Message Centriq AI..."
-          disabled={disabled}
-          className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[16px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
         />
 
-        <div className="flex items-center justify-between px-2 pb-2">
-          <div className="flex items-center gap-1">
-            <Popover open={isOpen} onOpenChange={setIsOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  disabled={uploading}
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground active:scale-90 disabled:opacity-50"
-                  title="Add"
-                >
-                  {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-6 w-6" strokeWidth={1.5} />}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-0 overflow-hidden rounded-2xl border-[var(--border)] bg-card/95 backdrop-blur-xl shadow-2xl" align="start" side="top" sideOffset={12}>
-                <div className="flex flex-col">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-3 w-full px-4 py-3.5 text-[13px] font-semibold hover:bg-secondary/50 transition-colors text-left group"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:scale-110 transition-transform">
-                      <Paperclip className="h-4 w-4" />
-                    </div>
-                    Attach Files
-                  </button>
-
-                  <div className="mx-4 border-t border-[var(--border)]" />
-
-                  <p className="px-4 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-                    Quick Queries
-                  </p>
-
-                  {[
-                    { icon: Car, label: "Request parking sticker", prompt: "I need a parking sticker", color: "bg-amber-500/10 text-amber-500" },
-                    { icon: Monitor, label: "Install software", prompt: "I need to install software on my laptop", color: "bg-violet-500/10 text-violet-500" },
-                    { icon: Headphones, label: "IT support ticket", prompt: "I need to raise an IT support ticket", color: "bg-blue-500/10 text-blue-500" },
-                    { icon: Wifi, label: "Request VPN access", prompt: "I need VPN access", color: "bg-emerald-500/10 text-emerald-500" },
-                    { icon: Package, label: "Asset request", prompt: "I need to request a new asset (laptop/equipment)", color: "bg-rose-500/10 text-rose-500" },
-                    { icon: Receipt, label: "Expense reimbursement", prompt: "I want to submit an expense reimbursement", color: "bg-orange-500/10 text-orange-500" },
-                  ].map(({ icon: Icon, label, prompt, color }) => (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        setIsOpen(false);
-                        onQuickAction?.(prompt);
-                      }}
-                      className="flex items-center gap-3 w-full px-4 py-2.5 text-[13px] hover:bg-secondary/50 transition-colors text-left group"
-                    >
-                      <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${color} group-hover:scale-110 transition-transform`}>
-                        <Icon className="h-3.5 w-3.5" />
-                      </div>
-                      <span className="text-foreground/80 font-medium">{label}</span>
-                    </button>
-                  ))}
-
-                  <div className="h-2" />
+        <div
+          className={cn(
+            "relative flex flex-col rounded-[24px] border bg-card/60 backdrop-blur-xl shadow-lg transition-all p-2",
+            isFocused ? "border-transparent shadow-xl" : "border-border",
+          )}
+          onFocus={() => setIsFocused(true)}
+          onBlur={(e) => {
+            // Don't blur if focus moves within the composer
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsFocused(false);
+            }
+          }}
+        >
+          {/* @mention dropdown */}
+          {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+              {loadingMentions && mentionResults.length === 0 ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleListening}
-              disabled={disabled}
-              className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-full transition-all active:scale-90 disabled:opacity-50 disabled:cursor-not-allowed",
-                isListening
-                  ? "bg-red-500/10 text-red-500 hover:bg-red-500/20"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              ) : mentionResults.length === 0 ? (
+                <div className="px-4 py-3 text-[13px] text-muted-foreground">No users found for &quot;{mentionQuery}&quot;</div>
+              ) : (
+                mentionResults.map((user, i) => (
+                  <button
+                    key={user.id}
+                    onMouseDown={(e) => { e.preventDefault(); selectMention(user); }}
+                    className={cn(
+                      "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
+                      i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50"
+                    )}
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
+                      {user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-foreground truncate">{user.name}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">{user.designation}{user.department ? ` · ${user.department}` : ""}</p>
+                    </div>
+                  </button>
+                ))
               )}
-              title={isListening ? "Stop recording" : "Voice input"}
-            >
-              {isListening
-                ? <MicOff className="h-5 w-5 animate-pulse" strokeWidth={1.5} />
-                : <Mic className="h-5 w-5" strokeWidth={1.5} />
-              }
-            </button>
+            </div>
+          )}
 
-            {(value.trim() || attached) && (
-              <button
+          <textarea
+            ref={ref}
+            value={value}
+            onChange={(e) => {
+              const text = e.target.value;
+              const cursor = e.target.selectionStart ?? text.length;
+              onChange(text);
+              detectMention(text, cursor);
+            }}
+            onKeyDown={(e) => {
+              if (mentionQuery !== null && mentionResults.length > 0) {
+                if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1)); return; }
+                if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectMention(mentionResults[mentionIndex]); return; }
+                if (e.key === "Escape") { e.preventDefault(); setMentionQuery(null); setMentionResults([]); return; }
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
+            placeholder="Message Centriq AI..."
+            disabled={disabled}
+            className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+
+          <div className="flex items-center justify-between px-2 pb-1">
+            <div className="flex items-center gap-1">
+              <motion.button
+                whileTap={{ scale: 0.9 }}
                 type="button"
-                onClick={handleSubmit}
-                disabled={disabled}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95 disabled:opacity-50"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                title="Attach file"
               >
-                <Send className="h-5 w-5" />
-              </button>
-            )}
+                {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" strokeWidth={1.5} />}
+              </motion.button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {/* Voice input */}
+              <motion.button
+                whileTap={{ scale: 0.85 }}
+                type="button"
+                onClick={toggleListening}
+                disabled={disabled}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+                  isListening
+                    ? "bg-red-500/10 text-red-500 hover:bg-red-500/20 ring-2 ring-red-500/30"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                )}
+                title={isListening ? "Stop recording" : "Voice input"}
+              >
+                {isListening
+                  ? <MicOff className="h-4 w-4 animate-pulse" strokeWidth={1.5} />
+                  : <Mic className="h-4 w-4" strokeWidth={1.5} />
+                }
+              </motion.button>
+
+              {/* Send button */}
+              <AnimatePresence>
+                {hasContent && (
+                  <motion.button
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                    whileTap={{ scale: 0.9 }}
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={disabled}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    <Send className="h-4 w-4" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 text-center text-[11px] font-medium text-muted-foreground/50 tracking-wide px-4">
+      <div className="mt-3 text-center text-[11px] font-medium text-muted-foreground/40 tracking-wide px-4">
         <span className="uppercase tracking-widest whitespace-nowrap"><BrandName withAI plain /></span>
         <span className="normal-case"> can make mistakes. Consider checking important information.</span>
       </div>

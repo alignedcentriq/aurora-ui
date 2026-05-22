@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSettings } from "@/lib/settings-store";
+import { motion } from "framer-motion";
 
 export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
@@ -45,10 +46,12 @@ function Toggle({ enabled, onToggle }: ToggleProps) {
         enabled ? "bg-primary" : "bg-muted",
       )}
     >
-      <div
+      <motion.div
+        layout
+        transition={{ type: "spring", stiffness: 500, damping: 35 }}
         className={cn(
-          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
-          enabled ? "translate-x-[22px]" : "translate-x-0.5",
+          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm",
+          enabled ? "left-[22px]" : "left-0.5",
         )}
       />
     </button>
@@ -86,6 +89,23 @@ function SettingRow({
   );
 }
 
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08, delayChildren: 0.1 },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 12 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { type: "spring", stiffness: 300, damping: 30 },
+  },
+};
+
 function SettingsPage() {
   const { user } = useAuth();
   const { theme, setTheme } = useSettings();
@@ -101,17 +121,27 @@ function SettingsPage() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5">
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5"
+      >
         <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight">Settings</h1>
         <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
           Manage your preferences and personalization
         </p>
-      </div>
+      </motion.div>
 
       <div className="flex-1 p-4 sm:p-8">
-        <div className="mx-auto max-w-3xl space-y-6 sm:space-y-8">
+        <motion.div
+          variants={container}
+          initial="hidden"
+          animate="show"
+          className="mx-auto max-w-3xl space-y-6 sm:space-y-8"
+        >
           {/* Profile Card */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card p-4 sm:p-6">
+          <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card p-4 sm:p-6">
             <div className="flex items-center gap-3 sm:gap-5">
               {user.avatarUrl ? (
                 <img
@@ -120,7 +150,7 @@ function SettingsPage() {
                   className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover shadow-md shrink-0"
                 />
               ) : (
-                <div className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-primary/10 text-lg sm:text-xl font-bold text-primary shadow-sm shrink-0">
+                <div className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-accent-cyan/10 text-lg sm:text-xl font-bold text-primary shadow-sm shrink-0">
                   {user.name
                     .split(" ")
                     .map((n) => n[0])
@@ -141,10 +171,10 @@ function SettingsPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* Appearance */}
-          <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+          <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
             <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
               <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
                 <Palette className="h-4 w-4 text-violet-500" /> Appearance
@@ -157,38 +187,46 @@ function SettingsPage() {
                   const Icon = opt.icon;
                   const isSelected = theme === opt.value;
                   return (
-                    <button
+                    <motion.button
                       key={opt.value}
+                      whileTap={{ scale: 0.97 }}
                       onClick={() => setTheme(opt.value)}
                       className={cn(
-                        "flex flex-col items-center gap-1.5 sm:gap-2 rounded-xl border-2 px-2 py-3 sm:px-4 sm:py-4 transition-all duration-150",
+                        "relative flex flex-col items-center gap-1.5 sm:gap-2 rounded-xl border-2 px-2 py-3 sm:px-4 sm:py-4 transition-all duration-150",
                         isSelected
                           ? "border-primary bg-primary/5"
                           : "border-[var(--border)] hover:border-[var(--border-strong)]",
                       )}
                     >
+                      {isSelected && (
+                        <motion.div
+                          layoutId="settings-theme"
+                          className="absolute inset-0 rounded-[10px] border-2 border-primary bg-primary/5"
+                          transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                        />
+                      )}
                       <Icon
                         className={cn(
-                          "h-4 w-4 sm:h-5 sm:w-5",
+                          "relative z-10 h-4 w-4 sm:h-5 sm:w-5",
                           isSelected ? "text-primary" : "text-muted-foreground",
                         )}
                       />
                       <span
                         className={cn(
-                          "text-[11px] sm:text-xs font-medium",
+                          "relative z-10 text-[11px] sm:text-xs font-medium",
                           isSelected ? "text-primary" : "text-muted-foreground",
                         )}
                       >
                         {opt.label}
                       </span>
-                    </button>
+                    </motion.button>
                   );
                 })}
               </div>
             </div>
-          </div>
+          </motion.div>
 
-        </div>
+        </motion.div>
       </div>
     </div>
   );

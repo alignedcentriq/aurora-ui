@@ -2,7 +2,8 @@
 @import "tailwindcss";
 
 /* 
- * Centriq AI — Premium Theme
+ * Centriq AI — Premium Theme v2
+ * Violet / Cyan / Indigo palette derived from logo
  * Optimized for Tailwind CSS v4
  */
 
@@ -38,56 +39,86 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
+  /* Glow shadows — violet / cyan */
   --shadow-glow-violet:
     0 0 0 1px color-mix(in oklab, var(--accent-violet) 20%, transparent),
     0 10px 40px -10px color-mix(in oklab, var(--accent-violet) 40%, transparent);
+  --shadow-glow-cyan:
+    0 0 0 1px color-mix(in oklab, var(--accent-cyan) 20%, transparent),
+    0 10px 40px -10px color-mix(in oklab, var(--accent-cyan) 35%, transparent);
   --shadow-elevated:
     0 20px 60px -20px rgba(0, 0, 0, 0.1), 0 1px 0 0 color-mix(in oklab, white 6%, transparent) inset;
+  --shadow-card:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover:
+    0 8px 30px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
 
+  /* Animations */
   --animate-fade-in: fade-in 0.4s ease-out both;
   --animate-slide-up: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-pulse-glow: pulse-glow 2s ease-in-out infinite;
+  --animate-gradient-shift: gradient-shift 6s ease infinite;
 }
 
+/* ─── Keyframes ─────────────────────────────────────────────────── */
+
 @keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-/* LIGHT MODE */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px 0 rgba(139, 92, 246, 0.15); }
+  50% { box-shadow: 0 0 40px 8px rgba(139, 92, 246, 0.25); }
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+/* ─── Light Mode ────────────────────────────────────────────────── */
+
 :root {
   --radius: 0.875rem;
 
-  --background: #ffffff;
+  --background: #fafbff;
   --foreground: #0f172a;
 
-  --surface: #f8fafc;
+  --surface: #f1f4fb;
   --surface-raised: #ffffff;
 
   --card: #ffffff;
@@ -96,9 +127,11 @@
   --popover: #ffffff;
   --popover-foreground: #0f172a;
 
+  /* Primary — Violet 600 */
   --primary: #7c3aed;
   --primary-foreground: #ffffff;
 
+  /* Accent Palette (from logo) */
   --accent-violet: #8b5cf6;
   --accent-indigo: #6366f1;
   --accent-emerald: #10b981;
@@ -123,30 +156,36 @@
   --input: #e2e8f0;
   --ring: #7c3aed;
 
-  --sidebar-bg: #0f172a;
+  --sidebar-bg: #0c0f1a;
   --sidebar-foreground: #f8fafc;
   --sidebar-accent: rgba(255, 255, 255, 0.08);
 
-  --gradient-primary: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  --gradient-primary: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
+  --gradient-brand: linear-gradient(135deg, #7c3aed 0%, #6366f1 40%, #06b6d4 100%);
+  --gradient-surface: linear-gradient(135deg, #f8fafc 0%, #ede9fe 50%, #e0f2fe 100%);
+  --gradient-text: linear-gradient(135deg, #7c3aed, #06b6d4);
 }
 
-/* DARK MODE */
+/* ─── Dark Mode ─────────────────────────────────────────────────── */
+
 .dark {
-  --background: #020617;
+  --background: #030711;
   --foreground: #f8fafc;
 
-  --surface: #0f172a;
-  --surface-raised: #1e293b;
+  --surface: #0c1222;
+  --surface-raised: #141c2e;
 
-  --card: #0f172a;
+  --card: #0c1222;
   --card-foreground: #f8fafc;
 
-  --popover: #0f172a;
+  --popover: #0c1222;
   --popover-foreground: #f8fafc;
 
+  /* Primary — Violet 400 (brighter in dark) */
   --primary: #8b5cf6;
   --primary-foreground: #ffffff;
 
+  /* Accent Palette (brighter for dark mode) */
   --accent-violet: #a78bfa;
   --accent-indigo: #818cf8;
   --accent-emerald: #34d399;
@@ -154,29 +193,34 @@
   --accent-cyan: #22d3ee;
   --accent-blue: #60a5fa;
 
-  --secondary: #1e293b;
+  --secondary: #141c2e;
   --secondary-foreground: #f8fafc;
 
-  --muted: #1e293b;
+  --muted: #141c2e;
   --muted-foreground: #94a3b8;
 
-  --accent: #1e293b;
+  --accent: #141c2e;
   --accent-foreground: #f8fafc;
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.2);
-  --input: rgba(255, 255, 255, 0.1);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --input: rgba(255, 255, 255, 0.08);
   --ring: #8b5cf6;
 
-  --sidebar-bg: #020617;
+  --sidebar-bg: #030711;
   --sidebar-foreground: #f8fafc;
   --sidebar-accent: rgba(255, 255, 255, 0.05);
 
-  --gradient-primary: linear-gradient(135deg, #8b5cf6 0%, #c084fc 100%);
+  --gradient-primary: linear-gradient(135deg, #8b5cf6 0%, #22d3ee 100%);
+  --gradient-brand: linear-gradient(135deg, #8b5cf6 0%, #818cf8 40%, #22d3ee 100%);
+  --gradient-surface: linear-gradient(135deg, #0c1222 0%, #1a1035 50%, #0c1a2a 100%);
+  --gradient-text: linear-gradient(135deg, #a78bfa, #22d3ee);
 }
+
+/* ─── Base Layer ────────────────────────────────────────────────── */
 
 @layer base {
   * {
@@ -195,35 +239,116 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Premium scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--color-foreground) 15%, transparent);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--color-foreground) 25%, transparent);
+  }
+
+  /* Selection highlight */
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+    color: var(--color-foreground);
   }
 }
 
+/* ─── Utility Layer ─────────────────────────────────────────────── */
+
 @layer utilities {
+
+  /* Glassmorphism variants */
   .glass {
     background: color-mix(in oklab, var(--surface) 40%, transparent);
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px) saturate(1.4);
     border: 1px solid var(--color-border);
   }
 
   .glass-card {
     background: rgba(255, 255, 255, 0.8);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid rgba(255, 255, 255, 0.25);
     box-shadow:
-      0 10px 15px -3px rgba(0, 0, 0, 0.1),
-      0 4px 6px -4px rgba(0, 0, 0, 0.1),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.5);
+      0 10px 15px -3px rgba(0, 0, 0, 0.08),
+      0 4px 6px -4px rgba(0, 0, 0, 0.06),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
   }
 
   .dark .glass-card {
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(12, 18, 34, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow:
-      0 20px 25px -5px rgba(0, 0, 0, 0.2),
+      0 20px 25px -5px rgba(0, 0, 0, 0.25),
       0 8px 10px -6px rgba(0, 0, 0, 0.2),
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
 
+  .glass-panel {
+    background: color-mix(in oklab, var(--surface) 60%, transparent);
+    backdrop-filter: blur(20px) saturate(1.5);
+    border: 1px solid var(--color-border);
+  }
+
+  /* Gradient text */
+  .text-gradient {
+    background: var(--gradient-text);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Gradient border (animated) */
+  .gradient-border {
+    position: relative;
+    background: var(--card);
+    border-radius: var(--radius);
+  }
+
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: var(--gradient-brand);
+    background-size: 200% 200%;
+    animation: gradient-shift 4s ease infinite;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .gradient-border:focus-within::before {
+    opacity: 1;
+  }
+
+  /* Shimmer skeleton */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--muted) 0%,
+      color-mix(in oklab, var(--muted) 70%, var(--primary)) 50%,
+      var(--muted) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  /* Sidebar items */
   .sidebar-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-lg transition-colors cursor-pointer;
     @apply hover:bg-[var(--sidebar-accent)] text-[var(--sidebar-foreground)]/70 hover:text-[var(--sidebar-foreground)];
@@ -233,14 +358,22 @@
     @apply bg-[var(--sidebar-accent)] text-[var(--sidebar-foreground)];
   }
 
+  /* Chat bubbles */
   .chat-bubble-user {
-    @apply bg-primary text-primary-foreground rounded-2xl rounded-tr-none px-4 py-2.5 max-w-[85%] shadow-sm break-words;
+    @apply bg-primary text-primary-foreground rounded-2xl rounded-br-md px-4 py-3 max-w-[85%] shadow-sm break-words;
   }
 
   .chat-bubble-assistant {
-    @apply bg-secondary text-secondary-foreground rounded-2xl rounded-tl-none px-4 py-2.5 max-w-full shadow-sm break-words;
+    @apply bg-secondary text-secondary-foreground rounded-2xl rounded-bl-md px-4 py-3 max-w-full break-words;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   }
 
+  .dark .chat-bubble-assistant {
+    background: var(--surface-raised);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  /* No scrollbar utility */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -250,6 +383,7 @@
     scrollbar-width: none;
   }
 
+  /* Compact mode */
   .compact-mode {
     --radius: 0.5rem;
   }

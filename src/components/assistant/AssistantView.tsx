@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { ThinkingBuddy } from "./ThinkingBuddy";
+import { SmartWidgets } from "./SmartWidgets";
+import { motion, AnimatePresence } from "framer-motion";
 
 import type { Turn } from "@/lib/chat-store";
 
@@ -49,20 +51,6 @@ interface ThreadData {
   turns: Turn[];
 }
 
-const initialTurns: Turn[] = [
-  {
-    role: "user",
-    text: "How many leave days do I have left this year, and can I apply for 2 days next Monday?",
-  },
-  {
-    role: "ai",
-    text: "You currently have **12 earned leaves** remaining for 2026. Next Monday (May 4) is open on your calendar and clashes with no team OOO. I can file the request with your manager, Priya, in one click.",
-    card: true,
-  },
-];
-
-const initialId = "chat-" + Date.now();
-
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
 
@@ -72,6 +60,7 @@ export function AssistantView() {
   const { theme } = useSettings();
   const { user } = useAuth();
   const [input, setInput] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
@@ -79,24 +68,41 @@ export function AssistantView() {
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [activity, setActivity] = useState("");
   const [vpnWarning, setVpnWarning] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Create a thread whenever there is no active one (first load or after last thread deleted)
+  // Create a thread whenever there is no active one
   useEffect(() => {
     if (!activeId) {
       createThread();
     }
   }, [activeId, createThread]);
 
-  // Check LLM reachability on mount — surfaces VPN issue before the user tries to chat
+  // Clear suggestion chips whenever the active thread changes
+  useEffect(() => {
+    setSuggestions([]);
+  }, [activeId]);
+
+  // Listen for quick-action events from CommandPalette
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ prompt: string }>) => {
+      if (e.detail?.prompt) {
+        send(e.detail.prompt);
+      }
+    };
+    window.addEventListener("centriq:quick-action", handler as EventListener);
+    return () => window.removeEventListener("centriq:quick-action", handler as EventListener);
+  }, [activeId, threads]);
+
+  // Check LLM reachability on mount
   useEffect(() => {
     fetch("/api/health/llm")
       .then((res) => { if (!res.ok) setVpnWarning(true); })
-      .catch(() => { /* backend itself unreachable — separate issue */ });
+      .catch(() => { /* backend itself unreachable */ });
   }, []);
 
-  // Poll health endpoint while VPN warning is active; auto-clear when VPN connects
+  // Poll health endpoint while VPN warning is active
   useEffect(() => {
     if (!vpnWarning) return;
     const id = setInterval(() => {
@@ -114,18 +120,29 @@ export function AssistantView() {
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
+  // Scroll handling
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [activeThread.turns.length, thinking]);
 
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
+  }, []);
+
+  const scrollToBottom = () => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  };
+
   const send = useCallback(
     (override?: string) => {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
-      // Intercept parking sticker requests — show interactive form
+      // Intercept parking sticker requests
       if (
         text.toLowerCase().includes("parking sticker") ||
         (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
@@ -140,6 +157,7 @@ export function AssistantView() {
         return;
       }
 
+      setSuggestions([]);
       addTurn(activeId, { role: "user", text });
       setInput("");
       setThinking(true);
@@ -150,7 +168,7 @@ export function AssistantView() {
       }));
 
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 180000);
       const activitySteps = getActivitySteps(text);
       setActivity(activitySteps[0]);
       const activityTimers = activitySteps
@@ -198,6 +216,26 @@ export function AssistantView() {
             interactive: data.interactive ?? undefined,
             images: Array.isArray(data.images) && data.images.length > 0 ? data.images : undefined,
           });
+          // Fetch contextual follow-up suggestions
+          fetch("/api/suggestions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(user?.email ? { "x-user-email": user.email } : {}),
+            },
+            body: JSON.stringify({
+              message: text,
+              response: responseText,
+              domain: data.domain ?? "general",
+            }),
+          })
+            .then((r) => (r.ok ? r.json() : { suggestions: [] }))
+            .then((d) => {
+              if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
+                setSuggestions(d.suggestions);
+              }
+            })
+            .catch(() => {});
         })
         .catch((err: Error & { code?: string }) => {
           console.error("Backend Error:", err);
@@ -314,51 +352,92 @@ export function AssistantView() {
     }
   };
 
-  const sidebarThreads = Object.values(threads)
-    .filter((t) => t.turns.length > 0)
-    .map((t) => ({
-      id: t.id,
-      title: t.turns[0].text,
-      domain: "Centriq",
-      time: "Now",
-    }))
-    .reverse();
-
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {vpnWarning && (
-          <div className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300">
-            <WifiOff className="h-4 w-4 shrink-0" />
-            <span>
-              <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
-            </span>
-            <button
-              onClick={() => setVpnWarning(false)}
-              className="ml-auto shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40"
-              aria-label="Dismiss"
+        {/* VPN Warning */}
+        <AnimatePresence>
+          {vpnWarning && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300 overflow-hidden"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
-          <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
+              <WifiOff className="h-4 w-4 shrink-0" />
+              <span>
+                <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
+              </span>
+              <button
+                onClick={() => setVpnWarning(false)}
+                className="ml-auto shrink-0 rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Messages Area */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="relative flex-1 overflow-y-auto scroll-smooth"
+        >
+          <div className={cn(
+            "mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col",
+            activeThread.turns.length === 0 ? "min-h-full justify-center py-8" : "py-8",
+          )}>
             {activeThread.turns.length === 0 ? (
-              <section className="flex w-full flex-col items-center justify-center text-center animate-[fade-in_.6s_ease-out_both] max-w-5xl mx-auto">
+              /* ──── Empty State ──── */
+              <motion.section
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.6 }}
+                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto"
+              >
                 {(() => {
                   const { heading, subheading } = getGreeting(user?.name || "there");
                   return (
                     <>
-                      <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-3">
-                        {heading}
-                      </h1>
-                      <p className="text-lg text-muted-foreground mb-12">{subheading}</p>
+                      <motion.h1
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+                        className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-2"
+                      >
+                        <span className="text-gradient">{heading}</span>
+                      </motion.h1>
+                      <motion.p
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.2 }}
+                        className="text-base text-muted-foreground mb-8"
+                      >
+                        {subheading}
+                      </motion.p>
                     </>
                   );
                 })()}
-                
-                <div className="w-full max-w-3xl mb-12">
+
+                {/* Smart Widgets */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.3 }}
+                  className="w-full max-w-3xl mb-8"
+                >
+                  <SmartWidgets onAction={(prompt) => !thinking && send(prompt)} />
+                </motion.div>
+
+                {/* Composer */}
+                <motion.div
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.45 }}
+                  className="w-full max-w-3xl"
+                >
                   <Composer
                     value={input}
                     onChange={setInput}
@@ -368,110 +447,172 @@ export function AssistantView() {
                       toast("Attachments", { description: "This feature is currently in preview." })
                     }
                     onQuickAction={(p) => !thinking && send(p)}
+                    suggestions={suggestions}
+                    onSuggestionSelect={(t) => !thinking && send(t)}
                   />
-                </div>
-
-              </section>
+                </motion.div>
+              </motion.section>
             ) : (
-              <section className="space-y-10 pb-10">
-                {activeThread.turns.map((t, i) =>
-                  t.role === "user" ? (
-                    <UserMessage 
-                      key={i} 
-                      initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
-                    >
-                      {t.text}
-                    </UserMessage>
-                  ) : (
-                    <AIMessage key={i} onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)} domain={t.role === "ai" ? t.domain : undefined} text={t.text}>
-                      <div className="space-y-4">
-                        {t.text && (
-                          <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                            {renderInline(t.text)}
+              /* ──── Chat Messages ──── */
+              <section className="space-y-6 pb-6">
+                <AnimatePresence mode="popLayout">
+                  {activeThread.turns.map((t, i) =>
+                    t.role === "user" ? (
+                      <motion.div
+                        key={`msg-${i}`}
+                        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                        layout
+                      >
+                        <UserMessage
+                          initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                        >
+                          {t.text}
+                        </UserMessage>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key={`msg-${i}`}
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 30,
+                          delay: 0.05,
+                        }}
+                        layout
+                      >
+                        <AIMessage
+                          onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)}
+                          domain={t.role === "ai" ? t.domain : undefined}
+                          text={t.text}
+                        >
+                          <div className="space-y-4">
+                            {t.text && (
+                              <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                                {renderInline(t.text)}
+                              </div>
+                            )}
+                            {t.images && t.images.length > 0 && (
+                              <div className="mt-3 flex flex-col gap-3">
+                                {t.images.map((url, imgIdx) => (
+                                  <a key={imgIdx} href={url} target="_blank" rel="noopener noreferrer">
+                                    <img
+                                      src={url}
+                                      alt={`Policy image ${imgIdx + 1}`}
+                                      className="max-w-full rounded-xl border border-border shadow-sm hover:shadow-md transition-shadow cursor-zoom-in"
+                                      loading="lazy"
+                                    />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                            {t.downloadUrl && (
+                              <motion.a
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.97 }}
+                                href={t.downloadUrl}
+                                download={t.downloadTitle ?? "report"}
+                                className="mt-1 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90"
+                              >
+                                <Download className="h-4 w-4" />
+                                {t.downloadTitle ?? "Download Report"}
+                              </motion.a>
+                            )}
+                            {t.card && (
+                              <AnswerCard
+                                title="Leave Balance · 2026"
+                                meta="System Source: HR Connect"
+                                rows={[
+                                  { label: "Total Earned Leaves", value: "12 days", highlight: true },
+                                  { label: "Casual Leaves", value: "4 days" },
+                                  { label: "Sick Leaves", value: "7 days" },
+                                  { label: "Upcoming (May 4)", value: "2 days" },
+                                ]}
+                                cta={{
+                                  label: "File Leave Request",
+                                  onClick: () => {
+                                    toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
+                                      loading: "Processing request...",
+                                      success: "Leave request filed with Priya!",
+                                      error: "Failed to file request",
+                                    });
+                                  },
+                                }}
+                              />
+                            )}
+                            {t.interactive?.type === "parking_form" && (
+                              <ParkingForm
+                                userEmail={user?.email || ""}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "email_draft" && t.interactive.data && (
+                              <InteractiveEmailDraft
+                                data={t.interactive.data}
+                                userEmail={user?.email}
+                                onSent={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                                }
+                              />
+                            )}
                           </div>
-                        )}
-                        {t.images && t.images.length > 0 && (
-                          <div className="mt-3 flex flex-col gap-3">
-                            {t.images.map((url, imgIdx) => (
-                              <a key={imgIdx} href={url} target="_blank" rel="noopener noreferrer">
-                                <img
-                                  src={url}
-                                  alt={`Policy image ${imgIdx + 1}`}
-                                  className="max-w-full rounded-lg border border-border shadow-sm hover:shadow-md transition-shadow cursor-zoom-in"
-                                  loading="lazy"
-                                />
-                              </a>
-                            ))}
-                          </div>
-                        )}
-                        {t.downloadUrl && (
-                          <a
-                            href={t.downloadUrl}
-                            download={t.downloadTitle ?? "report"}
-                            className="mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95"
-                          >
-                            <Download className="h-4 w-4" />
-                            {t.downloadTitle ?? "Download Report"}
-                          </a>
-                        )}
-                        {t.card && (
-                          <AnswerCard
-                            title="Leave Balance · 2026"
-                            meta="System Source: HR Connect"
-                            rows={[
-                              { label: "Total Earned Leaves", value: "12 days", highlight: true },
-                              { label: "Casual Leaves", value: "4 days" },
-                              { label: "Sick Leaves", value: "7 days" },
-                              { label: "Upcoming (May 4)", value: "2 days" },
-                            ]}
-                            cta={{
-                              label: "File Leave Request",
-                              onClick: () => {
-                                toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
-                                  loading: "Processing request...",
-                                  success: "Leave request filed with Priya!",
-                                  error: "Failed to file request",
-                                });
-                              },
-                            }}
-                          />
-                        )}
-                        {t.interactive?.type === "parking_form" && (
-                          <ParkingForm
-                            userEmail={user?.email || ""}
-                            onSubmitted={(msg) =>
-                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
-                            }
-                          />
-                        )}
-                        {t.interactive?.type === "email_draft" && t.interactive.data && (
-                          <InteractiveEmailDraft
-                            data={t.interactive.data}
-                            userEmail={user?.email}
-                            onSent={(msg) =>
-                              activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
-                            }
-                          />
-                        )}
-                      </div>
-                    </AIMessage>
-                  ),
-                )}
+                        </AIMessage>
+                      </motion.div>
+                    ),
+                  )}
+                </AnimatePresence>
 
-                {thinking && (
-                  <AIMessage live>
-                    <ThinkingBuddy />
-                  </AIMessage>
-                )}
+                {/* Thinking state */}
+                <AnimatePresence>
+                  {thinking && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    >
+                      <AIMessage live>
+                        <ThinkingBuddy />
+                      </AIMessage>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </section>
             )}
           </div>
+
+          {/* Scroll-to-bottom FAB */}
+          <AnimatePresence>
+            {showScrollBtn && activeThread.turns.length > 0 && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={scrollToBottom}
+                className="fixed bottom-28 right-8 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-card border border-border shadow-lg text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ArrowDown className="h-4 w-4" />
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Input Area */}
+        {/* Input Area — visible when there are messages */}
         {activeThread.turns.length > 0 && (
-          <footer className="relative border-t border-[var(--border)] bg-background/80 backdrop-blur-md px-4 pb-8 pt-4 sm:px-8">
-            <div className="mx-auto w-full max-w-4xl space-y-6">
+          <motion.footer
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="relative border-t border-border bg-background/60 backdrop-blur-xl px-4 pb-6 pt-4 sm:px-8"
+          >
+            <div className="mx-auto w-full max-w-4xl space-y-4">
               <Composer
                 value={input}
                 onChange={setInput}
@@ -482,11 +623,15 @@ export function AssistantView() {
                 }
                 onQuickAction={(p) => !thinking && send(p)}
                 onGenerateDoc={openDocModal}
+                suggestions={suggestions}
+                onSuggestionSelect={(t) => !thinking && send(t)}
               />
             </div>
-          </footer>
+          </motion.footer>
         )}
       </main>
+
+      {/* Document Generation Modal */}
       <Dialog open={showDocModal} onOpenChange={setShowDocModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -498,7 +643,7 @@ export function AssistantView() {
               <select
                 value={docType}
                 onChange={(event) => setDocType(event.target.value)}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
               >
                 <option value="project_status_report">Project Status Report</option>
                 <option value="sprint_summary">Sprint Summary</option>

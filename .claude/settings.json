@@ -3,6 +3,7 @@
     "allow": [
       "Bash(npx tsc *)",
       "Bash(git stash *)"
-    ]
+    ],
+     "deny": ["Read(.env)"]
   }
 }
