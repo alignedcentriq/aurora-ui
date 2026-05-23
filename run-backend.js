@@ -164,7 +164,19 @@ const runDockerCompose = async () => {
     await runCommand("wsl", composeArgs, { cwd: repoRoot });
     return;
   } catch (composePluginErr) {
-    console.warn("WSL 'docker compose' (V2) failed. Trying legacy 'docker-compose' (V1)...");
+    console.warn("WSL 'docker compose' (V2) exited non-zero:", composePluginErr.message);
+
+    // Before falling back to V1, check if required ports are already up.
+    // V2 may exit non-zero (e.g. a non-critical service failing its health check)
+    // while the core infrastructure containers are actually running.
+    const requiredAfterV2 = infraPorts.filter(p => p.required);
+    const allUpAfterV2 = await Promise.all(requiredAfterV2.map(p => isPortOpen(p.port, localInfraHost)));
+    if (allUpAfterV2.every(Boolean)) {
+      console.log("--- Required infrastructure ports are open after V2 attempt; skipping V1 fallback ---");
+      return;
+    }
+
+    console.warn("Required ports not yet open — trying legacy 'docker-compose' (V1)...");
   }
 
   try {

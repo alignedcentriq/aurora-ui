@@ -143,6 +143,9 @@ class AgentState(TypedDict):
     feedback_context: Optional[str]    # injected feedback prompt block
     user_email: Optional[str]          # logged-in user email
     session_id: Optional[str]          # chat thread id, used for pending confirmations
+    conversation_summary: Optional[str]  # rolling summary of older turns (context manager)
+    user_role: Optional[str]           # "employee" | "hr" | "admin" | "manager" | "it" | "pmo"
+    graph_token: Optional[str]         # user's delegated Microsoft Graph token (from frontend)
 
 
 PENDING_IT_EMAIL_DRAFTS: dict[str, dict] = {}
@@ -162,6 +165,102 @@ def _is_confirmation(text: str) -> bool:
 def _is_cancellation(text: str) -> bool:
     normalized = text.strip().lower()
     return normalized in {"no", "cancel", "stop", "discard", "do not send", "don't send"}
+
+
+# ── Role Instructions ─────────────────────────────────────────────────────────
+
+ROLE_INSTRUCTIONS = {
+    "employee":   "You are serving a regular employee. Expose only their own records — never other employees' data.",
+    "hr":         "You are serving an HR manager. You may access and display aggregate employee data, all leave records, and HR reports.",
+    "admin":      "You are serving an Office Admin. You have full cross-domain read/write access for admin operations.",
+    "manager":    "You are serving a functional manager. You may access your direct reports' data only.",
+    "it":         "You are serving an IT manager. You may view all IT tickets, assets, software requests, and licenses.",
+    "pmo":        "You are serving a PMO manager. You may view and edit all project data, allocations, and training licenses.",
+}
+
+
+def _get_role_instruction(state: AgentState) -> str:
+    """Return a role-awareness string to append to agent system prompts."""
+    role = (state.get("user_role") or "employee").lower()
+    return ROLE_INSTRUCTIONS.get(role, ROLE_INSTRUCTIONS["employee"])
+
+
+def _save_conversation_summary(thread_id: str, summary: str, domain: Optional[str]) -> None:
+    """Persist rolling conversation summary to DB for durability across Redis restarts."""
+    try:
+        from app.database import SessionLocal
+        from app.models import ConversationSummary
+        import datetime
+        db = SessionLocal()
+        try:
+            existing = db.query(ConversationSummary).filter(ConversationSummary.thread_id == thread_id).first()
+            if existing:
+                existing.summary = summary
+                existing.domain = domain
+                existing.updated_at = datetime.datetime.utcnow()
+            else:
+                db.add(ConversationSummary(thread_id=thread_id, summary=summary, domain=domain))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[context_manager] Failed to persist summary: {e}")
+
+
+async def context_manager_node(state: AgentState) -> dict:
+    """Rolling window + summarization node.
+
+    When the conversation grows beyond ~6000 tokens, this node:
+    1. Summarizes all but the last 6 messages via LLM
+    2. Injects the summary into feedback_context (already prepended to every agent's system prompt)
+    3. Persists the summary to conversation_summaries table for durability across Redis restarts
+
+    NOTE: Does NOT modify the messages list directly — LangGraph's reducer appends rather than
+    replaces, so summary is injected via feedback_context instead.
+    """
+    messages = state.get("messages", [])
+    total_tokens = sum(len(getattr(m, "content", "") or "") // 4 for m in messages)
+
+    if total_tokens <= 6000 or len(messages) <= 8:
+        return {}
+
+    to_summarize = messages[:-6]  # everything except the last 3 turns
+
+    summary_prompt = (
+        "Summarize this conversation history in 3-5 sentences. "
+        "Preserve: key facts, dates, employee names, leave types, ticket IDs, "
+        "requests made, and decisions reached. Be concise and factual."
+    )
+    try:
+        summary_response = await summary_llm.ainvoke(
+            [
+                SystemMessage(content=summary_prompt),
+                HumanMessage(content="\n".join(
+                    f"{m.type}: {getattr(m, 'content', '')}" for m in to_summarize
+                )),
+            ]
+        )
+        summary_text = summary_response.content.strip()
+        if not summary_text:
+            return {}
+    except Exception as e:
+        print(f"[context_manager] Summarization failed: {e}")
+        return {}
+
+    session_id = state.get("session_id")
+    if session_id:
+        _save_conversation_summary(session_id, summary_text, state.get("domain"))
+
+    # Inject summary as a prefix to feedback_context — all agents append this to their system prompt
+    existing_feedback = state.get("feedback_context") or ""
+    updated_feedback = (
+        f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{summary_text}\n\n{existing_feedback}"
+    )
+    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens → summary)")
+    return {
+        "conversation_summary": summary_text,
+        "feedback_context": updated_feedback,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -507,9 +606,21 @@ def intent_router(state: AgentState):
                 "entities": {},
             }
 
-    if "five project name" in last_human.lower():
-        return {"domain": "dummy_test", "route_confidence": 1.0, "route_reasoning": "Testing trigger detected.",
-                "sub_intent": "test", "entities": {}}
+    # Fast-path: leave balance — must run BEFORE sticky domain so short queries aren't swallowed
+    _LB_RE = re.compile(
+        r'\b(leave\s+balance|how\s+many\s+leave|remaining\s+leave|leave\s+status'
+        r'|my\s+leave|check\s+.*leave|leaves?\s+(left|remaining|available))\b',
+        re.IGNORECASE,
+    )
+    if _LB_RE.search(last_human):
+        print("[Router] Fast-path leave balance → deeplink")
+        return {
+            "domain": "deeplink",
+            "route_confidence": 1.0,
+            "route_reasoning": "Fast-path: leave balance query → deeplink/Zoho.",
+            "sub_intent": "leave_balance",
+            "entities": {},
+        }
 
     # Sticky domain: keep the same domain for follow-up messages that reference prior context.
     # Triggers on: (a) short reply to an agent question, OR (b) short message with context-reference
@@ -593,10 +704,12 @@ def hr_agent(state: AgentState):
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
+        role_instruction = _get_role_instruction(state)
         base = PromptService.get_system_prompt(
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
-            f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n\n"
+            f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n"
+            f"ROLE: {role_instruction}\n\n"
             f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
             f"1. Leave balance: → call get_leave_balance(email='{user_email}').\n"
             f"2. Apply leave: → call apply_leave(email='{user_email}', start_date, end_date, leave_type). "
@@ -647,7 +760,40 @@ def hr_agent(state: AgentState):
 
 async def deeplink_agent_node(state: AgentState):
     """Deep-Link Agent — automates Zoho leave, PowerApps complaints, and Payroll via Playwright."""
-    # Fast-path: params already extracted by regex — call tool directly, 0 LLM calls
+    # Fast-path: leave balance — call tool directly, format response, 0 LLM calls
+    if state.get("sub_intent") == "leave_balance":
+        try:
+            from app.agents.deeplink_agent import get_zoho_leave_balance
+            result_json = get_zoho_leave_balance.invoke({})
+            result_data = json.loads(result_json)
+            if result_data.get("success"):
+                balances = result_data.get("balances") or []
+                if balances:
+                    lines = []
+                    for b in balances:
+                        leave_type = b.get("type", "Unknown")
+                        balance = b.get("balance", "?")
+                        total = b.get("total")
+                        used = b.get("used")
+                        if total is not None and used is not None:
+                            lines.append(f"{leave_type} — {balance} days remaining (used {used} of {total})")
+                        else:
+                            lines.append(f"{leave_type} — {balance} days remaining")
+                    return {"messages": [AIMessage(content="Here is your current leave balance:\n\n" + "\n".join(lines))]}
+                raw = result_data.get("raw_text", "")
+                if raw:
+                    # Fall through to LLM to parse raw_text
+                    pass
+                else:
+                    return {"messages": [AIMessage(content="Your leave balance data was retrieved but appears empty. Please try again or check Zoho People directly.")]}
+            elif result_data.get("action") == "run_setup":
+                return {"messages": [AIMessage(content="Your Zoho session isn't set up yet. Please type 'setup zoho session' to log in once via SSO, then ask again.")]}
+            elif result_data.get("error"):
+                return {"messages": [AIMessage(content=f"I couldn't fetch your leave balance: {result_data['error']}. Please try again.")]}
+        except Exception as _lb_err:
+            print(f"[deeplink] leave_balance fast-path error: {_lb_err}")
+
+    # Fast-path: leave application params already extracted by regex — call tool directly, 0 LLM calls
     if state.get("sub_intent") == "zoho_leave_fastpath":
         entities = state.get("entities") or {}
         if entities.get("start_date") and entities.get("end_date"):
@@ -682,6 +828,7 @@ async def pmo_agent_node(state: AgentState):
         "feedback_context": state.get("feedback_context") or "",
         "sub_intent": state.get("sub_intent") or "",
         "entities": state.get("entities") or {},
+        "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
     return {"messages": [last_ai]}
@@ -735,6 +882,7 @@ async def admin_agent_node(state: AgentState):
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
         "feedback_context": feedback_ctx,
+        "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Admin request."))
     return {"messages": [last_ai]}
@@ -777,6 +925,7 @@ async def it_agent_node(state: AgentState):
         "messages": state["messages"],
         "user_email": user_email,
         "feedback_context": (state.get("feedback_context") or "") + entity_hint,
+        "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
     return {"messages": [last_ai]}
@@ -788,6 +937,7 @@ async def manager_agent_node(state: AgentState):
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
         "feedback_context": state.get("feedback_context") or "",
+        "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
     return {"messages": [last_ai]}
@@ -928,6 +1078,7 @@ except Exception as e:
 workflow = StateGraph(AgentState)
 
 workflow.add_node("intent_router", intent_router)
+workflow.add_node("context_manager", context_manager_node)
 workflow.add_node("feedback_lookup", feedback_lookup)
 workflow.add_node("hr_agent", hr_agent)
 workflow.add_node("pmo_agent", pmo_agent_node)
@@ -943,7 +1094,10 @@ workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
 
 workflow.set_entry_point("intent_router")
-workflow.add_edge("intent_router", "feedback_lookup")
+# context_manager sits between router and feedback_lookup:
+# intent_router → context_manager (compress if >6000 tokens) → feedback_lookup → domain agent
+workflow.add_edge("intent_router", "context_manager")
+workflow.add_edge("context_manager", "feedback_lookup")
 workflow.add_conditional_edges("feedback_lookup", route_to_agent)
 workflow.add_conditional_edges("hr_agent", should_continue_hr)
 workflow.add_conditional_edges("general_agent", should_continue_general)

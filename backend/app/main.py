@@ -378,7 +378,12 @@ async def process_approval(token: str):
         db.close()
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None)):
+async def chat(
+    request: ChatRequest,
+    x_user_email: Optional[str] = Header(None),
+    x_user_role: Optional[str] = Header(None),
+    x_graph_token: Optional[str] = Header(None),
+):
     # VPN / LLM reachability pre-flight — catches "outside office, no VPN" in ~2s instead of timing out
     if not await asyncio.to_thread(_check_llm_reachable):
         raise HTTPException(
@@ -397,6 +402,8 @@ async def chat(request: ChatRequest, x_user_email: Optional[str] = Header(None))
                 {
                     "messages": [HumanMessage(content=request.message)],
                     "user_email": x_user_email or settings.DEFAULT_USER_EMAIL,
+                    "user_role": (x_user_role or "employee").lower(),
+                    "graph_token": x_graph_token or None,
                     "session_id": request.session_id,
                 },
                 config=config,

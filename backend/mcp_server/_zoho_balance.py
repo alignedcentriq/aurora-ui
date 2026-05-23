@@ -116,7 +116,7 @@ async def main():
         rendered = False
         for sel in balance_selectors:
             try:
-                await page.wait_for_selector(sel, timeout=15_000)
+                await page.wait_for_selector(sel, timeout=4_000)
                 _log(f"[zoho_balance] found selector: {sel}")
                 rendered = True
                 break
@@ -125,8 +125,8 @@ async def main():
 
         if not rendered:
             # Give the page a bit more time to settle even without a known selector
-            _log("[zoho_balance] no known selector found — waiting extra 5s")
-            await asyncio.sleep(5)
+            _log("[zoho_balance] no known selector found — waiting extra 3s")
+            await asyncio.sleep(3)
 
         # ── Scrape structured data ─────────────────────────────────────────────
         balances = []

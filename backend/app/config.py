@@ -99,7 +99,10 @@ class Config:
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── General Model (greetings, small talk) ──
-    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "MichelRosselli/apertus:8b-instruct-2509-bf16")
+    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "qwen2.5:14b")
+
+    # ── Summarizer Model (context_manager_node, conversation summaries) ──
+    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "qwen2.5:14b")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")
@@ -118,9 +121,6 @@ class Config:
     EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
 
-    CHUNKING_BASE_URL = _resolve_llm_base_url("CHUNKING_BASE_URL", "EMBEDDING_BASE_URL")
-    CHUNKING_MODEL_NAME = os.getenv("CHUNKING_MODEL_NAME", os.getenv("EMBEDDING_MODEL_NAME", "gpt-oss:latest"))
-    CHUNKING_API_KEY = os.getenv("CHUNKING_API_KEY", os.getenv("EMBEDDING_API_KEY", "ollama"))
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
 
@@ -131,11 +131,27 @@ class Config:
     REDIS_URL = _resolve_redis_url()
     USE_MEMORY_SAVER = os.getenv("USE_MEMORY_SAVER", "false").lower() == "true"
 
-    # Microsoft Graph
+    # Microsoft Graph (used for webhook subscriptions / general Graph calls)
     GRAPH_TENANT_ID = os.getenv("GRAPH_TENANT_ID")
     GRAPH_CLIENT_ID = os.getenv("GRAPH_CLIENT_ID")
     GRAPH_CLIENT_SECRET = os.getenv("GRAPH_CLIENT_SECRET")
     GRAPH_CLIENT_STATE = os.getenv("GRAPH_CLIENT_STATE", "secretClientState")
+
+    # SharePoint-specific Azure AD app (Sites.Selected — separate from MSAL SSO app)
+    # Falls back to GRAPH_ vars if not set separately.
+    SHAREPOINT_TENANT_ID    = os.getenv("SHAREPOINT_TENANT_ID") or os.getenv("GRAPH_TENANT_ID")
+    SHAREPOINT_CLIENT_ID    = os.getenv("SHAREPOINT_CLIENT_ID") or os.getenv("GRAPH_CLIENT_ID")
+    SHAREPOINT_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET") or os.getenv("GRAPH_CLIENT_SECRET")
+    # Base folder path inside the document library.
+    # Graph API drive root IS "Shared Documents", so strip that prefix automatically.
+    # e.g. SHAREPOINT_FOLDER_PATH=/Shared Documents/IQ/ → SHAREPOINT_BASE_FOLDER = "IQ"
+    SHAREPOINT_BASE_FOLDER = (
+        lambda raw: (
+            raw[len("shared documents/"):].strip("/")
+            if raw.lower().startswith("shared documents/")
+            else ("" if raw.lower() == "shared documents" else raw)
+        )
+    )(os.getenv("SHAREPOINT_FOLDER_PATH", "").strip("/").strip())
 
     # MinIO
     MINIO_ENDPOINT = _resolve_minio_endpoint()
@@ -171,12 +187,28 @@ class Config:
     PA_WEBHOOK_PARKING_REVOKED         = os.getenv("PA_WEBHOOK_PARKING_REVOKED", "")
     PA_WEBHOOK_LEAVE_APPROVED          = os.getenv("PA_WEBHOOK_LEAVE_APPROVED", "")
     PA_WEBHOOK_ANNOUNCEMENT_CREATED    = os.getenv("PA_WEBHOOK_ANNOUNCEMENT_CREATED", "")
+    PA_WEBHOOK_COMPLAINT_NEW           = os.getenv("PA_WEBHOOK_COMPLAINT_NEW", "")
     PA_WEBHOOK_REIMBURSEMENT_SUBMITTED = os.getenv("PA_WEBHOOK_REIMBURSEMENT_SUBMITTED", "")
     PA_CALLBACK_SECRET                 = os.getenv("PA_CALLBACK_SECRET", "")
 
     # ── External Portal Automation (Playwright MCP) ───────────────────────────
     ZOHO_PEOPLE_URL    = os.getenv("ZOHO_PEOPLE_URL", "")
+    # Zoho OAuth2 API (replaces session-file scraping)
+    ZOHO_CLIENT_ID     = os.getenv("ZOHO_CLIENT_ID", "")
+    ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")
+    ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "")
+    ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "https://accounts.zoho.com")
+    ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "https://people.zoho.com")
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
+
+    # ── SharePoint Policy Sync ─────────────────────────────────────────────────
+    # Full SharePoint site URL, e.g. https://tenant.sharepoint.com/sites/Centriq
+    SHAREPOINT_SITE_URL = os.getenv("SHAREPOINT_SITE_URL", "")
+    # Comma-separated folder names in the document library to sync as policies
+    # These are top-level folder names, e.g. "ADMIN,IT PMO,HR"
+    SHAREPOINT_POLICY_FOLDERS = os.getenv("SHAREPOINT_POLICY_FOLDERS", "ADMIN,IT PMO")
+    # How often (seconds) to poll SharePoint for new/changed files (default 10 min)
+    SHAREPOINT_SYNC_INTERVAL = int(os.getenv("SHAREPOINT_SYNC_INTERVAL_SECONDS", "600"))
 
 settings = Config()

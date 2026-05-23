@@ -2,7 +2,6 @@ import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send, Copy, Check } fro
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
-import { BrandName } from "@/components/BrandName";
 import { motion } from "framer-motion";
 
 export function UserMessage({
@@ -100,18 +99,6 @@ export function AIMessage({
             badge && `border-l-2 ${badge.borderColor}`,
           )}>
             <div className="relative">{children}</div>
-          </div>
-
-          {/* Brand + badge row */}
-          <div className="flex items-center gap-2 px-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/50 flex items-center">
-              <BrandName withAI />
-            </div>
-            {badge && (
-              <span className={cn("rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider", badge.classes)}>
-                {badge.label}
-              </span>
-            )}
           </div>
 
           {/* Action bar — copy + feedback */}
