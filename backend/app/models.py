@@ -527,3 +527,51 @@ class LeaveBalanceCache(Base):
     sync_status = Column(String, default="ok")
     sync_error = Column(Text, nullable=True)
     last_synced_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ConversationSummary(Base):
+    """Medium-term memory: persisted summary of older conversation turns.
+    Created by context_manager_node when the message window exceeds ~6000 tokens.
+    Keyed by LangGraph thread_id so it survives Redis restarts.
+    """
+    __tablename__ = "conversation_summaries"
+    __table_args__ = {"schema": SCHEMA}
+
+    thread_id = Column(String, primary_key=True)
+    summary = Column(Text, nullable=False)
+    domain = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class UserMemory(Base):
+    """Long-term memory: persistent facts about individual users.
+    Written by remember_user_fact tool; retrieved semantically by memory_retriever_node.
+    E.g. "user's laptop is Dell XPS 15", "user prefers WFH on Fridays".
+    """
+    __tablename__ = "user_memories"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True)
+    user_email = Column(String, index=True, nullable=False)
+    fact = Column(Text, nullable=False)
+    embedding = Column(Vector(768), nullable=True)
+    domain = Column(String, nullable=True)  # "it_support", "hr", etc.
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_accessed_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ToolSession(Base):
+    """Tracks per-user connection status for external tool integrations.
+    Playwright tools (Zoho, PowerApps) need a browser session; Graph API tools are always ready.
+    """
+    __tablename__ = "tool_sessions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True)
+    user_email = Column(String, index=True, nullable=False)
+    tool_name = Column(String, nullable=False)      # "zoho", "powerapps", "room_booking"
+    session_path = Column(String, nullable=True)    # filesystem path for playwright sessions
+    # not_connected | connecting | active | expired
+    status = Column(String, default="not_connected")
+    connected_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)

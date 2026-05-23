@@ -32,8 +32,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     networks:
       - centriq-network
@@ -47,7 +47,13 @@ services:
     networks:
       - centriq-network
     entrypoint: >
-      /bin/sh -c " until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done; /usr/bin/mc mb --ignore-existing myminio/aurora-bucket; /usr/bin/mc anonymous set public myminio/aurora-bucket; exit 0; "
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc mb --ignore-existing myminio/aurora-bucket;
+      /usr/bin/mc mb --ignore-existing myminio/policies-bucket;
+      /usr/bin/mc anonymous set none myminio/aurora-bucket;
+      /usr/bin/mc anonymous set none myminio/policies-bucket;
+      exit 0;"
 
   loki:
     image: grafana/loki:latest

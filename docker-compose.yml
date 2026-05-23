@@ -37,15 +37,18 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - MINIO_ENDPOINT=minio:9000
       - LANGFUSE_HOST=http://langfuse-server:3000
     networks:
       - centriq-network
     depends_on:
-      - redis
-      - minio
-      - loki
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      loki:
+        condition: service_started
     restart: always
     logging:
       driver: loki
@@ -53,14 +56,21 @@ services:
         loki-url: "http://localhost:3002/loki/api/v1/push"
 
   redis:
-    image: redis/redis-stack-server:latest
+    image: redis:7-alpine
     ports:
       - "6380:6379"
+    command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     networks:
       - centriq-network
     volumes:
       - redis_data:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -68,25 +78,36 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SITE_NAME: centriq-prod
+      MINIO_UPDATE: "off"
     command: server /data --console-address ":9001"
     networks:
       - centriq-network
     volumes:
       - minio_data:/data
     restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   createbuckets:
     image: minio/mc
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     networks:
       - centriq-network
     entrypoint: >
-      /bin/sh -c "until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done;
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done;
       /usr/bin/mc mb --ignore-existing myminio/aurora-bucket;
-      /usr/bin/mc anonymous set public myminio/aurora-bucket;
+      /usr/bin/mc mb --ignore-existing myminio/policies-bucket;
+      /usr/bin/mc anonymous set none myminio/aurora-bucket;
+      /usr/bin/mc anonymous set none myminio/policies-bucket;
       exit 0;"
 
   # Separate postgres only for Langfuse — app uses hosted DB via backend/.env

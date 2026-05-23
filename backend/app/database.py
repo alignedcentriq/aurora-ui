@@ -31,6 +31,9 @@ from app.models import (
     Grievance,
     CompanySettings,
     LeaveBalanceCache,
+    ConversationSummary,
+    UserMemory,
+    ToolSession,
     SCHEMA,
 )
 from app.config import settings
@@ -122,6 +125,11 @@ def init_db():
                 f')',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
+                # BM25 full-text search on policy chunks (Phase 2 RAG upgrade)
+                f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector '
+                f"GENERATED ALWAYS AS (to_tsvector('english', COALESCE(text, ''))) STORED",
+                # User memory HNSW index (created after table exists via Base.metadata.create_all)
+                f'CREATE INDEX IF NOT EXISTS idx_user_memories_email ON "{SCHEMA}".user_memories(user_email)',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -164,6 +172,11 @@ def init_db():
                 f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
                 f'CREATE INDEX IF NOT EXISTS idx_chat_feedback_embedding_hnsw ON "{SCHEMA}".chat_feedback '
                 f'USING hnsw (user_message_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # GIN index for BM25 full-text search on policy chunks
+                f'CREATE INDEX IF NOT EXISTS idx_policy_chunks_tsv ON "{SCHEMA}".policy_chunks USING gin(text_tsv)',
+                # HNSW index for user memory semantic search
+                f'CREATE INDEX IF NOT EXISTS idx_user_memories_embedding_hnsw ON "{SCHEMA}".user_memories '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))
@@ -229,6 +242,19 @@ def init_db():
             threading.Thread(target=_policy_sync_loop, daemon=True).start()
         except Exception as e:
             print(f"[init_db] Policy sync loop notice: {e}")
+
+        # Background thread: polls SharePoint for new/changed policy documents
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL:
+                from app.services.sharepoint_policy_sync import sharepoint_sync_loop
+                _sp_interval = _s.SHAREPOINT_SYNC_INTERVAL
+                print(f"[init_db] Starting SharePoint policy sync loop (interval={_sp_interval}s)...")
+                threading.Thread(target=sharepoint_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] SharePoint sync skipped — SHAREPOINT_SITE_URL not configured.")
+        except Exception as e:
+            print(f"[init_db] SharePoint sync loop notice: {e}")
 
     except Exception as e:
         print(f"Error during init_db: {e}")

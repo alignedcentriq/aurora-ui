@@ -11,14 +11,29 @@ logger = logging.getLogger(__name__)
 
 
 class GraphClient:
-    def __init__(self):
-        self.tenant_id = settings.GRAPH_TENANT_ID
-        self.client_id = settings.GRAPH_CLIENT_ID
-        self.client_secret = settings.GRAPH_CLIENT_SECRET
+    def __init__(self, use_sharepoint_creds: bool = False):
+        """
+        use_sharepoint_creds=True  → use SHAREPOINT_CLIENT_ID/SECRET/TENANT_ID
+                                     (Sites.Selected app for document ingestion)
+        use_sharepoint_creds=False → use GRAPH_CLIENT_ID/SECRET/TENANT_ID
+                                     (general Graph app for subscriptions, etc.)
+        """
+        self._use_sp = use_sharepoint_creds
         self.base_url = "https://graph.microsoft.com/v1.0"
-
         self._access_token = None
         self._token_expires_at = datetime.datetime.min
+
+    @property
+    def tenant_id(self):
+        return settings.SHAREPOINT_TENANT_ID if self._use_sp else settings.GRAPH_TENANT_ID
+
+    @property
+    def client_id(self):
+        return settings.SHAREPOINT_CLIENT_ID if self._use_sp else settings.GRAPH_CLIENT_ID
+
+    @property
+    def client_secret(self):
+        return settings.SHAREPOINT_CLIENT_SECRET if self._use_sp else settings.GRAPH_CLIENT_SECRET
 
     def _get_token(self):
         if datetime.datetime.utcnow() < self._token_expires_at:
@@ -29,7 +44,7 @@ class GraphClient:
             "client_id": self.client_id,
             "scope": "https://graph.microsoft.com/.default",
             "client_secret": self.client_secret,
-            "grant_type": "client_credentials"
+            "grant_type": "client_credentials",
         }
         response = requests.post(url, data=payload)
         if response.status_code != 200:
@@ -114,6 +129,25 @@ class GraphClient:
         response.raise_for_status()
         return response
 
+    def list_files_recursive(self, drive_id: str, folder_path: str) -> list[dict]:
+        """Recursively list all files under folder_path, returning items with an
+        extra 'relative_path' key so callers can preserve folder structure."""
+        results = []
+        self._recurse(drive_id, folder_path, folder_path, results)
+        return results
+
+    def _recurse(self, drive_id: str, root_path: str, current_path: str, results: list):
+        items = self.list_folder_contents(drive_id, current_path)
+        for item in items:
+            if "folder" in item:
+                child_path = current_path.rstrip("/") + "/" + item["name"]
+                self._recurse(drive_id, root_path, child_path, results)
+            elif "file" in item:
+                # relative_path = path within the root folder, e.g. "SubFolder/file.pdf"
+                rel = current_path[len(root_path):].lstrip("/")
+                item["relative_path"] = (rel + "/" + item["name"]) if rel else item["name"]
+                results.append(item)
+
     def get_site_id(self, site_name: str):
         print(f"DEBUG: Using Token: {self._get_token()[:20]}...")
         # If user provides a full URL, clean it up to the format Graph expects:
@@ -139,7 +173,8 @@ class GraphClient:
         response.raise_for_status()
         return response.json().get("id")
 
-graph_client = GraphClient()
+graph_client = GraphClient()                        # general Graph calls (webhooks, etc.)
+sp_client    = GraphClient(use_sharepoint_creds=True)  # SharePoint document ingestion
 
 def process_document(file_metadata: dict, session: Session):
     """

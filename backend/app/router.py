@@ -5,7 +5,8 @@ Uses gpt-oss (or configured router model) for fast intent classification.
 Routes user messages to the correct domain agent.
 """
 
-import json
+from pydantic import BaseModel, Field
+from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
@@ -26,29 +27,35 @@ DOMAIN_REGISTRY = {
         "description": "Office Administration — reimbursement (travel, medical, certification, equipment), "
                        "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
                        "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
-                       "courier services, ID cards, access management",
+                       "courier services, ID cards, access management, desk key requests, desk assignments",
         "status": "active",
     },
     "it_support": {
         "description": "IT Support & Helpdesk — software installation (with HITL approval flow), IT tickets, "
-                       "asset management (laptops, monitors, keyboards, peripherals), password reset, VPN access, "
-                       "laptop issues, email access, network connectivity, system access requests, "
-                       "hardware problems (overheating, heating, system getting hot, device too hot, laptop fan loud), "
-                       "device performance issues (slow system, system freezing, computer crashing, system hanging, "
-                       "laptop not starting, blue screen, system restart), any issue with a computer, machine, "
-                       "device, workstation, or IT equipment",
+                       "asset management (laptops, monitors, keyboards, peripherals, headphones, headset), "
+                       "password reset, VPN access, laptop issues, email access, network connectivity, "
+                       "system access requests, hardware problems (overheating, heating, system getting hot, "
+                       "device too hot, laptop fan loud), device performance issues (slow system, system freezing, "
+                       "computer crashing, system hanging, laptop not starting, blue screen, system restart), "
+                       "any issue with a computer, machine, device, workstation, or IT equipment, "
+                       "requesting software licenses (Claude, GitHub Copilot, Loveable), "
+                       "requesting hardware peripherals (monitor, mouse, keyboard, headset, headphones), "
+                       "checking what licenses or assets are assigned to me",
         "status": "active",
     },
     "pmo": {
         "description": "Project Management Office — company projects, internal projects, active projects, "
                        "AI projects, technology projects, initiatives the company is working on, "
                        "project status, completion percentage, project owner, next milestone, "
-                       "PDF report generation, project summary, what projects exist",
+                       "PDF report generation, project summary, what projects exist, "
+                       "managing Udemy training licenses — assigning seats, checking who has access, "
+                       "revoking expired Udemy licenses",
         "status": "active",
     },
     "functional_manager": {
         "description": "Functional Manager & Team Lead — who is on my team, who reports to me, "
-                       "my direct reports, team members, reportees, org structure",
+                       "my direct reports, team members, reportees, org structure, "
+                       "checking if a meeting room is available, booking a conference room",
         "status": "active",
     },
     "deeplink": {
@@ -67,6 +74,19 @@ DOMAIN_REGISTRY = {
 }
 
 
+# ── Structured Output Schema ──────────────────────────────────────────────────
+
+class RouterOutput(BaseModel):
+    """Structured classification output from the intent router."""
+    domain: Literal["hr", "admin", "it_support", "pmo", "functional_manager", "deeplink", "general"]
+    confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence from 0.0 to 1.0")
+    reasoning: str = Field(description="One-sentence explanation of the classification")
+    sub_intent: str = Field(description="Short snake_case label for the specific action, e.g. software_install")
+    entities: dict = Field(default_factory=dict, description="Key entities extracted from the message")
+
+
+# ── Router Prompt ─────────────────────────────────────────────────────────────
+
 def _build_router_prompt() -> str:
     """Build the classification prompt dynamically from the domain registry."""
     domain_descriptions = "\n".join(
@@ -75,44 +95,39 @@ def _build_router_prompt() -> str:
     )
     return f"""You are an intent classification engine for an enterprise AI assistant called Centriq.
 
-Your ONLY job is to read the user's message and output a JSON classification.
+Classify the user's message into the correct domain.
 
 Available domains:
 {domain_descriptions}
+  - "general": Use when the intent is unclear, ambiguous, or does not fit any domain above.
 
-RULES:
-1. Respond with ONLY a valid JSON object. No explanation, no markdown, no extra text.
-2. The JSON must have exactly these keys: "domain", "confidence", "reasoning", "sub_intent", "entities"
-3. "domain" must be one of: {list(DOMAIN_REGISTRY.keys())}
-4. "confidence" must be a float between 0.0 and 1.0
-5. "reasoning" is a one-sentence explanation of your classification
-6. "sub_intent" is a short snake_case label for the specific action (e.g. "software_install", "leave_balance", "ticket_status", "parking_sticker", "team_attendance")
-7. "entities" is a JSON object of key entities extracted from the message (e.g. {{"software_name": "Node.js"}}, {{"ticket_id": "IT-123"}}, {{"leave_type": "sick"}}) — use {{}} if none
-8. If the intent is unclear or ambiguous, use "general" with confidence below 0.6
-9. If the user mentions multiple domains, pick the PRIMARY one
+CLASSIFICATION RULES:
+1. If the intent is unclear or ambiguous, use "general" with confidence below 0.6
+2. If the user mentions multiple domains, pick the PRIMARY one
+3. sub_intent is a short snake_case label for the specific action (e.g. "software_install", "leave_balance", "ticket_status", "parking_sticker", "team_attendance", "document_request", "desk_key_request")
+4. entities contains key values extracted from the message (software name, ticket ID, leave type, dates, room name) — use empty dict if none
+5. confidence is your certainty: 0.9+ = very clear, 0.7-0.9 = likely, 0.5-0.7 = uncertain, <0.5 = very ambiguous
 
-Example responses:
-{{"domain": "it_support", "confidence": 0.97, "reasoning": "User wants to install Node.js, which is a software installation request.", "sub_intent": "software_install", "entities": {{"software_name": "Node.js"}}}}
-{{"domain": "it_support", "confidence": 0.95, "reasoning": "User reports their system is heating up, which is a hardware/device issue handled by IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "overheating"}}}}
-{{"domain": "it_support", "confidence": 0.93, "reasoning": "User's laptop is slow/freezing, which is a device performance issue for IT support.", "sub_intent": "hardware_issue", "entities": {{"issue_type": "performance"}}}}
-{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User is asking about their leave balance — fetched live from Zoho People (deeplink).", "sub_intent": "leave_balance", "entities": {{}}}}
-{{"domain": "pmo", "confidence": 0.98, "reasoning": "User wants to see all projects in the organization.", "sub_intent": "list_projects", "entities": {{}}}}
-{{"domain": "pmo", "confidence": 0.98, "reasoning": "User is asking which projects exist in the company.", "sub_intent": "list_projects", "entities": {{}}}}
-{{"domain": "pmo", "confidence": 0.97, "reasoning": "User wants the current status of a specific project.", "sub_intent": "project_status", "entities": {{"project_name": "Aurora UI"}}}}
-{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants to know achievements of a specific project.", "sub_intent": "project_achievements", "entities": {{"project_name": "Centriq AI"}}}}
-{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a downloadable PDF report for all projects.", "sub_intent": "generate_report", "entities": {{"project_name": "all"}}}}
-{{"domain": "pmo", "confidence": 0.96, "reasoning": "User wants a PDF report for a specific project.", "sub_intent": "generate_report", "entities": {{"project_name": "HR Integration"}}}}
-{{"domain": "admin", "confidence": 0.95, "reasoning": "User asking about certification reimbursement policy — admin handles reimbursement policy information.", "sub_intent": "policy_query", "entities": {{"policy_topic": "certification reimbursement"}}}}
-{{"domain": "admin", "confidence": 0.93, "reasoning": "User asking about travel expense policy — admin handles expense and reimbursement policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "travel expense"}}}}
-{{"domain": "hr", "confidence": 0.94, "reasoning": "User asking about leave policy — HR handles leave and attendance policies.", "sub_intent": "policy_query", "entities": {{"policy_topic": "leave"}}}}
-{{"domain": "deeplink", "confidence": 0.97, "reasoning": "User wants to apply casual leave — leave applications are submitted via Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "casual", "start_date": "2025-06-10", "end_date": "2025-06-12"}}}}
-{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User wants to apply sick leave — leave submissions go through Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "sick"}}}}
-{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to take earned leave — leave applications use Zoho People (deeplink).", "sub_intent": "submit_leave", "entities": {{"leave_type": "earned"}}}}
-{{"domain": "deeplink", "confidence": 0.97, "reasoning": "User wants to raise/file a complaint — formal complaints go through the PowerApps Admin Action Tracker (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "AC not working", "location": "T-1 6th Floor"}}}}
-{{"domain": "deeplink", "confidence": 0.96, "reasoning": "User wants to submit a ticket for a premises issue — Admin Action Tracker is the portal for formal complaints (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "washroom tap leaking"}}}}
-{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to log a complaint about an office/facility problem — this goes through PowerApps Admin Action Tracker (deeplink).", "sub_intent": "powerapps_complaint", "entities": {{"issue": "lights not working", "location": "T-3 8th Floor"}}}}
-{{"domain": "deeplink", "confidence": 0.95, "reasoning": "User wants to raise a ticket for a premises complaint — deeplink handles formal complaints via PowerApps.", "sub_intent": "powerapps_complaint", "entities": {{"issue": "cleanliness issue near reception"}}}}
-{{"domain": "general", "confidence": 0.5, "reasoning": "Ambiguous greeting with no clear domain.", "sub_intent": "greeting", "entities": {{}}}}
+EXAMPLES:
+- "install Node.js" → domain: it_support, sub_intent: software_install, entities: {{"software_name": "Node.js"}}
+- "my laptop is overheating" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "overheating"}}
+- "my system is very slow" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "performance"}}
+- "I need a GitHub Copilot license" → domain: it_support, sub_intent: license_request, entities: {{"license_name": "GitHub Copilot"}}
+- "request a monitor for my desk" → domain: it_support, sub_intent: asset_request, entities: {{"asset_type": "monitor"}}
+- "how many leaves do I have" → domain: deeplink, sub_intent: leave_balance, entities: {{}}
+- "apply sick leave from Monday" → domain: deeplink, sub_intent: submit_leave, entities: {{"leave_type": "sick"}}
+- "raise a complaint about AC not working" → domain: deeplink, sub_intent: powerapps_complaint, entities: {{"issue": "AC not working"}}
+- "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
+- "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
+- "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
+- "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
+- "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
+- "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
+- "is Salween room free tomorrow 2-3pm" → domain: functional_manager, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
+- "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
+- "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
+- "hi" → domain: general, sub_intent: greeting, entities: {{}}
 """
 
 
@@ -123,8 +138,8 @@ _router_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=0,
-    max_tokens=350,  # increased to support entities + sub_intent fields
-)
+    max_tokens=350,
+).with_structured_output(RouterOutput)
 
 
 def classify_intent(user_message: str) -> dict:
@@ -138,34 +153,23 @@ def classify_intent(user_message: str) -> dict:
     human = HumanMessage(content=user_message)
 
     try:
-        response = _router_llm.invoke([system, human])
-        raw = response.content.strip()
+        result: RouterOutput = _router_llm.invoke([system, human])
 
-        if "```" in raw:
-            import re
-            match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-            if match:
-                raw = match.group(1).strip()
-
-        result = json.loads(raw)
-
-        domain = result.get("domain", "general")
+        domain = result.domain
         if domain not in DOMAIN_REGISTRY:
             domain = "general"
 
-        entities = result.get("entities", {})
-        if not isinstance(entities, dict):
-            entities = {}
+        entities = result.entities if isinstance(result.entities, dict) else {}
 
         return {
             "domain": domain,
-            "confidence": float(result.get("confidence", 0.5)),
-            "reasoning": result.get("reasoning", "No reasoning provided"),
-            "sub_intent": result.get("sub_intent", "unknown"),
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "sub_intent": result.sub_intent,
             "entities": entities,
         }
 
-    except (json.JSONDecodeError, Exception) as e:
+    except Exception as e:
         print(f"[Router] Classification failed: {e}. Falling back to 'general'.")
         return {
             "domain": "general",

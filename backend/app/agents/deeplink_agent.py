@@ -34,46 +34,42 @@ class DeeplinkState(TypedDict):
 
 @tool
 def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: str = "") -> str:
-    """Open Zoho People leave form in Edge browser with form pre-filled. User reviews and clicks Submit.
+    """Apply leave via Zoho People API. Falls back to a direct Zoho link if API is unavailable.
     start_date and end_date must be YYYY-MM-DD format. leave_type: Casual, Sick, Earned, or Optional."""
-    zoho_base = (settings.ZOHO_PEOPLE_URL or "").rstrip("/")
-    if not zoho_base:
-        return json.dumps({"success": False, "error": "ZOHO_PEOPLE_URL not configured."})
-
-    if not (_SESSIONS_DIR / "zoho.bin").exists():
-        return json.dumps({
-            "success": False,
-            "error": "Zoho session not set up",
-            "action": "run_setup",
-            "instruction": "Tell the user to type 'setup zoho session' to log in once via SSO.",
-        })
-
-    leave_page = zoho_base + "#leavetracker/mydata/applyleave"
-    fill_script = _MCP_SERVER_DIR / "_zoho_fill.py"
-
-    subprocess.Popen(
-        [
-            sys.executable, str(fill_script),
-            start_date, end_date, leave_type, reason or "",
-            str(_SESSIONS_DIR), leave_page,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
+    zoho_link = (
+        ((settings.ZOHO_PEOPLE_URL or "").rstrip("/") + "#leavetracker/applyleave")
+        if settings.ZOHO_PEOPLE_URL
+        else "https://people.zoho.com"
     )
 
+    if settings.ZOHO_REFRESH_TOKEN:
+        try:
+            from app.services.leave_balance_sync import apply_leave
+            result = apply_leave(
+                settings.DEFAULT_USER_EMAIL, start_date, end_date, leave_type, reason or ""
+            )
+            if result.get("success"):
+                return json.dumps(result)
+        except Exception as exc:
+            print(f"[submit_zoho_leave] API error: {exc}")
+
+    # API not configured or failed — return fallback link
     def _fmt(iso: str) -> str:
-        return _dt.strptime(iso, "%Y-%m-%d").strftime("%d %b %Y")
+        try:
+            return _dt.strptime(iso, "%Y-%m-%d").strftime("%d %b %Y")
+        except Exception:
+            return iso
 
     return json.dumps({
-        "success": True,
-        "action_required": "user_submit",
+        "success":    False,
+        "fallback":   True,
+        "link":       zoho_link,
+        "leave_type": leave_type,
+        "start_date": start_date,
+        "end_date":   end_date,
         "message": (
-            f"Opening Zoho leave form in Edge: {leave_type} leave "
-            f"from {_fmt(start_date)} to {_fmt(end_date)}"
-            + (f", reason: {reason}" if reason else "")
-            + ". The browser is opening now — please review the pre-filled form and click Submit."
-            + " The window closes automatically after 10 minutes."
+            f"Please apply your {leave_type} leave ({_fmt(start_date)} to {_fmt(end_date)}) "
+            "directly in Zoho People."
         ),
     })
 
@@ -109,55 +105,51 @@ def submit_powerapps_complaint(
     priority: str = "Medium",
     location: str = "Other",
 ) -> str:
-    """Open the PowerApps Admin Action Tracker complaint form in Edge, pre-filled with the
-    provided details. User reviews, attaches files if needed, and clicks Submit Ticket.
+    """Submit a complaint to the PowerApps Admin Action Tracker via Power Automate webhook.
+    Falls back to a direct link if the webhook is not configured.
 
     action_item: Description of the issue / action required.
     priority: High, Medium, or Low. Default Medium.
     location: One of — T-1 6th Floor, T-2 10th Floor, T-3 6th Floor, T-3 8th Floor,
               Bangalore Office, Indore Office, Other.
     """
-    powerapps_url = settings.POWERAPPS_URL or ""
-    if not powerapps_url:
-        return json.dumps({"success": False, "error": "POWERAPPS_URL not configured in .env.local."})
-
-    profile_dir = _SESSIONS_DIR / "powerapps_profile"
-    if not profile_dir.exists():
-        return json.dumps({
-            "success": False,
-            "error": "PowerApps session not set up",
-            "action": "run_setup",
-            "instruction": "Tell the user to type 'setup powerapps session' to log in once via SSO.",
-        })
+    import datetime
+    import requests as _req
 
     priority_map = {"high": "High", "medium": "Medium", "low": "Low"}
     priority = priority_map.get(priority.lower(), "Medium")
 
-    fill_script = _MCP_SERVER_DIR / "_powerapps_fill.py"
-    subprocess.Popen(
-        [
-            sys.executable, str(fill_script),
-            action_item,
-            priority,
-            location or "Other",
-            str(_SESSIONS_DIR),
-            powerapps_url,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-    )
+    webhook_url   = settings.PA_WEBHOOK_COMPLAINT_NEW or ""
+    powerapps_url = settings.POWERAPPS_URL or ""
 
-    loc_note = f" at {location}" if location and location != "Other" else ""
+    if webhook_url:
+        payload = {
+            "action_item":   action_item,
+            "priority":      priority,
+            "location":      location or "Other",
+            "submitted_by":  settings.DEFAULT_USER_EMAIL,
+            "submitted_at":  datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        try:
+            resp = _req.post(webhook_url, json=payload, timeout=10)
+            resp.raise_for_status()
+            return json.dumps({
+                "success": True,
+                "message": "Your complaint has been submitted via Power Automate. The flow will create the ticket shortly.",
+            })
+        except Exception as exc:
+            return json.dumps({
+                "success": False,
+                "error":   str(exc),
+                "link":    powerapps_url,
+            })
+
+    # Webhook not configured — return fallback link
     return json.dumps({
-        "success": True,
-        "action_required": "user_submit",
-        "message": (
-            f"Opening the Admin Action Tracker in Edge: {priority} priority complaint{loc_note}. "
-            "The browser is opening now — please review the pre-filled form, "
-            "attach any photos if needed, and click Submit Ticket. "
-            "The window closes automatically after 10 minutes."
-        ),
+        "success":  False,
+        "fallback": True,
+        "link":     powerapps_url,
+        "message":  "Power Automate webhook not configured — please open the form manually.",
     })
 
 
@@ -191,10 +183,12 @@ def get_zoho_leave_balance() -> str:
     """Return the employee's current leave balance from Zoho People.
     Served from DB cache when fresh (< 15 min old); otherwise runs a headless
     scrape for this user only, caches the result, and returns it."""
-    from app.config import settings as _settings
-    from app.services.leave_balance_sync import get_or_refresh
-
-    return json.dumps(get_or_refresh(_settings.DEFAULT_USER_EMAIL))
+    try:
+        from app.config import settings as _settings
+        from app.services.leave_balance_sync import get_or_refresh
+        return json.dumps(get_or_refresh(_settings.DEFAULT_USER_EMAIL))
+    except Exception as exc:
+        return json.dumps({"success": False, "error": f"Failed to fetch leave balance: {exc}"})
 
 
 _NATIVE_TOOLS = [
@@ -232,6 +226,14 @@ AVAILABLE TOOLS:
 - If dates have no year (e.g. "June 10 to June 12") → "2026-06-10" and "2026-06-12".
 - Ask ONLY if both start date AND end date are completely absent.
 
+Tool response handling:
+- result.success = true  → confirm: "Your [leave_type] leave has been applied in Zoho."
+                           Add request_id if present: "Request ID: {id}"
+- result.fallback = true → say: "I couldn't apply via API. Please apply directly in Zoho:"
+                           then show result.link as a clickable link.
+                           Remind the user to fill: leave type, from, to dates from result fields.
+- result.error (no fallback) → tell user the submission failed and to try again.
+
 ─── POWERAPPS COMPLAINT SUBMISSION ───────────────────────────────────────────
 Trigger: user says "raise a complaint", "file a complaint", "submit a complaint",
          "log a complaint", "I want to raise a ticket", "I have a premises/facility issue",
@@ -250,7 +252,13 @@ EXACT STEPS:
   STEP 2 — Once location is provided → call submit_powerapps_complaint immediately.
   NEVER ask for priority — default silently to "Medium" unless urgency is explicit.
   NEVER ask for Ticket ID — it is auto-generated by the app.
-  NEVER redirect to another portal or ask the user to file manually.
+
+Tool response handling:
+- result.success = true  → confirm: "Your complaint has been submitted via Power Automate."
+- result.fallback = true → say: "The webhook isn't set up yet. Please open the form manually:"
+                           then show result.link as a clickable link.
+- result.error + link    → say submission failed, show result.link as fallback.
+- result.error (no link) → tell user submission failed and to contact admin.
 
 ─── LEAVE BALANCE ────────────────────────────────────────────────────────────
 Trigger: user asks "how many leaves do I have", "what is my leave balance",
@@ -267,11 +275,9 @@ Trigger: user asks "how many leaves do I have", "what is my leave balance",
 - If result.action = "run_setup": tell user to type 'setup zoho session' first.
 - If result.error: tell user the balance could not be fetched and to try again.
 
-─── TOOL RESPONSE HANDLING ───────────────────────────────────────────────────
-- setup_zoho_session success → "Zoho session setup is in progress — please log in in the browser window."
-- setup_powerapps_session success → relay the message from the tool exactly.
-- submit_zoho_leave success (action_required = user_submit) → relay the message from the tool exactly.
-- submit_powerapps_complaint success (action_required = user_submit) → relay the message from the tool exactly.
+─── SETUP RESPONSES ──────────────────────────────────────────────────────────
+- setup_zoho_session success → relay message from tool exactly.
+- setup_powerapps_session success → relay message from tool exactly.
 - Any tool returns action "run_setup" → tell user to type the relevant setup command.
 
 NEVER ask for the user's email. OUTPUT: Plain text only. No markdown tables. No HTML.

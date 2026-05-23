@@ -217,6 +217,7 @@ def _extract_text_from_docx_bytes(data: bytes) -> str:
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list:
+    """Character-based chunker (legacy — kept for backward compatibility)."""
     if not text:
         return []
     text = re.sub(r'\s+', ' ', text).strip()
@@ -227,6 +228,43 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
         if chunk:
             chunks.append(chunk)
         start = end - overlap
+    return chunks
+
+
+def _chunk_text_sentences(text: str, max_tokens: int = 400, overlap_sentences: int = 2) -> list:
+    """Sentence-aware chunker that respects natural sentence boundaries.
+
+    - Splits on sentence-ending punctuation followed by whitespace + capital letter
+    - Groups sentences into chunks of ~max_tokens (1 token ≈ 4 chars)
+    - Adds overlap_sentences-sentence overlap between consecutive chunks
+    """
+    if not text:
+        return []
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Split on sentence boundaries: . ! ? followed by space and uppercase
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z\"\'])', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        return [text] if text else []
+
+    chunks: list = []
+    current: list = []
+    current_len = 0
+
+    for sent in sentences:
+        sent_len = len(sent) // 4  # approximate token count
+        if current_len + sent_len > max_tokens and current:
+            chunks.append(" ".join(current))
+            # Keep last overlap_sentences for continuity
+            current = current[-overlap_sentences:] if overlap_sentences else []
+            current_len = sum(len(s) // 4 for s in current)
+        current.append(sent)
+        current_len += sent_len
+
+    if current:
+        chunks.append(" ".join(current))
+
     return chunks
 
 
@@ -340,7 +378,7 @@ class PolicyService:
                 )
                 if raw_images:
                     img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
-                    chunks_preview = _chunk_text(content[:50000])
+                    chunks_preview = _chunk_text_sentences(content[:50000])
                     assignment = _assign_images_to_chunks(
                         raw_images, len(chunks_preview), is_docx=not is_pdf
                     )
@@ -493,7 +531,7 @@ class PolicyService:
                 chunk_images: dict = {}
                 if raw_images:
                     img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
-                    chunks_preview = _chunk_text(content[:50000])
+                    chunks_preview = _chunk_text_sentences(content[:50000])
                     assignment = _assign_images_to_chunks(
                         raw_images, len(chunks_preview), is_docx=not is_pdf
                     )
@@ -531,6 +569,7 @@ class PolicyService:
     def _chunk_and_embed(policy: Policy, db, chunk_images: dict = None):
         """
         Internal: chunk one Policy and store PolicyChunk rows in the given session.
+        Uses sentence-aware chunking (~400 tokens, 2-sentence overlap).
         Embedding is best-effort — chunks are stored even without embeddings.
         chunk_images: optional {chunk_index: [minio_key, ...]} mapping
         """
@@ -538,15 +577,15 @@ class PolicyService:
 
         db.query(PolicyChunk).filter(PolicyChunk.policy_id == policy.id).delete()
 
-        chunks = _chunk_text(policy.content or "")
-        for i, chunk_text in enumerate(chunks):
-            embed_input = f"{policy.title}\n\n{chunk_text}"
+        chunks = _chunk_text_sentences(policy.content or "")
+        for i, chunk_text_val in enumerate(chunks):
+            embed_input = f"{policy.title}\n\n{chunk_text_val}"
             emb = PolicyService._get_embedding(embed_input)
             img_keys = (chunk_images or {}).get(i) or None
             db.add(PolicyChunk(
                 policy_id=policy.id,
                 chunk_index=i,
-                text=chunk_text,
+                text=chunk_text_val,
                 embedding=emb,
                 image_urls=img_keys if img_keys else None,
             ))
@@ -611,68 +650,119 @@ class PolicyService:
     # ── Search ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def search_policies(query: str, limit: int = 2) -> str:
+    def _rrf_fuse(sem_ids: list, bm25_ids: list, k: int = 60) -> dict:
+        """Reciprocal Rank Fusion: combines two ranked lists into a single score dict.
+        Returns {chunk_id: rrf_score} sorted by score descending."""
+        scores: dict = {}
+        for rank, cid in enumerate(sem_ids):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+        for rank, cid in enumerate(bm25_ids):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+        return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+
+    @staticmethod
+    def search_policies(query: str, limit: int = 4) -> str:
         """
-        Search policy chunks.
-        1. Try semantic search via cosine similarity on stored embeddings,
-           with a title-keyword boost so the best-named policy wins.
-        2. Fall back to keyword search on chunk text (synonyms expanded).
-        3. Last resort: keyword search on full Policy.content.
-        All data comes from the database — no file system access.
+        Hybrid BM25 + pgvector search with Reciprocal Rank Fusion.
+
+        1. Semantic search (pgvector cosine distance, top-20 candidates)
+        2. BM25 keyword search (PostgreSQL tsvector/tsquery, top-20 candidates)
+        3. RRF fusion of both ranked lists
+        4. Fallback: keyword search on chunks/policies if no embeddings available
+        Returns top `limit` (default 4) unique-policy chunks.
         """
         from app.models import PolicyChunk
+        from sqlalchemy import text as sql_text
+        from app.models import SCHEMA
+
         db = SessionLocal()
         try:
             query_keywords = [w for w in query.lower().split() if len(w) > 2]
-            # Pre-load policy titles for cheap title-boost scoring
             policy_title_map = {p.id: (p.title or "").lower() for p in db.query(Policy).all()}
+
+            sem_ids: list = []
+            bm25_ids: list = []
 
             # ── 1. Semantic search via pgvector ───────────────────────────────
             query_emb = PolicyService._get_embedding(query)
             if query_emb:
                 dist_expr = PolicyChunk.embedding.cosine_distance(query_emb)
-                candidates = (
-                    db.query(PolicyChunk, dist_expr.label("dist"))
+                sem_rows = (
+                    db.query(PolicyChunk.id, dist_expr.label("dist"))
                     .filter(
                         PolicyChunk.embedding.isnot(None),
-                        dist_expr < 0.55,
+                        dist_expr < 0.65,
                     )
                     .order_by(dist_expr)
-                    .limit(limit * 10)
+                    .limit(20)
                     .all()
                 )
-                scored = []
-                for c, distance in candidates:
-                    if PolicyService._is_metadata_chunk(c.text):
+                sem_ids = [r.id for r in sem_rows]
+
+            # ── 2. BM25 keyword search via tsvector ───────────────────────────
+            try:
+                bm25_rows = db.execute(
+                    sql_text(
+                        f"SELECT id FROM \"{SCHEMA}\".policy_chunks "
+                        f"WHERE text_tsv IS NOT NULL "
+                        f"AND text_tsv @@ plainto_tsquery('english', :q) "
+                        f"ORDER BY ts_rank(text_tsv, plainto_tsquery('english', :q)) DESC "
+                        f"LIMIT 20"
+                    ),
+                    {"q": query},
+                ).fetchall()
+                bm25_ids = [r[0] for r in bm25_rows]
+            except Exception as bm25_err:
+                print(f"[PolicyService] BM25 search skipped: {bm25_err}")
+
+            # ── 3. RRF fusion ─────────────────────────────────────────────────
+            if sem_ids or bm25_ids:
+                fused_scores = PolicyService._rrf_fuse(sem_ids, bm25_ids)
+                all_fused_ids = list(fused_scores.keys())
+
+                # Apply title-keyword boost to top-8 candidates
+                candidate_ids = all_fused_ids[:8]
+                chunks_by_id = {
+                    c.id: c for c in db.query(PolicyChunk).filter(PolicyChunk.id.in_(candidate_ids)).all()
+                }
+                reranked = []
+                for cid in candidate_ids:
+                    c = chunks_by_id.get(cid)
+                    if c is None or PolicyService._is_metadata_chunk(c.text):
                         continue
                     title = policy_title_map.get(c.policy_id, "")
-                    title_bonus = sum(0.5 for kw in query_keywords if kw in title and kw not in ("policy", "what", "the", "for", "and"))
-                    scored.append((1 - distance + title_bonus, c))
+                    title_bonus = sum(
+                        0.1 for kw in query_keywords
+                        if kw in title and kw not in ("policy", "what", "the", "for", "and")
+                    )
+                    final_score = fused_scores[cid] + title_bonus
+                    reranked.append((final_score, c))
 
-                scored.sort(key=lambda x: x[0], reverse=True)
+                reranked.sort(key=lambda x: x[0], reverse=True)
 
-                if scored:
-                    seen_policies: set = set()
-                    results = []
-                    all_image_keys: list = []
-                    for _, c in scored:
-                        if len(results) >= limit:
-                            break
-                        if c.policy_id in seen_policies:
-                            continue
-                        policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
-                        if policy:
-                            seen_policies.add(c.policy_id)
-                            updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
-                            results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
-                            if c.image_urls:
-                                all_image_keys.extend(c.image_urls)
+                seen_policies: set = set()
+                results = []
+                all_image_keys: list = []
+                for _, c in reranked:
+                    if len(results) >= limit:
+                        break
+                    if c.policy_id in seen_policies:
+                        continue
+                    policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
+                    if policy:
+                        seen_policies.add(c.policy_id)
+                        updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                        results.append(
+                            f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}"
+                        )
+                        if c.image_urls:
+                            all_image_keys.extend(c.image_urls)
 
-                    if results:
-                        text = "\n\n---\n\n".join(results)
-                        return PolicyService._append_image_marker(text, all_image_keys)
+                if results:
+                    text = "\n\n---\n\n".join(results)
+                    return PolicyService._append_image_marker(text, all_image_keys)
 
-            # ── 2. Keyword search on chunks ───────────────────────────────────
+            # ── 4. Keyword fallback on chunks ──────────────────────────────────
             chunks_all = db.query(PolicyChunk).all()
             if chunks_all:
                 keywords = PolicyService._expand_keywords(query)
@@ -703,7 +793,9 @@ class PolicyService:
                         if policy:
                             seen_policies.add(c.policy_id)
                             updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
-                            results.append(f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}")
+                            results.append(
+                                f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}"
+                            )
                             if c.image_urls:
                                 all_image_keys.extend(c.image_urls)
 
@@ -711,7 +803,7 @@ class PolicyService:
                         text = "\n\n---\n\n".join(results)
                         return PolicyService._append_image_marker(text, all_image_keys)
 
-            # ── 3. Last resort: keyword search on full Policy.content ─────────
+            # ── 5. Last resort: keyword search on full Policy.content ──────────
             return PolicyService._fallback_policy_search(query, db, limit)
 
         finally:

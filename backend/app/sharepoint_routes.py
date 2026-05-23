@@ -61,7 +61,6 @@ async def trigger_transfer(request: TransferRequest, background_tasks: Backgroun
     """
     Triggers a background task to transfer documents from SharePoint to MinIO.
     """
-    # We run it in background because it might take time
     background_tasks.add_task(
         sharepoint_transfer_service.transfer_folder_to_minio,
         request.site_name,
@@ -69,3 +68,23 @@ async def trigger_transfer(request: TransferRequest, background_tasks: Backgroun
         request.minio_prefix
     )
     return {"message": "Transfer started in background", "site": request.site_name, "folder": request.folder_path}
+
+
+@router.post("/sharepoint/sync-policies")
+async def sync_sharepoint_policies(background_tasks: BackgroundTasks):
+    """
+    Sync all folders from SHAREPOINT_POLICY_FOLDERS directly from SharePoint
+    into the DB (no MinIO middleman). Downloads → extracts text → chunks → embeds.
+    Runs in background — returns immediately.
+    """
+    from app.config import settings
+    if not settings.SHAREPOINT_SITE_URL:
+        raise HTTPException(status_code=400, detail="SHAREPOINT_SITE_URL is not configured.")
+
+    from app.services.sharepoint_policy_sync import sync_all_sharepoint_folders
+    background_tasks.add_task(sync_all_sharepoint_folders)
+    folders = [f.strip() for f in (settings.SHAREPOINT_POLICY_FOLDERS or "").split(",") if f.strip()]
+    return {
+        "message": "SharePoint policy sync started in background.",
+        "folders": folders,
+    }
