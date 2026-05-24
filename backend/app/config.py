@@ -71,11 +71,11 @@ def _resolve_redis_url() -> str:
 
 
 def _resolve_router_model() -> str:
-    """Use the Windows Aligned server router model."""
+    """Use qwen2.5:14b for routing/admin/IT/PMO/manager — lighter and fast enough for structured output."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    return "gpt-oss:latest"
+    return "qwen2.5:14b"
 
 
 class Config:
@@ -95,6 +95,9 @@ class Config:
 
     # ── Summarizer Model (context_manager_node, conversation summaries) ──
     SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "qwen2.5:14b")
+
+    # ── Fast Model (lightweight agents: manager, general, summarizer, suggestions) ──
+    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "qwen2.5:7b")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")

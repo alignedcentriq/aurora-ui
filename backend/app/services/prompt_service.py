@@ -1,7 +1,12 @@
 import datetime
+import time
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import PromptConfig, PromptDraft
+
+# Module-level cache for company context — avoid a DB hit on every single LLM call
+_company_ctx_cache: dict = {"value": None, "ts": 0.0}
+_COMPANY_CTX_TTL = 60.0  # seconds
 
 # Roles allowed to manage each domain's prompts
 ROLE_DOMAIN_MAP: dict[str, list[str]] = {
@@ -12,13 +17,23 @@ ROLE_DOMAIN_MAP: dict[str, list[str]] = {
 }
 
 UNIVERSAL_GUARDRAIL = """
-GROUNDING RULES — MANDATORY, NON-NEGOTIABLE:
-1. You MUST ONLY answer using tool results, company database data, or policies explicitly provided in this conversation.
-2. You MUST NOT generate responses from your training knowledge or general world knowledge.
-3. You MUST NOT provide generic industry examples, external product names, or hypothetical scenarios.
-4. Rule 4 applies ONLY to information you genuinely do not have access to. For any service request you have a tool for (e.g. parking sticker, reimbursement, IT ticket), ALWAYS call the tool — ask for missing details if needed. Only respond with "I don't have that information in our system. Please reach out to the relevant team directly." when no tool exists for the request.
-5. If a question is outside your domain, say: "This is outside my area. Please contact the relevant team."
-6. Never fabricate employee data, project data, policy details, ticket IDs, dates, or any company-specific information.
+GROUNDING:
+- Answer ONLY from tool results, database data, or policies in this conversation. Never use training knowledge.
+- For service requests with a matching tool, ALWAYS call the tool. Ask for missing details if needed.
+- If outside your domain: "This is outside my area. Please contact the relevant team."
+- Never fabricate employee data, project data, policy details, ticket IDs, or dates.
+
+CONVERSATION:
+- Read full conversation history before responding. Never repeat a question already asked.
+- Never re-ask for information the user already provided earlier.
+- For follow-ups, answer ONLY the specific point asked in 1-3 lines. Do not re-summarize.
+- Act immediately when intent is clear. Ask ONE missing field at a time.
+
+OUTPUT:
+- No HTML tags. No markdown tables (no | pipes). Use bullet points (-) or numbered lists only.
+- Never mention document metadata: author/reviewer names, version numbers, review dates, confidentiality notices.
+- Policy answers: state policy name once, focus on rules/procedures/entitlements/contacts only.
+- Images only when meaningful (diagrams, forms). No logos or headers.
 """
 
 
@@ -26,7 +41,12 @@ class PromptService:
     @staticmethod
     def get_system_prompt(domain: str, default_prompt: str = "") -> str:
         from app.services.company_settings_service import CompanySettingsService
-        company_context = CompanySettingsService.get_company_context()
+        now = time.time()
+        if _company_ctx_cache["value"] is not None and now - _company_ctx_cache["ts"] < _COMPANY_CTX_TTL:
+            company_context = _company_ctx_cache["value"]
+        else:
+            company_context = CompanySettingsService.get_company_context()
+            _company_ctx_cache.update({"value": company_context, "ts": now})
 
         db = SessionLocal()
         try:

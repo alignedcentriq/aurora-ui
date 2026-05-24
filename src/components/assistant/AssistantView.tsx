@@ -22,6 +22,8 @@ import { ParkingForm } from "./ParkingForm";
 import { ThinkingBuddy } from "./ThinkingBuddy";
 import { SmartWidgets } from "./SmartWidgets";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import type { Turn } from "@/lib/chat-store";
 
@@ -55,7 +57,7 @@ import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
 
 export function AssistantView() {
-  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
+  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
   const { theme } = useSettings();
   const { user } = useAuth();
@@ -175,6 +177,24 @@ export function AssistantView() {
         .slice(1)
         .map((step, index) => window.setTimeout(() => setActivity(step), (index + 1) * 1800));
 
+      const fetchSuggestions = (userText: string, aiText: string, domain: string) => {
+        fetch("/api/suggestions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(user?.email ? { "x-user-email": user.email } : {}),
+          },
+          body: JSON.stringify({ message: userText, response: aiText, domain }),
+        })
+          .then((r) => (r.ok ? r.json() : { suggestions: [] }))
+          .then((d) => {
+            if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
+              setSuggestions(d.suggestions);
+            }
+          })
+          .catch(() => {});
+      };
+
       fetch("/api/chat", {
         method: "POST",
         signal: controller.signal,
@@ -191,6 +211,7 @@ export function AssistantView() {
         }),
       })
         .then(async (res) => {
+          // Non-2xx responses still return JSON error bodies
           if (!res.ok) {
             const errorData = await res.json().catch(() => ({}));
             const detail = errorData.detail;
@@ -202,40 +223,79 @@ export function AssistantView() {
             }
             throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
           }
-          return res.json();
-        })
-        .then((data) => {
-          const responseText =
-            data.response || "Sorry, I received an empty response from the server.";
-          addTurn(activeId, {
-            role: "ai",
-            text: responseText,
-            downloadUrl: data.download_url ?? undefined,
-            downloadTitle: data.download_title ?? undefined,
-            domain: data.domain ?? undefined,
-            interactive: data.interactive ?? undefined,
-            images: Array.isArray(data.images) && data.images.length > 0 ? data.images : undefined,
-          });
-          // Fetch contextual follow-up suggestions
-          fetch("/api/suggestions", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(user?.email ? { "x-user-email": user.email } : {}),
-            },
-            body: JSON.stringify({
-              message: text,
-              response: responseText,
-              domain: data.domain ?? "general",
-            }),
-          })
-            .then((r) => (r.ok ? r.json() : { suggestions: [] }))
-            .then((d) => {
-              if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
-                setSuggestions(d.suggestions);
+
+          // SSE stream reader
+          const reader = res.body!.getReader();
+          const decoder = new TextDecoder();
+          let aiTurnAdded = false;
+          let accumulatedText = "";
+          let buffer = "";
+
+          const processLine = (line: string) => {
+            if (!line.startsWith("data: ")) return;
+            let evt: Record<string, unknown>;
+            try { evt = JSON.parse(line.slice(6)); } catch { return; }
+
+            if (evt.type === "token") {
+              const content = (evt.content as string) ?? "";
+              accumulatedText += content;
+              if (!aiTurnAdded) {
+                // First token — switch from "thinking" to streaming message
+                setThinking(false);
+                activityTimers.forEach((t) => window.clearTimeout(t));
+                setActivity("");
+                addTurn(activeId, { role: "ai", text: content, streaming: true });
+                aiTurnAdded = true;
+              } else {
+                updateLastAITurn(activeId, { text: accumulatedText });
               }
-            })
-            .catch(() => {});
+            } else if (evt.type === "replace") {
+              accumulatedText = (evt.content as string) ?? accumulatedText;
+              updateLastAITurn(activeId, { text: accumulatedText });
+            } else if (evt.type === "done") {
+              updateLastAITurn(activeId, {
+                streaming: false,
+                domain: (evt.domain as string) ?? undefined,
+                interactive: (evt.interactive as Turn["interactive"]) ?? undefined,
+                downloadUrl: (evt.download_url as string) ?? undefined,
+                images:
+                  Array.isArray(evt.images) && evt.images.length > 0
+                    ? (evt.images as string[])
+                    : undefined,
+              });
+              fetchSuggestions(text, accumulatedText, (evt.domain as string) ?? "general");
+            } else if (evt.type === "error") {
+              if (!aiTurnAdded) {
+                setThinking(false);
+                setActivity("");
+                addTurn(activeId, {
+                  role: "ai",
+                  text: "Sorry, something went wrong. Please try again.",
+                });
+                aiTurnAdded = true;
+              }
+            }
+          };
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) processLine(line.trim());
+          }
+          if (buffer.trim()) processLine(buffer.trim());
+
+          // If stream ended without a done event and we never got tokens
+          if (!aiTurnAdded) {
+            setThinking(false);
+            setActivity("");
+            addTurn(activeId, {
+              role: "ai",
+              text: "Sorry, I received an empty response. Please try again.",
+            });
+          }
         })
         .catch((err: Error & { code?: string }) => {
           console.error("Backend Error:", err);
@@ -271,7 +331,7 @@ export function AssistantView() {
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking, user?.email, user?.role],
+    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role],
   );
 
   const handleNewChat = () => {
@@ -488,11 +548,15 @@ export function AssistantView() {
                           onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)}
                           domain={t.role === "ai" ? t.domain : undefined}
                           text={t.text}
+                          live={t.streaming}
                         >
                           <div className="space-y-4">
                             {t.text && (
-                              <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                                {renderInline(t.text)}
+                              <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
+                                {t.streaming && (
+                                  <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
+                                )}
                               </div>
                             )}
                             {t.images && t.images.length > 0 && (
@@ -673,19 +737,6 @@ export function AssistantView() {
   );
 }
 
-function renderInline(text: string | undefined) {
-  if (!text) return null;
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) =>
-    p.startsWith("**") && p.endsWith("**") ? (
-      <strong key={i} className="font-bold text-foreground">
-        {p.slice(2, -2)}
-      </strong>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  );
-}
 
 function getActivitySteps(text: string) {
   const lower = text.toLowerCase();

@@ -36,9 +36,9 @@ tool_node = ToolNode(tools)
 _manager_llm = ChatOpenAI(
     base_url=settings.ROUTER_BASE_URL,
     api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
+    model=settings.FAST_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    timeout=120,
+    timeout=30,
 ).bind_tools(tools)
 
 
@@ -46,28 +46,9 @@ def manager_assistant(state: ManagerState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
     default_prompt = (
         f"You are the Manager Assistant for Aligned Automation.\n"
-        f"The logged-in manager's email is: {user_email}. NEVER ask who the user is.\n\n"
-        f"CONVERSATION MEMORY RULE:\n"
-        f"Read the full conversation history before responding.\n"
-        f"- If the user refers to a prior answer ('tell me more about them', 'what about Alice?'), use the context from previous messages.\n"
-        f"- NEVER ask for information already provided in this conversation.\n\n"
-        f"TOOLS:\n"
-        f"1. 'Who reports to me', 'my team', 'my direct reports', 'my reportees':\n"
-        f"   → Call get_my_team(manager_email='{user_email}') immediately.\n"
-        f"2. 'Find someone with X skill', 'who has experience in Y', 'search for Z':\n"
-        f"   → Call search_people_directory(query=<query>) immediately.\n\n"
-        f"LEAVE APPROVAL: Leave approval and rejection is handled entirely via email. "
-        f"When an employee submits a leave request, their reporting manager receives an email with Approve/Reject links to click. "
-        f"There is no leave approval action in this chat.\n\n"
-        f"For payroll or HR policy questions → tell the manager to ask Centriq in the HR context.\n\n"
-        f"FOLLOW-UP FOCUS RULE:\n"
-        f"- When the user asks a specific follow-up about someone already listed ('what are Rahul's skills?', 'how many people do I have?'), answer ONLY that point from the conversation history — 1-3 lines.\n"
-        f"- Do NOT re-list the full team on every follow-up.\n\n"
-        f"OUTPUT FORMATTING:\n"
-        f"- NEVER output markdown tables (no | pipe characters).\n"
-        f"- NEVER output HTML tags.\n"
-        f"- Use plain bullet points (- ) or numbered lists (1. 2. 3.) only.\n"
-        f"Be concise and professional."
+        f"Manager email: {user_email}. Never ask who the user is.\n"
+        f"Leave approval is handled via email links — there is no leave approval action in this chat.\n"
+        f"For HR policy questions, tell the manager to ask Centriq in the HR context.\n"
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
     guardrail = PromptService.get_guardrail("functional_manager")

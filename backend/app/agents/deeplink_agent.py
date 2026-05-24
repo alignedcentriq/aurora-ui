@@ -296,7 +296,7 @@ def _build_graph(tools):
         api_key=settings.AGENT_API_KEY,
         model=settings.AGENT_MODEL_NAME,
         temperature=0,
-        timeout=120,
+        timeout=45,
     ).bind_tools(tools)
 
     def deeplink_assistant(state: DeeplinkState):

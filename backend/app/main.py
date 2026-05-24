@@ -82,13 +82,22 @@ def _llm_host_port() -> tuple[str, int]:
     return (parsed.hostname or ALIGNED_LLM_HOST), (parsed.port or 11434)
 
 
+_llm_reachable_cache: dict = {"result": True, "ts": 0.0}
+_LLM_REACHABLE_TTL = 30.0  # seconds — cache VPN check result
+
+
 def _check_llm_reachable() -> bool:
+    now = time.time()
+    if now - _llm_reachable_cache["ts"] < _LLM_REACHABLE_TTL:
+        return _llm_reachable_cache["result"]
     host, port = _llm_host_port()
     try:
         with socket.create_connection((host, port), timeout=2.0):
-            return True
+            result = True
     except OSError:
-        return False
+        result = False
+    _llm_reachable_cache.update({"result": result, "ts": now})
+    return result
 app.include_router(sharepoint_router, prefix="/api")
 app.include_router(pmo_router)
 app.include_router(it_router)
@@ -397,6 +406,88 @@ async def serve_policy_image(image_id: int):
         db.close()
 
 
+# Nodes whose LLM stream events should NOT be forwarded to the user
+# (routing/context work, not the final answer)
+_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup"}
+
+_policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
+_email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
+_download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
+
+
+def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: float) -> dict:
+    """Apply the same cleanup/extraction logic as the old blocking endpoint."""
+    final_message = raw_text
+    download_url = None
+    interactive = None
+    policy_images: list = []
+
+    # Extract policy images from ToolMessages (skip small logos/icons < 20 KB)
+    from app.models import PolicyImage as _PolicyImage
+    _img_db = SessionLocal()
+    try:
+        for msg in all_messages:
+            if hasattr(msg, 'content') and isinstance(msg.content, str):
+                m = _policy_img_re.search(msg.content)
+                if m:
+                    for img_id in m.group(1).split("||"):
+                        img_id = img_id.strip()
+                        if not img_id:
+                            continue
+                        try:
+                            img_rec = _img_db.query(_PolicyImage).filter(_PolicyImage.id == int(img_id)).first()
+                            if img_rec and img_rec.image_data and len(img_rec.image_data) >= 20_000:
+                                policy_images.append(f"/api/policy-images/{img_id}")
+                        except Exception:
+                            pass
+    finally:
+        _img_db.close()
+
+    # Extract interactive email draft
+    email_match = _email_draft_re.search(final_message)
+    if email_match:
+        try:
+            draft_data = json.loads(email_match.group(1))
+            interactive = {"type": "email_draft", "data": draft_data}
+            final_message = _email_draft_re.sub("", final_message).strip()
+        except Exception:
+            pass
+
+    # Extract download tag
+    dl_match = _download_tag_re.search(final_message)
+    if dl_match:
+        path = dl_match.group(1)
+        title = dl_match.group(2)
+        base_url = f"http://localhost:{settings.PORT}"
+        download_url = f"{base_url}{path}"
+        markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
+        final_message = _download_tag_re.sub(markdown_link, final_message)
+
+    # Strip HTML tags
+    html_stripped = re.sub(r'<[^>]+>', '', final_message).strip()
+    if html_stripped:
+        final_message = html_stripped
+
+    # Remove stray JSON blobs (but only if non-empty text remains)
+    cleaned = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+    if cleaned:
+        final_message = cleaned
+
+    # Collapse excessive blank lines
+    final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()
+
+    if not final_message.strip():
+        final_message = "I processed your request, but I was unable to generate a text summary. Please try again or rephrase your question."
+
+    return {
+        "final_message": final_message,
+        "download_url": download_url,
+        "interactive": interactive,
+        "images": policy_images if policy_images else None,
+        "processing_time": f"{time.time() - start_time:.2f}s",
+    }
+
+
 @app.post("/api/chat")
 async def chat(
     request: ChatRequest,
@@ -404,7 +495,7 @@ async def chat(
     x_user_role: Optional[str] = Header(None),
     x_graph_token: Optional[str] = Header(None),
 ):
-    # VPN / LLM reachability pre-flight — catches "outside office, no VPN" in ~2s instead of timing out
+    # VPN / LLM reachability pre-flight
     if not await asyncio.to_thread(_check_llm_reachable):
         raise HTTPException(
             status_code=503,
@@ -414,102 +505,118 @@ async def chat(
             },
         )
 
-    try:
-        start_time = time.time()
-        with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
-            config = {"configurable": {"thread_id": request.session_id}}
-            result = await app_agent.ainvoke(
-                {
-                    "messages": [HumanMessage(content=request.message)],
-                    "user_email": x_user_email or settings.DEFAULT_USER_EMAIL,
-                    "user_role": (x_user_role or "employee").lower(),
-                    "graph_token": x_graph_token,
-                    "session_id": request.session_id,
-                },
-                config=config,
-            )
-            
-            raw_ai_message = result["messages"][-1].content
-            routed_domain = result.get("domain", "unknown")
+    start_time = time.time()
+    user_email = x_user_email or settings.DEFAULT_USER_EMAIL
+    user_role = (x_user_role or "employee").lower()
+    config = {"configurable": {"thread_id": request.session_id}}
+    input_data = {
+        "messages": [HumanMessage(content=request.message)],
+        "user_email": user_email,
+        "user_role": user_role,
+        "graph_token": x_graph_token,
+        "session_id": request.session_id,
+    }
 
-            final_message = raw_ai_message
-            download_url = None
-            interactive = None
-            policy_images: list = []
+    async def generate():
+        accumulated_text = ""
+        routed_domain = "general"
+        final_messages = []
+        llm_calls: dict[str, dict] = {}  # run_id → {node, model, start}
 
-            # Extract policy image IDs from ToolMessages (never from the AI response)
-            _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
-            for msg in result.get("messages", []):
-                if hasattr(msg, 'content') and isinstance(msg.content, str):
-                    m = _policy_img_re.search(msg.content)
-                    if m:
-                        for img_id in m.group(1).split("||"):
-                            img_id = img_id.strip()
-                            if img_id:
-                                policy_images.append(f"/api/policy-images/{img_id}")
+        try:
+            async for event in app_agent.astream_events(input_data, config=config, version="v2"):
+                event_type = event.get("event", "")
 
-            # Extract interactive email draft marker before any cleanup
-            email_draft_pattern = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
-            email_draft_match = email_draft_pattern.search(final_message)
-            if email_draft_match:
-                try:
-                    draft_data = json.loads(email_draft_match.group(1))
-                    interactive = {"type": "email_draft", "data": draft_data}
-                    final_message = email_draft_pattern.sub("", final_message).strip()
-                except Exception:
-                    pass
+                # ── Track LLM call start ─────────────────────────────────
+                if event_type == "on_chat_model_start":
+                    run_id = event.get("run_id", "")
+                    meta = event.get("metadata", {})
+                    node = meta.get("langgraph_node", "unknown")
+                    model = meta.get("ls_model_name") or event.get("name", "unknown")
+                    llm_calls[run_id] = {"node": node, "model": model, "start": time.time()}
 
-            # Extract and convert [DOWNLOAD_PDF:url:title] to markdown link
-            download_tag_pattern = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
-            match = download_tag_pattern.search(final_message)
-            if match:
-                path = match.group(1)
-                title = match.group(2)
-                base_url = f"http://localhost:{settings.PORT}"
-                download_url = f"{base_url}{path}"
-                markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
-                final_message = download_tag_pattern.sub(markdown_link, final_message)
+                # ── Track LLM call end ───────────────────────────────────
+                elif event_type == "on_chat_model_end":
+                    run_id = event.get("run_id", "")
+                    call = llm_calls.pop(run_id, None)
+                    if call:
+                        elapsed = time.time() - call["start"]
+                        logger.info("llm_call", extra={
+                            "node": call["node"],
+                            "model": call["model"],
+                            "duration_s": round(elapsed, 2),
+                            "session_id": request.session_id,
+                        })
+                        print(
+                            f"[LLM] node={call['node']}  model={call['model']}  "
+                            f"time={elapsed:.2f}s  session={request.session_id}"
+                        )
 
-            # Strip any HTML tags the LLM may have generated (render as plain text)
-            html_stripped = re.sub(r'<[^>]+>', '', final_message).strip()
-            if html_stripped:
-                final_message = html_stripped
+                # Stream tokens from final-response nodes only
+                elif event_type == "on_chat_model_stream":
+                    node = event.get("metadata", {}).get("langgraph_node", "")
+                    if node not in _SKIP_STREAMING_NODES:
+                        chunk = event["data"].get("chunk")
+                        if chunk is not None:
+                            content = chunk.content if hasattr(chunk, "content") else ""
+                            # Only stream plain text — skip tool-call argument dicts
+                            if isinstance(content, str) and content:
+                                accumulated_text += content
+                                yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
-            # Remove any internal JSON/metadata blocks but ONLY if they are not the only content
-            cleaned_message = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
-            if cleaned_message:
-                final_message = cleaned_message
+                # Capture final graph state (domain + all messages for post-processing)
+                elif event_type == "on_chain_end" and event.get("name") == "LangGraph":
+                    output = event["data"].get("output") or {}
+                    routed_domain = output.get("domain") or routed_domain
+                    final_messages = output.get("messages") or []
 
-            # Collapse 3+ consecutive blank lines to 2
-            final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()
+        except Exception as exc:
+            print(f"[stream] error: {exc}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
 
-            # Ultimate fallback if empty
-            if not final_message.strip():
-                final_message = "I processed your request, but I was unable to generate a text summary. Please try again or rephrase your question."
+        # If nothing streamed (tool-only path, fast-path nodes, etc.), use last message
+        if not accumulated_text and final_messages:
+            last = final_messages[-1]
+            accumulated_text = last.content if hasattr(last, "content") and isinstance(last.content, str) else ""
+            # Send as token so frontend creates the AI turn (no LLM = no stream events)
+            if accumulated_text:
+                yield f"data: {json.dumps({'type': 'token', 'content': accumulated_text})}\n\n"
 
-            trace.update(output=final_message, metadata={"domain": routed_domain})
+        # Post-process the accumulated text
+        post = _postprocess(accumulated_text, final_messages, routed_domain, start_time)
+        final_message = post["final_message"]
 
-            # Structured Logging for Loki
-            logger.info("chat_response", extra={
-                "domain": routed_domain,
-                "latency_ms": int((time.time() - start_time) * 1000),
-                "session_id": request.session_id,
-                "message_length": len(request.message),
-            })
+        # If post-processing changed the text (HTML stripped, markers removed), patch the frontend
+        if final_message != accumulated_text:
+            yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
 
-        return {
-            "response": final_message,
+        # Langfuse trace
+        try:
+            with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
+                trace.update(output=final_message, metadata={"domain": routed_domain})
+        except Exception:
+            pass
+
+        # Loki log
+        logger.info("chat_response", extra={
             "domain": routed_domain,
-            "id": "msg_1",
-            "processing_time": f"{time.time() - start_time:.2f}s",
-            "download_url": download_url,
-            "interactive": interactive,
-            "images": policy_images if policy_images else None,
-        }
+            "latency_ms": int((time.time() - start_time) * 1000),
+            "session_id": request.session_id,
+            "message_length": len(request.message),
+        })
 
-    except Exception as e:
-        print(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 class SuggestionsRequest(BaseModel):
     message: str
@@ -532,7 +639,7 @@ async def get_suggestions(request: SuggestionsRequest):
         )
         user_content = f"User question: {request.message}\n\nAI response: {request.response[:800]}"
         completion = await client.chat.completions.create(
-            model=settings.AGENT_MODEL_NAME,
+            model=settings.FAST_MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},

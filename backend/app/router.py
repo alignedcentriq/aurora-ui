@@ -10,6 +10,7 @@ from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
+from app.services.policy_service import _expand_query
 
 # ── Domain Registry ──────────────────────────────────────────────────────────
 # Each domain maps to a description used by the router for classification.
@@ -138,8 +139,46 @@ _router_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=0,
-    max_tokens=350,
+    max_tokens=256,
+    timeout=30,
 ).with_structured_output(RouterOutput)
+
+
+async def classify_intent_async(user_message: str) -> dict:
+    """Async version of classify_intent — uses ainvoke to avoid blocking the event loop."""
+    expanded_message, did_you_mean = _expand_query(user_message)
+    if expanded_message != user_message:
+        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+
+    system = SystemMessage(content=_build_router_prompt())
+    human = HumanMessage(content=expanded_message)
+
+    try:
+        result: RouterOutput = await _router_llm.ainvoke([system, human])
+
+        domain = result.domain
+        if domain not in DOMAIN_REGISTRY:
+            domain = "general"
+
+        entities = result.entities if isinstance(result.entities, dict) else {}
+
+        return {
+            "domain": domain,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "sub_intent": result.sub_intent,
+            "entities": entities,
+        }
+
+    except Exception as e:
+        print(f"[Router] Classification failed: {e}. Falling back to 'general'.")
+        return {
+            "domain": "general",
+            "confidence": 0.3,
+            "reasoning": f"Classification failed ({str(e)[:80]}), defaulting to general.",
+            "sub_intent": "unknown",
+            "entities": {},
+        }
 
 
 def classify_intent(user_message: str) -> dict:
@@ -149,8 +188,12 @@ def classify_intent(user_message: str) -> dict:
     Returns:
         dict with keys: domain, confidence, reasoning, sub_intent, entities
     """
+    expanded_message, did_you_mean = _expand_query(user_message)
+    if expanded_message != user_message:
+        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+
     system = SystemMessage(content=_build_router_prompt())
-    human = HumanMessage(content=user_message)
+    human = HumanMessage(content=expanded_message)
 
     try:
         result: RouterOutput = _router_llm.invoke([system, human])

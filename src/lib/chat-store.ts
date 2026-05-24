@@ -21,6 +21,7 @@ export interface Turn {
   domain?: string;
   interactive?: InteractivePayload;
   images?: string[];
+  streaming?: boolean;
 }
 
 export interface Thread {
@@ -37,6 +38,7 @@ interface ChatState {
   setThinking: (thinking: boolean) => void;
   createThread: () => string;
   addTurn: (threadId: string, turn: Turn) => void;
+  updateLastAITurn: (threadId: string, updates: Partial<Turn>) => void;
   deleteThread: (id: string) => void;
 }
 
@@ -71,6 +73,24 @@ export const useChatStore = create<ChatState>()(
                 turns: [...thread.turns, turn],
                 updatedAt: Date.now(),
               },
+            },
+          };
+        }),
+      updateLastAITurn: (threadId, updates) =>
+        set((state) => {
+          const thread = state.threads[threadId];
+          if (!thread) return state;
+          const turns = [...thread.turns];
+          for (let i = turns.length - 1; i >= 0; i--) {
+            if (turns[i].role === "ai") {
+              turns[i] = { ...turns[i], ...updates };
+              break;
+            }
+          }
+          return {
+            threads: {
+              ...state.threads,
+              [threadId]: { ...thread, turns, updatedAt: Date.now() },
             },
           };
         }),

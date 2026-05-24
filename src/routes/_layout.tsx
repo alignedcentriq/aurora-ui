@@ -3,10 +3,8 @@ import { Sidebar } from "@/components/Sidebar";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { Menu, Search } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { useAuth } from "@/lib/auth-store";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
 import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 
@@ -17,7 +15,6 @@ export const Route = createFileRoute("/_layout")({
 function LayoutComponent() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const { user } = useAuth();
 
   // Cmd/Ctrl+K shortcut
   useEffect(() => {
@@ -77,20 +74,6 @@ function LayoutComponent() {
 
           {/* Notifications */}
           <AnnouncementBanner variant="topbar" />
-
-          {/* Theme toggle */}
-          <ThemeToggle />
-
-          {/* User avatar */}
-          {user && (
-            <div className="ml-2 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary ring-1 ring-primary/20 overflow-hidden">
-              {user.avatarUrl ? (
-                <img src={user.avatarUrl} alt={user.name} className="h-full w-full object-cover" />
-              ) : (
-                user.name.split(" ").map(n => n[0]).join("")
-              )}
-            </div>
-          )}
         </motion.header>
 
         <Outlet />

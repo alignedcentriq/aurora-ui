@@ -30,6 +30,16 @@ import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/chat-store";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string }> = {
   Employee: { icon: Briefcase, color: "text-blue-400", label: "Employee" },
@@ -52,6 +62,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const [isRoleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [avatarError, setAvatarError] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const defaultCollapsed = () => {
     if (typeof window === "undefined") return false;
@@ -94,8 +105,14 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     return false;
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this conversation?")) return;
+  const handleDelete = (id: string) => {
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
     deleteThread(id);
     try {
       await fetch(`/api/chat/${id}`, { method: "DELETE" });
@@ -464,6 +481,27 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           </AnimatePresence>
         </div>
       </motion.aside>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete conversation</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this conversation. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

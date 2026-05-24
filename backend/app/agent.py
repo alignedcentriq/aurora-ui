@@ -30,7 +30,7 @@ from langchain_core.tools import tool
 
 from app.hr_service import HRService
 from app.config import settings
-from app.router import classify_intent, get_domain_status, get_placeholder_response
+from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
 from app.agents.pmo_agent import pmo_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
@@ -268,7 +268,7 @@ async def context_manager_node(state: AgentState) -> dict:
 
 @tool
 def get_leave_balance(email: str):
-    """Get the current leave balance for an employee."""
+    """Get current leave balance. Call with the logged-in user's email. Never ask for email."""
     return HRService.get_leave_balance(email)
 
 @tool
@@ -279,13 +279,15 @@ def apply_leave(
     leave_type: str = "Casual",
     reason: str = "Applied via AI Assistant",
 ):
-    """Submit a leave request. Use YYYY-MM-DD format for dates."""
+    """Submit a leave request. Infer leave_type from context (default Casual). Dates in YYYY-MM-DD.
+    Do NOT ask for reason — defaults to 'Applied via AI Assistant'. Manager gets email to approve/reject."""
     return HRService.apply_leave(email, start_date, end_date, leave_type, reason)
 
 @tool
 def search_hr_policies(query: str):
-    """Search HR policy documents for a specific topic."""
-    return HRService.search_policies(query, limit=1)
+    """Search HR policy documents. Call for any policy question. Answer from the result only.
+    State policy name once. Never include metadata (author, version, review dates)."""
+    return HRService.search_policies(query, limit=4)
 
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
@@ -454,10 +456,11 @@ def generate_hr_document(doc_type: str, target_email: str = ""):
 
 @tool
 def submit_grievance(category: str, description: str, is_anonymous: bool = False):
-    """Submit an HR grievance or concern.
-    category options: Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other.
-    Set is_anonymous=True to submit without revealing your identity.
-    Use for: 'raise a complaint', 'submit grievance', 'report harassment', 'anonymous HR concern'."""
+    """Submit an HR grievance. STRICT multi-turn flow — do NOT call until all 3 are confirmed:
+    1. category: infer from message (Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other)
+    2. description: ask 'Could you describe what happened?' if not provided
+    3. is_anonymous: ask 'Would you like to remain anonymous?' — NEVER skip this step
+    Only call after user confirms all three. Never call with empty description."""
     from app.hr_service import HRService
     return HRService.submit_grievance(settings.DEFAULT_USER_EMAIL, category, description, is_anonymous)
 
@@ -509,18 +512,18 @@ agent_llm = ChatOpenAI(
     api_key=settings.AGENT_API_KEY,
     model=settings.AGENT_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    max_retries=3,
-    timeout=120,
+    max_retries=2,
+    timeout=45,
 )
 
-# General LLM — uses the same tool-capable agent model (GENERAL_MODEL_NAME does not support tools)
+# General LLM — lighter qwen2.5:14b for greetings/small talk/announcements
 general_llm_base = ChatOpenAI(
     base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
+    model=settings.FAST_MODEL_NAME,
     temperature=0.7,
-    max_retries=3,
-    timeout=30,
+    max_retries=2,
+    timeout=20,
 )
 
 
@@ -531,12 +534,290 @@ hr_llm = agent_llm.bind_tools(hr_tools)
 summary_llm = ChatOpenAI(
     base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
+    model=settings.FAST_MODEL_NAME,
     temperature=0.3,
-    max_retries=3,
-    timeout=120,
+    max_retries=2,
+    timeout=20,
 )
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3b. KEYWORD FAST-PATH ROUTER (0 LLM calls — saves 20-60s per request)
+# ═══════════════════════════════════════════════════════════════════════════════
+# For queries with clear, unambiguous intent, skip the LLM router entirely.
+# Only matches patterns where misclassification risk is negligible.
+# Ambiguous queries still fall through to the LLM router.
+
+_KW_GREETING = re.compile(
+    r'^\s*(hi|hello|hey|hola|namaste|yo|sup|'
+    r'good\s+(morning|afternoon|evening|night)|'
+    r'thanks|thank\s+you|bye|goodbye|see\s+you|'
+    r'how\s+are\s+you|what\'?s\s+up|what\s+can\s+you\s+do|'
+    r'who\s+are\s+you)'
+    r'[!.?\s]*$', re.I
+)
+
+_KW_HR_POLICY = re.compile(
+    r'\b(leave\s+policy|hr\s+policy|attendance\s+policy|wfh\s+policy|'
+    r'work\s+from\s+home\s+policy|posh\s+policy|sexual\s+harassment|'
+    r'maternity\s+(leave|policy)|paternity\s+(leave|policy)|'
+    r'probation\s+(policy|period|confirmation)|comp[- ]?off\s+policy|'
+    r'holiday\s+(list|calendar|policy)|appraisal\s+policy|'
+    r'referral\s+bonus|onboarding\s+policy|offboarding\s+policy|'
+    r'gratuity\s+policy|variable\s+pay\s+policy|'
+    r'sabbatical\s+policy|relocation\s+policy)\b', re.I
+)
+
+_KW_HR_DOC = re.compile(
+    r'\b(experience\s+certificate|generate\s+.{0,15}(certificate|letter|noc)|'
+    r'relieving\s+letter|salary\s+certificate|noc\s+for)\b', re.I
+)
+
+_KW_HR_GRIEVANCE = re.compile(
+    r'\b(grievance|submit\s+grievance|report\s+harassment|'
+    r'hr\s+complaint|anonymous\s+complaint)\b', re.I
+)
+
+_KW_HR_PEOPLE = re.compile(
+    r'\b(employee\s+directory|org\s+chart|department\s+headcount|'
+    r'who\s+is\s+\w+\s+\w+|find\s+(employee|person|people)\s+with|'
+    r'who\s+has\s+\w+\s+skills?)\b', re.I
+)
+
+_KW_ADMIN_REIMB = re.compile(
+    r'\b(reimburs\w*|expense\s+(policy|claim|process|limit)|'
+    r'claim\s+(policy|process)|certification\s+reimburs|'
+    r'travel\s+reimburs|medical\s+reimburs|'
+    r'how\s+(to|can\s+i)\s+(claim|reimburse|raise\s+reimburs))\b', re.I
+)
+
+_KW_ADMIN_PARKING = re.compile(
+    r'\b(parking\s+(sticker|pass|request|info)|'
+    r'register\s+(my\s+)?(vehicle|bike|car|two[- ]?wheeler|four[- ]?wheeler)|'
+    r'surrender\s+parking)\b', re.I
+)
+
+_KW_ADMIN_FACILITY = re.compile(
+    r'\b(ac\s+(not|isn\'?t|is\s+not)|air\s+condition\w*\s+(not|broken|issue)|'
+    r'lights?\s+(not|broken|flickering)|plumbing\s+(issue|leak|broken)|'
+    r'washroom\s+(dirty|issue|problem)|electrical\s+(issue|problem)|'
+    r'housekeeping|facility\s+complaint|furniture\s+(broken|damaged)|'
+    r'lift\s+(not|broken|stuck)|elevator\s+(not|broken))\b', re.I
+)
+
+_KW_ADMIN_FOOD = re.compile(
+    r'\b(food\s+(complaint|quality|hygiene)|cafeteria\s+(complaint|issue)|'
+    r'foreign\s+object\s+in\s+food|food\s+vendor|rate\s+.{0,20}(vendor|food))\b', re.I
+)
+
+_KW_ADMIN_ACCOM = re.compile(
+    r'\b(book\s+(guest\s+house|hotel|accommodation)|'
+    r'guest\s+house\s+(booking|request)|corporate\s+accommodation)\b', re.I
+)
+
+_KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
+
+_KW_IT_HARDWARE = re.compile(
+    r'\b(laptop|system|computer|device|machine|workstation)\s+'
+    r'(is\s+)?(slow|hanging|crashing|overheating|heating|hot|'
+    r'not\s+(working|starting|responding)|frozen|freezing|'
+    r'restarting|blue\s+screen|lagging|noisy|fan\s+loud)\b', re.I
+)
+
+_KW_IT_TICKETS = re.compile(r'\bmy\s+(it\s+)?(tickets?|requests?|issues?)\b', re.I)
+_KW_IT_ASSETS = re.compile(r'\bmy\s+(it\s+)?(assets?|equipment|devices?)\b', re.I)
+_KW_IT_CREATE = re.compile(r'\b(create|raise|log|open)\s+(a\s+|an\s+)?(it\s+)?ticket\b', re.I)
+_KW_IT_INSTALL = re.compile(
+    r'\b(?:install|need|want|get\s+me|setup|set\s+up)\s+'
+    r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
+    r'(?:\s+(?:on|for|please|pls|in|app|software)\b|[.!?]?\s*$)', re.I
+)
+_KW_IT_VPN = re.compile(
+    r'\b(vpn\s+(not|issue|problem|access|connect)|'
+    r'password\s+reset|network\s+(issue|problem|not|down|slow))\b', re.I
+)
+_KW_IT_LICENSE = re.compile(
+    r'\b(need|want|request|get)\s+(a\s+)?(claude|copilot|github\s+copilot|'
+    r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
+)
+
+_KW_PMO = re.compile(
+    r'\b(project\s+(status|report|list|summary)|list\s+(all\s+)?projects|'
+    r'active\s+projects|company\s+projects|our\s+projects|'
+    r'udemy\s+(license|seat|access)|training\s+license)\b', re.I
+)
+
+_KW_MANAGER = re.compile(
+    r'\b(my\s+team|who\s+reports\s+to\s+me|direct\s+reports|'
+    r'my\s+reportees|team\s+members|meeting\s+room|conference\s+room)\b', re.I
+)
+
+_KW_DEEPLINK_SETUP = re.compile(r'\bsetup\s+(zoho|powerapps|payroll)\b', re.I)
+_KW_DEEPLINK_COMPLAINT = re.compile(
+    r'\b(raise|file|submit|log)\s+(a\s+)?(complaint|ticket)\s+'
+    r'(in|on|via)\s+(the\s+)?(portal|tracker|powerapps)\b', re.I
+)
+
+_KW_COMPANY_INFO = re.compile(
+    r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
+    r'company\s+(info|details|overview|profile)|'
+    r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company))\b', re.I
+)
+
+
+def _try_keyword_route(message: str) -> dict | None:
+    """Classify intent via keyword/regex matching — 0 LLM calls, <1ms.
+
+    Returns a routing dict if the intent is unambiguous, None to fall
+    through to the LLM router for ambiguous queries.
+    """
+    text = message.strip()
+
+    # Greetings / small talk
+    if _KW_GREETING.match(text):
+        return {"domain": "general", "confidence": 1.0,
+                "reasoning": "Keyword: greeting/social",
+                "sub_intent": "greeting", "entities": {}}
+
+    # HR — policy queries
+    if _KW_HR_POLICY.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: HR policy query",
+                "sub_intent": "policy_query", "entities": {}}
+
+    # HR — document generation
+    if _KW_HR_DOC.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: HR document request",
+                "sub_intent": "document_request", "entities": {}}
+
+    # HR — grievance
+    if _KW_HR_GRIEVANCE.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: HR grievance",
+                "sub_intent": "grievance", "entities": {}}
+
+    # HR — people search
+    if _KW_HR_PEOPLE.search(text):
+        return {"domain": "hr", "confidence": 0.9,
+                "reasoning": "Keyword: people/directory search",
+                "sub_intent": "employee_search", "entities": {}}
+
+    # Admin — reimbursement / expense
+    if _KW_ADMIN_REIMB.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: reimbursement/expense",
+                "sub_intent": "policy_query",
+                "entities": {"policy_topic": "reimbursement"}}
+
+    # Admin — parking
+    if _KW_ADMIN_PARKING.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: parking sticker",
+                "sub_intent": "parking_sticker", "entities": {}}
+
+    # Admin — facility complaint
+    if _KW_ADMIN_FACILITY.search(text):
+        return {"domain": "admin", "confidence": 0.9,
+                "reasoning": "Keyword: facility complaint",
+                "sub_intent": "facility_complaint", "entities": {}}
+
+    # Admin — food complaint / rating
+    if _KW_ADMIN_FOOD.search(text):
+        return {"domain": "admin", "confidence": 0.9,
+                "reasoning": "Keyword: food complaint/rating",
+                "sub_intent": "food_complaint", "entities": {}}
+
+    # Admin — accommodation
+    if _KW_ADMIN_ACCOM.search(text):
+        return {"domain": "admin", "confidence": 0.9,
+                "reasoning": "Keyword: accommodation booking",
+                "sub_intent": "accommodation", "entities": {}}
+
+    # Admin — desk key
+    if _KW_ADMIN_DESK.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: desk key request",
+                "sub_intent": "desk_key_request", "entities": {}}
+
+    # IT — hardware issues
+    if _KW_IT_HARDWARE.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: hardware/device issue",
+                "sub_intent": "hardware_issue", "entities": {}}
+
+    # IT — VPN / network / password
+    if _KW_IT_VPN.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: VPN/network/password",
+                "sub_intent": "create_ticket", "entities": {}}
+
+    # IT — license request
+    if _KW_IT_LICENSE.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: license request",
+                "sub_intent": "license_request", "entities": {}}
+
+    # IT — my tickets
+    if _KW_IT_TICKETS.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: check IT tickets",
+                "sub_intent": "my_tickets", "entities": {}}
+
+    # IT — my assets
+    if _KW_IT_ASSETS.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: check IT assets",
+                "sub_intent": "my_assets", "entities": {}}
+
+    # IT — create ticket
+    if _KW_IT_CREATE.search(text):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: create IT ticket",
+                "sub_intent": "create_ticket", "entities": {}}
+
+    # IT — software install (with entity extraction)
+    m = _KW_IT_INSTALL.search(text)
+    if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs)\b', text, re.I):
+        sw = m.group(1).strip()
+        if sw and 1 < len(sw) < 35:
+            return {"domain": "it_support", "confidence": 0.9,
+                    "reasoning": "Keyword: software install",
+                    "sub_intent": "software_install",
+                    "entities": {"software_name": sw}}
+
+    # PMO — projects / training licenses
+    if _KW_PMO.search(text):
+        return {"domain": "pmo", "confidence": 0.95,
+                "reasoning": "Keyword: PMO/project query",
+                "sub_intent": "list_projects", "entities": {}}
+
+    # Manager — team / room
+    if _KW_MANAGER.search(text):
+        return {"domain": "functional_manager", "confidence": 0.95,
+                "reasoning": "Keyword: team/manager query",
+                "sub_intent": "team_structure", "entities": {}}
+
+    # Deeplink — setup sessions
+    if _KW_DEEPLINK_SETUP.search(text):
+        return {"domain": "deeplink", "confidence": 1.0,
+                "reasoning": "Keyword: setup external session",
+                "sub_intent": "setup_session", "entities": {}}
+
+    # Deeplink — complaint via portal
+    if _KW_DEEPLINK_COMPLAINT.search(text):
+        return {"domain": "deeplink", "confidence": 0.9,
+                "reasoning": "Keyword: portal complaint",
+                "sub_intent": "powerapps_complaint", "entities": {}}
+
+    # Company info — route to general, not HR
+    if _KW_COMPANY_INFO.search(text):
+        return {"domain": "general", "confidence": 0.9,
+                "reasoning": "Keyword: company info query",
+                "sub_intent": "company_info", "entities": {}}
+
+    return None  # Ambiguous — fall through to LLM router
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -554,7 +835,7 @@ def _last_ai_message(messages: list) -> str:
     return ""
 
 
-def intent_router(state: AgentState):
+async def intent_router(state: AgentState):
     """Entry node — classifies intent, extracts sub-intent + entities, routes to domain."""
     last_human = None
     for msg in reversed(state["messages"]):
@@ -644,8 +925,23 @@ def intent_router(state: AgentState):
             "entities": leave_params,
         }
 
+    # Keyword fast-path: classify via regex — 0 LLM calls, <1ms
+    keyword_result = _try_keyword_route(last_human)
+    if keyword_result:
+        print(
+            f"[Router] Keyword fast-path → {keyword_result['domain']} "
+            f"({keyword_result['sub_intent']})"
+        )
+        return {
+            "domain": keyword_result["domain"],
+            "route_confidence": keyword_result["confidence"],
+            "route_reasoning": keyword_result["reasoning"],
+            "sub_intent": keyword_result["sub_intent"],
+            "entities": keyword_result.get("entities", {}),
+        }
+
     try:
-        result = classify_intent(last_human)
+        result = await classify_intent_async(last_human)
         print(
             f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} "
             f"| Sub-intent: {result.get('sub_intent', '?')} | Entities: {result.get('entities', {})}"
@@ -663,8 +959,33 @@ def intent_router(state: AgentState):
     }
 
 
+_feedback_count_cache: dict = {"count": 0, "ts": 0.0}
+_FEEDBACK_COUNT_TTL = 300.0  # re-check every 5 minutes
+
+
 def feedback_lookup(state: AgentState) -> dict:
-    """Fetch relevant past feedback for the current query and store as prompt context."""
+    """Fetch relevant past feedback for the current query and store as prompt context.
+
+    Optimization: skips the expensive Ollama embedding call when fewer than 3
+    feedback entries exist in the database (checked with a 5-minute cache).
+    """
+    import time as _t
+    now = _t.time()
+    if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
+        try:
+            from app.database import SessionLocal as _SL
+            from app.models import ChatFeedback as _CF
+            _db = _SL()
+            try:
+                _feedback_count_cache.update({"count": _db.query(_CF).count(), "ts": now})
+            finally:
+                _db.close()
+        except Exception:
+            _feedback_count_cache.update({"count": 0, "ts": now})
+
+    if _feedback_count_cache["count"] < 3:
+        return {}
+
     domain = state.get("domain", "unknown") or "unknown"
     last_human = next(
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
@@ -687,44 +1008,20 @@ def hr_agent(state: AgentState):
         base = PromptService.get_system_prompt(
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
-            f"The logged-in employee's email is: {user_email}. NEVER ask who the user is.\n"
+            f"Employee email: {user_email}. Never ask who the user is.\n"
             f"ROLE: {role_instruction}\n\n"
-            f"DIRECT ACTION RULES — Act immediately when intent is clear:\n"
-            f"1. Leave balance: → call get_leave_balance(email='{user_email}').\n"
-            f"2. Apply leave: → call apply_leave(email='{user_email}', start_date, end_date, leave_type). "
-            f"Infer leave_type (default Casual). DO NOT ask for reason — it defaults to 'Applied via AI Assistant'. "
-            f"Manager gets an email to approve/reject via clickable link.\n"
-            f"3. Policy question: → call search_hr_policies. Always cite the policy name and last-updated date in your answer.\n"
-            f"4. Employee search: → call search_employee_directory.\n"
-            f"5. Org chart / team: → call get_org_chart or get_team_roster.\n"
-            f"6. Team absence / 'who is on leave': → call get_team_absence_for(manager_email='{user_email}', ...).\n"
-            f"7. Generate document ('experience certificate', 'expense summary'): → call generate_hr_document(target_email='{user_email}', doc_type=...).\n"
-            f"8. Raise grievance / complaint: → call submit_grievance_for(employee_email='{user_email}', ...). "
-            f"Ask for category and description if missing; ask if they want to be anonymous.\n"
-            f"9. Onboarding checklist for new joiner: → call trigger_onboarding_checklist(employee_email=...).\n"
-            f"10. Offboarding checklist for departing employee: → call trigger_offboarding_checklist(employee_email=..., last_working_day=...).\n\n"
-            f"RESPONSE STYLE: Act first. Only ask when a REQUIRED parameter is truly missing. "
-            f"Never answer from training knowledge — use tools only.\n\n"
-            f"CONVERSATION MEMORY RULES:\n"
-            f"- Always read the FULL conversation history before responding.\n"
-            f"- If the user refers to something mentioned earlier ('that policy', 'same dates', 'as I said'), look it up in prior messages.\n"
-            f"- NEVER ask for information the user already provided in this conversation.\n"
-            f"- NEVER repeat a question already asked in this conversation.\n\n"
-            f"FOLLOW-UP FOCUS RULE:\n"
-            f"- When the user asks a specific follow-up about a tool result already in the conversation, answer ONLY that point in 1-3 lines.\n"
-            f"- Do NOT re-list the full policy/balance/document. Extract the specific detail asked.\n"
-            f"- Be precise: 'timeline to submit' ≠ 'timeline to receive'. If policy only mentions one, say the other is not specified.\n\n"
-            f"GRIEVANCE DATA COLLECTION (strict multi-turn — follow this order):\n"
-            f"Step 1 — Infer category from message. Valid: Harassment, Discrimination, Safety, Manager Conduct, Compensation, Workplace Culture, Other.\n"
-            f"Step 2 — If description missing → ask ONLY: 'Could you describe what happened?'\n"
-            f"Step 3 — After description provided → ask ONLY: 'Would you like to remain anonymous?'\n"
-            f"Step 4 — ONLY after category + description + anonymity are all confirmed → call submit_grievance_for.\n"
-            f"NEVER skip step 3. NEVER call the tool before the user has answered the anonymity question.\n"
-            f"NEVER call the tool with empty or placeholder description.\n\n"
-            f"OUTPUT FORMATTING:\n"
-            f"- NEVER output markdown tables (no | pipe characters).\n"
-            f"- NEVER output HTML tags.\n"
-            f"- Use plain bullet points (- ) or numbered lists (1. 2. 3.) only.",
+            f"Tool routing — act immediately:\n"
+            f"- Leave balance → get_leave_balance(email='{user_email}')\n"
+            f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
+            f"- Policy question → search_hr_policies, answer from result\n"
+            f"- Employee search → search_employee_directory\n"
+            f"- Org chart / team → get_org_chart or get_team_roster\n"
+            f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
+            f"- Document → generate_hr_document(target_email='{user_email}')\n"
+            f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
+            f"- Onboarding → trigger_onboarding_checklist\n"
+            f"- Offboarding → trigger_offboarding_checklist\n\n"
+            f"Never answer from training knowledge — use tools only.\n",
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
@@ -927,26 +1224,36 @@ general_tool_node = ToolNode(general_tools)
 general_llm = general_llm_base.bind_tools(general_tools)
 
 
+def _greeting_response(state: AgentState) -> str:
+    """Build a time-aware greeting — 0 LLM calls, <1ms."""
+    import datetime as _dt
+    hour = _dt.datetime.now().hour
+    email = state.get("user_email") or ""
+    name = email.split("@")[0].replace(".", " ").title() if email and "@" in email else ""
+    if hour < 12:
+        period = "Good morning"
+    elif hour < 17:
+        period = "Good afternoon"
+    else:
+        period = "Good evening"
+    greeting = f"{period}{', ' + name if name else ''}!"
+    return f"{greeting} I'm Centriq, your workplace assistant. I can help you with HR policies, leave management, reimbursements, IT tickets, parking, project updates, and more. What do you need help with?"
+
+
 def general_agent(state: AgentState):
     """General Agent — greetings, announcements, and policy Q&A."""
+    # Fast-path: greetings don't need LLM — respond instantly
+    sub_intent = state.get("sub_intent") or ""
+    if sub_intent == "greeting":
+        return {"messages": [AIMessage(content=_greeting_response(state))]}
+
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
-        "You handle greetings, small talk, company announcements, and general policy questions. "
-        "You have two tools: get_announcements (fetch all active announcements) "
-        "and search_hr_policies (search for policy details by topic). "
-        "Always call get_announcements when the user asks about news, updates, or announcements. "
-        "Always call search_hr_policies when the user asks about a policy — use tools first, never guess. "
-        "If the user asks a follow-up about a policy already discussed, answer from the conversation history — extract only the specific detail asked, do NOT re-summarize the full policy. "
-        "Be precise: 'timeline to submit' (submission deadline) and 'timeline to receive/release' (processing time) are different — if the policy only mentions one, say so rather than substituting the other. "
-        "Only suggest contacting the HR or Admin team if the tools return no results. "
-        "Do NOT offer further assistance or solicit next actions unless the user asks. "
-        "CONVERSATION MEMORY RULES: Always read the FULL conversation history before responding. "
-        "If the user refers to something mentioned earlier ('it', 'that policy', 'the timeline'), look it up in prior messages. "
-        "NEVER ask for information the user already provided. NEVER repeat a question already asked. "
-        "OUTPUT FORMATTING: NEVER output markdown tables (no | pipe characters). "
-        "NEVER output HTML tags. Use plain bullet points (- ) or numbered lists only. "
-        "Keep responses concise — answer what was asked, do not re-summarize the full policy if a specific detail was requested.",
+        "You handle company announcements and general policy questions. "
+        "Tools: get_announcements (news/updates), search_hr_policies (policy lookups). "
+        "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
+        "Do not offer further assistance unless asked.",
     )
     guardrail = PromptService.get_guardrail("general")
     feedback_ctx = state.get("feedback_context") or ""

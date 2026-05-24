@@ -202,8 +202,8 @@ pmo_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    max_retries=3,
-    timeout=120,
+    max_retries=2,
+    timeout=45,
 )
 pmo_llm_with_tools = pmo_llm.bind_tools(pmo_tools)
 
