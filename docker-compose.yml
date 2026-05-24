@@ -44,13 +44,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      loki:
-        condition: service_started
     restart: always
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://localhost:3002/loki/api/v1/push"
 
   redis:
     image: redis:7-alpine
@@ -104,45 +98,9 @@ services:
       - centriq-network
     restart: always
 
-  loki:
-    image: grafana/loki:latest
-    ports:
-      - "3002:3100"
-    networks:
-      - centriq-network
-    volumes:
-      - loki_data:/loki
-    restart: always
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      - GF_SECURITY_ALLOW_EMBEDDING=true
-      - GRAFANA_POSTGRES_HOST=${GRAFANA_POSTGRES_HOST}
-      - GRAFANA_POSTGRES_USER=${GRAFANA_POSTGRES_USER}
-      - GRAFANA_POSTGRES_PASSWORD=${GRAFANA_POSTGRES_PASSWORD}
-      - GRAFANA_POSTGRES_DB=${GRAFANA_POSTGRES_DB:-centriq}
-    depends_on:
-      - loki
-    networks:
-      - centriq-network
-    volumes:
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
-      - grafana_data:/var/lib/grafana
-    restart: always
-
 volumes:
   redis_data:
   langfuse_db_data:
-  loki_data:
-  grafana_data:
 
 networks:
   centriq-network:

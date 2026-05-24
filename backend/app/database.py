@@ -35,6 +35,8 @@ from app.models import (
     ConversationSummary,
     UserMemory,
     ToolSession,
+    AiRequestLog,
+    AiLlmCallLog,
     SCHEMA,
 )
 from app.config import settings

@@ -16,8 +16,6 @@ requests
 redis
 langgraph-checkpoint-redis
 langfuse<3.0.0
-python-logging-loki
-python-json-logger
 reportlab
 pdfplumber
 pymupdf

@@ -14,11 +14,6 @@ sudo usermod -aG docker $USER
 docker --version && docker compose version
 ```
 
-### 2. Install the Loki logging plugin
-```bash
-docker plugin install grafana/loki-docker-driver:latest --alias loki --grant-all-permissions
-```
-
 ---
 
 ## Deployment Steps
@@ -93,7 +88,6 @@ docker compose logs -f backend     # watch backend logs
 | Service       | Default URL                          |
 |---------------|--------------------------------------|
 | **App**       | `http://server-ip` (or custom port)  |
-| Grafana       | `http://server-ip:3001` (admin/admin)|
 | Langfuse      | `http://server-ip:3003`              |
 | MinIO console | `http://server-ip:9001` (minioadmin/minioadmin) |
 
