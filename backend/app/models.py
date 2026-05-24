@@ -590,3 +590,53 @@ class ToolSession(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+# ── Observability / Activity Logs ────────────────────────────────────────────
+
+class AiRequestLog(Base):
+    """One row per /api/chat request — powers the CloudTrail-style log viewer."""
+    __tablename__ = "ai_request_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True)
+    user_email = Column(String, index=True)
+    user_message = Column(Text)
+    domain = Column(String, index=True)                     # HR, IT, Admin, PMO, General
+    sub_intent = Column(String, nullable=True)
+    route_method = Column(String, nullable=True)            # keyword / llm / sticky / fast_path
+    response_text = Column(Text, nullable=True)             # truncated to 2000 chars
+    response_length = Column(Integer, default=0)
+    total_latency_ms = Column(Integer, default=0)
+    llm_call_count = Column(Integer, default=0)
+    total_prompt_tokens = Column(Integer, default=0)
+    total_completion_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    model_name = Column(String, nullable=True)              # primary model used
+    error = Column(Text, nullable=True)
+    langfuse_trace_id = Column(String, nullable=True)       # link to Langfuse trace
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    llm_calls = relationship("AiLlmCallLog", back_populates="request", cascade="all, delete-orphan")
+
+
+class AiLlmCallLog(Base):
+    """One row per LLM invocation within a chat request."""
+    __tablename__ = "ai_llm_call_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, ForeignKey(f"{SCHEMA}.ai_request_logs.id", ondelete="CASCADE"), index=True)
+    node = Column(String, index=True)                       # LangGraph node name
+    model = Column(String)
+    duration_ms = Column(Integer, default=0)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    is_tool_call = Column(Boolean, default=False)
+    tool_names = Column(String, nullable=True)              # comma-separated
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    request = relationship("AiRequestLog", back_populates="llm_calls")
+
+

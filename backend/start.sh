@@ -2,7 +2,7 @@
 # Centriq AI Backend Startup Script (Mac/Linux/WSL)
 
 echo "--- Starting Centriq AI Backend Infrastructure ---"
-docker compose -f ../docker-compose.yml up -d redis db loki grafana langfuse-server
+docker compose -f ../docker-compose.yml up -d redis db langfuse-server
 
 # Create virtual environment if not exists
 if [ ! -d "venv" ]; then

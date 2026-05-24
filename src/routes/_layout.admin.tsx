@@ -646,28 +646,25 @@ function AdminDashboard() {
             External monitoring tools — require separate login credentials to access.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Grafana */}
+            {/* AI Observability */}
             <div className="rounded-xl border border-[var(--border)] p-4 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Database className="h-5 w-5 text-amber-500" />
-                  <h4 className="text-[14px] font-semibold text-foreground">Grafana Dashboard</h4>
+                  <Database className="h-5 w-5 text-indigo-500" />
+                  <h4 className="text-[14px] font-semibold text-foreground">AI Observability</h4>
                 </div>
-                <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 shrink-0">
-                  <Lock className="h-2.5 w-2.5" /> Login required
+                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 shrink-0">
+                  Built-in
                 </span>
               </div>
               <p className="text-[12px] text-muted-foreground leading-relaxed">
-                Displays infrastructure metrics: CPU, memory, request rates, and application logs via Loki.
-                Use it to monitor API latency, error rates, and server health in real time.
+                CloudTrail-style activity logs, request volume charts, latency metrics, domain routing analytics, and per-node LLM performance.
               </p>
               <a
-                href={`${window.location.protocol}//${window.location.hostname}:3001/dashboards`}
-                target="_blank"
-                rel="noreferrer"
+                href="/observability"
                 className="inline-flex items-center gap-1.5 text-[12px] font-medium text-primary hover:underline"
               >
-                Open Grafana <ArrowUpRight className="h-3.5 w-3.5" />
+                Open Observability <ArrowUpRight className="h-3.5 w-3.5" />
               </a>
             </div>
 
@@ -683,9 +680,8 @@ function AdminDashboard() {
                 </span>
               </div>
               <p className="text-[12px] text-muted-foreground leading-relaxed">
-                LLM observability platform — tracks every AI conversation trace, token usage, model latency, and response quality scores.
-                Intended to debug agent failures, monitor cost per query, and evaluate AI quality across domains.
-                Not yet integrated with the backend (no SDK calls instrumented).
+                LLM trace waterfall — deep-dive into individual AI requests to see per-node generation spans, token usage, model latency, and tool calls.
+                Use it to debug specific agent failures or inspect the full reasoning chain.
               </p>
               <a
                 href={`${window.location.protocol}//${window.location.hostname}:3003`}

@@ -22,6 +22,7 @@ import {
   PanelLeftOpen,
   X,
   Sparkles,
+  Activity,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -138,6 +139,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       show: ["Admin", "HR", "IT", "PMO"].includes(user.role),
     },
     { to: "/admin", icon: LayoutDashboard, label: "Analytics", show: user.role === "Admin" },
+    { to: "/observability", icon: Activity, label: "Observability", show: ["IT", "Admin"].includes(user.role) },
     { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
     { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
     { to: "/it-portal", icon: Ticket, label: "IT Portal", show: user.role === "IT" },

@@ -35,40 +35,17 @@ from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
+from app.routes.observability_routes import router as observability_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
-from app.langfuse_tracing import langfuse_trace, langfuse_event
+from app.langfuse_tracing import TracingContext, langfuse_event
 
-# -- Loki Logger --
-try:
-    import logging_loki
-    from pythonjsonlogger import jsonlogger
-
-    class _SilentLokiHandler(logging_loki.LokiHandler):
-        """Suppress connection errors when Loki is not running."""
-        def handleError(self, record):
-            pass
-
-    loki_handler = _SilentLokiHandler(
-        url=os.environ.get("LOKI_URL", "http://localhost:3100/loki/api/v1/push"),
-        tags={"application": "aurora-backend"},
-        version="1",
-    )
-    formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
-    loki_handler.setFormatter(formatter)
-
-    logger = logging.getLogger("aurora-logger")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        logger.addHandler(loki_handler)
-        logger.addHandler(logging.StreamHandler())
-except Exception as e:
-    logger = logging.getLogger("aurora-logger")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        logger.addHandler(logging.StreamHandler())
-    logger.warning(f"Loki logging unavailable: {e}. Using console only.")
+# -- Logger (console only — Loki removed, observability via PostgreSQL) --
+logger = logging.getLogger("aurora-logger")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
 
 from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
@@ -109,6 +86,7 @@ app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
+app.include_router(observability_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -518,10 +496,22 @@ async def chat(
     }
 
     async def generate():
+        from app.models import AiRequestLog, AiLlmCallLog
+
         accumulated_text = ""
         routed_domain = "general"
         final_messages = []
-        llm_calls: dict[str, dict] = {}  # run_id → {node, model, start}
+        llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
+        completed_calls: list[dict] = []   # finished LLM calls for DB insert
+        error_msg: str | None = None
+
+        # Create Langfuse trace at the START so child spans can attach
+        tracing = TracingContext(
+            session_id=request.session_id,
+            user_id=user_email,
+            metadata={"message": request.message},
+            tags=["chat"],
+        )
 
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
@@ -534,6 +524,7 @@ async def chat(
                     node = meta.get("langgraph_node", "unknown")
                     model = meta.get("ls_model_name") or event.get("name", "unknown")
                     llm_calls[run_id] = {"node": node, "model": model, "start": time.time()}
+                    tracing.start_generation(run_id, node, model)
 
                 # ── Track LLM call end ───────────────────────────────────
                 elif event_type == "on_chat_model_end":
@@ -541,15 +532,47 @@ async def chat(
                     call = llm_calls.pop(run_id, None)
                     if call:
                         elapsed = time.time() - call["start"]
-                        logger.info("llm_call", extra={
+                        output_msg = event.get("data", {}).get("output")
+
+                        # Extract token usage from LangChain AIMessage
+                        usage = {}
+                        if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
+                            um = output_msg.usage_metadata
+                            usage = {
+                                "input_tokens": getattr(um, "input_tokens", 0) or (um.get("input_tokens", 0) if isinstance(um, dict) else 0),
+                                "output_tokens": getattr(um, "output_tokens", 0) or (um.get("output_tokens", 0) if isinstance(um, dict) else 0),
+                                "total_tokens": getattr(um, "total_tokens", 0) or (um.get("total_tokens", 0) if isinstance(um, dict) else 0),
+                            }
+
+                        # Detect tool calls
+                        tool_calls_list = []
+                        tool_names_str = None
+                        if output_msg and hasattr(output_msg, "tool_calls") and output_msg.tool_calls:
+                            tool_calls_list = output_msg.tool_calls
+                            tool_names_str = ",".join(
+                                tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, "name", "unknown")
+                                for tc in tool_calls_list
+                            )
+
+                        # Store for DB insert
+                        completed_calls.append({
                             "node": call["node"],
                             "model": call["model"],
-                            "duration_s": round(elapsed, 2),
-                            "session_id": request.session_id,
+                            "duration_ms": int(elapsed * 1000),
+                            "prompt_tokens": usage.get("input_tokens"),
+                            "completion_tokens": usage.get("output_tokens"),
+                            "total_tokens": usage.get("total_tokens"),
+                            "is_tool_call": bool(tool_calls_list),
+                            "tool_names": tool_names_str,
                         })
+
+                        # Langfuse generation span
+                        tracing.end_generation(run_id, output_msg, usage, tool_calls_list or None)
+
                         print(
                             f"[LLM] node={call['node']}  model={call['model']}  "
-                            f"time={elapsed:.2f}s  session={request.session_id}"
+                            f"time={elapsed:.2f}s  tokens={usage.get('total_tokens', '?')}  "
+                            f"session={request.session_id}"
                         )
 
                 # Stream tokens from final-response nodes only
@@ -571,9 +594,9 @@ async def chat(
                     final_messages = output.get("messages") or []
 
         except Exception as exc:
+            error_msg = str(exc)
             print(f"[stream] error: {exc}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-            return
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
 
         # If nothing streamed (tool-only path, fast-path nodes, etc.), use last message
         if not accumulated_text and final_messages:
@@ -591,20 +614,44 @@ async def chat(
         if final_message != accumulated_text:
             yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
 
-        # Langfuse trace
-        try:
-            with langfuse_trace("chat", session_id=request.session_id, metadata={"message": request.message}) as trace:
-                trace.update(output=final_message, metadata={"domain": routed_domain})
-        except Exception:
-            pass
+        # ── Observability: dual-write to Langfuse + PostgreSQL ───────
+        latency_ms = int((time.time() - start_time) * 1000)
 
-        # Loki log
-        logger.info("chat_response", extra={
-            "domain": routed_domain,
-            "latency_ms": int((time.time() - start_time) * 1000),
-            "session_id": request.session_id,
-            "message_length": len(request.message),
-        })
+        # Langfuse: finalise trace with output
+        tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
+
+        # PostgreSQL: insert request log + LLM call logs
+        try:
+            db = SessionLocal()
+            primary_model = completed_calls[-1]["model"] if completed_calls else None
+            req_log = AiRequestLog(
+                session_id=request.session_id,
+                user_email=user_email,
+                user_message=request.message,
+                domain=routed_domain,
+                response_text=final_message[:2000] if final_message else None,
+                response_length=len(final_message) if final_message else 0,
+                total_latency_ms=latency_ms,
+                llm_call_count=len(completed_calls),
+                total_prompt_tokens=sum(c.get("prompt_tokens") or 0 for c in completed_calls),
+                total_completion_tokens=sum(c.get("completion_tokens") or 0 for c in completed_calls),
+                total_tokens=sum(c.get("total_tokens") or 0 for c in completed_calls),
+                model_name=primary_model,
+                error=error_msg,
+                langfuse_trace_id=tracing.trace_id,
+            )
+            db.add(req_log)
+            db.flush()
+            for call_data in completed_calls:
+                db.add(AiLlmCallLog(request_id=req_log.id, **call_data))
+            db.commit()
+        except Exception as log_err:
+            print(f"[observability] DB insert error: {log_err}")
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
 

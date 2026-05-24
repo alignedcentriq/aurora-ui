@@ -14,6 +14,7 @@ import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
 import { Route as LayoutPeopleRouteImport } from './routes/_layout.people'
+import { Route as LayoutObservabilityRouteImport } from './routes/_layout.observability'
 import { Route as LayoutItPortalRouteImport } from './routes/_layout.it-portal'
 import { Route as LayoutHrPortalRouteImport } from './routes/_layout.hr-portal'
 import { Route as LayoutConfigRouteImport } from './routes/_layout.config'
@@ -42,6 +43,11 @@ const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
 const LayoutPeopleRoute = LayoutPeopleRouteImport.update({
   id: '/people',
   path: '/people',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutObservabilityRoute = LayoutObservabilityRouteImport.update({
+  id: '/observability',
+  path: '/observability',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutItPortalRoute = LayoutItPortalRouteImport.update({
@@ -77,6 +83,7 @@ export interface FileRoutesByFullPath {
   '/config': typeof LayoutConfigRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
+  '/observability': typeof LayoutObservabilityRoute
   '/people': typeof LayoutPeopleRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
@@ -87,6 +94,7 @@ export interface FileRoutesByTo {
   '/config': typeof LayoutConfigRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
+  '/observability': typeof LayoutObservabilityRoute
   '/people': typeof LayoutPeopleRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
@@ -100,6 +108,7 @@ export interface FileRoutesById {
   '/_layout/config': typeof LayoutConfigRoute
   '/_layout/hr-portal': typeof LayoutHrPortalRoute
   '/_layout/it-portal': typeof LayoutItPortalRoute
+  '/_layout/observability': typeof LayoutObservabilityRoute
   '/_layout/people': typeof LayoutPeopleRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
@@ -114,6 +123,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/hr-portal'
     | '/it-portal'
+    | '/observability'
     | '/people'
     | '/settings'
     | '/team'
@@ -124,6 +134,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/hr-portal'
     | '/it-portal'
+    | '/observability'
     | '/people'
     | '/settings'
     | '/team'
@@ -136,6 +147,7 @@ export interface FileRouteTypes {
     | '/_layout/config'
     | '/_layout/hr-portal'
     | '/_layout/it-portal'
+    | '/_layout/observability'
     | '/_layout/people'
     | '/_layout/settings'
     | '/_layout/team'
@@ -183,6 +195,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutPeopleRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/observability': {
+      id: '/_layout/observability'
+      path: '/observability'
+      fullPath: '/observability'
+      preLoaderRoute: typeof LayoutObservabilityRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/it-portal': {
       id: '/_layout/it-portal'
       path: '/it-portal'
@@ -227,6 +246,7 @@ interface LayoutRouteChildren {
   LayoutConfigRoute: typeof LayoutConfigRoute
   LayoutHrPortalRoute: typeof LayoutHrPortalRoute
   LayoutItPortalRoute: typeof LayoutItPortalRoute
+  LayoutObservabilityRoute: typeof LayoutObservabilityRoute
   LayoutPeopleRoute: typeof LayoutPeopleRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
@@ -239,6 +259,7 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutConfigRoute: LayoutConfigRoute,
   LayoutHrPortalRoute: LayoutHrPortalRoute,
   LayoutItPortalRoute: LayoutItPortalRoute,
+  LayoutObservabilityRoute: LayoutObservabilityRoute,
   LayoutPeopleRoute: LayoutPeopleRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,
