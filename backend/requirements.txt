@@ -15,7 +15,6 @@ python-multipart
 requests
 redis
 langgraph-checkpoint-redis
-boto3
 langfuse<3.0.0
 python-logging-loki
 python-json-logger
@@ -26,6 +25,8 @@ python-docx
 pandas
 openpyxl
 pgvector
+httpx
+cryptography
 
 mcp
 langchain-mcp-adapters

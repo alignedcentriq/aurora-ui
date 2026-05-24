@@ -37,7 +37,6 @@ from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.agents.deeplink_agent import get_deeplink_agent
 from app.services.it_service import ITService
-from app.sharepoint_transfer_service import sharepoint_transfer_service
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
 from app.services.people_service import PeopleService
@@ -288,25 +287,6 @@ def search_hr_policies(query: str):
     """Search HR policy documents for a specific topic."""
     return HRService.search_policies(query, limit=1)
 
-@tool
-def transfer_sharepoint_to_minio(site_name: str, folder_path: str, minio_prefix: str = ""):
-    """
-    Pull documents from a SharePoint folder and transfer them to MinIO.
-    site_name: e.g. 'tenant.sharepoint.com:/sites/SiteName'
-    folder_path: e.g. 'Shared Documents/General'
-    minio_prefix: Optional prefix for the objects in MinIO
-    """
-    return sharepoint_transfer_service.transfer_folder_to_minio(site_name, folder_path, minio_prefix)
-
-@tool
-def list_minio_documents(prefix: str = ""):
-    """
-    List all documents currently stored in MinIO.
-    prefix: Optional prefix to filter the search.
-    """
-    from app.minio_client import minio_client
-    return minio_client.list_objects(prefix)
-
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
 
@@ -507,7 +487,6 @@ def trigger_offboarding_checklist(employee_email: str, last_working_day: str = "
 
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
-    transfer_sharepoint_to_minio, list_minio_documents,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
     search_people_directory,

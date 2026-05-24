@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean, JSON, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -69,9 +69,9 @@ class Policy(Base):
     category = Column(String) # Leave, WFH, etc.
     content = Column(Text)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
-    # MinIO source tracking for incremental sync
-    minio_key = Column(String, nullable=True, unique=True)   # e.g. "admin/Leave Policy.pdf"
-    minio_etag = Column(String, nullable=True)               # S3 ETag; changes when file changes
+    # Source tracking for incremental sync (SharePoint)
+    source_key = Column(String, nullable=True, unique=True)   # e.g. "sp:HR/Leave Policy.pdf"
+    source_etag = Column(String, nullable=True)               # cTag/ETag; changes when file changes
 
 
 class PolicyChunk(Base):
@@ -84,8 +84,21 @@ class PolicyChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding = Column(Vector(768), nullable=True)
-    image_urls = Column(JSON, nullable=True)  # list of MinIO object keys for images near this chunk
+    image_urls = Column(JSON, nullable=True)  # list of PolicyImage IDs for images near this chunk
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class PolicyImage(Base):
+    """Stores images extracted from policy PDFs/DOCXs directly in PostgreSQL."""
+    __tablename__ = "policy_images"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    policy_id = Column(Integer, ForeignKey(f"{SCHEMA}.policies.id", ondelete="CASCADE"), index=True, nullable=False)
+    content_type = Column(String, nullable=False, default="image/png")
+    image_data = Column(LargeBinary, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 
 class CompanySettings(Base):
     __tablename__ = "company_settings"
@@ -575,3 +588,5 @@ class ToolSession(Base):
     status = Column(String, default="not_connected")
     connected_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
+
+

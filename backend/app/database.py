@@ -12,6 +12,7 @@ from app.models import (
     Attendance,
     Policy,
     PolicyChunk,
+    PolicyImage,
     Project,
     Reimbursement,
     ITTicket,
@@ -68,26 +69,6 @@ def _background_embed_policies():
         print(f"[background] Policy embedding failed: {e}")
 
 
-# How often (seconds) the background thread polls MinIO for new/changed policies.
-# Override via env var POLICY_SYNC_INTERVAL_SECONDS (default 10 min).
-_POLICY_SYNC_INTERVAL = int(os.getenv("POLICY_SYNC_INTERVAL_SECONDS", "600"))
-
-
-def _policy_sync_loop():
-    """
-    Daemon thread: polls policies-bucket every POLICY_SYNC_INTERVAL seconds.
-    Picks up new or modified files automatically via ETag comparison.
-    """
-    while True:
-        time.sleep(_POLICY_SYNC_INTERVAL)
-        try:
-            from app.services.policy_service import PolicyService
-            result = PolicyService.sync_from_minio_buckets()
-            if result["new"] or result["updated"]:
-                print(f"[policy_sync] {result}")
-        except Exception as e:
-            print(f"[policy_sync] error: {e}")
-
 
 def init_db():
     if _base_engine.dialect.name != "sqlite":
@@ -125,6 +106,9 @@ def init_db():
                 f')',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
+                # Rename minio_key/minio_etag to source_key/source_etag
+                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key',
+                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag',
                 # BM25 full-text search on policy chunks (Phase 2 RAG upgrade)
                 f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector '
                 f"GENERATED ALWAYS AS (to_tsvector('english', COALESCE(text, ''))) STORED",
@@ -221,27 +205,12 @@ def init_db():
             _seed_announcements(db)
         _ = db.query(ChatFeedback).count()
 
-        # Incremental sync from policies-bucket on every startup (ETag-aware — skips unchanged files)
-        try:
-            from app.services.policy_service import PolicyService
-            print("[init_db] Syncing policy documents from policies-bucket...")
-            PolicyService.sync_from_minio_buckets()
-        except Exception as e:
-            print(f"[init_db] Policy sync notice: {e}")
-
         # Background thread: embeds any chunks still missing vectors
         try:
             print("[init_db] Starting background embedding pass...")
             threading.Thread(target=_background_embed_policies, daemon=True).start()
         except Exception as e:
             print(f"[init_db] Embedding thread notice: {e}")
-
-        # Background thread: polls MinIO every {_POLICY_SYNC_INTERVAL}s for new/changed files
-        try:
-            print(f"[init_db] Starting policy sync loop (interval={_POLICY_SYNC_INTERVAL}s)...")
-            threading.Thread(target=_policy_sync_loop, daemon=True).start()
-        except Exception as e:
-            print(f"[init_db] Policy sync loop notice: {e}")
 
         # Background thread: polls SharePoint for new/changed policy documents
         try:

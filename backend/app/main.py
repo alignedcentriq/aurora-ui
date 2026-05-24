@@ -377,6 +377,26 @@ async def process_approval(token: str):
     finally:
         db.close()
 
+
+@app.get("/api/policy-images/{image_id}")
+async def serve_policy_image(image_id: int):
+    """Serve a policy image stored in PostgreSQL."""
+    from app.models import PolicyImage
+    from fastapi.responses import Response as RawResponse
+    db = SessionLocal()
+    try:
+        img = db.query(PolicyImage).filter(PolicyImage.id == image_id).first()
+        if not img:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return RawResponse(
+            content=img.image_data,
+            media_type=img.content_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    finally:
+        db.close()
+
+
 @app.post("/api/chat")
 async def chat(
     request: ChatRequest,
@@ -403,7 +423,7 @@ async def chat(
                     "messages": [HumanMessage(content=request.message)],
                     "user_email": x_user_email or settings.DEFAULT_USER_EMAIL,
                     "user_role": (x_user_role or "employee").lower(),
-                    "graph_token": x_graph_token or None,
+                    "graph_token": x_graph_token,
                     "session_id": request.session_id,
                 },
                 config=config,
@@ -417,20 +437,16 @@ async def chat(
             interactive = None
             policy_images: list = []
 
-            # Extract policy image keys from ToolMessages (never from the AI response)
+            # Extract policy image IDs from ToolMessages (never from the AI response)
             _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
             for msg in result.get("messages", []):
                 if hasattr(msg, 'content') and isinstance(msg.content, str):
                     m = _policy_img_re.search(msg.content)
                     if m:
-                        try:
-                            from app.minio_client import minio_client
-                            for key in m.group(1).split("||"):
-                                key = key.strip()
-                                if key:
-                                    policy_images.append(minio_client.get_presigned_url(key))
-                        except Exception as _img_e:
-                            print(f"[chat] image presign skipped: {_img_e}")
+                        for img_id in m.group(1).split("||"):
+                            img_id = img_id.strip()
+                            if img_id:
+                                policy_images.append(f"/api/policy-images/{img_id}")
 
             # Extract interactive email draft marker before any cleanup
             email_draft_pattern = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)

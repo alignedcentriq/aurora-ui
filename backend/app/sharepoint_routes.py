@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.graph_sync import process_sharepoint_changes
 from app.config import settings
-from app.sharepoint_transfer_service import sharepoint_transfer_service
 from pydantic import BaseModel
 from typing import Optional
 
@@ -50,24 +49,6 @@ async def sharepoint_webhook(request: Request, background_tasks: BackgroundTasks
             background_tasks.add_task(process_sharepoint_changes, drive_id)
 
     return Response(status_code=202)
-
-class TransferRequest(BaseModel):
-    site_name: str # e.g. "tenant.sharepoint.com:/sites/SiteName"
-    folder_path: str # e.g. "Shared Documents/General"
-    minio_prefix: Optional[str] = ""
-
-@router.post("/transfer-to-minio")
-async def trigger_transfer(request: TransferRequest, background_tasks: BackgroundTasks):
-    """
-    Triggers a background task to transfer documents from SharePoint to MinIO.
-    """
-    background_tasks.add_task(
-        sharepoint_transfer_service.transfer_folder_to_minio,
-        request.site_name,
-        request.folder_path,
-        request.minio_prefix
-    )
-    return {"message": "Transfer started in background", "site": request.site_name, "folder": request.folder_path}
 
 
 @router.post("/sharepoint/sync-policies")

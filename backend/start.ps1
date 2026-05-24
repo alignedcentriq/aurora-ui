@@ -1,7 +1,7 @@
 # Centriq AI Backend Startup Script (Windows Native)
 
 Write-Host "--- Starting Centriq AI Backend Infrastructure ---" -ForegroundColor Cyan
-docker compose -f ../docker-compose.yml up -d redis db minio createbuckets loki grafana langfuse-server
+docker compose -f ../docker-compose.yml up -d redis db loki grafana langfuse-server
 
 # Create virtual environment if not exists
 if (!(Test-Path "venv")) {
