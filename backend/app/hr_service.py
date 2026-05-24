@@ -310,6 +310,6 @@ class HRService:
                 relevant.sort(key=lambda x: x[0], reverse=True)
                 top_policies = [p for score, p in relevant[:3]]
                 
-                return "\n\n".join([f"**{p.title}**\n{(p.content or '')[:500]}..." for p in top_policies])
+                return "\n\n".join([f"**{p.title}**\n{(p.content or '')[:3000]}" for p in top_policies])
             finally:
                 db.close()

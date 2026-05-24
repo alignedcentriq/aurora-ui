@@ -14,6 +14,7 @@ All policy data lives in the DB — no runtime dependency on the PDF folder.
 import os
 import re
 import datetime
+from difflib import get_close_matches
 from pathlib import Path
 
 from app.config import settings
@@ -63,15 +64,99 @@ def _categorize(filename: str) -> str:
     return "General"
 
 
+# ── Query synonym expansion ─────────────────────────────────────────────────
+# Maps acronyms / shorthand commonly used by Indian enterprise employees to
+# their full forms so that both BM25 and embedding search can match policy text.
+_QUERY_SYNONYMS: dict[str, str] = {
+    "aa": "aligned automation",
+    "aaspl": "aligned automation services private limited",
+    "posh": "prevention of sexual harassment",
+    "pf": "provident fund EPF",
+    "epf": "employee provident fund",
+    "uan": "universal account number provident fund",
+    "wfh": "work from home remote",
+    "cl": "casual leave",
+    "el": "earned leave privilege leave",
+    "sl": "sick leave medical leave",
+    "ml": "maternity leave",
+    "pl": "paternity leave",
+    "comp off": "compensatory off",
+    "comp-off": "compensatory off",
+    "compoff": "compensatory off",
+    "lwd": "last working day resignation",
+    "lta": "leave travel allowance",
+    "hra": "house rent allowance",
+    "ctc": "cost to company compensation",
+    "nda": "non-disclosure agreement confidentiality",
+    "bgv": "background verification",
+    "f&f": "full and final settlement",
+    "full and final": "full and final settlement separation",
+    "gratuity": "gratuity payment act",
+    "esic": "employee state insurance",
+    "esi": "employee state insurance",
+    "mediclaim": "medical insurance health policy",
+    "reimbursement": "reimbursement expense claim",
+    "vpn": "virtual private network remote access",
+    "it ticket": "IT support helpdesk service request",
+    "laptop": "laptop asset hardware",
+    "onboarding": "onboarding joining induction",
+    "offboarding": "offboarding separation exit",
+    "probation": "probation confirmation period",
+    "appraisal": "appraisal performance review increment",
+    "variable pay": "variable pay bonus incentive",
+    "referral": "employee referral recruitment bonus",
+    "relocation": "relocation transfer allowance",
+    "sabbatical": "sabbatical long leave career break",
+}
+
+
+def _expand_query(query: str) -> tuple[str, str | None]:
+    """Expand known acronyms and fuzzy-correct near-misses.
+
+    Returns (expanded_query, suggestion | None).
+    - suggestion is set when a word *almost* matches a known term (e.g. "polish" → "posh")
+      but isn't an exact hit. The caller can surface it as "Did you mean …?"
+    """
+    lower = query.lower()
+    words = re.findall(r'\b[a-z]{2,}\b', lower)
+    extras: list[str] = []
+    suggestion: str | None = None
+
+    # 1. Exact matches
+    for term, expansion in _QUERY_SYNONYMS.items():
+        if re.search(r'\b' + re.escape(term) + r'\b', lower):
+            extras.append(expansion)
+
+    # 2. Fuzzy correction — only when no exact synonym matched
+    if not extras:
+        synonym_keys = list(_QUERY_SYNONYMS.keys())
+        for word in words:
+            if len(word) < 3:
+                continue
+            matches = get_close_matches(word, synonym_keys, n=1, cutoff=0.65)
+            if matches and matches[0] != word:
+                best = matches[0]
+                expansion = _QUERY_SYNONYMS[best]
+                extras.append(expansion)
+                full_form = expansion.split()[0:4]  # first few words of expansion
+                suggestion = f"{best.upper()} ({' '.join(full_form).title()})"
+
+    expanded = query + " " + " ".join(extras) if extras else query
+    return expanded, suggestion
+
+
 def _safe_title(title: str) -> str:
-    """Sanitize a policy title for use in a MinIO object key."""
+    """Sanitize a policy title for use as a safe filename."""
     return re.sub(r'[^\w\-]', '_', title)[:60]
+
+
+_MIN_IMAGE_BYTES = 20_000  # 20 KB — filters logos, headers, icons; keeps charts/diagrams/tables
 
 
 def _extract_images_from_pdf_bytes(data: bytes) -> list:
     """
     Return list of (page_index, image_bytes, ext) tuples.
-    Skips images smaller than 4 KB (likely icons/decorations).
+    Skips images smaller than 20 KB (logos, headers, decorations).
     Requires pymupdf (pip install pymupdf).
     """
     try:
@@ -84,8 +169,8 @@ def _extract_images_from_pdf_bytes(data: bytes) -> list:
                 xref = img[0]
                 base = doc.extract_image(xref)
                 img_bytes = base["image"]
-                if len(img_bytes) < 4096:
-                    continue  # skip tiny decorative images
+                if len(img_bytes) < _MIN_IMAGE_BYTES:
+                    continue
                 images.append((page_num, img_bytes, base.get("ext", "png")))
         doc.close()
         return images
@@ -98,7 +183,7 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
     """
     Return list of (position_ratio, image_bytes, ext) tuples.
     position_ratio is 0.0–1.0 indicating where in the document the image sits.
-    Skips images smaller than 4 KB.
+    Skips images smaller than 20 KB (logos, headers, decorations).
     """
     try:
         import zipfile
@@ -109,7 +194,7 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
             total = len(media)
             for idx, name in enumerate(sorted(media)):
                 img_bytes = z.read(name)
-                if len(img_bytes) < 4096:
+                if len(img_bytes) < _MIN_IMAGE_BYTES:
                     continue
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
                 position_ratio = idx / max(total, 1)
@@ -120,26 +205,29 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
         return []
 
 
-def _upload_policy_images(policy_id: int, title: str, raw_images: list, is_docx: bool = False) -> list:
+def _upload_policy_images(policy_id: int, title: str, raw_images: list, db, is_docx: bool = False) -> list:
     """
-    Upload images to MinIO under policy-images/{safe_title}/.
+    Store extracted images in the PolicyImage table.
     raw_images: list of (page_or_ratio, bytes, ext)
-    Returns list of MinIO object keys.
+    Returns list of PolicyImage IDs.
     """
-    from app.minio_client import minio_client
-    safe = _safe_title(title)
-    keys = []
-    content_type_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                        "gif": "image/gif", "webp": "image/webp"}
+    from app.models import PolicyImage
+    _EXT_CT = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+               "gif": "image/gif", "webp": "image/webp"}
+    ids = []
     for idx, (_, img_bytes, ext) in enumerate(raw_images):
-        key = f"policy-images/{safe}/{idx}.{ext}"
-        ct = content_type_map.get(ext, "image/png")
         try:
-            minio_client.upload_bytes(img_bytes, key, content_type=ct)
-            keys.append(key)
+            img = PolicyImage(
+                policy_id=policy_id,
+                content_type=_EXT_CT.get(ext.lower(), "image/png"),
+                image_data=img_bytes,
+            )
+            db.add(img)
+            db.flush()
+            ids.append(img.id)
         except Exception as e:
-            print(f"[PolicyService] Image upload failed ({key}): {e}")
-    return keys
+            print(f"[PolicyService] Image save failed (idx={idx}): {e}")
+    return ids
 
 
 def _assign_images_to_chunks(raw_images: list, num_chunks: int, is_docx: bool = False) -> dict:
@@ -377,18 +465,18 @@ class PolicyService:
                     else _extract_images_from_docx_bytes(file_bytes)
                 )
                 if raw_images:
-                    img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
+                    img_ids = _upload_policy_images(policy.id, title, raw_images, db, is_docx=not is_pdf)
                     chunks_preview = _chunk_text_sentences(content[:50000])
                     assignment = _assign_images_to_chunks(
                         raw_images, len(chunks_preview), is_docx=not is_pdf
                     )
                     chunk_images = {
-                        ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
+                        ci: [img_ids[ii] for ii in idxs if ii < len(img_ids)]
                         for ci, idxs in assignment.items()
                         if idxs
                     }
                     PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
-                    print(f"  [OK] Ingested: {title} [{len(content)} chars, {len(img_keys)} images]")
+                    print(f"  [OK] Ingested: {title} [{len(content)} chars, {len(img_ids)} images]")
                 else:
                     print(f"  [OK] Ingested: {title} [{len(content)} chars, no images]")
 
@@ -406,162 +494,6 @@ class PolicyService:
         print(f"[PolicyService] Ingest done: {result}")
         return result
 
-    # Canonical source bucket and prefixes for all policy documents
-    POLICIES_BUCKET = "policies-bucket"
-    POLICIES_PREFIXES = ("admin/", "it-support/", "hr/")
-
-    # Maps MinIO folder prefix → fallback category when filename keywords don't match
-    _PREFIX_CATEGORY = {
-        "admin/": "Admin",
-        "it-support/": "IT",
-        "hr/": "HR General",
-    }
-
-    @staticmethod
-    def sync_from_minio_buckets() -> dict:
-        """
-        Incremental sync across all policy bucket prefixes.
-        Detects new files (never seen) and changed files (ETag differs) and re-ingests them.
-        Returns aggregate counts: new, updated, skipped, errors.
-        """
-        total: dict = {"new": 0, "updated": 0, "skipped": 0, "errors": []}
-        for prefix in PolicyService.POLICIES_PREFIXES:
-            result = PolicyService.ingest_from_minio(prefix=prefix, bucket=PolicyService.POLICIES_BUCKET)
-            total["new"] += result.get("new", 0)
-            total["updated"] += result.get("updated", 0)
-            total["skipped"] += result.get("skipped", 0)
-            total["errors"] += result.get("errors", [])
-        if total["new"] or total["updated"]:
-            print(f"[PolicyService] Sync complete — new={total['new']} updated={total['updated']} skipped={total['skipped']}")
-            # Embed any chunks that were added without embeddings
-            PolicyService.embed_all_policies()
-        return total
-
-    @staticmethod
-    def ingest_from_minio(prefix: str = "policies/", bucket: str = None) -> dict:
-        """
-        Incremental ingest from MinIO.
-        - New file   (minio_key not in DB)         → ingest + chunk + embed
-        - Changed file (ETag differs from stored)  → delete old policy+chunks, re-ingest
-        - Unchanged file (same ETag)               → skip
-        """
-        from app.minio_client import minio_client
-
-        if bucket is None:
-            bucket = settings.MINIO_BUCKET_NAME
-
-        prefix_category = PolicyService._PREFIX_CATEGORY.get(prefix)
-
-        db = SessionLocal()
-        new_count, updated_count, skipped, errors = 0, 0, 0, []
-        try:
-            # Build a lookup: minio_key → (policy_id, stored_etag)
-            rows = db.query(Policy.id, Policy.minio_key, Policy.minio_etag).filter(
-                Policy.minio_key.isnot(None)
-            ).all()
-            existing: dict = {r.minio_key: (r.id, r.minio_etag) for r in rows}
-
-            objects = minio_client.list_objects(prefix=prefix, bucket=bucket)
-            if not objects:
-                print(f"[PolicyService] No objects in bucket='{bucket}' prefix='{prefix}'")
-                return {"new": 0, "updated": 0, "skipped": 0, "errors": []}
-
-            for obj in objects:
-                object_name = obj["Key"]
-                etag = obj.get("ETag", "").strip('"')
-                filename = object_name.split("/")[-1]
-                if not filename:
-                    continue
-                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                if ext not in ("pdf", "docx"):
-                    continue
-
-                is_new = object_name not in existing
-                is_changed = (not is_new) and (existing[object_name][1] != etag)
-
-                if not is_new and not is_changed:
-                    skipped += 1
-                    continue
-
-                # Delete stale policy rows before re-ingesting (CASCADE removes chunks)
-                if is_changed:
-                    stale_id = existing[object_name][0]
-                    db.query(Policy).filter(Policy.id == stale_id).delete()
-                    db.flush()
-                    print(f"  [UPDATE] ETag changed — replacing: {filename}")
-
-                try:
-                    file_bytes = minio_client.download_file(object_name, bucket=bucket)
-                except Exception as e:
-                    errors.append(f"Download failed ({filename}): {e}")
-                    continue
-
-                is_pdf = ext == "pdf"
-                content = (
-                    _extract_text_from_pdf_bytes(file_bytes)
-                    if is_pdf
-                    else _extract_text_from_docx_bytes(file_bytes)
-                )
-                if not content or len(content) < 50:
-                    errors.append(f"Empty/too short: {filename}")
-                    continue
-
-                title = filename.rsplit(".", 1)[0].strip()
-                category = _categorize(filename)
-                if category == "General" and prefix_category:
-                    category = prefix_category
-
-                policy = Policy(
-                    title=title,
-                    category=category,
-                    content=content[:50000],
-                    minio_key=object_name,
-                    minio_etag=etag,
-                    updated_at=datetime.datetime.utcnow(),
-                )
-                db.add(policy)
-                db.flush()
-
-                # Extract images and assign to chunks
-                raw_images = (
-                    _extract_images_from_pdf_bytes(file_bytes)
-                    if is_pdf
-                    else _extract_images_from_docx_bytes(file_bytes)
-                )
-                chunk_images: dict = {}
-                if raw_images:
-                    img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=not is_pdf)
-                    chunks_preview = _chunk_text_sentences(content[:50000])
-                    assignment = _assign_images_to_chunks(
-                        raw_images, len(chunks_preview), is_docx=not is_pdf
-                    )
-                    chunk_images = {
-                        ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
-                        for ci, idxs in assignment.items()
-                        if idxs
-                    }
-
-                PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
-                img_count = len(raw_images) if raw_images else 0
-                action = "NEW" if is_new else "UPDATED"
-                print(f"  [{action}] {title} [{len(content)} chars, {img_count} images]")
-
-                if is_new:
-                    new_count += 1
-                else:
-                    updated_count += 1
-
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            errors.append(str(e))
-            print(f"[PolicyService] MinIO ingest error: {e}")
-        finally:
-            db.close()
-
-        result = {"new": new_count, "updated": updated_count, "skipped": skipped, "errors": errors}
-        print(f"[PolicyService] Ingest '{prefix}': {result}")
-        return result
 
     # ── Chunking & Embedding ──────────────────────────────────────────────────
 
@@ -571,7 +503,7 @@ class PolicyService:
         Internal: chunk one Policy and store PolicyChunk rows in the given session.
         Uses sentence-aware chunking (~400 tokens, 2-sentence overlap).
         Embedding is best-effort — chunks are stored even without embeddings.
-        chunk_images: optional {chunk_index: [minio_key, ...]} mapping
+        chunk_images: optional {chunk_index: [PolicyImage.id, ...]} mapping
         """
         from app.models import PolicyChunk
 
@@ -628,24 +560,49 @@ class PolicyService:
     @staticmethod
     def _append_image_marker(text: str, image_keys: list) -> str:
         """
-        Append a [POLICY_IMG:key1||key2] marker to the result string when images exist.
+        Append a [POLICY_IMG:id1||id2] marker to the result string when images exist.
         This marker lives in the ToolMessage (not the final AI response) so main.py
-        can extract presigned URLs without them leaking into rendered chat text.
+        can build serving URLs without them leaking into rendered chat text.
         """
         if not image_keys:
             return text
-        return text + "\n\n[POLICY_IMG:" + "||".join(image_keys) + "]"
+        return text + "\n\n[POLICY_IMG:" + "||".join(str(k) for k in image_keys) + "]"
 
     # ── Metadata chunk detection ──────────────────────────────────────────────
 
-    _METADATA_MARKERS = ["version", "review date", "owner", "approved by", "effective date", "document no", "document number"]
+    _METADATA_MARKERS = [
+        "version", "review date", "next review", "owner", "approved by",
+        "effective date", "document no", "document number", "prepared by",
+        "reviewed by", "confidential", "authored by", "revision history",
+        "document control", "change log",
+    ]
 
     @staticmethod
     def _is_metadata_chunk(text: str) -> bool:
         """Return True if the chunk is a document-control table with no real policy content."""
         lower = text.lower()
         hits = sum(1 for m in PolicyService._METADATA_MARKERS if m in lower)
-        return hits >= 3 and len(text) < 600
+        # Pure metadata block (3+ markers in a short chunk)
+        if hits >= 3 and len(text) < 800:
+            return True
+        # Even in longer chunks, if metadata dominates (4+ markers), skip
+        if hits >= 4:
+            return True
+        return False
+
+    @staticmethod
+    def _strip_metadata_lines(text: str) -> str:
+        """Remove lines that are purely document-control metadata from a chunk."""
+        _META_LINE_RE = re.compile(
+            r'^.*(prepared by|reviewed by|approved by|authored by|document owner|'
+            r'next review|review date|effective date|version\s*:\s*\d|'
+            r'document no|revision history|confidential).*$',
+            re.IGNORECASE | re.MULTILINE,
+        )
+        cleaned = _META_LINE_RE.sub('', text)
+        # Collapse multiple blank lines
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned.strip()
 
     # ── Search ────────────────────────────────────────────────────────────────
 
@@ -674,6 +631,8 @@ class PolicyService:
         from app.models import PolicyChunk
         from sqlalchemy import text as sql_text
         from app.models import SCHEMA
+
+        query, did_you_mean = _expand_query(query)
 
         db = SessionLocal()
         try:
@@ -751,9 +710,9 @@ class PolicyService:
                     policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                     if policy:
                         seen_policies.add(c.policy_id)
-                        updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                        clean_text = PolicyService._strip_metadata_lines(c.text)
                         results.append(
-                            f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}"
+                            f"**{policy.title}** ({policy.category}):\n{clean_text}"
                         )
                         if c.image_urls:
                             all_image_keys.extend(c.image_urls)
@@ -792,9 +751,9 @@ class PolicyService:
                         policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                         if policy:
                             seen_policies.add(c.policy_id)
-                            updated = policy.updated_at.strftime("%d %b %Y") if policy.updated_at else "N/A"
+                            clean_text = PolicyService._strip_metadata_lines(c.text)
                             results.append(
-                                f"**{policy.title}** ({policy.category} · Last updated: {updated}):\n{c.text}"
+                                f"**{policy.title}** ({policy.category}):\n{clean_text}"
                             )
                             if c.image_urls:
                                 all_image_keys.extend(c.image_urls)
@@ -804,7 +763,10 @@ class PolicyService:
                         return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 5. Last resort: keyword search on full Policy.content ──────────
-            return PolicyService._fallback_policy_search(query, db, limit)
+            fallback = PolicyService._fallback_policy_search(query, db, limit)
+            if fallback.startswith("No policies found") and did_you_mean:
+                return f"I couldn't find a policy matching your query. Did you mean **{did_you_mean}**? Please try again with the correct term."
+            return fallback
 
         finally:
             db.close()
@@ -843,15 +805,15 @@ class PolicyService:
         results = []
         for _, p in scored[:limit]:
             content = p.content or ""
-            snippet = content[:500] + "..." if len(content) > 500 else content
+            snippet = content[:3000] if len(content) > 3000 else content
             for kw in keywords:
                 idx = content.lower().find(kw)
                 if idx >= 0:
-                    start = max(0, idx - 100)
-                    snippet = "..." + content[start:min(len(content), idx + 400)] + "..."
+                    start = max(0, idx - 200)
+                    snippet = content[start:min(len(content), idx + 2800)]
                     break
-            updated = p.updated_at.strftime("%d %b %Y") if p.updated_at else "N/A"
-            results.append(f"**{p.title}** ({p.category} · Last updated: {updated}):\n{snippet}")
+            snippet = PolicyService._strip_metadata_lines(snippet)
+            results.append(f"**{p.title}** ({p.category}):\n{snippet}")
 
         return "\n\n---\n\n".join(results)
 

@@ -69,21 +69,13 @@ def _resolve_redis_url() -> str:
     return value
 
 
-def _resolve_minio_endpoint() -> str:
-    """Return MINIO_ENDPOINT, substituting 'auto' with the platform-appropriate host."""
-    value = os.getenv("MINIO_ENDPOINT", "").strip()
-    if not value or value.lower() in AUTO_BASE_URL_VALUES:
-        host = _resolve_infra_host()
-        return f"{host}:9000"
-    return value
-
 
 def _resolve_router_model() -> str:
-    """Use the Windows Aligned server router model."""
+    """Use qwen2.5:14b for routing/admin/IT/PMO/manager — lighter and fast enough for structured output."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    return "gpt-oss:latest"
+    return "qwen2.5:14b"
 
 
 class Config:
@@ -103,6 +95,9 @@ class Config:
 
     # ── Summarizer Model (context_manager_node, conversation summaries) ──
     SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "qwen2.5:14b")
+
+    # ── Fast Model (lightweight agents: manager, general, summarizer, suggestions) ──
+    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "qwen2.5:7b")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")
@@ -152,13 +147,6 @@ class Config:
             else ("" if raw.lower() == "shared documents" else raw)
         )
     )(os.getenv("SHAREPOINT_FOLDER_PATH", "").strip("/").strip())
-
-    # MinIO
-    MINIO_ENDPOINT = _resolve_minio_endpoint()
-    MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-    MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
-    MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "aurora-bucket")
 
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")

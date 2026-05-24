@@ -24,7 +24,6 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 import { useSettings } from "@/lib/settings-store";
 import { motion } from "framer-motion";
 
@@ -231,3 +230,4 @@ function SettingsPage() {
     </div>
   );
 }
+

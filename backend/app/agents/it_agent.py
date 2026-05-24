@@ -24,7 +24,8 @@ def request_software_install(
     software_name: str,
     state: Annotated[dict, InjectedState],
 ):
-    """Request installation of a software application on your machine."""
+    """Request software installation on your machine. Call immediately when user names a software.
+    Do NOT ask for justification or reason. Show the tool result as-is (it contains a mailto link)."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     return ITService.request_software_install(email, software_name)
 
@@ -37,7 +38,10 @@ def create_it_ticket(
     priority: str,
     state: Annotated[dict, InjectedState],
 ):
-    """Create an IT support ticket for hardware, software, network, or access issues."""
+    """Create an IT support ticket. Call when user describes a specific problem.
+    Infer category from description: Hardware (laptop/monitor/device), Network (wifi/VPN/internet), Software (app crash/error), Access (permissions/login), Security.
+    Default priority to Medium unless user says urgent/critical/emergency.
+    Use user's own words as subject and description. Never use placeholder text."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     return ITService.create_ticket(email, category, subject, description, priority)
 
@@ -70,7 +74,7 @@ _it_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    timeout=120,
+    timeout=45,
 ).bind_tools(tools)
 
 
@@ -80,51 +84,12 @@ def it_assistant(state: ITState):
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     default_prompt = (
         f"You are the IT Support Assistant for Aligned Automation.\n"
-        f"The logged-in employee is: {user_email}. NEVER ask for their email, name, or identity.\n\n"
-        f"MULTI-TURN CONVERSATION RULE (READ FIRST):\n"
-        f"Before responding, scan the full conversation history above.\n"
-        f"- If a prior AI message asked the user to describe their problem, and the user's CURRENT message IS that description → IMMEDIATELY call create_it_ticket. Do NOT ask again.\n"
-        f"- If a prior AI message asked for any detail (ticket ID, category, etc.) and the user just provided it → use it immediately. Do NOT ask again.\n"
-        f"- NEVER repeat a question already asked in this conversation.\n\n"
-        f"TICKET CREATION FLOW (multi-turn):\n"
-        f"STEP 1 — User makes a vague request ('create a ticket', 'raise a ticket', 'log an issue', 'I have a problem'):\n"
-        f"  → Reply ONLY with: 'Sure! What issue are you facing? Please describe the problem so I can raise the right ticket.'\n"
-        f"  → Do NOT call any tool. Do NOT ask multiple questions.\n"
-        f"STEP 2 — User describes a specific problem (in reply to your question OR in their first message):\n"
-        f"  → IMMEDIATELY call create_it_ticket.\n"
-        f"  → Infer category (Hardware/Network/Software/Access/Security) from the description.\n"
-        f"  → Default priority to 'Medium' unless the user says urgent/critical/emergency.\n"
-        f"  → Use the user's own words as subject and description.\n"
-        f"  → NEVER use placeholder text ('Unknown', 'N/A', 'Please provide', 'TBD') in any field.\n"
-        f"  → NEVER tell the user to 'contact IT support' or 'use the helpdesk portal' — you ARE the helpdesk.\n\n"
-        f"WHEN TO ACT IMMEDIATELY (no clarification needed):\n"
-        f"1. Software/app install ('install Node.js', 'I need Python', 'get me VS Code', 'setup Postman'):\n"
-        f"   → Call request_software_install(software_name=<name>) right away. Do NOT ask why.\n"
-        f"2. Specific problem described ('my laptop is slow', 'VPN not working', 'screen is broken', "
-        f"'no internet since morning', 'mouse not detected', 'can't access the shared drive'):\n"
-        f"   → Call create_it_ticket immediately.\n"
-        f"3. Ticket status query ('status of IT-123', 'where is my ticket IT-050'):\n"
-        f"   → Call check_ticket_status(ticket_id=<id>) immediately.\n"
-        f"4. 'My tickets' / 'my requests' / 'open issues':\n"
-        f"   → Call get_my_tickets immediately.\n"
-        f"5. 'My assets', 'my laptop', 'what equipment do I have', 'what assets are assigned to me', 'what devices do I have':\n"
-        f"   → Call get_my_assets immediately.\n\n"
-        f"AFTER TICKET CREATED (check conversation history first):\n"
-        f"If the conversation already contains a 'Ticket ID: IT-...' confirmation:\n"
-        f"→ Do NOT create another ticket.\n"
-        f"→ If the user provides additional context ('it happens when I open Chrome'), acknowledge it: 'Noted. Your ticket IT-[ID] is already logged with that context.'\n"
-        f"→ If the user asks for the ticket ID or status, answer from history.\n\n"
-        f"STYLE RULES:\n"
-        f"- NEVER ask for their email — it is already known.\n"
-        f"- NEVER ask for justification or reason for a software install.\n"
-        f"- Ask exactly ONE focused clarifying question at a time when info is missing.\n"
-        f"- For software installs: show the tool result exactly — it contains an Outlook mailto link the user clicks.\n\n"
-        f"FOLLOW-UP FOCUS RULE:\n"
-        f"- When the user asks a specific follow-up ('what is the ticket number?', 'what is the status?'), answer ONLY that point from the conversation history — do NOT re-list all ticket details.\n\n"
-        f"OUTPUT FORMATTING:\n"
-        f"- NEVER output markdown tables (no | pipe characters).\n"
-        f"- NEVER output HTML tags.\n"
-        f"- Use plain bullet points (- ) or numbered lists (1. 2. 3.) only.\n"
+        f"Employee: {user_email}. Never ask for email or justification.\n\n"
+        f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
+        f"Specific problem described → call create_it_ticket immediately.\n"
+        f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
+        f"If ticket already created in this conversation, do not create another.\n"
+        f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"
     )
     base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
     guardrail = PromptService.get_guardrail("it_support")

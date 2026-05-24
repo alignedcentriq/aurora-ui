@@ -4,9 +4,8 @@ SharePoint → DB Policy Sync (no MinIO middleman)
 Downloads PDFs/DOCXs directly from SharePoint via Graph API,
 extracts text, chunks, embeds, and stores in the Policy / PolicyChunk tables.
 
-Change detection uses the Graph API cTag (content tag) stored in Policy.minio_etag,
-with a `sp:` prefixed minio_key for source tracking (backward-compatible with
-existing MinIO-sourced policies that use the same columns).
+Change detection uses the Graph API cTag (content tag) stored in Policy.source_etag,
+with a `sp:` prefixed source_key for source tracking.
 
 Folder → category mapping:
     ADMIN       → Admin
@@ -41,7 +40,7 @@ def _category_for_folder(folder: str) -> str:
 
 
 def _sp_key(relative_path: str, folder: str) -> str:
-    """Build a unique minio_key value for a SharePoint-sourced file.
+    """Build a unique source_key value for a SharePoint-sourced file.
     e.g. sp:ADMIN/SubDir/Leave Policy.pdf"""
     return f"sp:{folder}/{relative_path}"
 
@@ -82,7 +81,7 @@ def sync_folder(folder: str) -> dict:
 
     1. Resolve site → drive via sp_client
     2. Recursively list all PDF/DOCX files
-    3. Compare cTag with stored minio_etag → skip unchanged
+    3. Compare cTag with stored source_etag → skip unchanged
     4. Download new/changed files → extract text → chunk → embed → DB
     5. Delete policies whose source file no longer exists in SharePoint
 
@@ -130,10 +129,10 @@ def sync_folder(folder: str) -> dict:
     db = SessionLocal()
     try:
         sp_prefix = f"sp:{folder}/"
-        rows = db.query(Policy.id, Policy.minio_key, Policy.minio_etag).filter(
-            Policy.minio_key.like(f"{sp_prefix}%")
+        rows = db.query(Policy.id, Policy.source_key, Policy.source_etag).filter(
+            Policy.source_key.like(f"{sp_prefix}%")
         ).all()
-        existing = {r.minio_key: (r.id, r.minio_etag) for r in rows}
+        existing = {r.source_key: (r.id, r.source_etag) for r in rows}
 
         seen_keys = set()
 
@@ -182,8 +181,8 @@ def sync_folder(folder: str) -> dict:
                 title=title,
                 category=category,
                 content=content[:50000],
-                minio_key=sp_k,
-                minio_etag=ctag,
+                source_key=sp_k,
+                source_etag=ctag,
                 updated_at=datetime.datetime.utcnow(),
             )
             db.add(policy)
@@ -193,14 +192,13 @@ def sync_folder(folder: str) -> dict:
             raw_images = _extract_images(file_bytes, ext)
             chunk_images: dict = {}
             if raw_images:
-                from app.services.policy_service import _safe_title
-                img_keys = _upload_policy_images(policy.id, title, raw_images, is_docx=(ext == "docx"))
+                img_ids = _upload_policy_images(policy.id, title, raw_images, db, is_docx=(ext == "docx"))
                 chunks_preview = _chunk_text_sentences(content[:50000])
                 assignment = _assign_images_to_chunks(
                     raw_images, len(chunks_preview), is_docx=(ext == "docx")
                 )
                 chunk_images = {
-                    ci: [img_keys[ii] for ii in idxs if ii < len(img_keys)]
+                    ci: [img_ids[ii] for ii in idxs if ii < len(img_ids)]
                     for ci, idxs in assignment.items()
                     if idxs
                 }
@@ -219,7 +217,7 @@ def sync_folder(folder: str) -> dict:
         # ── Delete policies whose file was removed from SharePoint ────────
         removed_keys = set(existing.keys()) - seen_keys
         if removed_keys:
-            db.query(Policy).filter(Policy.minio_key.in_(removed_keys)).delete(
+            db.query(Policy).filter(Policy.source_key.in_(removed_keys)).delete(
                 synchronize_session="fetch"
             )
             deleted = len(removed_keys)
