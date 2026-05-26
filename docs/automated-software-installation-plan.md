@@ -136,7 +136,7 @@ Add tool function: `request_software_installation(software_name, reason)`
 
 ### 5. Notification Integration
 
-Use existing email service (`poc@alignedautomation.com` via Office 365 SMTP):
+Use existing email service (`shivam.sharma@alignedautomation.com` via Office 365 SMTP):
 
 **On request created (to IT approver):**
 - Employee name, software requested, reason

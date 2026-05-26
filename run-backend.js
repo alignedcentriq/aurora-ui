@@ -15,8 +15,6 @@ let wslKeepAliveProcess = null;
 const infraPorts = [
   { name: "Postgres", port: 5433, required: true },
   { name: "Redis", port: 6380, required: true },
-  { name: "Loki", port: 3002, required: false },
-  { name: "Grafana", port: 3001, required: false },
   { name: "Langfuse", port: 3003, required: false },
 ];
 
