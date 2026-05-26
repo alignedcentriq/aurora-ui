@@ -42,16 +42,15 @@ def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: s
         else "https://people.zoho.com"
     )
 
-    if settings.ZOHO_REFRESH_TOKEN:
-        try:
-            from app.services.leave_balance_sync import apply_leave
-            result = apply_leave(
-                settings.DEFAULT_USER_EMAIL, start_date, end_date, leave_type, reason or ""
-            )
-            if result.get("success"):
-                return json.dumps(result)
-        except Exception as exc:
-            print(f"[submit_zoho_leave] API error: {exc}")
+    # Apply leave internally via HRService (creates record + sends approval email)
+    try:
+        from app.hr_service import HRService
+        result_msg = HRService.apply_leave(
+            settings.DEFAULT_USER_EMAIL, start_date, end_date, leave_type, reason or ""
+        )
+        return json.dumps({"success": True, "message": result_msg})
+    except Exception as exc:
+        print(f"[submit_zoho_leave] Internal apply error: {exc}")
 
     # API not configured or failed — return fallback link
     def _fmt(iso: str) -> str:

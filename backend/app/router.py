@@ -59,6 +59,17 @@ DOMAIN_REGISTRY = {
                        "checking if a meeting room is available, booking a conference room",
         "status": "active",
     },
+    "ms365": {
+        "description": "Microsoft 365 & Viva Engage — reading emails from Outlook inbox, sending emails via Outlook, "
+                       "checking calendar events, finding meetings by date or keyword, "
+                       "reading Teams chat messages, "
+                       "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities. "
+                       "Use for: 'show my emails', 'send an email to X', 'what meetings do I have today', "
+                       "'check my calendar for next week', 'read my Teams messages', 'any emails from John', "
+                       "'show my Yammer feed', 'my communities', 'posts in X community', 'post to X community'. "
+                       "Do NOT use for email access issues (password reset, can't login) — those go to it_support.",
+        "status": "active",
+    },
     "deeplink": {
         "description": "External portal automation — use for: "
                        "(1) Applying/submitting/requesting leave of any type (casual, sick, earned, optional) — these go through Zoho People; "
@@ -79,7 +90,7 @@ DOMAIN_REGISTRY = {
 
 class RouterOutput(BaseModel):
     """Structured classification output from the intent router."""
-    domain: Literal["hr", "admin", "it_support", "pmo", "functional_manager", "deeplink", "general"]
+    domain: Literal["hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"]
     confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence from 0.0 to 1.0")
     reasoning: str = Field(description="One-sentence explanation of the classification")
     sub_intent: str = Field(description="Short snake_case label for the specific action, e.g. software_install")

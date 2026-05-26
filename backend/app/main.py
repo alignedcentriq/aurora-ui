@@ -36,6 +36,9 @@ from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.integration_routes import router as integration_router
+from app.routes.installation_routes import router as installation_router
+from app.routes.software_catalog_routes import router as software_catalog_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -87,6 +90,9 @@ app.include_router(admin_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(observability_router)
+app.include_router(integration_router)
+app.include_router(installation_router)
+app.include_router(software_catalog_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -304,6 +310,16 @@ async def process_approval(token: str):
                     ApprovalToken.token != token,
                     ApprovalToken.used == False,
                 ).update({"used": True})
+
+                # Deduct leave balance on approval
+                if decision == "Approved":
+                    try:
+                        from app.hr_service import HRService
+                        days = (leave.end_date - leave.start_date).days + 1
+                        HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
+                    except Exception as e:
+                        print(f"[Approval] Balance deduction error (non-fatal): {e}")
+
                 db.commit()
                 # Notify employee
                 try:
@@ -446,8 +462,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
     if html_stripped:
         final_message = html_stripped
 
-    # Remove stray JSON blobs (but only if non-empty text remains)
-    cleaned = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+    # Remove stray JSON blobs — only standalone blobs that start with {"
+    # (tool output leaks), not curly braces inside natural prose
+    cleaned = re.sub(r'(?:^|\n)\s*\{\"[^}]{20,}\}', '', final_message, flags=re.DOTALL).strip()
     if cleaned:
         final_message = cleaned
 
@@ -486,12 +503,25 @@ async def chat(
     start_time = time.time()
     user_email = x_user_email or settings.DEFAULT_USER_EMAIL
     user_role = (x_user_role or "employee").lower()
+
+    # Auto-fetch stored Microsoft token if none passed explicitly
+    effective_graph_token = x_graph_token or None
+    if not effective_graph_token:
+        try:
+            from app.services.oauth_service import get_valid_token
+            effective_graph_token = await get_valid_token(
+                user_email.lower().strip(),
+                "microsoft",
+            )
+        except Exception:
+            pass
+
     config = {"configurable": {"thread_id": request.session_id}}
     input_data = {
         "messages": [HumanMessage(content=request.message)],
         "user_email": user_email,
         "user_role": user_role,
-        "graph_token": x_graph_token,
+        "graph_token": effective_graph_token,
         "session_id": request.session_id,
     }
 

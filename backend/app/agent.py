@@ -36,6 +36,7 @@ from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.agents.deeplink_agent import get_deeplink_agent
+from app.agents.ms365_agent import ms365_agent
 from app.services.it_service import ITService
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
@@ -488,6 +489,28 @@ def trigger_offboarding_checklist(employee_email: str, last_working_day: str = "
     return HRService.trigger_offboarding(employee_email, last_working_day)
 
 
+@tool
+def submit_hr_query(
+    email: str,
+    category: str,
+    subject: str,
+    description: str,
+):
+    """Submit an HR query when the employee's question CANNOT be answered by
+    existing policies, OR when it requires HR to take an action (generate letter,
+    update records, process claim, etc.).
+
+    DO NOT call this tool if the answer is available in company policies.
+    ALWAYS search policies first before calling this tool.
+    ASK the employee for confirmation before submitting.
+
+    Categories: Attendance Query, General Query, Insurance Query, Leave Query,
+    Notice Period Query, PF Query, Proof Letter Query, Compensation & Tax Query,
+    Resignation Query."""
+    from app.hr_service import HRService
+    return HRService.submit_hr_query(email, category, subject, description)
+
+
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
@@ -499,6 +522,7 @@ hr_tools = [
     generate_hr_document,
     submit_grievance, submit_grievance_for,
     trigger_onboarding_checklist, trigger_offboarding_checklist,
+    submit_hr_query,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -659,6 +683,38 @@ _KW_DEEPLINK_COMPLAINT = re.compile(
     r'(in|on|via)\s+(the\s+)?(portal|tracker|powerapps)\b', re.I
 )
 
+_KW_MS365_EMAIL = re.compile(
+    r'\b(my\s+emails?|check\s+(my\s+)?email|inbox|read\s+.{0,10}emails?|'
+    r'unread\s+emails?|recent\s+emails?|show\s+.{0,10}emails?|'
+    r'any\s+emails?\s+from|new\s+emails?)\b', re.I
+)
+_KW_MS365_SEND = re.compile(
+    r'\b(send\s+(an?\s+)?email|email\s+to\s+\w|compose\s+email|'
+    r'write\s+(an?\s+)?email|draft\s+(an?\s+)?email)\b', re.I
+)
+_KW_MS365_CALENDAR = re.compile(
+    r'\b(my\s+calendar|check\s+(my\s+)?calendar|today\'?s?\s+meetings?|'
+    r'meetings?\s+(today|tomorrow|this\s+week|next\s+week)|'
+    r'calendar\s+(for|this|next)|what\s+meetings?\s+do\s+i\s+have|'
+    r'my\s+schedule|am\s+i\s+free|do\s+i\s+have\s+.{0,15}meeting)\b', re.I
+)
+_KW_MS365_TEAMS = re.compile(
+    r'\b(teams?\s+(messages?|chats?)|my\s+teams?\s+messages?|'
+    r'read\s+(my\s+)?teams?|check\s+(my\s+)?teams?)\b', re.I
+)
+_KW_MS365_TEAMS_SEND = re.compile(
+    r'\b(send\s+(a\s+)?message\s+to|message\s+.{1,40}\s+on\s+teams|'
+    r'teams?\s+message\s+to|dm\s+\w+\s+on\s+teams|'
+    r'send\s+.{1,40}\s+on\s+teams)\b', re.I
+)
+
+_KW_MS365_YAMMER = re.compile(
+    r'\b(yammer|viva\s+engage|community\s+(feed|posts?|messages?)|'
+    r'my\s+communities|post\s+to\s+community|'
+    r'announcements?\s+on\s+(yammer|viva)|'
+    r'viva\s+engage\s+(feed|posts?|messages?))\b', re.I
+)
+
 _KW_COMPANY_INFO = re.compile(
     r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
     r'company\s+(info|details|overview|profile)|'
@@ -740,6 +796,42 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "admin", "confidence": 0.95,
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
+
+    # MS365 — read emails
+    if _KW_MS365_EMAIL.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: email/inbox query",
+                "sub_intent": "read_email", "entities": {}}
+
+    # MS365 — send email
+    if _KW_MS365_SEND.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: send email",
+                "sub_intent": "send_email", "entities": {}}
+
+    # MS365 — calendar
+    if _KW_MS365_CALENDAR.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: calendar/meetings query",
+                "sub_intent": "calendar", "entities": {}}
+
+    # MS365 — send Teams message (must be before read teams)
+    if _KW_MS365_TEAMS_SEND.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: send Teams message",
+                "sub_intent": "send_teams_message", "entities": {}}
+
+    # MS365 — Teams messages
+    if _KW_MS365_TEAMS.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: Teams messages",
+                "sub_intent": "teams_messages", "entities": {}}
+
+    # MS365 — Yammer / Viva Engage
+    if _KW_MS365_YAMMER.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: Yammer/Viva Engage",
+                "sub_intent": "yammer", "entities": {}}
 
     # IT — hardware issues
     if _KW_IT_HARDWARE.search(text):
@@ -824,7 +916,7 @@ def _try_keyword_route(message: str) -> dict | None:
 # 4. GRAPH NODES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager"}
+_STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager", "ms365"}
 
 
 def _last_ai_message(messages: list) -> str:
@@ -1020,7 +1112,10 @@ def hr_agent(state: AgentState):
             f"- Document → generate_hr_document(target_email='{user_email}')\n"
             f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
             f"- Onboarding → trigger_onboarding_checklist\n"
-            f"- Offboarding → trigger_offboarding_checklist\n\n"
+            f"- Offboarding → trigger_offboarding_checklist\n"
+            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
+            f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
+            f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
             f"Never answer from training knowledge — use tools only.\n",
         )
         guardrail = PromptService.get_guardrail("hr")
@@ -1219,6 +1314,87 @@ async def manager_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
+async def ms365_agent_node(state: AgentState):
+    """MS365 Agent — reads emails, sends emails, calendar, Teams, Yammer.
+
+    Execute-first: for unambiguous read intents, pre-fetch data at the Python
+    level and inject it into feedback_context so the LLM only formats (1 call).
+    """
+    sub_intent = state.get("sub_intent") or ""
+    graph_token = state.get("graph_token") or ""
+    user_email = (state.get("user_email") or settings.DEFAULT_USER_EMAIL).lower().strip()
+
+    # Fetch Yammer token on-demand (separate audience from Graph)
+    yammer_token = ""
+    try:
+        from app.services.oauth_service import get_yammer_token
+        yammer_token = await get_yammer_token(user_email) or ""
+    except Exception:
+        pass
+
+    # Execute-first for unambiguous read-only intents (skip 1 LLM call)
+    pre_fetched = ""
+    if graph_token and sub_intent == "read_email":
+        from app.services import ms365_service
+        result = await ms365_service.fetch_my_emails(graph_token)
+        if result.get("success"):
+            pre_fetched = f"[PRE-FETCHED EMAILS]\n{json.dumps(result)}\n[END]"
+
+    elif graph_token and sub_intent == "calendar":
+        from app.services import ms365_service
+        from app.agents.ms365_agent import _today_range
+        start, end = _today_range()
+        result = await ms365_service.fetch_calendar_view(graph_token, start, end)
+        if result.get("success"):
+            pre_fetched = f"[PRE-FETCHED CALENDAR (today)]\n{json.dumps(result)}\n[END]"
+
+    elif graph_token and sub_intent == "teams_messages":
+        from app.services import ms365_service
+        result = await ms365_service.fetch_teams_chats(graph_token)
+        if result.get("success"):
+            pre_fetched = f"[PRE-FETCHED TEAMS]\n{json.dumps(result)}\n[END]"
+
+    elif yammer_token and sub_intent == "yammer":
+        from app.services import yammer_service
+        result = await yammer_service.fetch_my_feed(yammer_token)
+        if result.get("success"):
+            pre_fetched = f"[PRE-FETCHED YAMMER FEED]\n{json.dumps(result)}\n[END]"
+
+    feedback_ctx = state.get("feedback_context") or ""
+    if pre_fetched:
+        feedback_ctx = pre_fetched + "\n\n" + feedback_ctx
+
+    # For follow-ups: inject conversation summary so the LLM knows the prior ask
+    if sub_intent == "followup":
+        prior_msgs = state.get("messages", [])
+        prior_context_parts = []
+        for m in prior_msgs[-6:]:  # last 3 turns (human+ai pairs)
+            role = "User" if isinstance(m, HumanMessage) else "Assistant"
+            content = getattr(m, "content", "")
+            if isinstance(content, str) and content.strip():
+                prior_context_parts.append(f"{role}: {content[:300]}")
+        if prior_context_parts:
+            feedback_ctx = (
+                "[CONVERSATION CONTEXT — this is a follow-up to the prior exchange]\n"
+                + "\n".join(prior_context_parts)
+                + "\n[END CONTEXT]\n\n"
+                + feedback_ctx
+            )
+
+    result = await ms365_agent.ainvoke({
+        "messages": state["messages"],
+        "user_email": user_email,
+        "feedback_context": feedback_ctx,
+        "graph_token": graph_token,
+        "yammer_token": yammer_token,
+    })
+    last_ai = next(
+        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)),
+        AIMessage(content="Failed to process Microsoft 365 request."),
+    )
+    return {"messages": [last_ai]}
+
+
 general_tools = [get_announcements, search_hr_policies]
 general_tool_node = ToolNode(general_tools)
 general_llm = general_llm_base.bind_tools(general_tools)
@@ -1330,6 +1506,7 @@ def route_to_agent(state: AgentState):
     if domain == "admin": return "admin_agent"
     if domain == "it_support": return "it_agent"
     if domain == "functional_manager": return "manager_agent"
+    if domain == "ms365": return "ms365_agent"
     if domain == "dummy_test": return "dummy_test_agent"
     if status == "placeholder": return "placeholder_agent"
     if domain == "hr": return "hr_agent"
@@ -1372,6 +1549,7 @@ workflow.add_node("admin_agent", admin_agent_node)
 workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("deeplink_agent", deeplink_agent_node)
+workflow.add_node("ms365_agent", ms365_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
@@ -1395,6 +1573,7 @@ workflow.add_edge("admin_agent", END)
 workflow.add_edge("it_agent", END)
 workflow.add_edge("manager_agent", END)
 workflow.add_edge("deeplink_agent", END)
+workflow.add_edge("ms365_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 
