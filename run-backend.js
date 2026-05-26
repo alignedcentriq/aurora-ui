@@ -311,11 +311,6 @@ const runUvicornWithRestart = async (uvicornPath) => {
     "app.main:app",
     "--host", "0.0.0.0",
     "--port", "8080",
-    "--reload",
-    "--reload-dir", "app",
-    "--reload-exclude", "__pycache__",
-    "--reload-exclude", "*.pyc",
-    "--reload-delay", "0.5",
   ];
   const env = { ...process.env, LANGFUSE_OTEL: "false" };
 

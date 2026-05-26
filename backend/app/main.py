@@ -462,8 +462,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
     if html_stripped:
         final_message = html_stripped
 
-    # Remove stray JSON blobs (but only if non-empty text remains)
-    cleaned = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+    # Remove stray JSON blobs — only standalone blobs that start with {"
+    # (tool output leaks), not curly braces inside natural prose
+    cleaned = re.sub(r'(?:^|\n)\s*\{\"[^}]{20,}\}', '', final_message, flags=re.DOTALL).strip()
     if cleaned:
         final_message = cleaned
 

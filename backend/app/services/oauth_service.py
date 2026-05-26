@@ -123,7 +123,7 @@ def microsoft_auth_url(user_email: str) -> str:
         "response_mode": "query",
         "scope": settings.MICROSOFT_OAUTH_SCOPES,
         "state": state,
-        "prompt": "consent",
+        "prompt": "select_account",
     }
     return f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"
 
@@ -396,6 +396,54 @@ async def get_valid_token(user_email: str, provider: str) -> str | None:
         elif provider == "zoho":
             return await zoho_refresh(acc)
         return None
+    finally:
+        db.close()
+
+
+async def get_yammer_token(user_email: str) -> str | None:
+    """Exchange stored Microsoft refresh token for a Yammer-scoped access token.
+
+    Yammer uses a different token audience than Graph API, so we exchange
+    the same refresh token with scope=https://api.yammer.com/user_impersonation.
+    The token is fetched on-demand and not persisted separately.
+    """
+    db = SessionLocal()
+    try:
+        acc = (
+            db.query(ConnectedAccount)
+            .filter(
+                ConnectedAccount.user_email == user_email,
+                ConnectedAccount.provider == "microsoft",
+                ConnectedAccount.status == "active",
+            )
+            .first()
+        )
+        if not acc or not acc.refresh_token_enc:
+            return None
+
+        tenant = settings.MICROSOFT_OAUTH_TENANT_ID or "common"
+        token_url = f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/token"
+
+        payload = {
+            "client_id": settings.MICROSOFT_OAUTH_CLIENT_ID,
+            "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET,
+            "refresh_token": decrypt_token(acc.refresh_token_enc),
+            "grant_type": "refresh_token",
+            "scope": "https://api.yammer.com/user_impersonation",
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(token_url, data=payload)
+            if resp.status_code != 200:
+                log.warning("[oauth] Yammer token exchange failed: %s", resp.text)
+                return None
+            data = resp.json()
+
+        if "error" in data:
+            log.warning("[oauth] Yammer token error: %s", data)
+            return None
+
+        return data.get("access_token")
     finally:
         db.close()
 
