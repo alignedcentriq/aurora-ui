@@ -179,6 +179,69 @@ async def search_calendar(
     return {"success": True, "keyword": keyword, "count": len(matched), "events": matched}
 
 
+# -- Rooms / Places -----------------------------------------------------------
+
+async def fetch_rooms(token: str) -> dict:
+    """Fetch all meeting rooms from the organisation's room directory."""
+    url = f"{GRAPH_BASE}/places/microsoft.graph.room"
+    params = {
+        "$select": "id,displayName,emailAddress,capacity,building,floorNumber,floorLabel,isWheelChairAccessible,phone",
+        "$top": "100",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        rooms = []
+        for r in data.get("value", []):
+            rooms.append({
+                "name": r.get("displayName", ""),
+                "email": r.get("emailAddress", ""),
+                "capacity": r.get("capacity"),
+                "building": r.get("building", ""),
+                "floor": r.get("floorLabel") or (str(r["floorNumber"]) if r.get("floorNumber") is not None else ""),
+                "wheelchair_accessible": r.get("isWheelChairAccessible", False),
+                "phone": r.get("phone", ""),
+            })
+        return {"success": True, "count": len(rooms), "rooms": rooms}
+
+    except httpx.HTTPStatusError as e:
+        return _error(f"Rooms error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch rooms: {e}")
+
+
+async def fetch_room_lists(token: str) -> dict:
+    """Fetch room lists (buildings/groups) from the organisation's room directory."""
+    url = f"{GRAPH_BASE}/places/microsoft.graph.roomList"
+    params = {
+        "$select": "id,displayName,emailAddress,phone",
+        "$top": "50",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        lists = [
+            {
+                "name": rl.get("displayName", ""),
+                "email": rl.get("emailAddress", ""),
+                "phone": rl.get("phone", ""),
+            }
+            for rl in data.get("value", [])
+        ]
+        return {"success": True, "count": len(lists), "room_lists": lists}
+
+    except httpx.HTTPStatusError as e:
+        return _error(f"Room lists error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch room lists: {e}")
+
+
 # -- Teams Chats --------------------------------------------------------------
 
 async def send_teams_message(token: str, chat_id: str, content: str) -> dict:

@@ -5,6 +5,9 @@ A lightweight FastAPI app that mimics Zoho People API endpoints.
 Reads from the same PostgreSQL database as the main Centriq app,
 so it returns real data matching the internal leave system.
 
+Swagger UI: http://localhost:8090/docs
+ReDoc:       http://localhost:8090/redoc
+
 Usage:
     cd backend
     uvicorn mock_zoho_server:app --port 8090
@@ -16,37 +19,100 @@ Then set in .env:
 """
 
 import datetime
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Any
 
-app = FastAPI(title="Mock Zoho People API", version="1.0")
+app = FastAPI(
+    title="Mock Zoho People API",
+    version="1.0",
+    description=(
+        "Mimics the Zoho People API for local development. "
+        "Reads from the internal PostgreSQL database.\n\n"
+        "**OAuth token**: Any value works — the mock always returns `mock-zoho-access-token`."
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+
+# ── Response Models ──────────────────────────────────────────────────────────
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    api_domain: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "access_token": "mock-zoho-access-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "api_domain": "http://localhost:8090",
+            }
+        }
+    }
+
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
+    port: int
 
 
 # ── OAuth2 Token Endpoint ────────────────────────────────────────────────────
 
-@app.post("/oauth/v2/token")
-async def mock_token(request: Request):
-    """Always returns a valid mock token."""
-    return JSONResponse({
-        "access_token": "mock-zoho-access-token",
-        "token_type": "Bearer",
-        "expires_in": 3600,
-        "api_domain": "http://localhost:8090",
-    })
+@app.post(
+    "/oauth/v2/token",
+    response_model=TokenResponse,
+    summary="Get OAuth2 access token",
+    tags=["Auth"],
+)
+async def mock_token(
+    grant_type: str = Form(default="refresh_token", description="OAuth2 grant type"),
+    client_id: str = Form(default="mock-client-id"),
+    client_secret: str = Form(default="mock-client-secret"),
+    refresh_token: str = Form(default="mock-refresh-token"),
+    code: str = Form(default="", description="Used for authorization_code grant"),
+    redirect_uri: str = Form(default=""),
+):
+    """Always returns a valid mock token regardless of credentials."""
+    return TokenResponse(
+        access_token="mock-zoho-access-token",
+        token_type="Bearer",
+        expires_in=3600,
+        api_domain="http://localhost:8090",
+    )
 
 
 # ── Leave Balance Report ─────────────────────────────────────────────────────
 
-@app.get("/people/api/v2/leavetracker/reports/bookedAndBalance")
-async def mock_leave_balance(request: Request):
-    """Returns leave balances from the internal LeaveBalance table.
+@app.get(
+    "/people/api/v2/leavetracker/reports/bookedAndBalance",
+    summary="Leave booked & balance report",
+    tags=["Leave Tracker"],
+    response_description="Leave balances for all employees grouped by leave type",
+)
+async def mock_leave_balance():
+    """
+    Returns leave balances from the internal `LeaveBalance` table.
 
-    Mimics the Zoho response shape:
+    **Response shape** (mimics real Zoho):
+    ```json
     {
-        "leavetypes": { "<ltId>": {"name": "Casual Leave", "unit": "Day"} },
-        "report": { "<empRecNo>": { "<ltId>": {"booked": 3, "balance": 9}, "total": {...} } },
-        "employees": ["<empRecNo>"]
+      "leavetypes": { "<ltId>": { "name": "Casual Leave", "unit": "Day" } },
+      "report": {
+        "<empId>": {
+          "<ltId>": { "booked": 3, "balance": 9 },
+          "total": { "booked": 5, "balance": 15 }
+        }
+      },
+      "employees": ["<empId>"]
     }
+    ```
     """
     from app.database import SessionLocal
     from app.models import LeaveBalance, LeaveType, Employee
@@ -54,16 +120,14 @@ async def mock_leave_balance(request: Request):
     year = datetime.date.today().year
     db = SessionLocal()
     try:
-        # Build leave types map
         leave_types = db.query(LeaveType).filter(LeaveType.is_active == True).all()
-        leavetypes_map = {}
+        leavetypes_map: dict[str, Any] = {}
         for lt in leave_types:
             leavetypes_map[str(lt.id)] = {"name": lt.name, "unit": "Day"}
 
-        # Get all employees with balances
         employees = db.query(Employee).all()
-        report = {}
-        emp_ids = []
+        report: dict[str, Any] = {}
+        emp_ids: list[str] = []
 
         for emp in employees:
             balances = (
@@ -76,7 +140,7 @@ async def mock_leave_balance(request: Request):
 
             emp_key = str(emp.id)
             emp_ids.append(emp_key)
-            emp_data = {}
+            emp_data: dict[str, Any] = {}
             total_booked = 0
             total_balance = 0
 
@@ -102,9 +166,27 @@ async def mock_leave_balance(request: Request):
 
 # ── Leave Types ──────────────────────────────────────────────────────────────
 
-@app.get("/people/api/leave/v2/leaveTypes")
-async def mock_leave_types(request: Request):
-    """Returns leave types from the internal LeaveType table."""
+@app.get(
+    "/people/api/leave/v2/leaveTypes",
+    summary="List active leave types",
+    tags=["Leave Tracker"],
+    response_description="All active leave types defined in the system",
+)
+async def mock_leave_types():
+    """
+    Returns active leave types from the internal `LeaveType` table.
+
+    **Response shape**:
+    ```json
+    {
+      "response": {
+        "result": [
+          { "leaveTypeId": "1", "leaveType": "Casual Leave", "unit": "Day" }
+        ]
+      }
+    }
+    ```
+    """
     from app.database import SessionLocal
     from app.models import LeaveType
 
@@ -128,9 +210,10 @@ async def mock_leave_types(request: Request):
 
 # ── Health Check ─────────────────────────────────────────────────────────────
 
-@app.get("/")
+@app.get("/", response_model=HealthResponse, summary="Health check", tags=["System"])
 async def health():
-    return {"status": "ok", "service": "Mock Zoho People API", "port": 8090}
+    """Returns server status."""
+    return HealthResponse(status="ok", service="Mock Zoho People API", port=8090)
 
 
 if __name__ == "__main__":

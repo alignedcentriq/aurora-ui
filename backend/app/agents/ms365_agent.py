@@ -147,6 +147,30 @@ async def search_calendar(
 
 
 @tool
+async def list_meeting_rooms(
+    building: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """List meeting rooms and cabins available in the organisation.
+    Optionally filter by building name. Returns room name, location, capacity,
+    floor, and booking email. Call when user asks about rooms, cabins, meeting rooms,
+    or available spaces for booking."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    result = await ms365_service.fetch_rooms(token)
+    if not result.get("success"):
+        return json.dumps(result)
+    rooms = result["rooms"]
+    if building:
+        bld = building.lower()
+        rooms = [r for r in rooms if bld in (r.get("building") or "").lower() or bld in (r.get("name") or "").lower()]
+    result["rooms"] = rooms
+    result["count"] = len(rooms)
+    return json.dumps(result)
+
+
+@tool
 async def read_teams_messages(
     top: int = 15,
     state: Annotated[dict, InjectedState] = None,
@@ -259,6 +283,7 @@ async def post_to_community(
 
 tools = [
     read_my_emails, send_email_graph, read_my_calendar, search_calendar,
+    list_meeting_rooms,
     read_teams_messages, send_teams_message,
     read_yammer_feed, list_my_communities, read_community_posts, post_to_community,
 ]
@@ -283,6 +308,7 @@ def ms365_assistant(state: MS365State):
         f"- Send email → send_email_graph (confirm recipient, subject, body with user first)\n"
         f"- Calendar → read_my_calendar (default: today; ask if ambiguous)\n"
         f"- Find meeting → search_calendar (search by keyword in subject)\n"
+        f"- Rooms/cabins/spaces → list_meeting_rooms (filter by building if specified)\n"
         f"- Teams chats → read_teams_messages (recent chat messages)\n"
         f"- Send Teams message → send_teams_message (confirm recipient and message first)\n"
         f"- Viva Engage/Yammer feed → read_yammer_feed\n"

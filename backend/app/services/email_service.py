@@ -1,96 +1,122 @@
 """
-Email dispatcher for Centriq AI.
+Email dispatcher for Centriq AI — sends via Microsoft Graph API.
+
+All outbound emails are sent FROM the logged-in user's connected Microsoft 365
+mailbox using their delegated OAuth token. The destination is always read from
+the NOTIFY_TO_EMAIL environment variable (no hardcoded addresses).
 
 Used by:
-  - IT Agent  → sends ticket email to helpdesk (ManageEngine auto-creates ticket)
-  - Admin Agent → sends parking / food complaint / reimbursement notifications
-  - HR Agent  → sends announcement broadcast emails
+  - IT Agent     → IT ticket notifications
+  - Admin Agent  → parking / food complaint / reimbursement notifications
+  - HR Agent     → leave approval, queries, grievances, onboarding/offboarding
 """
 
 import json
-import smtplib
 import logging
 import html
-import threading
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import Optional
+
+import httpx
+
+from app.config import settings
+
+logger = logging.getLogger("aurora-logger")
+
+_GRAPH_SEND_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
+_TIMEOUT = 15.0
 
 
 def _nl2br(text: str) -> str:
     """Escape HTML and convert newlines to <br> for email clients that ignore CSS."""
     return html.escape(text).replace("\n", "<br>")
 
-from app.config import settings
 
-logger = logging.getLogger("aurora-logger")
+def _get_graph_token(user_email: str) -> str | None:
+    """Return a valid Microsoft Graph token for user_email, or None if not connected."""
+    try:
+        from app.services.oauth_service import get_valid_token
+        return get_valid_token(user_email, "microsoft")
+    except Exception as e:
+        logger.warning("[email] Cannot get Graph token for %s: %s", user_email, e)
+        return None
 
 
 def _send(
-    to: str,
+    user_email: str,
+    to: "str | list[str]",
     subject: str,
     html_body: str,
-    cc: Optional[str] = None,
-    reply_to: Optional[str] = None,
 ) -> bool:
-    """Send an email. Returns True on success, False on failure."""
-    if not settings.SMTP_USER or not settings.SMTP_PASS:
-        logger.warning("SMTP credentials not configured — email not sent.")
+    """
+    Send an email via Microsoft Graph API using the logged-in user's delegated token.
+
+    - FROM  : user_email's Microsoft 365 mailbox (via their connected account token)
+    - TO    : `to` — must be a value from settings.NOTIFY_TO_EMAIL or a specific person's
+              email from the database (manager, employee). Never hardcoded in callers.
+    - Returns True on success, False on any failure (non-blocking).
+    """
+    if not to:
+        logger.warning("[email] No recipient provided — email not sent.")
         return False
+
+    token = _get_graph_token(user_email)
+    if not token:
+        logger.warning("[email] No Graph token for %s — email not sent. Connect MS365 in Settings.", user_email)
+        return False
+
+    to_list = [to] if isinstance(to, str) else to
+    payload = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": html_body},
+            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+        },
+        "saveToSentItems": True,
+    }
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_USER}>"
-        msg["To"] = to
-        msg["Subject"] = subject
-        if cc:
-            msg["Cc"] = cc
-        if reply_to:
-            msg["Reply-To"] = reply_to
-        msg.attach(MIMEText(html_body, "html"))
-
-        recipients = [to] + ([cc] if cc else [])
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-            server.starttls()
-            server.login(settings.SMTP_USER, settings.SMTP_PASS)
-            server.sendmail(settings.SMTP_USER, recipients, msg.as_string())
-
-        logger.info("email_sent", extra={"to": to, "subject": subject})
+        resp = httpx.post(
+            _GRAPH_SEND_URL,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        logger.info("[email] sent from=%s to=%s subject=%s", user_email, to_list, subject)
         return True
-
+    except httpx.HTTPStatusError as e:
+        logger.error("[email] Graph send failed from=%s: %s %s", user_email, e.response.status_code, e.response.text[:300])
+        return False
     except Exception as e:
-        logger.error(f"Email send failed: {e}")
+        logger.error("[email] Graph send error from=%s: %s", user_email, e)
         return False
 
 
+# ── Software Install ──────────────────────────────────────────────────────────
+
 def send_software_install_email(
-    requester_email: str,
+    user_email: str,
     software_name: str,
     subject: str,
     body: str,
 ) -> bool:
-    """Send a confirmed software install request to IT support."""
+    """Send a confirmed software install request to the helpdesk Teams channel."""
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#1a73e8;">Software Installation Request</h2>
       <p style="line-height:1.5;">{_nl2br(body)}</p>
       <p style="color:#888;font-size:12px;margin-top:24px;">
-        Submitted via Centriq AI after user confirmation. Reply-To is set to the requester.
+        Submitted via Centriq AI. Reply to respond directly to the requester.
       </p>
     </body></html>
     """
-    return _send(
-        to=settings.HELPDESK_EMAIL,
-        subject=subject,
-        html_body=html_body,
-        cc=requester_email,
-        reply_to=requester_email,
-    )
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
-# ── IT Helpdesk (ManageEngine) ────────────────────────────────────────────────
+# ── IT Helpdesk ───────────────────────────────────────────────────────────────
 
 def send_it_ticket_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     employee_id: str,
@@ -101,12 +127,8 @@ def send_it_ticket_email(
     priority: str,
     ticket_id: str,
 ) -> bool:
-    """
-    Send IT ticket to helpdesk email so ManageEngine auto-creates a ticket.
-    Subject format is parsed by ManageEngine to extract category and requester.
-    """
+    """Send IT ticket to the helpdesk Teams channel."""
     email_subject = f"[IT Support] {category} - {subject} | {employee_id}"
-
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#1a73e8;">IT Support Request — Centriq AI</h2>
@@ -122,32 +144,27 @@ def send_it_ticket_email(
             <td>{_nl2br(description)}</td></tr>
       </table>
       <p style="color:#888;font-size:12px;margin-top:24px;">
-        This request was submitted via Centriq AI Assistant. Please do not reply directly to this email.
+        Submitted via Centriq AI. Reply to respond directly to the employee.
       </p>
     </body></html>
     """
-    return _send(
-        to=settings.HELPDESK_EMAIL,
-        subject=email_subject,
-        html_body=html_body,
-        cc=employee_email,
-    )
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=email_subject, html_body=html_body)
 
 
 # ── Admin Notifications ───────────────────────────────────────────────────────
 
 def send_parking_request_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     vehicle_type: str,
     vehicle_number: str,
     vehicle_make: str,
     vehicle_model: str,
-    action: str = "request",  # "request" or "surrender"
+    action: str = "request",
 ) -> bool:
     action_label = "New Parking Request" if action == "request" else "Parking Surrender Request"
     subject = f"[Admin] {action_label} — {vehicle_number}"
-
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#1a73e8;">{action_label} — Centriq AI</h2>
@@ -159,13 +176,14 @@ def send_parking_request_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;">Model</td><td>{vehicle_model or "—"}</td></tr>
         <tr><td style="background:#f5f5f5;font-weight:bold;">Action</td><td>{action_label}</td></tr>
       </table>
-      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Reply to respond directly to the employee.</p>
     </body></html>
     """
-    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
 def send_food_complaint_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     vendor_name: str,
@@ -174,7 +192,6 @@ def send_food_complaint_email(
     ticket_id: str,
 ) -> bool:
     subject = f"[Admin] Food Complaint — {vendor_name} | {ticket_id}"
-
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#e53935;">Food / Cafeteria Complaint — Centriq AI</h2>
@@ -186,13 +203,14 @@ def send_food_complaint_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
             <td>{_nl2br(description)}</td></tr>
       </table>
-      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Reply to respond directly to the employee.</p>
     </body></html>
     """
-    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
 def send_facility_complaint_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     ticket_id: str,
@@ -202,7 +220,6 @@ def send_facility_complaint_email(
     priority: str,
 ) -> bool:
     subject = f"[Admin] Facility Complaint {ticket_id} — {category} ({priority})"
-
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#f57c00;">Facility Complaint — Centriq AI</h2>
@@ -215,13 +232,14 @@ def send_facility_complaint_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td>
             <td>{_nl2br(description)}</td></tr>
       </table>
-      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI.</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Reply to respond directly to the employee.</p>
     </body></html>
     """
-    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
 def send_facility_complaint_status_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     ticket_id: str,
@@ -255,10 +273,11 @@ def send_facility_complaint_status_email(
       </div>
     </body></html>
     """
-    return _send(to=employee_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
 
 
 def send_food_complaint_status_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     ticket_id: str,
@@ -292,10 +311,11 @@ def send_food_complaint_status_email(
       </div>
     </body></html>
     """
-    return _send(to=employee_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
 
 
 def send_reimbursement_email(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     reimbursement_type: str,
@@ -304,7 +324,6 @@ def send_reimbursement_email(
     reimbursement_id: int,
 ) -> bool:
     subject = f"[Admin] Reimbursement Request #{reimbursement_id} — {reimbursement_type}"
-
     html_body = f"""
     <html><body style="font-family: Arial, sans-serif; color: #333;">
       <h2 style="color:#1a73e8;">Reimbursement Request — Centriq AI</h2>
@@ -316,13 +335,16 @@ def send_reimbursement_email(
         <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Reason / Details</td>
             <td>{_nl2br(reason)}</td></tr>
       </table>
-      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Please process in the reimbursement portal.</p>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Reply to respond directly to the employee.</p>
     </body></html>
     """
-    return _send(to=settings.ADMIN_EMAIL, subject=subject, html_body=html_body, cc=employee_email)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
+
+# ── Leave Notifications ───────────────────────────────────────────────────────
 
 def send_leave_approval_request(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     leave_type: str,
@@ -360,14 +382,15 @@ def send_leave_approval_request(
             ✗ Reject Leave
           </a>
         </div>
-        <p style="color:#888;font-size:12px;">These links expire in 24 hours. Submitted via Centriq AI.</p>
+        <p style="color:#888;font-size:12px;">These links expire in 24 hours. Submitted via Centriq AI. Reply to contact the employee directly.</p>
       </div>
     </body></html>
     """
-    return _send(to=manager_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=manager_email, subject=subject, html_body=html_body)
 
 
 def send_leave_decision_notification(
+    user_email: str,
     employee_email: str,
     employee_name: str,
     leave_type: str,
@@ -397,10 +420,11 @@ def send_leave_decision_notification(
       </div>
     </body></html>
     """
-    return _send(to=employee_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
 
 
 def send_leave_fyi_notification(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     leave_type: str,
@@ -430,19 +454,21 @@ def send_leave_fyi_notification(
       </div>
     </body></html>
     """
-    return _send(to=functional_manager_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=functional_manager_email, subject=subject, html_body=html_body)
 
+
+# ── HR Notifications ──────────────────────────────────────────────────────────
 
 def send_hr_query_notification(
+    user_email: str,
     reference_id: str,
     employee_name: str,
     employee_email: str,
     category: str,
     subject: str,
     description: str,
-    hr_email: str,
 ) -> bool:
-    """Notify HR team about a new employee query."""
+    """Notify the Teams channel about a new employee HR query."""
     email_subject = f"[HR Query] {reference_id} — {category} | {employee_name}"
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
@@ -458,21 +484,21 @@ def send_hr_query_notification(
           <tr><td style="background:#f5f5f5;font-weight:bold;">Subject</td><td>{html.escape(subject)}</td></tr>
           <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td><td>{_nl2br(description)}</td></tr>
         </table>
-        <p>Please respond through the HR Portal.</p>
+        <p>Please respond through the HR Portal or reply to contact the employee directly.</p>
         <p style="color:#888;font-size:12px;">Submitted via Centriq AI.</p>
       </div>
     </body></html>
     """
-    return _send(to=hr_email, subject=email_subject, html_body=html_body)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=email_subject, html_body=html_body)
 
 
 def send_grievance_notification(
+    user_email: str,
     reference_id: str,
     category: str,
     description: str,
     is_anonymous: bool,
     submitted_by: str,
-    hr_email: str,
 ) -> bool:
     submitter_label = "Anonymous" if is_anonymous else html.escape(submitted_by)
     subject = f"[HR Grievance] {reference_id} — {category}"
@@ -494,18 +520,18 @@ def send_grievance_notification(
       </div>
     </body></html>
     """
-    return _send(to=hr_email, subject=subject, html_body=html_body)
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
+
+# ── Onboarding / Offboarding ──────────────────────────────────────────────────
 
 def send_onboarding_checklist(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     joining_date: str,
     department: str,
     designation: str,
-    it_email: str,
-    admin_email: str,
-    hr_email: str,
 ) -> bool:
     subject = f"[Onboarding] New Joiner: {employee_name} — {joining_date}"
     checklist_it = """
@@ -544,35 +570,26 @@ def send_onboarding_checklist(
           <tr><td style="background:#f5f5f5;font-weight:bold;">Designation</td><td>{html.escape(designation)}</td></tr>
           <tr><td style="background:#f5f5f5;font-weight:bold;">Joining Date</td><td>{html.escape(joining_date)}</td></tr>
         </table>
-
         <h3 style="color:#1a73e8;">IT Setup Tasks</h3>
         <ul style="line-height:1.8;">{checklist_it}</ul>
-
         <h3 style="color:#f57c00;">Admin / Facilities Tasks</h3>
         <ul style="line-height:1.8;">{checklist_admin}</ul>
-
         <h3 style="color:#7c3aed;">HR Tasks</h3>
         <ul style="line-height:1.8;">{checklist_hr}</ul>
-
         <p style="color:#888;font-size:12px;">Generated by Centriq AI. Please complete all relevant tasks before the joining date.</p>
       </div>
     </body></html>
     """
-    ok1 = _send(to=it_email, subject=f"[IT] {subject}", html_body=html_body)
-    ok2 = _send(to=admin_email, subject=f"[Admin] {subject}", html_body=html_body)
-    ok3 = _send(to=hr_email, subject=f"[HR] {subject}", html_body=html_body)
-    return ok1 or ok2 or ok3
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
 def send_offboarding_checklist(
+    user_email: str,
     employee_name: str,
     employee_email: str,
     last_day: str,
     department: str,
     manager_email: str,
-    it_email: str,
-    admin_email: str,
-    hr_email: str,
 ) -> bool:
     subject = f"[Offboarding] {employee_name} — Last Day: {last_day}"
     checklist_it = """
@@ -614,36 +631,35 @@ def send_offboarding_checklist(
           <tr><td style="background:#f5f5f5;font-weight:bold;">Department</td><td>{html.escape(department)}</td></tr>
           <tr><td style="background:#f5f5f5;font-weight:bold;">Last Working Day</td><td>{html.escape(last_day)}</td></tr>
         </table>
-
         <h3 style="color:#dc2626;">Manager Handover Tasks</h3>
         <ul style="line-height:1.8;">{checklist_manager}</ul>
-
         <h3 style="color:#1a73e8;">IT Tasks</h3>
         <ul style="line-height:1.8;">{checklist_it}</ul>
-
         <h3 style="color:#f57c00;">Admin / Facilities Tasks</h3>
         <ul style="line-height:1.8;">{checklist_admin}</ul>
-
         <h3 style="color:#7c3aed;">HR Tasks</h3>
         <ul style="line-height:1.8;">{checklist_hr}</ul>
-
         <p style="color:#888;font-size:12px;">Generated by Centriq AI. Please complete all tasks by {html.escape(last_day)}.</p>
       </div>
     </body></html>
     """
-    ok1 = _send(to=manager_email, subject=f"[Manager] {subject}", html_body=html_body)
-    ok2 = _send(to=it_email, subject=f"[IT] {subject}", html_body=html_body)
-    ok3 = _send(to=admin_email, subject=f"[Admin] {subject}", html_body=html_body)
-    ok4 = _send(to=hr_email, subject=f"[HR] {subject}", html_body=html_body)
-    return ok1 or ok2 or ok3 or ok4
+    # Send to the Teams channel; manager gets a separate copy
+    ok1 = _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
+    ok2 = _send(user_email=user_email, to=manager_email, subject=f"[Manager] {subject}", html_body=html_body) if manager_email else False
+    return ok1 or ok2
 
 
-def send_notification_event(event_type: str, subject_suffix: str, data: dict) -> None:
-    """Send a structured notification email to NOTIFICATION_EMAIL for PA monitoring. Fire-and-forget."""
-    if not settings.NOTIFICATION_EMAIL:
+# ── Monitoring / PA event ─────────────────────────────────────────────────────
+
+def send_notification_event(user_email: str, event_type: str, subject_suffix: str, data: dict) -> None:
+    """Fire-and-forget: send a structured event notification to the Teams channel."""
+    if not settings.NOTIFY_TO_EMAIL or not user_email:
         return
 
-    def _send_async():
+    import threading
+    import base64 as _b64
+
+    def _do_send():
         subject = f"[AURORA] {event_type} — {subject_suffix}"
         rows = "".join(
             f'<tr><td style="background:#f5f5f5;font-weight:bold;width:160px;padding:8px;">'
@@ -651,7 +667,6 @@ def send_notification_event(event_type: str, subject_suffix: str, data: dict) ->
             f'<td style="padding:8px;">{html.escape(str(v))}</td></tr>'
             for k, v in data.items()
         )
-        import base64 as _b64
         json_str = json.dumps({"event": event_type, **data}, default=str)
         json_b64 = _b64.b64encode(json_str.encode()).decode()
         html_body = f"""
@@ -666,12 +681,15 @@ def send_notification_event(event_type: str, subject_suffix: str, data: dict) ->
   </div>
   <div id="pa-data" style="display:none;overflow:hidden;line-height:0;max-height:0;">PAJSON:{json_b64}:ENDJSON</div>
 </body></html>"""
-        _send(to=settings.NOTIFICATION_EMAIL, subject=subject, html_body=html_body)
+        _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
-    threading.Thread(target=_send_async, daemon=True).start()
+    threading.Thread(target=_do_send, daemon=True).start()
 
+
+# ── Announcements ─────────────────────────────────────────────────────────────
 
 def send_announcement_email(
+    user_email: str,
     recipients: list,
     title: str,
     body: str,
@@ -679,7 +697,7 @@ def send_announcement_email(
     sent_by: str,
     image_url: str | None = None,
 ) -> bool:
-    """Broadcast an announcement to a list of email addresses."""
+    """Broadcast an announcement from the HR person's mailbox to a list of recipients."""
     subject = title
     image_block = (
         f'<img src="{html.escape(image_url)}" alt="" '
@@ -697,6 +715,4 @@ def send_announcement_email(
     """
     if not recipients:
         return False
-    to = recipients[0]
-    cc = ", ".join(recipients[1:]) if len(recipients) > 1 else None
-    return _send(to=to, subject=subject, html_body=html_body, cc=cc)
+    return _send(user_email=user_email, to=recipients, subject=subject, html_body=html_body)

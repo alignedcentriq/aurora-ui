@@ -153,16 +153,9 @@ class Config:
     PORT = int(os.getenv("PORT", "8080"))
     HOST = os.getenv("HOST", "0.0.0.0")
 
-    # SMTP / Email (for IT helpdesk tickets + admin notifications)
-    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USER = os.getenv("SMTP_USER", "")
-    SMTP_PASS = os.getenv("SMTP_PASS", "")
-    SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Centriq AI")
-    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "poc@alignedautomation")
-    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "poc@alignedautomation")
-    HR_EMAIL = os.getenv("HR_EMAIL", os.getenv("ADMIN_EMAIL", "poc@alignedautomation.com"))
-    NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "poc@alignedautomation.com")
+    # Email — all outbound notifications go to this address (Teams channel or shared inbox)
+    # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
+    NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
     # Power Automate — SharePoint/PowerApps complaint sync
@@ -196,7 +189,8 @@ class Config:
         "openid profile email offline_access User.Read User.ReadBasic.All "
         "Mail.Read Mail.ReadWrite Mail.Send "
         "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
-        "Chat.Read Chat.ReadWrite",
+        "Chat.Read Chat.ReadWrite "
+        "Place.Read.All",
     )
     # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
     TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")

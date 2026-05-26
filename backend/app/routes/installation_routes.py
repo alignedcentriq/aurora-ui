@@ -30,7 +30,7 @@ logger = logging.getLogger("aurora-logger")
 
 router = APIRouter(prefix="/api/installation-requests", tags=["Software Installation"])
 
-_IT_APPROVER_EMAIL = settings.HELPDESK_EMAIL  # IT team inbox
+_IT_APPROVER_EMAIL = settings.NOTIFY_TO_EMAIL  # set NOTIFY_TO_EMAIL in .env
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -104,10 +104,10 @@ def _send_approval_request_email(req: InstallationRequest) -> None:
     </body></html>
     """
     _send(
+        user_email=emp_email,
         to=_IT_APPROVER_EMAIL,
         subject=f"[Install Request] {software} — {emp_name}",
         html_body=html_body,
-        reply_to=emp_email or None,
     )
 
 
@@ -120,7 +120,7 @@ def _send_employee_notification(emp_email: str, subject: str, message: str) -> N
       <p style="color:#888;font-size:12px;margin-top:24px;">Centriq AI — IT Support</p>
     </body></html>
     """
-    _send(to=emp_email, subject=subject, html_body=html_body)
+    _send(user_email=emp_email, to=emp_email, subject=subject, html_body=html_body)
 
 
 # ── Deployment background task ────────────────────────────────────────────────

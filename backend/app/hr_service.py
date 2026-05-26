@@ -207,6 +207,7 @@ class HRService:
                 ))
                 db.commit()
                 send_leave_approval_request(
+                    user_email=emp.email,
                     employee_name=emp.name, employee_email=emp.email,
                     leave_type=leave_type, start_date=start_date, end_date=end_date,
                     reason=reason,
@@ -222,6 +223,7 @@ class HRService:
                 fm_email = HRService._find_functional_manager_email(db, emp)
                 if fm_email and fm_email != manager_email:
                     send_leave_fyi_notification(
+                        user_email=emp.email,
                         employee_name=emp.name, employee_email=emp.email,
                         leave_type=leave_type, start_date=start_date, end_date=end_date,
                         reason=reason, functional_manager_email=fm_email,
@@ -258,13 +260,13 @@ class HRService:
             db.commit()
             try:
                 send_hr_query_notification(
+                    user_email=emp.email,
                     reference_id=reference_id,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     category=category,
                     subject=subject,
                     description=description,
-                    hr_email=settings.HR_EMAIL,
                 )
             except Exception as e:
                 print(f"[HR] Query notification email error (non-fatal): {e}")
@@ -370,12 +372,12 @@ class HRService:
             db.commit()
             submitter = "Anonymous" if is_anonymous else emp.name
             send_grievance_notification(
+                user_email=emp.email,
                 reference_id=reference_id,
                 category=category,
                 description=description,
                 is_anonymous=is_anonymous,
                 submitted_by=submitter,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Your grievance has been submitted (Ref: **{reference_id}**). "
@@ -394,14 +396,12 @@ class HRService:
             emp = HRService.get_employee_by_email(db, employee_email)
             joining = emp.joining_date.strftime("%d %b %Y") if emp.joining_date else "As per offer letter"
             send_onboarding_checklist(
+                user_email=triggered_by or employee_email,
                 employee_name=emp.name,
                 employee_email=emp.email,
                 joining_date=joining,
                 department=emp.department or "N/A",
                 designation=emp.designation or "N/A",
-                it_email=settings.HELPDESK_EMAIL,
-                admin_email=settings.ADMIN_EMAIL,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Onboarding checklist triggered for **{emp.name}** (joining: {joining}). "
@@ -421,14 +421,12 @@ class HRService:
                 last_day = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
             manager_email = HRService._find_manager_email(db, emp)
             send_offboarding_checklist(
+                user_email=triggered_by or employee_email,
                 employee_name=emp.name,
                 employee_email=emp.email,
                 last_day=last_day,
                 department=emp.department or "N/A",
                 manager_email=manager_email,
-                it_email=settings.HELPDESK_EMAIL,
-                admin_email=settings.ADMIN_EMAIL,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Offboarding checklist triggered for **{emp.name}** (last day: {last_day}). "
