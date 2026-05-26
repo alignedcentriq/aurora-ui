@@ -488,6 +488,28 @@ def trigger_offboarding_checklist(employee_email: str, last_working_day: str = "
     return HRService.trigger_offboarding(employee_email, last_working_day)
 
 
+@tool
+def submit_hr_query(
+    email: str,
+    category: str,
+    subject: str,
+    description: str,
+):
+    """Submit an HR query when the employee's question CANNOT be answered by
+    existing policies, OR when it requires HR to take an action (generate letter,
+    update records, process claim, etc.).
+
+    DO NOT call this tool if the answer is available in company policies.
+    ALWAYS search policies first before calling this tool.
+    ASK the employee for confirmation before submitting.
+
+    Categories: Attendance Query, General Query, Insurance Query, Leave Query,
+    Notice Period Query, PF Query, Proof Letter Query, Compensation & Tax Query,
+    Resignation Query."""
+    from app.hr_service import HRService
+    return HRService.submit_hr_query(email, category, subject, description)
+
+
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
@@ -499,6 +521,7 @@ hr_tools = [
     generate_hr_document,
     submit_grievance, submit_grievance_for,
     trigger_onboarding_checklist, trigger_offboarding_checklist,
+    submit_hr_query,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -1020,7 +1043,10 @@ def hr_agent(state: AgentState):
             f"- Document → generate_hr_document(target_email='{user_email}')\n"
             f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
             f"- Onboarding → trigger_onboarding_checklist\n"
-            f"- Offboarding → trigger_offboarding_checklist\n\n"
+            f"- Offboarding → trigger_offboarding_checklist\n"
+            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
+            f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
+            f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
             f"Never answer from training knowledge — use tools only.\n",
         )
         guardrail = PromptService.get_guardrail("hr")

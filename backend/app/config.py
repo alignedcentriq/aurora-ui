@@ -179,6 +179,28 @@ class Config:
     PA_WEBHOOK_REIMBURSEMENT_SUBMITTED = os.getenv("PA_WEBHOOK_REIMBURSEMENT_SUBMITTED", "")
     PA_CALLBACK_SECRET                 = os.getenv("PA_CALLBACK_SECRET", "")
 
+    # ── Connected Accounts (OAuth2 delegated -- per-user token storage) ────────
+    # Microsoft: reuses MSAL app registration (add Web platform + client secret)
+    MICROSOFT_OAUTH_CLIENT_ID = (
+        os.getenv("MICROSOFT_OAUTH_CLIENT_ID")
+        or os.getenv("VITE_MSAL_CLIENT_ID", "")
+    )
+    MICROSOFT_OAUTH_CLIENT_SECRET = os.getenv("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+    MICROSOFT_OAUTH_TENANT_ID = (
+        os.getenv("MICROSOFT_OAUTH_TENANT_ID")
+        or os.getenv("VITE_MSAL_TENANT_ID")
+        or os.getenv("GRAPH_TENANT_ID", "")
+    )
+    MICROSOFT_OAUTH_SCOPES = os.getenv(
+        "MICROSOFT_OAUTH_SCOPES",
+        "openid profile email offline_access User.Read User.ReadBasic.All "
+        "Mail.Read Mail.ReadWrite Mail.Send "
+        "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
+        "Chat.Read Chat.ReadWrite",
+    )
+    # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
+    TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
+
     # ── External Portal Automation (Playwright MCP) ───────────────────────────
     ZOHO_PEOPLE_URL    = os.getenv("ZOHO_PEOPLE_URL", "")
     # Zoho OAuth2 API (replaces session-file scraping)
@@ -189,6 +211,11 @@ class Config:
     ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "https://people.zoho.com")
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
+
+    # ── ManageEngine Endpoint Central ─────────────────────────────────────────
+    # Set to http://localhost:8091 to use the mock server during development.
+    MANAGE_ENGINE_BASE_URL = os.getenv("MANAGE_ENGINE_BASE_URL", "http://localhost:8091")
+    MANAGE_ENGINE_API_KEY = os.getenv("MANAGE_ENGINE_API_KEY", "mock-api-key")
 
     # ── SharePoint Policy Sync ─────────────────────────────────────────────────
     # Full SharePoint site URL, e.g. https://tenant.sharepoint.com/sites/Centriq

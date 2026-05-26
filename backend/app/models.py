@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean, JSON, LargeBinary
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text, DateTime, Boolean, JSON, LargeBinary, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
 import datetime
+import uuid
 
 Base = declarative_base()
 
@@ -312,6 +313,53 @@ class AssetAssignment(Base):
     status = Column(String, default="Assigned")  # Assigned, Returned
 
 
+# ── Software Catalog (ManageEngine Endpoint Central packages) ─────────────────
+class SoftwareCatalog(Base):
+    __tablename__ = "software_catalog"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, index=True)
+    version = Column(String, nullable=True)
+    category = Column(String, nullable=True)          # productivity, development, communication…
+    endpoint_central_package_id = Column(String, nullable=True)  # ME package ID
+    installer_hash = Column(String, nullable=True)    # SHA-256 for verification
+    auto_approve = Column(Boolean, default=False)     # skip IT approval for low-risk apps
+    requires_license = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    requests = relationship("InstallationRequest", back_populates="software")
+
+
+# ── Installation Requests ─────────────────────────────────────────────────────
+class InstallationRequest(Base):
+    __tablename__ = "installation_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=False)
+    software_id = Column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.software_catalog.id"), nullable=False)
+    machine_hostname = Column(String, nullable=True)
+    reason = Column(Text, nullable=True)
+    # pending / approved / rejected / deploying / deployed / failed
+    status = Column(String, default="pending", nullable=False)
+    requested_at = Column(DateTime, default=datetime.datetime.utcnow)
+    reviewed_by = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    deployment_job_id = Column(String, nullable=True)   # ME job ID
+    deployed_at = Column(DateTime, nullable=True)
+    deployment_log = Column(Text, nullable=True)
+    approval_token = Column(String, unique=True, nullable=True, index=True)
+    approval_expires_at = Column(DateTime, nullable=True)
+
+    employee = relationship("Employee", foreign_keys=[employee_id])
+    reviewer = relationship("Employee", foreign_keys=[reviewed_by])
+    software = relationship("SoftwareCatalog", back_populates="requests")
+
+
 # ── Prompt Config (Role-Based) ────────────
 class PromptConfig(Base):
     __tablename__ = "prompt_configs"
@@ -588,6 +636,85 @@ class ToolSession(Base):
     status = Column(String, default="not_connected")
     connected_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
+
+
+# ── Observability / Activity Logs ────────────────────────────────────────────
+
+class ConnectedAccount(Base):
+    """OAuth2 tokens for user-connected external services (Microsoft, Zoho).
+    Tokens are Fernet-encrypted at rest. The backend refreshes them transparently.
+    """
+    __tablename__ = "connected_accounts"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=False)
+    provider = Column(String, nullable=False)              # "microsoft" | "zoho"
+    access_token_enc = Column(Text, nullable=True)         # Fernet-encrypted
+    refresh_token_enc = Column(Text, nullable=True)        # Fernet-encrypted
+    token_expires_at = Column(DateTime, nullable=True)
+    scopes = Column(Text, nullable=True)                   # space-separated scopes granted
+    provider_user_id = Column(String, nullable=True)       # e.g. Microsoft OID
+    provider_email = Column(String, nullable=True)         # email from the provider
+    status = Column(String, default="active")              # active | expired | revoked
+    connected_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+# ── Internal Leave Management ────────────────────────────────────────────────
+
+class LeaveType(Base):
+    """Configurable leave types with annual entitlements."""
+    __tablename__ = "leave_types"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)         # "Casual Leave"
+    code = Column(String, unique=True, nullable=False)         # "CL"
+    annual_entitlement = Column(Float, nullable=True)          # 12 (None = unlimited for LWP)
+    is_earned = Column(Boolean, default=False)                 # True for Comp Off
+    is_active = Column(Boolean, default=True)
+    carry_forward = Column(Boolean, default=False)
+    max_consecutive_days = Column(Integer, nullable=True)
+
+
+class LeaveBalance(Base):
+    """Per-employee, per-leave-type, per-year balance tracking."""
+    __tablename__ = "leave_balances"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "leave_type_id", "year", name="uq_emp_lt_year"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=False, index=True)
+    leave_type_id = Column(Integer, ForeignKey(f"{SCHEMA}.leave_types.id"), nullable=False)
+    year = Column(Integer, nullable=False)
+    entitled = Column(Float, default=0)                        # Annual allocation
+    used = Column(Float, default=0)                            # Approved leaves consumed
+    balance = Column(Float, default=0)                         # entitled - used
+    earned = Column(Float, default=0)                          # For Comp Off — earned credits
+
+
+# ── HR Query System (replaces Zoho Cases) ────────────────────────────────────
+
+class HRQuery(Base):
+    """Employee HR queries — replaces Zoho People's case/query module."""
+    __tablename__ = "hr_queries"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference_id = Column(String, unique=True, index=True, nullable=False)   # "HRQ-001"
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=False)
+    category = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    status = Column(String, default="Open")                    # Open, In Progress, Resolved, Closed
+    priority = Column(String, default="Normal")                # Low, Normal, High
+    response = Column(Text, nullable=True)
+    responded_by = Column(String, nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 # ── Observability / Activity Logs ────────────────────────────────────────────

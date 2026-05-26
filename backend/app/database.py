@@ -37,6 +37,9 @@ from app.models import (
     ToolSession,
     AiRequestLog,
     AiLlmCallLog,
+    LeaveType,
+    LeaveBalance,
+    HRQuery,
     SCHEMA,
 )
 from app.config import settings
@@ -205,6 +208,8 @@ def init_db():
             _seed_zoho_profiles(db)
         if db.query(Announcement).count() == 0:
             _seed_announcements(db)
+        if db.query(LeaveType).count() == 0:
+            _seed_leave_types(db)
         _ = db.query(ChatFeedback).count()
 
         # Background thread: embeds any chunks still missing vectors
@@ -643,6 +648,19 @@ def _seed_announcements(db):
     print("Announcements seeding complete.")
 
 
+
+
+def _seed_leave_types(db):
+    """Seed the four standard leave types."""
+    print("Seeding leave types...")
+    db.add_all([
+        LeaveType(name="Casual Leave", code="CL", annual_entitlement=12, is_earned=False, carry_forward=False),
+        LeaveType(name="Privileged Leave", code="PL", annual_entitlement=15, is_earned=False, carry_forward=True),
+        LeaveType(name="Leave Without Pay", code="LWP", annual_entitlement=None, is_earned=False, carry_forward=False),
+        LeaveType(name="Compensatory Off", code="CO", annual_entitlement=None, is_earned=True, carry_forward=False),
+    ])
+    db.commit()
+    print("Leave types seeding complete.")
 
 
 def _migrate_prompt_configs(db):

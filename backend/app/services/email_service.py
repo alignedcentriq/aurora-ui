@@ -400,6 +400,72 @@ def send_leave_decision_notification(
     return _send(to=employee_email, subject=subject, html_body=html_body)
 
 
+def send_leave_fyi_notification(
+    employee_name: str,
+    employee_email: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    reason: str,
+    functional_manager_email: str,
+) -> bool:
+    """FYI notification to Functional Manager — no approve/reject links."""
+    subject = f"[Leave FYI] {employee_name} — {leave_type} | {start_date} to {end_date}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Leave Notification (FYI) — Centriq AI</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>Hi,</p>
+        <p>This is to inform you that <strong>{html.escape(employee_name)}</strong> has applied for leave. This is for your information only — the reporting manager will approve or reject this request.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:140px;">Employee</td><td>{html.escape(employee_name)} ({html.escape(employee_email)})</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Leave Type</td><td>{html.escape(leave_type)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">From</td><td>{html.escape(start_date)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">To</td><td>{html.escape(end_date)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Reason</td><td>{_nl2br(reason)}</td></tr>
+        </table>
+        <p style="color:#888;font-size:12px;">This is an automated FYI notification from Centriq AI. No action is required from you.</p>
+      </div>
+    </body></html>
+    """
+    return _send(to=functional_manager_email, subject=subject, html_body=html_body)
+
+
+def send_hr_query_notification(
+    reference_id: str,
+    employee_name: str,
+    employee_email: str,
+    category: str,
+    subject: str,
+    description: str,
+    hr_email: str,
+) -> bool:
+    """Notify HR team about a new employee query."""
+    email_subject = f"[HR Query] {reference_id} — {category} | {employee_name}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">New HR Query — Centriq AI</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>A new HR query has been submitted and requires your attention.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:140px;">Reference ID</td><td>{html.escape(reference_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Employee</td><td>{html.escape(employee_name)} ({html.escape(employee_email)})</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Category</td><td>{html.escape(category)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Subject</td><td>{html.escape(subject)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Description</td><td>{_nl2br(description)}</td></tr>
+        </table>
+        <p>Please respond through the HR Portal.</p>
+        <p style="color:#888;font-size:12px;">Submitted via Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(to=hr_email, subject=email_subject, html_body=html_body)
+
+
 def send_grievance_notification(
     reference_id: str,
     category: str,
