@@ -17,7 +17,6 @@ from typing import List, Optional
 
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
-from app.mcp_client import load_mcp_tools, shutdown_mcp_client
 from app.agents.deeplink_agent import get_deeplink_agent
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
@@ -44,7 +43,7 @@ from app.services.feedback_service import FeedbackService
 # -- Langfuse tracing --
 from app.langfuse_tracing import TracingContext, langfuse_event
 
-# -- Logger (console only — Loki removed, observability via PostgreSQL) --
+# -- Logger --
 logger = logging.getLogger("aurora-logger")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -174,17 +173,8 @@ async def startup_event():
 
     asyncio.create_task(periodic_renew())
 
-    try:
-        await load_mcp_tools()
-        get_deeplink_agent()
-        print("MCP deep-link tools loaded.")
-    except Exception as e:
-        print(f"[MCP] Deep-link tools failed to load: {e}")
+    get_deeplink_agent()
 
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await shutdown_mcp_client()
 
 
 @app.get("/")
