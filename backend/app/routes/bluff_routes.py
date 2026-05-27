@@ -2,10 +2,11 @@
 Bluff Mode — decoy chat endpoint.
 
 When Bluff Mode is active in the frontend, all chat goes through this route.
-- Policy-related queries  → routed to real HRService.search_policies (RAG)
-- Everything else         → returns a generic, non-revealing placeholder response
+- Policy-related queries  → RAG retrieval + LLM synthesis (same quality as real chat)
+- Everything else         → generic placeholder response
 """
 
+import asyncio
 import json
 import re
 from fastapi import APIRouter
@@ -34,11 +35,48 @@ _GENERIC_RESPONSES = [
 _response_idx = 0
 
 
-def _get_generic_response(message: str) -> str:
+def _get_generic_response(_: str) -> str:
     global _response_idx
     resp = _GENERIC_RESPONSES[_response_idx % len(_GENERIC_RESPONSES)]
     _response_idx += 1
     return resp
+
+
+async def _synthesize_policy_answer(query: str, context: str):
+    """
+    Use the same LLM as the real agent to synthesize a clean answer
+    from retrieved policy chunks. Streams tokens as they arrive.
+    """
+    from openai import AsyncOpenAI
+    from app.config import settings
+
+    client = AsyncOpenAI(
+        base_url=settings.AGENT_BASE_URL,
+        api_key=settings.AGENT_API_KEY,
+    )
+
+    system_prompt = (
+        "You are a helpful HR assistant. Answer the employee's question using ONLY "
+        "the policy information provided below. Be clear and concise. "
+        "Do not include document metadata, version numbers, author names, or review dates. "
+        "If the policy text does not cover the question, say so briefly."
+    )
+    user_content = f"Question: {query}\n\nPolicy Information:\n{context}"
+
+    stream = await client.chat.completions.create(
+        model=settings.AGENT_MODEL_NAME,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.2,
+        stream=True,
+    )
+
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            yield delta
 
 
 class BluffChatRequest(BaseModel):
@@ -50,7 +88,7 @@ class BluffChatRequest(BaseModel):
 async def bluff_chat(request: BluffChatRequest):
     """
     Decoy chat endpoint for Bluff Mode.
-    Policy queries → real RAG answer.
+    Policy queries → RAG retrieval + LLM synthesis → real answer streamed live.
     Everything else → generic placeholder streamed response.
     """
 
@@ -58,22 +96,24 @@ async def bluff_chat(request: BluffChatRequest):
 
     async def generate():
         if is_policy:
-            # Real policy answer via HRService RAG
             try:
+                # Step 1: RAG retrieval (same as real agent's search_hr_policies tool)
                 from app.hr_service import HRService
-                result = HRService.search_policies(request.message, limit=4)
-                if result and isinstance(result, str) and result.strip():
-                    # Stream word-by-word so it looks live
-                    words = result.split(" ")
-                    for i, word in enumerate(words):
-                        chunk = word + (" " if i < len(words) - 1 else "")
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-                else:
+                context = await asyncio.to_thread(
+                    HRService.search_policies, request.message, 4
+                )
+
+                if not context or not context.strip():
                     yield f"data: {json.dumps({'type': 'token', 'content': 'I could not find a matching policy for your query. Please contact HR for assistance.'})}\n\n"
+                else:
+                    # Step 2: LLM synthesis — stream tokens directly to client
+                    async for token in _synthesize_policy_answer(request.message, context):
+                        yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'token', 'content': 'I could not retrieve policy information at this time. Please try again later.'})}\n\n"
         else:
-            # Generic non-revealing response
+            # Generic non-revealing response, streamed word by word
             response_text = _get_generic_response(request.message)
             words = response_text.split(" ")
             for i, word in enumerate(words):

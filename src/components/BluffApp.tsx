@@ -1,5 +1,7 @@
 import * as React from "react";
 import { Toaster, toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,18 +153,39 @@ function ChatTab() {
           >
             <div
               style={{
-                maxWidth: "70%",
+                maxWidth: "72%",
                 padding: "10px 14px",
                 borderRadius: m.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
                 background: m.role === "user" ? "#2563eb" : "#f1f5f9",
                 color: m.role === "user" ? "#fff" : "#1e293b",
                 fontSize: "14px",
-                lineHeight: "1.5",
-                whiteSpace: "pre-wrap",
+                lineHeight: "1.6",
                 wordBreak: "break-word",
               }}
             >
-              {m.content || (loading && i === messages.length - 1 ? "…" : "")}
+              {m.role === "user" ? (
+                m.content || (loading && i === messages.length - 1 ? "…" : "")
+              ) : (
+                m.content ? (
+                  <div style={{ "--md-color": "#1e293b" } as React.CSSProperties}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => <p style={{ margin: "0 0 8px" }}>{children}</p>,
+                        ul: ({ children }) => <ul style={{ margin: "4px 0 8px", paddingLeft: "18px" }}>{children}</ul>,
+                        ol: ({ children }) => <ol style={{ margin: "4px 0 8px", paddingLeft: "18px" }}>{children}</ol>,
+                        li: ({ children }) => <li style={{ marginBottom: "2px" }}>{children}</li>,
+                        strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
+                        h1: ({ children }) => <p style={{ fontWeight: 700, fontSize: "15px", margin: "8px 0 4px" }}>{children}</p>,
+                        h2: ({ children }) => <p style={{ fontWeight: 600, fontSize: "14px", margin: "6px 0 4px" }}>{children}</p>,
+                        h3: ({ children }) => <p style={{ fontWeight: 600, margin: "4px 0 2px" }}>{children}</p>,
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (loading && i === messages.length - 1 ? "…" : "")
+              )}
             </div>
           </div>
         ))}
