@@ -38,6 +38,7 @@ from app.routes.observability_routes import router as observability_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
+from app.routes.bluff_routes import router as bluff_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -51,8 +52,32 @@ if not logger.handlers:
 
 from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse as StarletteJSONResponse
 
 app = FastAPI(title="Centriq AI Backend")
+
+
+class BluffModeMiddleware(BaseHTTPMiddleware):
+    """
+    When the frontend sends X-Bluff-Mode: 1, intercept all non-bluff, non-policy
+    API routes and return a generic empty response so no real data leaks.
+    The /api/bluff/* routes and any path containing 'policy' are exempt.
+    """
+
+    _BLUFF_EXEMPT = re.compile(r"(/api/bluff/|policy)", re.IGNORECASE)
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if (
+            request.headers.get("X-Bluff-Mode") == "1"
+            and not self._BLUFF_EXEMPT.search(request.url.path)
+        ):
+            return StarletteJSONResponse(
+                {"data": [], "items": [], "message": "No data available"},
+                status_code=200,
+            )
+        return await call_next(request)
 
 # ── LLM Reachability (VPN check) ─────────────────────────────────────────────
 
@@ -92,7 +117,9 @@ app.include_router(observability_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
+app.include_router(bluff_router)
 
+app.add_middleware(BluffModeMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
