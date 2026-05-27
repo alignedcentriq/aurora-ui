@@ -22,10 +22,18 @@ import {
   AlignLeft,
   ShieldCheck,
   Zap,
+  Link2,
+  Unlink,
+  CheckCircle2,
+  Loader2,
+  Mail,
+  Calendar,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettings } from "@/lib/settings-store";
 import { motion } from "framer-motion";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
@@ -104,6 +112,225 @@ const item = {
     transition: { type: "spring", stiffness: 300, damping: 30 },
   },
 };
+
+// -- Connected Accounts (OAuth2 popup flow) -----------------------------------
+
+interface ProviderMeta {
+  name: string;
+  icon: React.FC<{ className?: string }>;
+  description: string;
+  features: string[];
+  color: string;
+}
+
+function MicrosoftIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 21 21" fill="none">
+      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+    </svg>
+  );
+}
+
+function ZohoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none">
+      <rect width="24" height="24" rx="4" fill="#E42527" />
+      <text x="4" y="17" fontFamily="Arial" fontWeight="bold" fontSize="11" fill="white">Z</text>
+    </svg>
+  );
+}
+
+const PROVIDER_META: Record<string, ProviderMeta> = {
+  microsoft: {
+    name: "Microsoft 365",
+    icon: MicrosoftIcon,
+    description: "Outlook, Calendar & Teams",
+    features: ["Send & read emails", "View calendar events", "Teams chat"],
+    color: "#0078D4",
+  },
+  zoho: {
+    name: "Zoho People",
+    icon: ZohoIcon,
+    description: "Leave & Attendance",
+    features: ["Leave balances", "Attendance records", "Apply for leave"],
+    color: "#E42527",
+  },
+};
+
+interface ConnectionStatus {
+  provider: string;
+  connected: boolean;
+  email: string | null;
+  connected_at: string | null;
+  scopes: string | null;
+}
+
+function ConnectedAccounts({ userEmail }: { userEmail: string }) {
+  const [connections, setConnections] = useState<ConnectionStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
+
+  const authHeaders = useMemo(() => ({
+    "Content-Type": "application/json",
+    "x-user-email": userEmail,
+  }), [userEmail]);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/integrations/status", { headers: authHeaders });
+      if (res.ok) {
+        setConnections(await res.json());
+      }
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    fetchStatus();
+  }, [fetchStatus]);
+
+  // Listen for postMessage from OAuth popup
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === "oauth-callback") {
+        setConnecting(null);
+        fetchStatus();
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [fetchStatus]);
+
+  const handleConnect = (provider: string) => {
+    setConnecting(provider);
+    const url = `/api/integrations/connect/${provider}?email=${encodeURIComponent(userEmail)}`;
+    const w = 500, h = 650;
+    const left = window.screenX + (window.outerWidth - w) / 2;
+    const top = window.screenY + (window.outerHeight - h) / 2;
+    const popup = window.open(url, `oauth_${provider}`, `width=${w},height=${h},left=${left},top=${top}`);
+
+    // Poll for popup close (fallback if postMessage fails)
+    const timer = setInterval(() => {
+      if (!popup || popup.closed) {
+        clearInterval(timer);
+        setConnecting(null);
+        fetchStatus();
+      }
+    }, 500);
+  };
+
+  const handleDisconnect = async (provider: string) => {
+    setDisconnecting(provider);
+    try {
+      await fetch(`/api/integrations/disconnect/${provider}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      await fetchStatus();
+    } catch {
+      // silent
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {Object.entries(PROVIDER_META).map(([key, meta]) => {
+        const conn = connections.find((c) => c.provider === key);
+        const isConnected = conn?.connected ?? false;
+        const Icon = meta.icon;
+
+        return (
+          <div
+            key={key}
+            className={cn(
+              "rounded-xl border p-4 transition-all",
+              isConnected
+                ? "border-green-500/30 bg-green-500/5"
+                : "border-[var(--border)] hover:border-[var(--border-strong)]",
+            )}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--muted)] shrink-0">
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-[13px] font-semibold text-foreground">{meta.name}</p>
+                  <p className="text-[11px] text-muted-foreground">{meta.description}</p>
+                  {isConnected && conn?.email && (
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">
+                        {conn.email}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {meta.features.map((f) => (
+                      <span
+                        key={f}
+                        className="inline-flex items-center rounded-md bg-[var(--muted)] px-2 py-0.5 text-[10px] text-muted-foreground"
+                      >
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="shrink-0">
+                {isConnected ? (
+                  <button
+                    onClick={() => handleDisconnect(key)}
+                    disabled={disconnecting === key}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-3 py-1.5 text-[11px] font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors disabled:opacity-50"
+                  >
+                    {disconnecting === key ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Unlink className="h-3 w-3" />
+                    )}
+                    Disconnect
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleConnect(key)}
+                    disabled={connecting === key}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {connecting === key ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <ExternalLink className="h-3 w-3" />
+                    )}
+                    Connect
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function SettingsPage() {
   const { user } = useAuth();
@@ -222,6 +449,21 @@ function SettingsPage() {
                   );
                 })}
               </div>
+            </div>
+          </motion.div>
+
+          {/* Connected Accounts */}
+          <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
+              <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
+                <Link2 className="h-4 w-4 text-blue-500" /> Connected Accounts
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Connect your accounts to enable mail, calendar, and chat features through the assistant.
+              </p>
+            </div>
+            <div className="p-4 sm:p-6">
+              <ConnectedAccounts userEmail={user.email} />
             </div>
           </motion.div>
 

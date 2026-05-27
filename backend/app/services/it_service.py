@@ -48,6 +48,7 @@ class ITService:
             try:
                 from app.services.email_service import send_it_ticket_email
                 send_it_ticket_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     employee_id=emp.employee_id or str(emp.id),
@@ -153,7 +154,7 @@ class ITService:
         try:
             from app.services.email_service import send_software_install_email
             sent = send_software_install_email(
-                requester_email=email,
+                user_email=email,
                 software_name=software_name,
                 subject=draft["subject"],
                 body=draft["body"],

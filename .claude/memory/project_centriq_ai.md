@@ -451,8 +451,8 @@ headers: {
 | `DEFAULT_USER_EMAIL` | `employee1@centriq.ai` | Dev fallback when x-user-email header absent |
 | `PORT` | `8080` | Backend port |
 | `SMTP_HOST/PORT/USER/PASS` | `smtp.gmail.com/587` | Email |
-| `HELPDESK_EMAIL` | `poc@alignedautomation.com` | IT tickets destination |
-| `ADMIN_EMAIL` | `poc@alignedautomation.com` | Admin notifications |
+| `HELPDESK_EMAIL` | `shivam.sharma@alignedautomation.com` | IT tickets destination |
+| `ADMIN_EMAIL` | `shivam.sharma@alignedautomation.com` | Admin notifications |
 | `GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | — | Azure AD for SharePoint Graph API |
 
 ---

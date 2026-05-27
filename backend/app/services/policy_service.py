@@ -133,7 +133,10 @@ def _expand_query(query: str) -> tuple[str, str | None]:
         for word in words:
             if len(word) < 3:
                 continue
-            matches = get_close_matches(word, synonym_keys, n=1, cutoff=0.65)
+            # Only compare against keys of similar length (±1 char) to avoid
+            # common words like "tell" fuzzy-matching short acronyms like "el".
+            candidate_keys = [k for k in synonym_keys if abs(len(k) - len(word)) <= 1]
+            matches = get_close_matches(word, candidate_keys, n=1, cutoff=0.65)
             if matches and matches[0] != word:
                 best = matches[0]
                 expansion = _QUERY_SYNONYMS[best]

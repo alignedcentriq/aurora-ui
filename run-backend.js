@@ -15,8 +15,6 @@ let wslKeepAliveProcess = null;
 const infraPorts = [
   { name: "Postgres", port: 5433, required: true },
   { name: "Redis", port: 6380, required: true },
-  { name: "Loki", port: 3002, required: false },
-  { name: "Grafana", port: 3001, required: false },
   { name: "Langfuse", port: 3003, required: false },
 ];
 
@@ -331,11 +329,6 @@ const runUvicornWithRestart = async (uvicornPath) => {
     "app.main:app",
     "--host", "0.0.0.0",
     "--port", "8080",
-    "--reload",
-    "--reload-dir", "app",
-    "--reload-exclude", "__pycache__",
-    "--reload-exclude", "*.pyc",
-    "--reload-delay", "0.5",
   ];
   const env = { ...process.env, LANGFUSE_OTEL: "false" };
 
@@ -352,6 +345,40 @@ const runUvicornWithRestart = async (uvicornPath) => {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
+};
+
+/**
+ * Start a mock uvicorn server in the background (fire-and-forget with auto-restart).
+ * Used for mock_zoho_server (8090) and mock_manage_engine_server (8091).
+ */
+const startMockServer = (uvicornPath, appModule, port, label) => {
+  const args = [appModule, "--host", "0.0.0.0", "--port", String(port)];
+  const env = { ...process.env, LANGFUSE_OTEL: "false" };
+
+  const launch = () => {
+    if (uvicornShuttingDown) return;
+    console.log(`--- Starting ${label} on port ${port} ---`);
+    const child = spawn(uvicornPath, args, {
+      cwd: backendDir,
+      env,
+      stdio: "inherit",
+      shell: false,
+    });
+    child.on("error", (err) => {
+      if (uvicornShuttingDown) return;
+      console.error(`[${label}] failed to start: ${err.message} — retrying in 5s`);
+      setTimeout(launch, 5000);
+    });
+    child.on("exit", (code) => {
+      if (uvicornShuttingDown) return;
+      if (code !== 0 && code !== null) {
+        console.error(`[${label}] exited with code ${code} — restarting in 5s`);
+        setTimeout(launch, 5000);
+      }
+    });
+  };
+
+  launch();
 };
 
 const startBackend = async () => {
@@ -384,6 +411,10 @@ const startBackend = async () => {
   console.log("--- Ensuring database is ready ---");
   await runCommand(venvPaths.python, ["create_db.py"]);
   await runCommand(venvPaths.python, ["init_db_script.py"]);
+
+  // Start mock servers in background (non-blocking, auto-restart)
+  startMockServer(venvPaths.uvicorn, "mock_zoho_server:app",          8090, "Mock Zoho");
+  startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
 
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runUvicornWithRestart(venvPaths.uvicorn);

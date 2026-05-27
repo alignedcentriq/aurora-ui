@@ -17,7 +17,6 @@ from typing import List, Optional
 
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
-from app.mcp_client import load_mcp_tools, shutdown_mcp_client
 from app.agents.deeplink_agent import get_deeplink_agent
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
@@ -36,12 +35,16 @@ from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.integration_routes import router as integration_router
+from app.routes.installation_routes import router as installation_router
+from app.routes.software_catalog_routes import router as software_catalog_router
+from app.routes.bluff_routes import router as bluff_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
 from app.langfuse_tracing import TracingContext, langfuse_event
 
-# -- Logger (console only — Loki removed, observability via PostgreSQL) --
+# -- Logger --
 logger = logging.getLogger("aurora-logger")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -49,8 +52,32 @@ if not logger.handlers:
 
 from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse as StarletteJSONResponse
 
 app = FastAPI(title="Centriq AI Backend")
+
+
+class BluffModeMiddleware(BaseHTTPMiddleware):
+    """
+    When the frontend sends X-Bluff-Mode: 1, intercept all non-bluff, non-policy
+    API routes and return a generic empty response so no real data leaks.
+    The /api/bluff/* routes and any path containing 'policy' are exempt.
+    """
+
+    _BLUFF_EXEMPT = re.compile(r"(/api/bluff/|policy)", re.IGNORECASE)
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if (
+            request.headers.get("X-Bluff-Mode") == "1"
+            and not self._BLUFF_EXEMPT.search(request.url.path)
+        ):
+            return StarletteJSONResponse(
+                {"data": [], "items": [], "message": "No data available"},
+                status_code=200,
+            )
+        return await call_next(request)
 
 # ── LLM Reachability (VPN check) ─────────────────────────────────────────────
 
@@ -87,7 +114,12 @@ app.include_router(admin_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(observability_router)
+app.include_router(integration_router)
+app.include_router(installation_router)
+app.include_router(software_catalog_router)
+app.include_router(bluff_router)
 
+app.add_middleware(BluffModeMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -168,17 +200,8 @@ async def startup_event():
 
     asyncio.create_task(periodic_renew())
 
-    try:
-        await load_mcp_tools()
-        get_deeplink_agent()
-        print("MCP deep-link tools loaded.")
-    except Exception as e:
-        print(f"[MCP] Deep-link tools failed to load: {e}")
+    get_deeplink_agent()
 
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await shutdown_mcp_client()
 
 
 @app.get("/")
@@ -304,6 +327,16 @@ async def process_approval(token: str):
                     ApprovalToken.token != token,
                     ApprovalToken.used == False,
                 ).update({"used": True})
+
+                # Deduct leave balance on approval
+                if decision == "Approved":
+                    try:
+                        from app.hr_service import HRService
+                        days = (leave.end_date - leave.start_date).days + 1
+                        HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
+                    except Exception as e:
+                        print(f"[Approval] Balance deduction error (non-fatal): {e}")
+
                 db.commit()
                 # Notify employee
                 try:
@@ -446,8 +479,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
     if html_stripped:
         final_message = html_stripped
 
-    # Remove stray JSON blobs (but only if non-empty text remains)
-    cleaned = re.sub(r'\{.*?\}', '', final_message, flags=re.DOTALL).strip()
+    # Remove stray JSON blobs — only standalone blobs that start with {"
+    # (tool output leaks), not curly braces inside natural prose
+    cleaned = re.sub(r'(?:^|\n)\s*\{\"[^}]{20,}\}', '', final_message, flags=re.DOTALL).strip()
     if cleaned:
         final_message = cleaned
 
@@ -486,12 +520,25 @@ async def chat(
     start_time = time.time()
     user_email = x_user_email or settings.DEFAULT_USER_EMAIL
     user_role = (x_user_role or "employee").lower()
+
+    # Auto-fetch stored Microsoft token if none passed explicitly
+    effective_graph_token = x_graph_token or None
+    if not effective_graph_token:
+        try:
+            from app.services.oauth_service import get_valid_token
+            effective_graph_token = await get_valid_token(
+                user_email.lower().strip(),
+                "microsoft",
+            )
+        except Exception:
+            pass
+
     config = {"configurable": {"thread_id": request.session_id}}
     input_data = {
         "messages": [HumanMessage(content=request.message)],
         "user_email": user_email,
         "user_role": user_role,
-        "graph_token": x_graph_token,
+        "graph_token": effective_graph_token,
         "session_id": request.session_id,
     }
 

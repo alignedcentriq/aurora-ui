@@ -68,6 +68,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_reimbursement_email
                 send_reimbursement_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     reimbursement_type=type,
@@ -82,6 +83,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_notification_event
                 send_notification_event(
+                    email,
                     "reimbursement_submitted",
                     f"{emp.name} — INR {amount:,.0f} ({type})",
                     {
@@ -177,6 +179,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_parking_request_email
                 send_parking_request_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     vehicle_type=vehicle_type,
@@ -221,6 +224,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_parking_request_email
                 send_parking_request_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     vehicle_type=vtype,
@@ -314,6 +318,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_facility_complaint_email
                 send_facility_complaint_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     ticket_id=ticket_id,
@@ -328,6 +333,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_notification_event
                 send_notification_event(
+                    email,
                     "facility_complaint",
                     f"[{priority}] {category} at {location}",
                     {
@@ -424,6 +430,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_food_complaint_email
                 send_food_complaint_email(
+                    user_email=email,
                     employee_name=emp.name,
                     employee_email=emp.email,
                     vendor_name=vendor_name,
@@ -437,6 +444,7 @@ class AdminService:
             try:
                 from app.services.email_service import send_notification_event
                 send_notification_event(
+                    email,
                     "food_complaint",
                     f"{vendor_name} — {complaint_type}",
                     {

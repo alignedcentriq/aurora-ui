@@ -2,7 +2,7 @@ import datetime
 import secrets
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import Employee, Leave, Policy, ApprovalToken, EmployeeZohoProfile, Grievance
+from app.models import Employee, Leave, Policy, ApprovalToken, EmployeeZohoProfile, Grievance, LeaveType, LeaveBalance, HRQuery
 
 class HRService:
     @staticmethod
@@ -30,21 +30,115 @@ class HRService:
         db = SessionLocal()
         try:
             emp = HRService.get_employee_by_email(db, email)
-            
-            # Simple logic: 24 days annual - approved leaves
-            approved_leaves = db.query(Leave).filter(
-                Leave.employee_id == emp.id, 
-                Leave.status == "Approved"
-            ).all()
-            used = len(approved_leaves)
-            balance = 24 - used
-            return f"You have {balance} days of leave remaining (Used: {used} days)."
+            year = datetime.date.today().year
+
+            balances = (
+                db.query(LeaveBalance, LeaveType)
+                .join(LeaveType, LeaveBalance.leave_type_id == LeaveType.id)
+                .filter(
+                    LeaveBalance.employee_id == emp.id,
+                    LeaveBalance.year == year,
+                    LeaveType.is_active == True,
+                )
+                .all()
+            )
+
+            if not balances:
+                # Fallback: init balances if missing and retry
+                HRService._init_employee_balances(db, emp.id, emp.joining_date)
+                db.commit()
+                balances = (
+                    db.query(LeaveBalance, LeaveType)
+                    .join(LeaveType, LeaveBalance.leave_type_id == LeaveType.id)
+                    .filter(
+                        LeaveBalance.employee_id == emp.id,
+                        LeaveBalance.year == year,
+                        LeaveType.is_active == True,
+                    )
+                    .all()
+                )
+
+            if not balances:
+                return "Leave balance data is not available. Please contact HR."
+
+            lines = [f"**Leave Balance ({year}):**\n"]
+            for lb, lt in balances:
+                if lt.code == "LWP":
+                    lines.append(f"- **{lt.name}**: No limit (deducted from salary)")
+                elif lt.is_earned:
+                    lines.append(f"- **{lt.name}**: {lb.balance} available ({lb.earned} earned, {lb.used} used)")
+                else:
+                    lines.append(f"- **{lt.name}**: {lb.balance} available ({lb.used} used of {lb.entitled})")
+            return "\n".join(lines)
         finally:
             db.close()
 
     @staticmethod
+    def _init_employee_balances(db: Session, employee_id: int, joining_date=None):
+        """Create LeaveBalance records for current year if missing."""
+        year = datetime.date.today().year
+        leave_types = db.query(LeaveType).filter(LeaveType.is_active == True).all()
+        for lt in leave_types:
+            existing = db.query(LeaveBalance).filter(
+                LeaveBalance.employee_id == employee_id,
+                LeaveBalance.leave_type_id == lt.id,
+                LeaveBalance.year == year,
+            ).first()
+            if existing:
+                continue
+            if lt.is_earned:
+                entitled = 0
+            elif lt.annual_entitlement is None:
+                entitled = 0
+            else:
+                if joining_date and joining_date.year == year:
+                    months_remaining = 12 - joining_date.month + 1
+                    entitled = round(lt.annual_entitlement * months_remaining / 12, 1)
+                else:
+                    entitled = lt.annual_entitlement
+            db.add(LeaveBalance(
+                employee_id=employee_id, leave_type_id=lt.id, year=year,
+                entitled=entitled, used=0, balance=entitled, earned=0,
+            ))
+
+    @staticmethod
+    def deduct_leave_balance(db: Session, employee_id: int, leave_type_name: str, days: float):
+        """Deduct balance on approval. Returns True if successful."""
+        year = datetime.date.today().year
+        lt = db.query(LeaveType).filter(LeaveType.name.ilike(f"%{leave_type_name}%")).first()
+        if not lt:
+            return False
+        if lt.code == "LWP":
+            return True  # No balance tracking for LWP
+        lb = db.query(LeaveBalance).filter(
+            LeaveBalance.employee_id == employee_id,
+            LeaveBalance.leave_type_id == lt.id,
+            LeaveBalance.year == year,
+        ).first()
+        if lb:
+            lb.used += days
+            lb.balance = lb.entitled + lb.earned - lb.used
+        return True
+
+    @staticmethod
+    def restore_leave_balance(db: Session, employee_id: int, leave_type_name: str, days: float):
+        """Restore balance on cancellation of an approved leave."""
+        year = datetime.date.today().year
+        lt = db.query(LeaveType).filter(LeaveType.name.ilike(f"%{leave_type_name}%")).first()
+        if not lt or lt.code == "LWP":
+            return
+        lb = db.query(LeaveBalance).filter(
+            LeaveBalance.employee_id == employee_id,
+            LeaveBalance.leave_type_id == lt.id,
+            LeaveBalance.year == year,
+        ).first()
+        if lb:
+            lb.used = max(0, lb.used - days)
+            lb.balance = lb.entitled + lb.earned - lb.used
+
+    @staticmethod
     def _find_manager_email(db, emp: Employee) -> str:
-        """Best-effort manager email lookup; falls back to HR_EMAIL."""
+        """Best-effort Reporting Manager email lookup; falls back to HR_EMAIL."""
         from app.config import settings
         if emp.manager_id:
             mgr = db.query(Employee).filter(Employee.id == emp.manager_id).first()
@@ -60,9 +154,21 @@ class HRService:
         return settings.HR_EMAIL
 
     @staticmethod
+    def _find_functional_manager_email(db, emp: Employee) -> str | None:
+        """Look up Functional Manager email from Zoho profile. Returns None if not found."""
+        profile = db.query(EmployeeZohoProfile).filter(EmployeeZohoProfile.employee_id == emp.id).first()
+        if profile and profile.functional_manager:
+            mgr = db.query(Employee).filter(
+                Employee.name.ilike(f"%{profile.functional_manager.split()[0]}%")
+            ).first()
+            if mgr and mgr.email:
+                return mgr.email
+        return None
+
+    @staticmethod
     def apply_leave(email: str, start_date: str, end_date: str, leave_type: str, reason: str = "Applied via AI Assistant"):
         from app.config import settings
-        from app.services.email_service import send_leave_approval_request
+        from app.services.email_service import send_leave_approval_request, send_leave_fyi_notification
         db = SessionLocal()
         try:
             emp = HRService.get_employee_by_email(db, email)
@@ -85,7 +191,7 @@ class HRService:
             db.commit()
             db.refresh(new_leave)
 
-            # Send manager approval email with clickable links
+            # Send Reporting Manager approval email with clickable links
             try:
                 manager_email = HRService._find_manager_email(db, emp)
                 expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
@@ -101,6 +207,7 @@ class HRService:
                 ))
                 db.commit()
                 send_leave_approval_request(
+                    user_email=emp.email,
                     employee_name=emp.name, employee_email=emp.email,
                     leave_type=leave_type, start_date=start_date, end_date=end_date,
                     reason=reason,
@@ -111,13 +218,64 @@ class HRService:
             except Exception as e:
                 print(f"[HR] Approval email error (non-fatal): {e}")
 
+            # Send FYI notification to Functional Manager (no approve/reject links)
+            try:
+                fm_email = HRService._find_functional_manager_email(db, emp)
+                if fm_email and fm_email != manager_email:
+                    send_leave_fyi_notification(
+                        user_email=emp.email,
+                        employee_name=emp.name, employee_email=emp.email,
+                        leave_type=leave_type, start_date=start_date, end_date=end_date,
+                        reason=reason, functional_manager_email=fm_email,
+                    )
+            except Exception as e:
+                print(f"[HR] FM FYI email error (non-fatal): {e}")
+
             return (
                 f"Your {leave_type} leave request from {start_date} to {end_date} has been submitted. "
-                f"Your manager has been notified by email and will approve or reject it within 24 hours."
+                f"Your reporting manager has been notified for approval and your functional manager has been informed."
             )
         finally:
             db.close()
 
+
+    @staticmethod
+    def submit_hr_query(email: str, category: str, subject: str, description: str) -> str:
+        """Create an HR query and notify HR team."""
+        from app.config import settings
+        from app.services.email_service import send_hr_query_notification
+        db = SessionLocal()
+        try:
+            emp = HRService.get_employee_by_email(db, email)
+            count = db.query(HRQuery).count()
+            reference_id = f"HRQ-{count + 1:03}"
+            query = HRQuery(
+                reference_id=reference_id,
+                employee_id=emp.id,
+                category=category,
+                subject=subject,
+                description=description,
+            )
+            db.add(query)
+            db.commit()
+            try:
+                send_hr_query_notification(
+                    user_email=emp.email,
+                    reference_id=reference_id,
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    category=category,
+                    subject=subject,
+                    description=description,
+                )
+            except Exception as e:
+                print(f"[HR] Query notification email error (non-fatal): {e}")
+            return (
+                f"Your HR query has been submitted (Ref: **{reference_id}**). "
+                f"Category: {category}. HR will respond within 2 working days."
+            )
+        finally:
+            db.close()
 
     @staticmethod
     def upsert_policy(title: str, content: str, category: str = "General"):
@@ -214,12 +372,12 @@ class HRService:
             db.commit()
             submitter = "Anonymous" if is_anonymous else emp.name
             send_grievance_notification(
+                user_email=emp.email,
                 reference_id=reference_id,
                 category=category,
                 description=description,
                 is_anonymous=is_anonymous,
                 submitted_by=submitter,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Your grievance has been submitted (Ref: **{reference_id}**). "
@@ -238,14 +396,12 @@ class HRService:
             emp = HRService.get_employee_by_email(db, employee_email)
             joining = emp.joining_date.strftime("%d %b %Y") if emp.joining_date else "As per offer letter"
             send_onboarding_checklist(
+                user_email=triggered_by or employee_email,
                 employee_name=emp.name,
                 employee_email=emp.email,
                 joining_date=joining,
                 department=emp.department or "N/A",
                 designation=emp.designation or "N/A",
-                it_email=settings.HELPDESK_EMAIL,
-                admin_email=settings.ADMIN_EMAIL,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Onboarding checklist triggered for **{emp.name}** (joining: {joining}). "
@@ -265,14 +421,12 @@ class HRService:
                 last_day = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
             manager_email = HRService._find_manager_email(db, emp)
             send_offboarding_checklist(
+                user_email=triggered_by or employee_email,
                 employee_name=emp.name,
                 employee_email=emp.email,
                 last_day=last_day,
                 department=emp.department or "N/A",
                 manager_email=manager_email,
-                it_email=settings.HELPDESK_EMAIL,
-                admin_email=settings.ADMIN_EMAIL,
-                hr_email=settings.HR_EMAIL,
             )
             return (
                 f"Offboarding checklist triggered for **{emp.name}** (last day: {last_day}). "
