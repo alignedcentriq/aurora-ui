@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
 import * as React from "react";
+import { BluffApp } from "../components/BluffApp";
 import { DefaultCatchBoundary } from "../components/DefaultCatchBoundary";
 import { NotFound } from "../components/NotFound";
 import appCss from "../styles.css?url";
@@ -48,7 +49,25 @@ export const Route = createRootRoute({
 function RootComponent() {
   const isBrowser = typeof window !== "undefined";
   const [isMsalInitialized, setIsMsalInitialized] = React.useState(false);
+  // Bluff ON by default (null or "1"). Only "0" means real UI.
+  const [isBluff, setIsBluff] = React.useState(
+    !isBrowser || localStorage.getItem("centriq_bluff") !== "0"
+  );
 
+  // Secret toggle: Ctrl+Shift+B flips bluff mode
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === "B") {
+        const next = localStorage.getItem("centriq_bluff") !== "0" ? "0" : "1";
+        localStorage.setItem("centriq_bluff", next);
+        setIsBluff(next !== "0");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // MSAL initialization — must run before any conditional returns (Rules of Hooks)
   React.useEffect(() => {
     if (isBrowser && msalInstance) {
       msalInstance
@@ -62,6 +81,14 @@ function RootComponent() {
         });
     }
   }, [isBrowser]);
+
+  if (isBrowser && isBluff) {
+    return (
+      <RootDocument>
+        <BluffApp />
+      </RootDocument>
+    );
+  }
 
   if (!isBrowser || !isMsalInitialized) {
     return (
