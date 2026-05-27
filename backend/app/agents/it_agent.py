@@ -4,6 +4,7 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import InjectedState, ToolNode
 from app.services.it_service import ITService
+from app.services.policy_service import PolicyService
 from app.services.prompt_service import PromptService
 from app.config import settings
 from langchain_openai import ChatOpenAI
@@ -66,7 +67,15 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
     return ITService.get_my_assets(email)
 
 
-tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets]
+@tool
+def search_it_policies(query: str):
+    """Search IT policy and procedure documents (VPN setup, password reset steps, software guides, security policies).
+    Call for any 'how to', 'steps', 'guide', or 'procedure' question before creating a ticket.
+    Answer from the result only. Never use training knowledge."""
+    return PolicyService.search_policies(query, limit=4)
+
+
+tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets, search_it_policies]
 tool_node = ToolNode(tools)
 
 _it_llm = ChatOpenAI(
@@ -85,8 +94,9 @@ def it_assistant(state: ITState):
     default_prompt = (
         f"You are the IT Support Assistant for Aligned Automation.\n"
         f"Employee: {user_email}. Never ask for email or justification.\n\n"
+        f"How-to / steps / guide / setup question (e.g. 'how to connect VPN', 'steps to reset password') → call search_it_policies first. Answer from the result. If no result found, then create a ticket.\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
-        f"Specific problem described → call create_it_ticket immediately.\n"
+        f"Specific problem described (something is broken, not working, error) → call create_it_ticket immediately.\n"
         f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
         f"If ticket already created in this conversation, do not create another.\n"
         f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"
