@@ -1114,6 +1114,7 @@ def hr_agent(state: AgentState):
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
             f"Employee email: {user_email}. Never ask who the user is.\n"
+            f"Always respond in English regardless of the language of the user's message.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
             f"- Leave balance → get_leave_balance(email='{user_email}')\n"

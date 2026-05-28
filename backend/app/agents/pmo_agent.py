@@ -12,6 +12,7 @@ from app.services.prompt_service import PromptService
 
 
 PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation. You have access to a real company project database.
+Always respond in English regardless of the language of the user's message.
 
 CONVERSATION MEMORY RULE:
 Read the full conversation history before responding.
