@@ -323,7 +323,8 @@ def ms365_assistant(state: MS365State):
     base_prompt = PromptService.get_system_prompt("ms365", default_prompt)
     guardrail = PromptService.get_guardrail("ms365")
     feedback_ctx = state.get("feedback_context") or ""
-    system_prompt = base_prompt + guardrail + feedback_ctx
+    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
+    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     return {"messages": [_ms365_llm.invoke(messages)]}

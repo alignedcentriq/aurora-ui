@@ -277,7 +277,9 @@ def admin_assistant(state: AdminState):
     base_prompt = PromptService.get_system_prompt("admin", default_prompt)
     guardrail = PromptService.get_guardrail("admin")
     feedback_ctx = state.get("feedback_context") or ""
-    system_prompt = base_prompt + guardrail + feedback_ctx
+    # Always enforce English regardless of what the stored prompt says
+    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
+    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
 
     # If policy was already pre-fetched by the parent graph node, strip search_admin_policies
     # from the tools list so the LLM cannot trigger a redundant second embedding + tool call.
