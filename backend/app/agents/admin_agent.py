@@ -173,10 +173,13 @@ def list_available_books():
         return "No books are currently available in the company library. Please check back later or contact Admin."
     lines = ["Here are the books currently available in our company library:\n"]
     for b in books:
+        avail = b["available_copies"]
+        total = b["total_copies"]
+        status = b.get("availability_status", "")
         lines.append(
             f"**[{b['id']}] {b['title']}** by {b['author']}"
             + (f" ({b['category']})" if b['category'] else "")
-            + f" — {b['available_copies']} copy/copies available"
+            + f" — {avail}/{total} copies available | {status}"
         )
     lines.append("\nTo request a book, just tell me the book title or ID.")
     return "\n".join(lines)
@@ -193,7 +196,8 @@ def request_book(
     notes: optional reason or message for the admin.
     Admin is notified by email. Request status can be tracked with check_book_requests."""
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
-    return BookshelfService.request_book(email, book_id, notes)
+    name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    return BookshelfService.request_book(email, name, book_id, notes)
 
 
 @tool

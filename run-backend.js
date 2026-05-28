@@ -401,6 +401,7 @@ const startBackend = async () => {
   // Start mock servers in background (non-blocking, auto-restart)
   startMockServer(venvPaths.uvicorn, "mock_zoho_server:app",          8090, "Mock Zoho");
   startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
+  startMockServer(venvPaths.uvicorn, "mock_nexus_library_server:app", 8092, "Mock Nexus Library");
 
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runUvicornWithRestart(venvPaths.uvicorn);

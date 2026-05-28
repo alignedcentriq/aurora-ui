@@ -663,8 +663,24 @@ interface Book {
   description: string;
   total_copies: number;
   available_copies: number;
-  status: string;
+  issued_copies: number;
+  reserved_copies: number;
+  lost_copies: number;
+  damaged_copies: number;
+  availability_status: string;
   created_at: string;
+  copies?: BookCopy[];
+}
+
+interface BookCopy {
+  id: number;
+  book_id: number;
+  copy_number: number;
+  status: string;
+  current_employee_email: string | null;
+  current_employee_name: string | null;
+  issued_at: string | null;
+  due_date: string | null;
 }
 
 interface BookRequest {
@@ -683,20 +699,57 @@ interface BookRequest {
   requested_at: string;
 }
 
-const BOOK_REQUEST_STATUSES = ["Approved", "Rejected", "Returned"];
+interface DashboardMetrics {
+  total_books: number;
+  total_copies: number;
+  available_copies: number;
+  issued_copies: number;
+  reserved_copies: number;
+  overdue_books: number;
+  lost_books: number;
+  damaged_books: number;
+}
+
+interface Dashboard {
+  metrics: DashboardMetrics;
+  popular_books: { title: string; author: string; request_count: number }[];
+  most_issued: { title: string; author: string; issued_copies: number }[];
+  overdue_list: { title: string; employee_name: string; employee_email: string; due_date: string; copy_number: number }[];
+}
+
+const COPY_STATUS_COLORS: Record<string, string> = {
+  Available: "text-emerald-400",
+  Issued: "text-blue-400",
+  Reserved: "text-amber-400",
+  Lost: "text-rose-400",
+  Damaged: "text-orange-400",
+  "Under Maintenance": "text-zinc-400",
+  Returned: "text-emerald-400",
+};
 
 function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [view, setView] = useState<"requests" | "books">("requests");
+  const [view, setView] = useState<"dashboard" | "requests" | "books">("dashboard");
   const [requests, setRequests] = useState<BookRequest[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loadingReq, setLoadingReq] = useState(true);
   const [loadingBooks, setLoadingBooks] = useState(true);
+  const [loadingDash, setLoadingDash] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
+  const [expandedBook, setExpandedBook] = useState<number | null>(null);
   const [reqFilter, setReqFilter] = useState("Pending");
   const [showBookForm, setShowBookForm] = useState(false);
-  const [editingBook, setEditingBook] = useState<Book | null>(null);
-  const [bookForm, setBookForm] = useState({ title: "", author: "", category: "", description: "", total_copies: 1, status: "Active" });
+  const [bookForm, setBookForm] = useState({ title: "", author: "", category: "", description: "", total_copies: 1 });
   const [savingBook, setSavingBook] = useState(false);
+
+  const fetchDashboard = useCallback(async () => {
+    setLoadingDash(true);
+    try {
+      const res = await fetch(`/api/portal/admin/library/dashboard`, { headers: authHeaders });
+      setDashboard(await res.json());
+    } catch { toast.error("Failed to load dashboard"); }
+    finally { setLoadingDash(false); }
+  }, []);
 
   const fetchRequests = useCallback(async () => {
     setLoadingReq(true);
@@ -717,7 +770,16 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
     finally { setLoadingBooks(false); }
   }, []);
 
-  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  const fetchBookCopies = useCallback(async (bookId: number) => {
+    try {
+      const res = await fetch(`/api/portal/admin/books/${bookId}`, { headers: authHeaders });
+      const data = await res.json();
+      setBooks((prev) => prev.map((b) => b.id === bookId ? { ...b, copies: data.copies } : b));
+    } catch { toast.error("Failed to load copies"); }
+  }, [authHeaders]);
+
+  useEffect(() => { if (view === "dashboard") fetchDashboard(); }, [view, fetchDashboard]);
+  useEffect(() => { if (view === "requests") fetchRequests(); }, [view, fetchRequests]);
   useEffect(() => { if (view === "books") fetchBooks(); }, [view, fetchBooks]);
 
   const actOnRequest = async (id: number, action: "approve" | "reject" | "return") => {
@@ -725,33 +787,32 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
     try {
       const res = await fetch(`/api/portal/admin/book-requests/${id}/${action}`, { method: "PUT", headers: authHeaders, body: JSON.stringify({}) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success(`Request ${action}d`);
+      toast.success(action === "approve" ? "Request approved" : action === "reject" ? "Request rejected" : "Book marked returned");
       fetchRequests();
+      if (view === "dashboard") fetchDashboard();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
   };
 
-  const openAddBook = () => {
-    setEditingBook(null);
-    setBookForm({ title: "", author: "", category: "", description: "", total_copies: 1, status: "Active" });
-    setShowBookForm(true);
-  };
-
-  const openEditBook = (b: Book) => {
-    setEditingBook(b);
-    setBookForm({ title: b.title, author: b.author, category: b.category, description: b.description, total_copies: b.total_copies, status: b.status });
-    setShowBookForm(true);
+  const actOnCopy = async (copyId: number, action: "lost" | "damaged" | "restore", bookId: number) => {
+    try {
+      const res = await fetch(`/api/portal/admin/library/copies/${copyId}/${action}`, { method: "PUT", headers: authHeaders, body: JSON.stringify({}) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(`Copy marked as ${action}`);
+      fetchBookCopies(bookId);
+      fetchBooks();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
   };
 
   const saveBook = async () => {
     if (!bookForm.title.trim()) { toast.error("Title is required"); return; }
     setSavingBook(true);
     try {
-      const url = editingBook ? `/api/portal/admin/books/${editingBook.id}` : `/api/portal/admin/books`;
-      const res = await fetch(url, { method: editingBook ? "PUT" : "POST", headers: authHeaders, body: JSON.stringify(bookForm) });
+      const res = await fetch(`/api/portal/admin/books`, { method: "POST", headers: authHeaders, body: JSON.stringify(bookForm) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success(editingBook ? "Book updated" : "Book added");
+      toast.success("Book added to Nexus library");
       setShowBookForm(false);
+      setBookForm({ title: "", author: "", category: "", description: "", total_copies: 1 });
       fetchBooks();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setSavingBook(false); }
@@ -762,112 +823,101 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
       {/* Sub-navigation */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex gap-1">
-          {(["requests", "books"] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={cn(
-                "rounded-lg px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors",
-                view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              )}
-            >
-              {v === "requests" ? "Borrow Requests" : "Manage Books"}
+          {(["dashboard", "requests", "books"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={cn("rounded-lg px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors",
+                view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground")}>
+              {v === "requests" ? "Borrow Requests" : v === "books" ? "Manage Books" : "Dashboard"}
             </button>
           ))}
         </div>
         {view === "books" && (
-          <button
-            onClick={openAddBook}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Book
+          <button onClick={() => setShowBookForm(true)}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
+            <Plus className="h-3.5 w-3.5" /> Add Book
+          </button>
+        )}
+        {view === "dashboard" && (
+          <button onClick={fetchDashboard} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
         )}
       </div>
 
-      {/* Add / Edit Book Form */}
-      {view === "books" && showBookForm && (
-        <div className="mb-5 rounded-xl border border-[var(--border)] bg-card p-5">
-          <h3 className="text-[14px] font-semibold text-foreground mb-4">{editingBook ? "Edit Book" : "Add New Book"}</h3>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: "Title *", key: "title", placeholder: "e.g. Clean Code" },
-              { label: "Author", key: "author", placeholder: "e.g. Robert C. Martin" },
-              { label: "Category", key: "category", placeholder: "Technology, Management…" },
-            ].map(({ label, key, placeholder }) => (
-              <div key={key}>
-                <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</label>
-                <input
-                  type="text"
-                  placeholder={placeholder}
-                  value={(bookForm as Record<string, string | number>)[key] as string}
-                  onChange={(e) => setBookForm((p) => ({ ...p, [key]: e.target.value }))}
-                  className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
-                />
+      {/* ── Dashboard ── */}
+      {view === "dashboard" && (
+        loadingDash ? <TableLoader /> : !dashboard ? <TableEmpty label="dashboard data" /> : (
+          <div className="space-y-6">
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                { label: "Total Books", value: dashboard.metrics.total_books, color: "text-foreground" },
+                { label: "Total Copies", value: dashboard.metrics.total_copies, color: "text-foreground" },
+                { label: "Available", value: dashboard.metrics.available_copies, color: "text-emerald-400" },
+                { label: "Issued", value: dashboard.metrics.issued_copies, color: "text-blue-400" },
+                { label: "Reserved", value: dashboard.metrics.reserved_copies, color: "text-amber-400" },
+                { label: "Overdue", value: dashboard.metrics.overdue_books, color: "text-rose-400" },
+                { label: "Lost", value: dashboard.metrics.lost_books, color: "text-rose-500" },
+                { label: "Damaged", value: dashboard.metrics.damaged_books, color: "text-orange-400" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="rounded-xl border border-[var(--border)] bg-card p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</p>
+                  <p className={cn("text-[28px] font-bold leading-none", color)}>{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Popular Books */}
+              <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+                <h3 className="text-[13px] font-semibold text-foreground mb-3">Most Requested Books</h3>
+                {dashboard.popular_books.length === 0 ? <p className="text-[13px] text-muted-foreground">No data yet</p> : (
+                  <div className="space-y-2">
+                    {dashboard.popular_books.map((b, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <div>
+                          <p className="text-[13px] font-medium text-foreground">{b.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{b.author}</p>
+                        </div>
+                        <span className="text-[12px] font-semibold text-primary">{b.request_count} requests</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-            <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Total Copies</label>
-              <input
-                type="number"
-                min={1}
-                value={bookForm.total_copies}
-                onChange={(e) => setBookForm((p) => ({ ...p, total_copies: parseInt(e.target.value) || 1 }))}
-                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Description</label>
-              <textarea
-                placeholder="Brief description…"
-                value={bookForm.description}
-                onChange={(e) => setBookForm((p) => ({ ...p, description: e.target.value }))}
-                rows={2}
-                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50 resize-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Status</label>
-              <select
-                value={bookForm.status}
-                onChange={(e) => setBookForm((p) => ({ ...p, status: e.target.value }))}
-                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
-              >
-                <option>Active</option>
-                <option>Inactive</option>
-              </select>
+
+              {/* Overdue List */}
+              <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+                <h3 className="text-[13px] font-semibold text-foreground mb-3">Overdue Books</h3>
+                {dashboard.overdue_list.length === 0 ? <p className="text-[13px] text-muted-foreground">No overdue books</p> : (
+                  <div className="space-y-2">
+                    {dashboard.overdue_list.map((o, i) => (
+                      <div key={i} className="flex items-start justify-between">
+                        <div>
+                          <p className="text-[13px] font-medium text-foreground">{o.title} <span className="text-muted-foreground font-normal">#{o.copy_number}</span></p>
+                          <p className="text-[11px] text-muted-foreground">{o.employee_name}</p>
+                        </div>
+                        <span className="text-[12px] font-semibold text-rose-400">Due {o.due_date}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          <div className="flex gap-2 mt-4">
-            <button
-              onClick={saveBook}
-              disabled={savingBook}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-            >
-              {savingBook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {editingBook ? "Save Changes" : "Add Book"}
-            </button>
-            <button
-              onClick={() => setShowBookForm(false)}
-              className="rounded-lg px-4 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        )
       )}
 
-      {/* Borrow Requests */}
+      {/* ── Borrow Requests ── */}
       {view === "requests" && (
         <>
           <FilterBar filter={reqFilter} setFilter={setReqFilter} options={["Pending", "Approved", "Rejected", "Returned", "All"]} onRefresh={fetchRequests} />
           {loadingReq ? <TableLoader /> : requests.length === 0 ? <TableEmpty label="book requests" /> : (
             <div className="overflow-x-auto rounded-lg">
-              <table className="w-full min-w-[900px] text-[13px]">
+              <table className="w-full min-w-[960px] text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--border)]">
-                    {["Ticket", "Employee", "Book", "Notes", "Status", "Requested", "Actions"].map((h) => (
+                    {["Ticket", "Employee", "Book", "Notes", "Status", "Due Date", "Requested", "Actions"].map((h) => (
                       <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
                     ))}
                   </tr>
@@ -884,13 +934,14 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                         <div className="font-medium text-foreground">{r.book_title}</div>
                         {r.book_author && <div className="text-[11px] text-muted-foreground">{r.book_author}</div>}
                       </td>
-                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
+                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[160px]">
                         <p className="line-clamp-2 leading-snug" title={r.notes}>{r.notes || "—"}</p>
                       </td>
                       <td className="py-3.5 pr-4">
                         <StatusBadge status={r.status} />
                         {r.admin_remarks && <div className="text-[11px] text-muted-foreground mt-0.5">{r.admin_remarks}</div>}
                       </td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{r.due_date || "—"}</td>
                       <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">{r.requested_at.slice(0, 10)}</td>
                       <td className="py-3.5">
                         {acting === r.id ? (
@@ -921,44 +972,118 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
         </>
       )}
 
-      {/* Manage Books */}
+      {/* ── Manage Books ── */}
       {view === "books" && (
         <>
+          {/* Add Book Form */}
+          {showBookForm && (
+            <div className="mb-5 rounded-xl border border-[var(--border)] bg-card p-5">
+              <h3 className="text-[14px] font-semibold text-foreground mb-4">Add New Book to Nexus Library</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Title *", key: "title", placeholder: "e.g. Clean Code" },
+                  { label: "Author", key: "author", placeholder: "e.g. Robert C. Martin" },
+                  { label: "Category", key: "category", placeholder: "Technology, Management…" },
+                ].map(({ label, key, placeholder }) => (
+                  <div key={key}>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</label>
+                    <input type="text" placeholder={placeholder}
+                      value={(bookForm as Record<string, string | number>)[key] as string}
+                      onChange={(e) => setBookForm((p) => ({ ...p, [key]: e.target.value }))}
+                      className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50" />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Total Copies</label>
+                  <input type="number" min={1} value={bookForm.total_copies}
+                    onChange={(e) => setBookForm((p) => ({ ...p, total_copies: parseInt(e.target.value) || 1 }))}
+                    className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Description</label>
+                  <textarea placeholder="Brief description…" value={bookForm.description}
+                    onChange={(e) => setBookForm((p) => ({ ...p, description: e.target.value }))} rows={2}
+                    className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50 resize-none" />
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={saveBook} disabled={savingBook}
+                  className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
+                  {savingBook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Add Book
+                </button>
+                <button onClick={() => setShowBookForm(false)} className="rounded-lg px-4 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary transition-colors">Cancel</button>
+              </div>
+            </div>
+          )}
+
           {loadingBooks ? <TableLoader /> : books.length === 0 ? <TableEmpty label="books" /> : (
-            <div className="overflow-x-auto rounded-lg">
-              <table className="w-full min-w-[800px] text-[13px]">
-                <thead>
-                  <tr className="border-b border-[var(--border)]">
-                    {["Title", "Author", "Category", "Copies (Available / Total)", "Status", "Actions"].map((h) => (
-                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {books.map((b) => (
-                    <tr key={b.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
-                      <td className="py-3.5 pr-4 font-medium text-foreground">{b.title}</td>
-                      <td className="py-3.5 pr-4 text-foreground/70">{b.author || "—"}</td>
-                      <td className="py-3.5 pr-4 text-foreground/70">{b.category || "—"}</td>
-                      <td className="py-3.5 pr-4">
-                        <span className={cn("font-medium", b.available_copies > 0 ? "text-emerald-400" : "text-rose-400")}>
-                          {b.available_copies}
-                        </span>
-                        <span className="text-muted-foreground/50"> / {b.total_copies}</span>
-                      </td>
-                      <td className="py-3.5 pr-4"><StatusBadge status={b.status} /></td>
-                      <td className="py-3.5">
-                        <button
-                          onClick={() => openEditBook(b)}
-                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                        >
-                          <Pencil className="h-3 w-3" /> Edit
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              {books.map((b) => (
+                <div key={b.id} className="rounded-xl border border-[var(--border)] bg-card overflow-hidden">
+                  {/* Book row */}
+                  <div
+                    className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                    onClick={() => {
+                      if (expandedBook === b.id) { setExpandedBook(null); }
+                      else { setExpandedBook(b.id); fetchBookCopies(b.id); }
+                    }}
+                  >
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground shrink-0 transition-transform", expandedBook === b.id && "rotate-180")} />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-foreground text-[13px]">{b.title}</span>
+                      {b.author && <span className="text-muted-foreground text-[12px] ml-2">by {b.author}</span>}
+                      {b.category && <span className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">{b.category}</span>}
+                    </div>
+                    <div className="flex items-center gap-4 text-[12px] shrink-0">
+                      <span className="text-emerald-400 font-medium">{b.available_copies} avail</span>
+                      <span className="text-blue-400">{b.issued_copies} issued</span>
+                      {b.reserved_copies > 0 && <span className="text-amber-400">{b.reserved_copies} reserved</span>}
+                      {b.lost_copies > 0 && <span className="text-rose-400">{b.lost_copies} lost</span>}
+                      {b.damaged_copies > 0 && <span className="text-orange-400">{b.damaged_copies} damaged</span>}
+                      <span className="text-muted-foreground/50">/ {b.total_copies} total</span>
+                    </div>
+                  </div>
+
+                  {/* Copies detail */}
+                  {expandedBook === b.id && (
+                    <div className="border-t border-[var(--border)] px-4 py-3 bg-secondary/20">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">Individual Copies</p>
+                      {!b.copies ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {b.copies.map((c) => (
+                            <div key={c.id} className="rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[12px] min-w-[160px]">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-semibold text-foreground">Copy #{c.copy_number}</span>
+                                <span className={cn("font-medium", COPY_STATUS_COLORS[c.status] ?? "text-zinc-400")}>{c.status}</span>
+                              </div>
+                              {c.current_employee_name && (
+                                <div className="text-muted-foreground text-[11px]">{c.current_employee_name}</div>
+                              )}
+                              {c.due_date && (
+                                <div className="text-muted-foreground text-[11px]">Due: {c.due_date}</div>
+                              )}
+                              {c.status === "Available" && (
+                                <div className="flex gap-1 mt-1.5">
+                                  <button onClick={() => actOnCopy(c.id, "lost", b.id)}
+                                    className="rounded px-1.5 py-0.5 text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">Lost</button>
+                                  <button onClick={() => actOnCopy(c.id, "damaged", b.id)}
+                                    className="rounded px-1.5 py-0.5 text-[11px] bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition-colors">Damaged</button>
+                                </div>
+                              )}
+                              {(c.status === "Lost" || c.status === "Damaged") && (
+                                <button onClick={() => actOnCopy(c.id, "restore", b.id)}
+                                  className="mt-1.5 rounded px-1.5 py-0.5 text-[11px] bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">Restore</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </>
