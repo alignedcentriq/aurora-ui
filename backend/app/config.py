@@ -173,7 +173,8 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
-    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "it-support@alignedautomation.com")
+    # Bookshelf Buddy — book request notifications go to this admin
+    BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
     # Power Automate — SharePoint/PowerApps complaint sync

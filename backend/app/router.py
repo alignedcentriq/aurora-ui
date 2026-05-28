@@ -29,7 +29,8 @@ DOMAIN_REGISTRY = {
                        "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
                        "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
                        "courier services, ID cards, access management, desk key requests, desk assignments, "
-                       "visitor / guest passes (registering a visitor coming to the office to meet an employee)",
+                       "Bookshelf Buddy — company library, borrow a book, issue a book, return a book, "
+                       "what books are available, check book request status",
         "status": "active",
     },
     "it_support": {

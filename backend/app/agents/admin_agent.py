@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 
 from app.services.admin_service import AdminService
 from app.services.announcement_service import AnnouncementService
+from app.services.bookshelf_service import BookshelfService
 from app.services.prompt_service import PromptService
 from app.hr_service import HRService
 from app.config import settings
@@ -163,6 +164,46 @@ def get_vendor_ratings(vendor_name: str):
     return AdminService.get_vendor_ratings(vendor_name)
 
 @tool
+def list_available_books():
+    """Show all books currently available to borrow from the company library (Bookshelf Buddy).
+    Call this when the user asks what books are available, wants to borrow a book, or asks about the bookshelf.
+    Always call this BEFORE request_book so the user can pick from the list."""
+    books = BookshelfService.list_available_books()
+    if not books:
+        return "No books are currently available in the company library. Please check back later or contact Admin."
+    lines = ["Here are the books currently available in our company library:\n"]
+    for b in books:
+        lines.append(
+            f"**[{b['id']}] {b['title']}** by {b['author']}"
+            + (f" ({b['category']})" if b['category'] else "")
+            + f" — {b['available_copies']} copy/copies available"
+        )
+    lines.append("\nTo request a book, just tell me the book title or ID.")
+    return "\n".join(lines)
+
+
+@tool
+def request_book(
+    book_id: int,
+    notes: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Submit a request to borrow a book from the company library (Bookshelf Buddy).
+    REQUIRED: book_id — get this from list_available_books first.
+    notes: optional reason or message for the admin.
+    Admin is notified by email. Request status can be tracked with check_book_requests."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return BookshelfService.request_book(email, book_id, notes)
+
+
+@tool
+def check_book_requests(state: Annotated[dict, InjectedState] = None):
+    """Check the status of your book borrow requests (Bookshelf Buddy)."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return BookshelfService.check_my_requests(email)
+
+
+@tool
 def post_admin_announcement(title: str, body: str, category: str = "General", target_audience: str = "all"):
     """
     Publish an announcement from the Admin team (Admin role only).
@@ -197,6 +238,7 @@ tools = [
     request_accommodation, request_visitor_pass,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
+    list_available_books, request_book, check_book_requests,
     post_admin_announcement, update_admin_prompt,
 ]
 

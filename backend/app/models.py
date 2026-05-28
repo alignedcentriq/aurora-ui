@@ -757,6 +757,46 @@ class HRQuery(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+# ── Bookshelf Buddy ──────────────────────────────────────────────────────────
+
+class Book(Base):
+    __tablename__ = "books"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, index=True)
+    author = Column(String, nullable=True)
+    category = Column(String, nullable=True)          # Technology, Management, Fiction, etc.
+    description = Column(Text, nullable=True)
+    total_copies = Column(Integer, default=1)
+    available_copies = Column(Integer, default=1)
+    status = Column(String, default="Active")         # Active, Inactive
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    requests = relationship("BookRequest", back_populates="book")
+
+
+class BookRequest(Base):
+    __tablename__ = "book_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(String, unique=True, index=True, nullable=False)  # BK-MMDDHHmmss
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=False)
+    book_id = Column(Integer, ForeignKey(f"{SCHEMA}.books.id"), nullable=False)
+    request_type = Column(String, default="Issue")     # Issue, Return
+    status = Column(String, default="Pending")         # Pending, Approved, Rejected, Returned, Cancelled
+    notes = Column(Text, nullable=True)
+    admin_remarks = Column(Text, nullable=True)
+    requested_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    due_date = Column(Date, nullable=True)             # Expected return date when issued
+
+    employee = relationship("Employee")
+    book = relationship("Book", back_populates="requests")
+
+
 # ── Observability / Activity Logs ────────────────────────────────────────────
 
 class AiRequestLog(Base):
