@@ -659,8 +659,7 @@ _KW_BOOKSHELF = re.compile(
     r'\b(bookshelf|book\s*shelf|borrow\s+a?\s*book|issue\s+a?\s*book|'
     r'return\s+a?\s*book|company\s+library|office\s+library|'
     r'available\s+books?|books?\s+available|book\s+request|request\s+a?\s*book|'
-    r'want\s+to\s+borrow|want\s+to\s+issue\s+(?:a\s+)?book|lend\s+me\s+a\s+book|'
-    r'check\s+(?:my\s+)?book\s+request)\b',
+    r'lend\s+me\s+a\s+book|check\s+(?:my\s+)?book\s+request)\b',
     re.I,
 )
 
