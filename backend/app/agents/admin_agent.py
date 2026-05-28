@@ -268,6 +268,20 @@ tools = [
     post_admin_announcement, update_admin_prompt,
 ]
 
+# Narrow tool sets per sub_intent — prevents the LLM from calling unrelated tools
+_TOOL_GROUPS: dict[str, list] = {
+    "bookshelf":          [list_available_books, borrow_book_by_name, request_book, check_book_requests],
+    "parking_sticker":    [request_parking_sticker, surrender_parking_sticker, get_parking_info],
+    "facility_complaint": [file_facility_complaint, check_complaint_status],
+    "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],
+    "accommodation":      [request_accommodation, search_admin_policies],
+    "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
+    "desk_key_request":   [search_admin_policies],
+}
+
+import re as _re
+_SUB_INTENT_RE = _re.compile(r'\[SUB_INTENT:([^\]]+)\]')
+
 tool_node = ToolNode(tools)
 
 _admin_llm = ChatOpenAI(
@@ -294,10 +308,20 @@ def admin_assistant(state: AdminState):
     feedback_ctx = state.get("feedback_context") or ""
     system_prompt = base_prompt + guardrail + feedback_ctx
 
-    # If policy was already pre-fetched by the parent graph node, strip search_admin_policies
-    # from the tools list so the LLM cannot trigger a redundant second embedding + tool call.
+    # Detect sub_intent injected by admin_agent_node and select a narrow tool set.
+    # Fallback to all tools when sub_intent is unknown or a follow-up.
+    _m = _SUB_INTENT_RE.search(feedback_ctx)
+    detected_sub = _m.group(1).strip() if _m else ""
     pre_fetched = "[PRE-SEARCHED POLICY]" in feedback_ctx or "[POLICY SEARCH RESULT]" in feedback_ctx
-    active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
+
+    if detected_sub in _TOOL_GROUPS:
+        active_tools = _TOOL_GROUPS[detected_sub]
+        # Still strip search_admin_policies when policy was already pre-fetched
+        if pre_fetched:
+            active_tools = [t for t in active_tools if t.name != "search_admin_policies"]
+    else:
+        # Unknown / followup — show all, strip search if already pre-fetched
+        active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     response = _admin_llm.bind_tools(active_tools).invoke(messages)

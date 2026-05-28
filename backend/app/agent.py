@@ -658,7 +658,9 @@ _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
 _KW_BOOKSHELF = re.compile(
     r'\b(bookshelf|book\s*shelf|borrow\s+a?\s*book|issue\s+a?\s*book|'
     r'return\s+a?\s*book|company\s+library|office\s+library|'
-    r'available\s+books?|books?\s+available|book\s+request|request\s+a?\s*book)\b',
+    r'available\s+books?|books?\s+available|book\s+request|request\s+a?\s*book|'
+    r'want\s+to\s+borrow|want\s+to\s+issue\s+(?:a\s+)?book|lend\s+me\s+a\s+book|'
+    r'check\s+(?:my\s+)?book\s+request)\b',
     re.I,
 )
 
@@ -1346,6 +1348,10 @@ async def admin_agent_node(state: AgentState):
                 policy_result = HRService.search_policies(str(original_topic), limit=2)
                 if policy_result and "No policies found" not in policy_result:
                     feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
+
+    # Stamp sub_intent into feedback_ctx so admin_agent can select the right tool group
+    if sub_intent:
+        feedback_ctx = f"[SUB_INTENT:{sub_intent}]\n" + feedback_ctx
 
     result = await admin_agent.ainvoke({
         "messages": state["messages"],
