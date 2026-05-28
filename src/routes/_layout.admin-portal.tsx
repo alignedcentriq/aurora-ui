@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown } from "lucide-react";
+import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -9,7 +9,7 @@ export const Route = createFileRoute("/_layout/admin-portal")({
   component: AdminPortal,
 });
 
-type Tab = "reimbursements" | "parking" | "complaints" | "food-complaints";
+type Tab = "reimbursements" | "parking" | "complaints" | "food-complaints" | "bookshelf";
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
@@ -56,7 +56,7 @@ function AdminPortal() {
       <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">Admin Portal</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">Manage reimbursements, parking stickers, facility complaints, and food complaints</p>
+          <p className="text-[13px] text-muted-foreground mt-0.5">Manage reimbursements, parking stickers, facility complaints, food complaints, and the company library</p>
         </div>
       </div>
 
@@ -67,6 +67,7 @@ function AdminPortal() {
           { id: "parking", label: "Parking Stickers", icon: Car },
           { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
           { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
+          { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -89,6 +90,7 @@ function AdminPortal() {
         {tab === "parking" && <ParkingTab authHeaders={authHeaders} />}
         {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} />}
         {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} />}
+        {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} />}
       </div>
     </div>
   );
@@ -648,6 +650,321 @@ function FoodComplaintsTab({ authHeaders }: { authHeaders: Record<string, string
     </div>
   );
 }
+
+// ── Bookshelf Buddy Tab ────────────────────────────────────────────────────────
+
+interface Book {
+  id: number;
+  title: string;
+  author: string;
+  category: string;
+  description: string;
+  total_copies: number;
+  available_copies: number;
+  status: string;
+  created_at: string;
+}
+
+interface BookRequest {
+  id: number;
+  ticket_id: string;
+  employee_name: string;
+  employee_email: string;
+  book_id: number;
+  book_title: string;
+  book_author: string;
+  request_type: string;
+  status: string;
+  notes: string;
+  admin_remarks: string;
+  due_date: string | null;
+  requested_at: string;
+}
+
+const BOOK_REQUEST_STATUSES = ["Approved", "Rejected", "Returned"];
+
+function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [view, setView] = useState<"requests" | "books">("requests");
+  const [requests, setRequests] = useState<BookRequest[]>([]);
+  const [books, setBooks] = useState<Book[]>([]);
+  const [loadingReq, setLoadingReq] = useState(true);
+  const [loadingBooks, setLoadingBooks] = useState(true);
+  const [acting, setActing] = useState<number | null>(null);
+  const [reqFilter, setReqFilter] = useState("Pending");
+  const [showBookForm, setShowBookForm] = useState(false);
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
+  const [bookForm, setBookForm] = useState({ title: "", author: "", category: "", description: "", total_copies: 1, status: "Active" });
+  const [savingBook, setSavingBook] = useState(false);
+
+  const fetchRequests = useCallback(async () => {
+    setLoadingReq(true);
+    try {
+      const qs = reqFilter !== "All" ? `?status=${reqFilter}` : "";
+      const res = await fetch(`/api/portal/admin/book-requests${qs}`, { headers: authHeaders });
+      setRequests(await res.json());
+    } catch { toast.error("Failed to load book requests"); }
+    finally { setLoadingReq(false); }
+  }, [reqFilter]);
+
+  const fetchBooks = useCallback(async () => {
+    setLoadingBooks(true);
+    try {
+      const res = await fetch(`/api/portal/admin/books`, { headers: authHeaders });
+      setBooks(await res.json());
+    } catch { toast.error("Failed to load books"); }
+    finally { setLoadingBooks(false); }
+  }, []);
+
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  useEffect(() => { if (view === "books") fetchBooks(); }, [view, fetchBooks]);
+
+  const actOnRequest = async (id: number, action: "approve" | "reject" | "return") => {
+    setActing(id);
+    try {
+      const res = await fetch(`/api/portal/admin/book-requests/${id}/${action}`, { method: "PUT", headers: authHeaders, body: JSON.stringify({}) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(`Request ${action}d`);
+      fetchRequests();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  const openAddBook = () => {
+    setEditingBook(null);
+    setBookForm({ title: "", author: "", category: "", description: "", total_copies: 1, status: "Active" });
+    setShowBookForm(true);
+  };
+
+  const openEditBook = (b: Book) => {
+    setEditingBook(b);
+    setBookForm({ title: b.title, author: b.author, category: b.category, description: b.description, total_copies: b.total_copies, status: b.status });
+    setShowBookForm(true);
+  };
+
+  const saveBook = async () => {
+    if (!bookForm.title.trim()) { toast.error("Title is required"); return; }
+    setSavingBook(true);
+    try {
+      const url = editingBook ? `/api/portal/admin/books/${editingBook.id}` : `/api/portal/admin/books`;
+      const res = await fetch(url, { method: editingBook ? "PUT" : "POST", headers: authHeaders, body: JSON.stringify(bookForm) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(editingBook ? "Book updated" : "Book added");
+      setShowBookForm(false);
+      fetchBooks();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setSavingBook(false); }
+  };
+
+  return (
+    <div>
+      {/* Sub-navigation */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex gap-1">
+          {(["requests", "books"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                "rounded-lg px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors",
+                view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+            >
+              {v === "requests" ? "Borrow Requests" : "Manage Books"}
+            </button>
+          ))}
+        </div>
+        {view === "books" && (
+          <button
+            onClick={openAddBook}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Book
+          </button>
+        )}
+      </div>
+
+      {/* Add / Edit Book Form */}
+      {view === "books" && showBookForm && (
+        <div className="mb-5 rounded-xl border border-[var(--border)] bg-card p-5">
+          <h3 className="text-[14px] font-semibold text-foreground mb-4">{editingBook ? "Edit Book" : "Add New Book"}</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: "Title *", key: "title", placeholder: "e.g. Clean Code" },
+              { label: "Author", key: "author", placeholder: "e.g. Robert C. Martin" },
+              { label: "Category", key: "category", placeholder: "Technology, Management…" },
+            ].map(({ label, key, placeholder }) => (
+              <div key={key}>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</label>
+                <input
+                  type="text"
+                  placeholder={placeholder}
+                  value={(bookForm as Record<string, string | number>)[key] as string}
+                  onChange={(e) => setBookForm((p) => ({ ...p, [key]: e.target.value }))}
+                  className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Total Copies</label>
+              <input
+                type="number"
+                min={1}
+                value={bookForm.total_copies}
+                onChange={(e) => setBookForm((p) => ({ ...p, total_copies: parseInt(e.target.value) || 1 }))}
+                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Description</label>
+              <textarea
+                placeholder="Brief description…"
+                value={bookForm.description}
+                onChange={(e) => setBookForm((p) => ({ ...p, description: e.target.value }))}
+                rows={2}
+                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50 resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Status</label>
+              <select
+                value={bookForm.status}
+                onChange={(e) => setBookForm((p) => ({ ...p, status: e.target.value }))}
+                className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50"
+              >
+                <option>Active</option>
+                <option>Inactive</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={saveBook}
+              disabled={savingBook}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+            >
+              {savingBook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {editingBook ? "Save Changes" : "Add Book"}
+            </button>
+            <button
+              onClick={() => setShowBookForm(false)}
+              className="rounded-lg px-4 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Borrow Requests */}
+      {view === "requests" && (
+        <>
+          <FilterBar filter={reqFilter} setFilter={setReqFilter} options={["Pending", "Approved", "Rejected", "Returned", "All"]} onRefresh={fetchRequests} />
+          {loadingReq ? <TableLoader /> : requests.length === 0 ? <TableEmpty label="book requests" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[900px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Ticket", "Employee", "Book", "Notes", "Status", "Requested", "Actions"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {requests.map((r) => (
+                    <tr key={r.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{r.ticket_id}</td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{r.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{r.book_title}</div>
+                        {r.book_author && <div className="text-[11px] text-muted-foreground">{r.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
+                        <p className="line-clamp-2 leading-snug" title={r.notes}>{r.notes || "—"}</p>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <StatusBadge status={r.status} />
+                        {r.admin_remarks && <div className="text-[11px] text-muted-foreground mt-0.5">{r.admin_remarks}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">{r.requested_at.slice(0, 10)}</td>
+                      <td className="py-3.5">
+                        {acting === r.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        ) : r.status === "Pending" ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => actOnRequest(r.id, "approve")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">
+                              <Check className="h-3 w-3" /> Approve
+                            </button>
+                            <button onClick={() => actOnRequest(r.id, "reject")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">
+                              <X className="h-3 w-3" /> Reject
+                            </button>
+                          </div>
+                        ) : r.status === "Approved" ? (
+                          <button onClick={() => actOnRequest(r.id, "return")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors">
+                            <BookOpen className="h-3 w-3" /> Mark Returned
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-[12px]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Manage Books */}
+      {view === "books" && (
+        <>
+          {loadingBooks ? <TableLoader /> : books.length === 0 ? <TableEmpty label="books" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[800px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Title", "Author", "Category", "Copies (Available / Total)", "Status", "Actions"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {books.map((b) => (
+                    <tr key={b.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4 font-medium text-foreground">{b.title}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70">{b.author || "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70">{b.category || "—"}</td>
+                      <td className="py-3.5 pr-4">
+                        <span className={cn("font-medium", b.available_copies > 0 ? "text-emerald-400" : "text-rose-400")}>
+                          {b.available_copies}
+                        </span>
+                        <span className="text-muted-foreground/50"> / {b.total_copies}</span>
+                      </td>
+                      <td className="py-3.5 pr-4"><StatusBadge status={b.status} /></td>
+                      <td className="py-3.5">
+                        <button
+                          onClick={() => openEditBook(b)}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                        >
+                          <Pencil className="h-3 w-3" /> Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 
 // ── Shared UI helpers ─────────────────────────────────────────────────────────
 

@@ -642,6 +642,13 @@ _KW_ADMIN_ACCOM = re.compile(
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
 
+_KW_BOOKSHELF = re.compile(
+    r'\b(bookshelf|book\s*shelf|borrow\s+a?\s*book|issue\s+a?\s*book|'
+    r'return\s+a?\s*book|company\s+library|office\s+library|'
+    r'available\s+books?|books?\s+available|book\s+request|request\s+a?\s*book)\b',
+    re.I,
+)
+
 _KW_IT_HARDWARE = re.compile(
     r'\b(laptop|system|computer|device|machine|workstation)\s+'
     r'(is\s+)?(slow|hanging|crashing|overheating|heating|hot|'
@@ -796,6 +803,12 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "admin", "confidence": 0.95,
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
+
+    # Admin — Bookshelf Buddy
+    if _KW_BOOKSHELF.search(text):
+        return {"domain": "admin", "confidence": 0.97,
+                "reasoning": "Keyword: bookshelf / book borrow request",
+                "sub_intent": "bookshelf", "entities": {}}
 
     # MS365 — read emails
     if _KW_MS365_EMAIL.search(text):

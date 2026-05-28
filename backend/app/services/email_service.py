@@ -341,6 +341,52 @@ def send_reimbursement_email(
     return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
+# ── Bookshelf Buddy ───────────────────────────────────────────────────────────
+
+def send_book_request_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    book_title: str,
+    book_author: str,
+    ticket_id: str,
+    notes: str = "",
+) -> bool:
+    """Notify the Bookshelf POC about a new book issue request.
+    Sends to BOOKSHELF_NOTIFY_EMAIL (not NOTIFY_TO_EMAIL) to keep out of the real admin inbox.
+    """
+    to = settings.BOOKSHELF_NOTIFY_EMAIL
+    if not to:
+        logger.warning("[bookshelf email] BOOKSHELF_NOTIFY_EMAIL not set — skipping notification.")
+        return False
+    subject = f"[Bookshelf] Book Request — {book_title} | {ticket_id}"
+    notes_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Notes</td>'
+        f'<td>{_nl2br(html.escape(notes))}</td></tr>'
+        if notes else ""
+    )
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Bookshelf Buddy — Book Issue Request</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>A new book issue request has been submitted via Centriq AI.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Requested By</td><td>{html.escape(employee_name)} ({html.escape(employee_email)})</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Book Title</td><td>{html.escape(book_title)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Author</td><td>{html.escape(book_author)}</td></tr>
+          {notes_row}
+        </table>
+        <p>Please review and approve / reject this request from the <strong>Admin Portal → Bookshelf Buddy</strong> tab.</p>
+        <p style="color:#888;font-size:12px;">Submitted via Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=to, subject=subject, html_body=html_body)
+
+
 # ── Leave Notifications ───────────────────────────────────────────────────────
 
 def send_leave_approval_request(

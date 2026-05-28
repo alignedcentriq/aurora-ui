@@ -6,7 +6,7 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_admin
 from app.database import get_db
-from app.models import Reimbursement, ParkingSticker, FacilityComplaint, FoodComplaint, Employee
+from app.models import Reimbursement, ParkingSticker, FacilityComplaint, FoodComplaint, Employee, Book, BookRequest
 from app.services.email_service import send_facility_complaint_status_email, send_food_complaint_status_email
 
 router = APIRouter(prefix="/api/portal/admin", tags=["Admin Portal"])
@@ -378,3 +378,191 @@ def update_food_complaint_status(
         closure_comment=body.closure_comment if body.status == "Closed" else None,
     )
     return {"message": f"Food complaint {ticket_id} updated to {body.status}."}
+
+
+# ── Bookshelf Buddy ───────────────────────────────────────────────────────────
+
+class BookBody(BaseModel):
+    title: str
+    author: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    total_copies: int = 1
+    available_copies: Optional[int] = None
+    status: str = "Active"
+
+
+class BookRequestActionBody(BaseModel):
+    admin_remarks: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+@router.get("/books")
+def list_books(
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    books = db.query(Book).order_by(Book.title).all()
+    return [
+        {
+            "id": b.id,
+            "title": b.title,
+            "author": b.author or "",
+            "category": b.category or "",
+            "description": b.description or "",
+            "total_copies": b.total_copies,
+            "available_copies": b.available_copies,
+            "status": b.status,
+            "created_at": b.created_at.isoformat(),
+        }
+        for b in books
+    ]
+
+
+@router.post("/books")
+def add_book(
+    body: BookBody,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    book = Book(
+        title=body.title.strip(),
+        author=body.author,
+        category=body.category,
+        description=body.description,
+        total_copies=body.total_copies,
+        available_copies=body.available_copies if body.available_copies is not None else body.total_copies,
+        status=body.status,
+    )
+    db.add(book)
+    db.commit()
+    db.refresh(book)
+    return {"message": "Book added.", "id": book.id}
+
+
+@router.put("/books/{id}")
+def update_book(
+    id: int,
+    body: BookBody,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    book = db.query(Book).filter(Book.id == id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    book.title = body.title.strip()
+    book.author = body.author
+    book.category = body.category
+    book.description = body.description
+    book.total_copies = body.total_copies
+    if body.available_copies is not None:
+        book.available_copies = body.available_copies
+    book.status = body.status
+    book.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Book updated."}
+
+
+@router.get("/book-requests")
+def list_book_requests(
+    status: Optional[str] = None,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    q = (
+        db.query(BookRequest, Book, Employee)
+        .join(Book, BookRequest.book_id == Book.id)
+        .join(Employee, BookRequest.employee_id == Employee.id)
+    )
+    if status:
+        q = q.filter(BookRequest.status == status)
+    rows = q.order_by(BookRequest.requested_at.desc()).all()
+    return [
+        {
+            "id": req.id,
+            "ticket_id": req.ticket_id,
+            "employee_name": emp.name,
+            "employee_email": emp.email,
+            "book_id": book.id,
+            "book_title": book.title,
+            "book_author": book.author or "",
+            "request_type": req.request_type,
+            "status": req.status,
+            "notes": req.notes or "",
+            "admin_remarks": req.admin_remarks or "",
+            "due_date": req.due_date.isoformat() if req.due_date else None,
+            "requested_at": req.requested_at.isoformat(),
+        }
+        for req, book, emp in rows
+    ]
+
+
+@router.put("/book-requests/{id}/approve")
+def approve_book_request(
+    id: int,
+    body: BookRequestActionBody,
+    user: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    req = db.query(BookRequest).filter(BookRequest.id == id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Book request not found.")
+    if req.status != "Pending":
+        raise HTTPException(status_code=400, detail=f"Request is already {req.status}.")
+
+    book = db.query(Book).filter(Book.id == req.book_id).first()
+    if not book or book.available_copies <= 0:
+        raise HTTPException(status_code=400, detail="Book is no longer available.")
+
+    book.available_copies -= 1
+    req.status = "Approved"
+    req.admin_remarks = body.admin_remarks
+    if body.due_date:
+        try:
+            req.due_date = datetime.date.fromisoformat(body.due_date)
+        except ValueError:
+            pass
+    req.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Book request approved."}
+
+
+@router.put("/book-requests/{id}/reject")
+def reject_book_request(
+    id: int,
+    body: BookRequestActionBody,
+    user: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    req = db.query(BookRequest).filter(BookRequest.id == id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Book request not found.")
+    if req.status not in ("Pending",):
+        raise HTTPException(status_code=400, detail=f"Request is already {req.status}.")
+    req.status = "Rejected"
+    req.admin_remarks = body.admin_remarks
+    req.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Book request rejected."}
+
+
+@router.put("/book-requests/{id}/return")
+def mark_book_returned(
+    id: int,
+    body: BookRequestActionBody,
+    _: CurrentUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    req = db.query(BookRequest).filter(BookRequest.id == id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Book request not found.")
+    if req.status != "Approved":
+        raise HTTPException(status_code=400, detail="Only approved requests can be marked returned.")
+    book = db.query(Book).filter(Book.id == req.book_id).first()
+    if book:
+        book.available_copies = min(book.available_copies + 1, book.total_copies)
+    req.status = "Returned"
+    req.admin_remarks = body.admin_remarks
+    req.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"message": "Book marked as returned."}
