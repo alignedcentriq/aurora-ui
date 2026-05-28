@@ -134,6 +134,10 @@ EXAMPLES:
 - "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
 - "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
 - "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
+- "I want to borrow Atomic Habits" → domain: admin, sub_intent: bookshelf, entities: {{"book_name": "Atomic Habits"}}
+- "what books are available in the library" → domain: admin, sub_intent: bookshelf, entities: {{}}
+- "I want to borrow a pen" → domain: admin, sub_intent: general_admin, entities: {{"item": "pen"}}
+- "check my book request status" → domain: admin, sub_intent: bookshelf, entities: {{}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
