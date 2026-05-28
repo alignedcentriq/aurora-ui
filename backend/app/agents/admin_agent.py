@@ -1,5 +1,5 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, InjectedState
@@ -264,6 +264,17 @@ def admin_assistant(state: AdminState):
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     response = _admin_llm.bind_tools(active_tools).invoke(messages)
+
+    # If the model returned empty text with no tool calls, surface the last tool result directly.
+    # This prevents the "unable to generate a text summary" fallback on weak models.
+    if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
+        last_tool = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, ToolMessage) and m.content),
+            None,
+        )
+        if last_tool:
+            response = AIMessage(content=last_tool.content)
+
     return {"messages": [response]}
 
 
