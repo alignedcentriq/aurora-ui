@@ -166,8 +166,8 @@ def get_vendor_ratings(vendor_name: str):
 @tool
 def list_available_books():
     """Show all books currently available to borrow from the company library (Bookshelf Buddy).
-    Call this when the user asks what books are available, wants to borrow a book, or asks about the bookshelf.
-    Always call this BEFORE request_book so the user can pick from the list."""
+    Call this ONLY when the user asks to see the full list without naming a specific book.
+    If the user names a specific book they want to borrow, use borrow_book_by_name instead."""
     books = BookshelfService.list_available_books()
     if not books:
         return "No books are currently available in the company library. Please check back later or contact Admin."
@@ -208,6 +208,28 @@ def check_book_requests(state: Annotated[dict, InjectedState] = None):
 
 
 @tool
+def borrow_book_by_name(
+    book_name: str,
+    notes: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Borrow a book by title — searches the library and submits the request in one step.
+    Use this INSTEAD of list_available_books + request_book when the user names a specific book.
+    book_name: partial or full title (case-insensitive match). Admin is notified by email."""
+    books = BookshelfService.list_available_books()
+    if not books:
+        return "No books are currently available in the company library."
+    name_lower = book_name.lower()
+    match = next((b for b in books if name_lower in b["title"].lower()), None)
+    if not match:
+        titles = ", ".join(b["title"] for b in books[:5])
+        return f"No available book matching '{book_name}' found. Available books include: {titles}."
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    emp_name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    return BookshelfService.request_book(email, emp_name, match["id"], notes)
+
+
+@tool
 def post_admin_announcement(title: str, body: str, category: str = "General", target_audience: str = "all"):
     """
     Publish an announcement from the Admin team (Admin role only).
@@ -242,7 +264,7 @@ tools = [
     request_accommodation, request_visitor_pass,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
-    list_available_books, request_book, check_book_requests,
+    list_available_books, borrow_book_by_name, request_book, check_book_requests,
     post_admin_announcement, update_admin_prompt,
 ]
 
@@ -253,7 +275,7 @@ _admin_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    timeout=45,
+    timeout=120,
 )
 def admin_assistant(state: AdminState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
