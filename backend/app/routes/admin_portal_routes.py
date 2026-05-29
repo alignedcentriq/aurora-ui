@@ -483,25 +483,148 @@ def list_book_requests(status: Optional[str] = None, _: CurrentUser = Depends(re
     return BookshelfService.list_requests(status)
 
 
+def _find_request(id: int) -> Optional[dict]:
+    for r in BookshelfService.list_requests() or []:
+        if r.get("id") == id:
+            return r
+    return None
+
+
 @router.put("/book-requests/{id}/approve")
-def approve_book_request(id: int, body: BookRequestActionBody, _: CurrentUser = Depends(require_admin)):
+def approve_book_request(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
     try:
-        return BookshelfService.approve_request(id, body.admin_remarks or "", body.due_date or "")
+        result = BookshelfService.approve_request(id, body.admin_remarks or "", body.due_date or "")
     except Exception as e:
         _nexus_error(e)
+    req = _find_request(id) or {}
+    try:
+        from app.services.email_service import send_book_decision_email
+        send_book_decision_email(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+            decision="Approved",
+            due_date=(result or {}).get("due_date") or req.get("due_date") or "",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Book approval email error: {e}")
+    return result
 
 
 @router.put("/book-requests/{id}/reject")
-def reject_book_request(id: int, body: BookRequestActionBody, _: CurrentUser = Depends(require_admin)):
+def reject_book_request(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
+    req = _find_request(id) or {}
     try:
-        return BookshelfService.reject_request(id, body.admin_remarks or "")
+        result = BookshelfService.reject_request(id, body.admin_remarks or "")
     except Exception as e:
         _nexus_error(e)
+    try:
+        from app.services.email_service import send_book_decision_email
+        send_book_decision_email(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+            decision="Rejected",
+            due_date="",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Book rejection email error: {e}")
+    return result
 
 
 @router.put("/book-requests/{id}/return")
-def return_book(id: int, body: BookRequestActionBody, _: CurrentUser = Depends(require_admin)):
+def return_book(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
+    req = _find_request(id) or {}
     try:
-        return BookshelfService.return_book(id, body.admin_remarks or "")
+        result = BookshelfService.return_book(id, body.admin_remarks or "")
     except Exception as e:
         _nexus_error(e)
+    try:
+        from app.services.email_service import send_book_return_confirmation
+        send_book_return_confirmation(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Return confirmation email error: {e}")
+    return result
+
+
+# ── Extensions ────────────────────────────────────────────────────────────────
+
+class ExtensionActionBody(BaseModel):
+    admin_remarks: Optional[str] = None
+
+
+@router.get("/book-extensions")
+def list_book_extensions(status: Optional[str] = None, _: CurrentUser = Depends(require_admin)):
+    return BookshelfService.list_extensions(status)
+
+
+@router.put("/book-extensions/{id}/approve")
+def approve_book_extension(
+    id: int,
+    body: ExtensionActionBody,
+    user: CurrentUser = Depends(require_admin),
+):
+    ext = BookshelfService.get_extension(id)
+    if not ext:
+        raise HTTPException(404, "Extension request not found")
+    try:
+        result = BookshelfService.approve_extension(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_extension_decision_email
+        send_extension_decision_email(
+            user_email=user.email,
+            employee_email=ext.get("employee_email") or "",
+            employee_name=ext.get("employee_name") or "",
+            book_title=ext.get("book_title") or "",
+            ticket_id=ext.get("ticket_id") or f"#{id}",
+            decision="Approved",
+            new_due_date=(result or {}).get("new_due_date") or "",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Extension approval email error: {e}")
+    return result
+
+
+@router.put("/book-extensions/{id}/reject")
+def reject_book_extension(
+    id: int,
+    body: ExtensionActionBody,
+    user: CurrentUser = Depends(require_admin),
+):
+    ext = BookshelfService.get_extension(id)
+    if not ext:
+        raise HTTPException(404, "Extension request not found")
+    try:
+        result = BookshelfService.reject_extension(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_extension_decision_email
+        send_extension_decision_email(
+            user_email=user.email,
+            employee_email=ext.get("employee_email") or "",
+            employee_name=ext.get("employee_name") or "",
+            book_title=ext.get("book_title") or "",
+            ticket_id=ext.get("ticket_id") or f"#{id}",
+            decision="Rejected",
+            new_due_date="",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Extension rejection email error: {e}")
+    return result

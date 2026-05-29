@@ -1,6 +1,7 @@
 import io
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -34,6 +35,7 @@ from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
+from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.observability_routes import router as observability_router
@@ -115,6 +117,7 @@ app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
+app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(observability_router)
@@ -413,6 +416,115 @@ async def process_approval(token: str):
                     f"The leave request has been <strong>{decision}</strong>. The employee has been notified by email.",
                     color,
                 ))
+
+        if tok.entity_type == "book_request":
+            from app.services.bookshelf_service import BookshelfService
+            from app.services.email_service import send_book_decision_email
+            # Invalidate the sibling token
+            db.query(ApprovalToken).filter(
+                ApprovalToken.entity_type == "book_request",
+                ApprovalToken.entity_id == tok.entity_id,
+                ApprovalToken.token != token,
+                ApprovalToken.used == False,
+            ).update({"used": True})
+            db.commit()
+
+            book_title = "your book"
+            due_date = ""
+            try:
+                if decision == "Approved":
+                    result = BookshelfService.approve_request(tok.entity_id, admin_remarks="Approved via email")
+                    due_date = (result or {}).get("due_date", "")
+                else:
+                    BookshelfService.reject_request(tok.entity_id, admin_remarks="Rejected via email")
+                # Look up book title for the employee notification.
+                for req in BookshelfService.list_requests() or []:
+                    if req.get("id") == tok.entity_id:
+                        book_title = req.get("book_title") or book_title
+                        ticket_id = req.get("ticket_id") or f"#{tok.entity_id}"
+                        employee_name = req.get("employee_name") or ""
+                        if not due_date:
+                            due_date = req.get("due_date") or ""
+                        break
+                else:
+                    ticket_id = f"#{tok.entity_id}"
+                    employee_name = ""
+            except Exception as e:
+                color = "#dc2626"
+                return HTMLResponse(_approval_html(
+                    "Action Failed",
+                    f"We couldn't update the borrow request: {html.escape(str(e))}",
+                    color,
+                ), status_code=502)
+
+            try:
+                send_book_decision_email(
+                    user_email=tok.approver_email,
+                    employee_email=tok.employee_email,
+                    employee_name=employee_name,
+                    book_title=book_title,
+                    ticket_id=ticket_id,
+                    decision=decision,
+                    due_date=due_date,
+                    admin_remarks="",
+                )
+            except Exception as e:
+                print(f"[Approval] Book decision email error: {e}")
+
+            color = "#16a34a" if decision == "Approved" else "#dc2626"
+            return HTMLResponse(_approval_html(
+                f"Borrow Request {decision}",
+                f"The borrow request for <strong>{html.escape(book_title)}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.",
+                color,
+            ))
+
+        if tok.entity_type == "book_extension":
+            from app.services.bookshelf_service import BookshelfService
+            from app.services.email_service import send_extension_decision_email
+            db.query(ApprovalToken).filter(
+                ApprovalToken.entity_type == "book_extension",
+                ApprovalToken.entity_id == tok.entity_id,
+                ApprovalToken.token != token,
+                ApprovalToken.used == False,
+            ).update({"used": True})
+            db.commit()
+
+            ext_record = BookshelfService.get_extension(tok.entity_id) or {}
+            new_due_date = ""
+            try:
+                if decision == "Approved":
+                    result = BookshelfService.approve_extension(tok.entity_id, admin_remarks="Approved via email")
+                    new_due_date = (result or {}).get("new_due_date", "")
+                else:
+                    BookshelfService.reject_extension(tok.entity_id, admin_remarks="Rejected via email")
+            except Exception as e:
+                color = "#dc2626"
+                return HTMLResponse(_approval_html(
+                    "Action Failed",
+                    f"We couldn't update the extension: {html.escape(str(e))}",
+                    color,
+                ), status_code=502)
+
+            try:
+                send_extension_decision_email(
+                    user_email=tok.approver_email,
+                    employee_email=tok.employee_email,
+                    employee_name=ext_record.get("employee_name") or "",
+                    book_title=ext_record.get("book_title") or "your book",
+                    ticket_id=ext_record.get("ticket_id") or f"#{tok.entity_id}",
+                    decision=decision,
+                    new_due_date=new_due_date,
+                    admin_remarks="",
+                )
+            except Exception as e:
+                print(f"[Approval] Extension decision email error: {e}")
+
+            color = "#16a34a" if decision == "Approved" else "#dc2626"
+            return HTMLResponse(_approval_html(
+                f"Extension {decision}",
+                f"The extension request for <strong>{html.escape(ext_record.get('book_title') or 'the book')}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.",
+                color,
+            ))
 
         db.commit()
         return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))

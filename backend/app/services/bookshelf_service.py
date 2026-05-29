@@ -3,17 +3,22 @@ BookshelfService — all data comes from the Nexus Library mock server (port 809
 The Nexus server is the single source of truth for book inventory.
 """
 
+import datetime
 import logging
+import secrets
 import threading
 from typing import Optional
 
 import httpx
 
 from app.config import settings
+from app.database import SessionLocal
+from app.models import ApprovalToken
 
 logger = logging.getLogger("aurora-logger")
 
 _TIMEOUT = 10.0
+_APPROVAL_TOKEN_TTL_HOURS = 72
 
 
 def _nexus(path: str) -> str:
@@ -83,6 +88,29 @@ class BookshelfService:
         return _get("/api/library/dashboard")
 
     @staticmethod
+    def _mint_action_tokens(entity_type: str, entity_id: int, approver_email: str, employee_email: str) -> tuple[str, str]:
+        """Create approve/reject ApprovalToken rows for an email action link and return the two tokens."""
+        approve_tok = secrets.token_urlsafe(32)
+        reject_tok = secrets.token_urlsafe(32)
+        expires = datetime.datetime.utcnow() + datetime.timedelta(hours=_APPROVAL_TOKEN_TTL_HOURS)
+        db = SessionLocal()
+        try:
+            for tok, action in ((approve_tok, "approve"), (reject_tok, "reject")):
+                db.add(ApprovalToken(
+                    token=tok,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    action=action,
+                    approver_email=approver_email,
+                    employee_email=employee_email,
+                    expires_at=expires,
+                ))
+            db.commit()
+        finally:
+            db.close()
+        return approve_tok, reject_tok
+
+    @staticmethod
     def request_book(employee_email: str, employee_name: str, book_id: int, notes: str = "") -> str:
         try:
             result = _post("/api/library/requests", {
@@ -94,6 +122,7 @@ class BookshelfService:
         except RuntimeError as e:
             return f"Could not submit request: {e}"
 
+        request_id = result.get("id")
         ticket_id = result.get("ticket_id", "—")
         due_date = result.get("due_date", "—")
 
@@ -103,6 +132,22 @@ class BookshelfService:
         if book:
             book_title = book.get("title", book_title)
             book_author = book.get("author", "")
+
+        # Mint Approve/Reject tokens so the admin can act from email.
+        approve_tok = reject_tok = None
+        try:
+            if request_id and settings.BOOKSHELF_NOTIFY_EMAIL:
+                approve_tok, reject_tok = BookshelfService._mint_action_tokens(
+                    entity_type="book_request",
+                    entity_id=int(request_id),
+                    approver_email=settings.BOOKSHELF_NOTIFY_EMAIL,
+                    employee_email=employee_email,
+                )
+        except Exception as e:
+            logger.warning("[bookshelf] Could not mint approval tokens for request %s: %s", request_id, e)
+
+        approve_url = f"{settings.APP_BASE_URL}/api/approve/{approve_tok}" if approve_tok else ""
+        reject_url = f"{settings.APP_BASE_URL}/api/approve/{reject_tok}" if reject_tok else ""
 
         def _notify():
             try:
@@ -115,9 +160,11 @@ class BookshelfService:
                     book_author=book_author,
                     ticket_id=ticket_id,
                     notes=notes,
+                    approve_url=approve_url,
+                    reject_url=reject_url,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("[bookshelf] Admin notification email failed for %s: %s", ticket_id, e)
 
         threading.Thread(target=_notify, daemon=True).start()
 
@@ -200,3 +247,132 @@ class BookshelfService:
     @staticmethod
     def add_copies(book_id: int, count: int) -> dict:
         return _post(f"/api/library/books/{book_id}/copies", {"count": count})
+
+    # ── Employee self-service ────────────────────────────────────────────────
+
+    @staticmethod
+    def find_my_request_by_ticket(employee_email: str, ticket_id: str) -> Optional[dict]:
+        ticket_q = (ticket_id or "").strip().upper()
+        if not ticket_q:
+            return None
+        rows = _get("/api/library/requests/my", email=employee_email) or []
+        for r in rows:
+            if (r.get("ticket_id") or "").upper() == ticket_q:
+                return r
+        return None
+
+    @staticmethod
+    def employee_return(employee_email: str, ticket_id: str) -> dict:
+        req = BookshelfService.find_my_request_by_ticket(employee_email, ticket_id)
+        if not req:
+            return {"ok": False, "message": f"No borrow with ticket {ticket_id} found on your account."}
+        if req.get("status") != "Approved":
+            return {"ok": False, "message": f"Borrow {ticket_id} is {req.get('status')} — only active borrows can be returned."}
+        try:
+            _put(f"/api/library/requests/{req['id']}/return", {"admin_remarks": "Returned by employee"})
+        except RuntimeError as e:
+            return {"ok": False, "message": f"Return failed: {e}"}
+
+        def _notify():
+            try:
+                from app.services.email_service import send_book_return_confirmation
+                send_book_return_confirmation(
+                    user_email=employee_email,
+                    employee_email=employee_email,
+                    employee_name=req.get("employee_name") or "",
+                    book_title=req.get("book_title") or "",
+                    ticket_id=req["ticket_id"],
+                )
+            except Exception as e:
+                logger.warning("[bookshelf] return confirmation email failed for %s: %s", req["ticket_id"], e)
+
+        threading.Thread(target=_notify, daemon=True).start()
+        return {"ok": True, "message": f"Returned **{req.get('book_title') or 'the book'}** (ticket {req['ticket_id']}).", "request": req}
+
+    @staticmethod
+    def request_extension(employee_email: str, ticket_id: str, additional_days: int = 7, reason: str = "") -> dict:
+        req = BookshelfService.find_my_request_by_ticket(employee_email, ticket_id)
+        if not req:
+            return {"ok": False, "message": f"No borrow with ticket {ticket_id} found on your account."}
+        if req.get("status") != "Approved":
+            return {"ok": False, "message": f"Borrow {ticket_id} is {req.get('status')} — only active borrows can be extended."}
+        try:
+            ext = _post(f"/api/library/requests/{req['id']}/extension", {
+                "employee_email": employee_email,
+                "additional_days": additional_days,
+                "reason": reason or "",
+            })
+        except RuntimeError as e:
+            return {"ok": False, "message": f"Extension request failed: {e}"}
+
+        ext_id = ext.get("id")
+        approve_url = reject_url = ""
+        try:
+            if ext_id and settings.BOOKSHELF_NOTIFY_EMAIL:
+                approve_tok, reject_tok = BookshelfService._mint_action_tokens(
+                    entity_type="book_extension",
+                    entity_id=int(ext_id),
+                    approver_email=settings.BOOKSHELF_NOTIFY_EMAIL,
+                    employee_email=employee_email,
+                )
+                approve_url = f"{settings.APP_BASE_URL}/api/approve/{approve_tok}"
+                reject_url = f"{settings.APP_BASE_URL}/api/approve/{reject_tok}"
+        except Exception as e:
+            logger.warning("[bookshelf] Could not mint extension tokens for ext %s: %s", ext_id, e)
+
+        def _notify():
+            try:
+                from app.services.email_service import send_extension_request_email
+                send_extension_request_email(
+                    user_email=employee_email,
+                    employee_name=req.get("employee_name") or "",
+                    employee_email=employee_email,
+                    book_title=req.get("book_title") or "",
+                    ticket_id=req["ticket_id"],
+                    additional_days=additional_days,
+                    current_due_date=req.get("due_date") or "",
+                    reason=reason or "",
+                    approve_url=approve_url,
+                    reject_url=reject_url,
+                )
+            except Exception as e:
+                logger.warning("[bookshelf] extension request email failed for %s: %s", req["ticket_id"], e)
+
+        threading.Thread(target=_notify, daemon=True).start()
+        return {
+            "ok": True,
+            "message": (
+                f"Extension request submitted for **{req.get('book_title') or 'your book'}** "
+                f"(ticket {req['ticket_id']}). +{additional_days} day(s) pending admin approval."
+            ),
+            "extension_id": ext_id,
+        }
+
+    # ── Extension admin helpers ─────────────────────────────────────────────
+
+    @staticmethod
+    def list_extensions(status: Optional[str] = None) -> list[dict]:
+        params = {}
+        if status:
+            params["status"] = status
+        return _get("/api/library/extensions", **params) or []
+
+    @staticmethod
+    def list_my_extensions(employee_email: str) -> list[dict]:
+        return _get("/api/library/extensions/my", email=employee_email) or []
+
+    @staticmethod
+    def approve_extension(ext_id: int, admin_remarks: str = "") -> dict:
+        return _put(f"/api/library/extensions/{ext_id}/approve", {"admin_remarks": admin_remarks})
+
+    @staticmethod
+    def reject_extension(ext_id: int, admin_remarks: str = "") -> dict:
+        return _put(f"/api/library/extensions/{ext_id}/reject", {"admin_remarks": admin_remarks})
+
+    @staticmethod
+    def get_extension(ext_id: int) -> Optional[dict]:
+        rows = BookshelfService.list_extensions() or []
+        for r in rows:
+            if r.get("id") == ext_id:
+                return r
+        return None

@@ -29,8 +29,10 @@ DOMAIN_REGISTRY = {
                        "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
                        "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
                        "courier services, ID cards, access management, desk key requests, desk assignments, "
-                       "Bookshelf Buddy — company library, borrow a book, issue a book, return a book, "
-                       "what books are available, check book request status",
+                       "visitor / guest passes (registering a visitor coming to the office to meet an employee), "
+                       "Bookshelf Buddy — company library, browsing/discovering books, borrowing/issuing a book, "
+                       "looking for reading or learning material, book recommendations, returning a borrowed book, "
+                       "extending or renewing a borrow (more time on a book), checking book request status",
         "status": "active",
     },
     "it_support": {
@@ -136,10 +138,20 @@ EXAMPLES:
 - "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
 - "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
 - "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
-- "I want to borrow Atomic Habits" → domain: admin, sub_intent: bookshelf, entities: {{"book_name": "Atomic Habits"}}
-- "what books are available in the library" → domain: admin, sub_intent: bookshelf, entities: {{}}
+- "I want to borrow Atomic Habits" → domain: admin, sub_intent: bookshelf.borrow, entities: {{"book_name": "Atomic Habits"}}
+- "what books are available in the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need a book" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "looking for some reading material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need learning material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "recommend a book on machine learning" → domain: admin, sub_intent: bookshelf.discover, entities: {{"topic": "machine learning"}}
+- "browse the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
 - "I want to borrow a pen" → domain: admin, sub_intent: general_admin, entities: {{"item": "pen"}}
-- "check my book request status" → domain: admin, sub_intent: bookshelf, entities: {{}}
+- "check my book request status" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "show my borrowed books" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "return my book BK-12345" → domain: admin, sub_intent: bookshelf.return, entities: {{"ticket_id": "BK-12345"}}
+- "I finished reading Clean Code" → domain: admin, sub_intent: bookshelf.return, entities: {{"book_name": "Clean Code"}}
+- "extend my borrow for 7 more days" → domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
+- "renew Atomic Habits, I need more time" → domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}

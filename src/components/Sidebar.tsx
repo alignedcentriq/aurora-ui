@@ -22,10 +22,8 @@ import {
   X,
   Sparkles,
   Activity,
-  Zap,
-  Network,
-  Layers,
-  FileText,
+  BookOpen,
+  Library as LibraryIcon,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -142,6 +140,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
+    { to: "/books", icon: BookOpen, label: "Library", show: true },
+    { to: "/my-library", icon: LibraryIcon, label: "My Library", show: true },
     {
       to: "/people",
       icon: Users,

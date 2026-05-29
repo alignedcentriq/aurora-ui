@@ -706,15 +706,60 @@ interface DashboardMetrics {
   issued_copies: number;
   reserved_copies: number;
   overdue_books: number;
+  due_soon: number;
+  pending_requests: number;
+  pending_extensions: number;
+  active_borrowers: number;
   lost_books: number;
   damaged_books: number;
+}
+
+interface AssignmentRow {
+  ticket_id: string;
+  book_title: string;
+  book_author: string;
+  employee_name: string;
+  employee_email: string;
+  copy_number: number;
+  issued_at: string | null;
+  due_date: string;
+  status: string;
+}
+
+interface DashboardListRow {
+  title: string;
+  employee_name: string;
+  employee_email: string;
+  due_date: string;
+  copy_number: number;
 }
 
 interface Dashboard {
   metrics: DashboardMetrics;
   popular_books: { title: string; author: string; request_count: number }[];
   most_issued: { title: string; author: string; issued_copies: number }[];
-  overdue_list: { title: string; employee_name: string; employee_email: string; due_date: string; copy_number: number }[];
+  overdue_list: DashboardListRow[];
+  due_soon_list: DashboardListRow[];
+  assignment_list: AssignmentRow[];
+}
+
+interface BookExtension {
+  id: number;
+  request_id: number;
+  ticket_id: string;
+  employee_name: string;
+  employee_email: string;
+  book_title: string;
+  book_author: string;
+  additional_days: number;
+  reason: string;
+  status: string;
+  admin_remarks: string;
+  previous_due: string | null;
+  new_due_date: string | null;
+  current_due_date: string | null;
+  requested_at: string;
+  actioned_at: string | null;
 }
 
 const COPY_STATUS_COLORS: Record<string, string> = {
@@ -728,16 +773,20 @@ const COPY_STATUS_COLORS: Record<string, string> = {
 };
 
 function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [view, setView] = useState<"dashboard" | "requests" | "books">("dashboard");
+  const [view, setView] = useState<"dashboard" | "requests" | "extensions" | "assignments" | "books">("dashboard");
   const [requests, setRequests] = useState<BookRequest[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [extensions, setExtensions] = useState<BookExtension[]>([]);
   const [loadingReq, setLoadingReq] = useState(true);
   const [loadingBooks, setLoadingBooks] = useState(true);
   const [loadingDash, setLoadingDash] = useState(true);
+  const [loadingExt, setLoadingExt] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
+  const [actingExt, setActingExt] = useState<number | null>(null);
   const [expandedBook, setExpandedBook] = useState<number | null>(null);
   const [reqFilter, setReqFilter] = useState("Pending");
+  const [extFilter, setExtFilter] = useState("Pending");
   const [showBookForm, setShowBookForm] = useState(false);
   const [bookForm, setBookForm] = useState({ title: "", author: "", category: "", description: "", total_copies: 1 });
   const [savingBook, setSavingBook] = useState(false);
@@ -778,8 +827,33 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
     } catch { toast.error("Failed to load copies"); }
   }, [authHeaders]);
 
+  const fetchExtensions = useCallback(async () => {
+    setLoadingExt(true);
+    try {
+      const qs = extFilter !== "All" ? `?status=${extFilter}` : "";
+      const res = await fetch(`/api/portal/admin/book-extensions${qs}`, { headers: authHeaders });
+      setExtensions(await res.json());
+    } catch { toast.error("Failed to load extension requests"); }
+    finally { setLoadingExt(false); }
+  }, [extFilter]);
+
+  const actOnExtension = async (id: number, action: "approve" | "reject") => {
+    setActingExt(id);
+    try {
+      const res = await fetch(`/api/portal/admin/book-extensions/${id}/${action}`, {
+        method: "PUT", headers: authHeaders, body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(action === "approve" ? "Extension approved" : "Extension rejected");
+      fetchExtensions();
+      if (view === "dashboard") fetchDashboard();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActingExt(null); }
+  };
+
   useEffect(() => { if (view === "dashboard") fetchDashboard(); }, [view, fetchDashboard]);
   useEffect(() => { if (view === "requests") fetchRequests(); }, [view, fetchRequests]);
+  useEffect(() => { if (view === "extensions") fetchExtensions(); }, [view, fetchExtensions]);
   useEffect(() => { if (view === "books") fetchBooks(); }, [view, fetchBooks]);
 
   const actOnRequest = async (id: number, action: "approve" | "reject" | "return") => {
@@ -822,12 +896,16 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
     <div>
       {/* Sub-navigation */}
       <div className="flex items-center justify-between mb-5">
-        <div className="flex gap-1">
-          {(["dashboard", "requests", "books"] as const).map((v) => (
+        <div className="flex gap-1 flex-wrap">
+          {(["dashboard", "requests", "extensions", "assignments", "books"] as const).map((v) => (
             <button key={v} onClick={() => setView(v)}
               className={cn("rounded-lg px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors",
                 view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground")}>
-              {v === "requests" ? "Borrow Requests" : v === "books" ? "Manage Books" : "Dashboard"}
+              {v === "requests" ? "Borrow Requests"
+                : v === "extensions" ? "Extensions"
+                : v === "assignments" ? "Assignments"
+                : v === "books" ? "Manage Books"
+                : "Dashboard"}
             </button>
           ))}
         </div>
@@ -852,11 +930,15 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
             <div className="grid grid-cols-4 gap-3">
               {[
                 { label: "Total Books", value: dashboard.metrics.total_books, color: "text-foreground" },
-                { label: "Total Copies", value: dashboard.metrics.total_copies, color: "text-foreground" },
                 { label: "Available", value: dashboard.metrics.available_copies, color: "text-emerald-400" },
                 { label: "Issued", value: dashboard.metrics.issued_copies, color: "text-blue-400" },
-                { label: "Reserved", value: dashboard.metrics.reserved_copies, color: "text-amber-400" },
+                { label: "Active Borrowers", value: dashboard.metrics.active_borrowers ?? 0, color: "text-cyan-400" },
+                { label: "Pending Requests", value: dashboard.metrics.pending_requests ?? 0, color: "text-amber-400" },
+                { label: "Pending Extensions", value: dashboard.metrics.pending_extensions ?? 0, color: "text-violet-400" },
+                { label: "Due Soon (≤7d)", value: dashboard.metrics.due_soon ?? 0, color: "text-amber-300" },
                 { label: "Overdue", value: dashboard.metrics.overdue_books, color: "text-rose-400" },
+                { label: "Total Copies", value: dashboard.metrics.total_copies, color: "text-foreground" },
+                { label: "Reserved", value: dashboard.metrics.reserved_copies, color: "text-amber-400" },
                 { label: "Lost", value: dashboard.metrics.lost_books, color: "text-rose-500" },
                 { label: "Damaged", value: dashboard.metrics.damaged_books, color: "text-orange-400" },
               ].map(({ label, value, color }) => (
@@ -904,7 +986,123 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                 )}
               </div>
             </div>
+
+            {/* Due Soon List */}
+            <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+              <h3 className="text-[13px] font-semibold text-foreground mb-3">Due Within 7 Days</h3>
+              {(dashboard.due_soon_list || []).length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">Nothing due in the next 7 days.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(dashboard.due_soon_list || []).map((o, i) => (
+                    <div key={i} className="flex items-start justify-between">
+                      <div>
+                        <p className="text-[13px] font-medium text-foreground">{o.title} <span className="text-muted-foreground font-normal">#{o.copy_number}</span></p>
+                        <p className="text-[11px] text-muted-foreground">{o.employee_name}</p>
+                      </div>
+                      <span className="text-[12px] font-semibold text-amber-300">Due {o.due_date}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+        )
+      )}
+
+      {/* ── Extensions ── */}
+      {view === "extensions" && (
+        <>
+          <FilterBar filter={extFilter} setFilter={setExtFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetchExtensions} />
+          {loadingExt ? <TableLoader /> : extensions.length === 0 ? <TableEmpty label="extension requests" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[960px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Ticket", "Employee", "Book", "+Days", "Reason", "Current Due", "New Due", "Status", "Actions"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {extensions.map((e) => (
+                    <tr key={e.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{e.ticket_id}</td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{e.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{e.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{e.book_title}</div>
+                        {e.book_author && <div className="text-[11px] text-muted-foreground">{e.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 font-semibold">+{e.additional_days}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
+                        <p className="line-clamp-2 leading-snug" title={e.reason}>{e.reason || "—"}</p>
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{e.current_due_date || "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{e.new_due_date || "—"}</td>
+                      <td className="py-3.5 pr-4"><StatusBadge status={e.status} /></td>
+                      <td className="py-3.5">
+                        {actingExt === e.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        ) : e.status === "Pending" ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => actOnExtension(e.id, "approve")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">
+                              <Check className="h-3.5 w-3.5" /> Approve
+                            </button>
+                            <button onClick={() => actOnExtension(e.id, "reject")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">
+                              <X className="h-3.5 w-3.5" /> Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Assignments — flat Book | Employee | Issue Date | Due Date | Status view ── */}
+      {view === "assignments" && (
+        loadingDash ? <TableLoader /> : !dashboard ? <TableEmpty label="assignments" /> : (
+          (dashboard.assignment_list || []).length === 0 ? <TableEmpty label="active assignments" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[900px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Book", "Employee", "Ticket", "Copy", "Issue Date", "Due Date", "Status"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard.assignment_list || []).map((a) => (
+                    <tr key={a.ticket_id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{a.book_title}</div>
+                        {a.book_author && <div className="text-[11px] text-muted-foreground">{a.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{a.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{a.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{a.ticket_id}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70">#{a.copy_number}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{a.issued_at ? a.issued_at.slice(0, 10) : "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{a.due_date}</td>
+                      <td className="py-3.5 pr-4"><StatusBadge status={a.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )
       )}
 
