@@ -15,8 +15,9 @@ Set in .env.local:
 """
 
 import datetime
-import sqlite3
 import os
+import secrets
+import sqlite3
 from contextlib import contextmanager
 from typing import Optional
 
@@ -89,9 +90,28 @@ def _init_db():
             requested_at         TEXT DEFAULT (datetime('now')),
             approved_at          TEXT,
             returned_at          TEXT,
-            due_date             TEXT
+            due_date             TEXT,
+            extension_count      INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS extension_requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id      INTEGER NOT NULL REFERENCES borrow_requests(id),
+            employee_email  TEXT NOT NULL,
+            additional_days INTEGER NOT NULL,
+            reason          TEXT,
+            status          TEXT DEFAULT 'Pending',
+            admin_remarks   TEXT,
+            previous_due    TEXT,
+            new_due_date    TEXT,
+            requested_at    TEXT DEFAULT (datetime('now')),
+            actioned_at     TEXT
         );
         """)
+        # Idempotent column migration for older DBs created before extension_count existed.
+        cols = {row[1] for row in con.execute("PRAGMA table_info(borrow_requests)").fetchall()}
+        if "extension_count" not in cols:
+            con.execute("ALTER TABLE borrow_requests ADD COLUMN extension_count INTEGER DEFAULT 0")
         # Seed sample books if empty
         count = con.execute("SELECT COUNT(*) FROM books").fetchone()[0]
         if count == 0:
@@ -189,7 +209,7 @@ def _copy_row(row) -> dict:
     }
 
 
-def _request_row(row, book_title="") -> dict:
+def _request_row(row, book_title="", book_author="") -> dict:
     return {
         "id": row["id"],
         "ticket_id": row["ticket_id"],
@@ -197,6 +217,7 @@ def _request_row(row, book_title="") -> dict:
         "employee_name": row["employee_name"],
         "book_id": row["book_id"],
         "book_title": book_title or "",
+        "book_author": book_author or "",
         "copy_id": row["copy_id"],
         "request_type": row["request_type"],
         "status": row["status"],
@@ -206,6 +227,23 @@ def _request_row(row, book_title="") -> dict:
         "approved_at": row["approved_at"],
         "returned_at": row["returned_at"],
         "due_date": row["due_date"],
+        "extension_count": row["extension_count"] if "extension_count" in row.keys() else 0,
+    }
+
+
+def _extension_row(row) -> dict:
+    return {
+        "id": row["id"],
+        "request_id": row["request_id"],
+        "employee_email": row["employee_email"],
+        "additional_days": row["additional_days"],
+        "reason": row["reason"] or "",
+        "status": row["status"],
+        "admin_remarks": row["admin_remarks"] or "",
+        "previous_due": row["previous_due"],
+        "new_due_date": row["new_due_date"],
+        "requested_at": row["requested_at"],
+        "actioned_at": row["actioned_at"],
     }
 
 
@@ -273,6 +311,16 @@ class RejectBody(BaseModel):
 
 
 class CopyStatusBody(BaseModel):
+    admin_remarks: Optional[str] = None
+
+
+class ExtensionRequestBody(BaseModel):
+    employee_email: str
+    additional_days: int = 7
+    reason: Optional[str] = None
+
+
+class ExtensionActionBody(BaseModel):
     admin_remarks: Optional[str] = None
 
 
@@ -408,24 +456,24 @@ def list_requests(status: Optional[str] = Query(None)):
     with _db() as con:
         if status:
             rows = con.execute(
-                "SELECT r.*, b.title as book_title FROM borrow_requests r JOIN books b ON b.id=r.book_id WHERE r.status=? ORDER BY r.requested_at DESC",
+                "SELECT r.*, b.title as book_title, b.author as book_author FROM borrow_requests r JOIN books b ON b.id=r.book_id WHERE r.status=? ORDER BY r.requested_at DESC",
                 (status,),
             ).fetchall()
         else:
             rows = con.execute(
-                "SELECT r.*, b.title as book_title FROM borrow_requests r JOIN books b ON b.id=r.book_id ORDER BY r.requested_at DESC"
+                "SELECT r.*, b.title as book_title, b.author as book_author FROM borrow_requests r JOIN books b ON b.id=r.book_id ORDER BY r.requested_at DESC"
             ).fetchall()
-        return [_request_row(r, r["book_title"]) for r in rows]
+        return [_request_row(r, r["book_title"], r["book_author"]) for r in rows]
 
 
 @app.get("/api/library/requests/my")
 def my_requests(email: str = Query(...)):
     with _db() as con:
         rows = con.execute(
-            "SELECT r.*, b.title as book_title FROM borrow_requests r JOIN books b ON b.id=r.book_id WHERE r.employee_email=? ORDER BY r.requested_at DESC",
+            "SELECT r.*, b.title as book_title, b.author as book_author FROM borrow_requests r JOIN books b ON b.id=r.book_id WHERE r.employee_email=? ORDER BY r.requested_at DESC",
             (email,),
         ).fetchall()
-        return [_request_row(r, r["book_title"]) for r in rows]
+        return [_request_row(r, r["book_title"], r["book_author"]) for r in rows]
 
 
 @app.post("/api/library/requests", status_code=201)
@@ -437,50 +485,83 @@ def create_request(body: CreateRequestBody):
         if book["available_copies"] <= 0:
             raise HTTPException(400, f"'{book['title']}' has no available copies right now.")
 
+        # Ticket id includes a short random suffix so two requests in the
+        # same second don't collide on the UNIQUE constraint.
         ts = datetime.datetime.utcnow().strftime("%m%d%H%M%S")
-        ticket_id = f"BK-{ts}"
+        ticket_id = f"BK-{ts}-{secrets.token_hex(2).upper()}"
 
         due = (datetime.date.today() + datetime.timedelta(days=14)).isoformat()
-        con.execute(
+        cur = con.execute(
             """INSERT INTO borrow_requests
                (ticket_id, employee_email, employee_name, book_id, request_type, status, notes, due_date)
                VALUES (?,?,?,?,?,?,?,?)""",
             (ticket_id, body.employee_email, body.employee_name,
              body.book_id, "Issue", "Pending", body.notes, due),
         )
-        return {"ticket_id": ticket_id, "due_date": due, "message": "Request submitted successfully."}
+        return {
+            "id": cur.lastrowid,
+            "ticket_id": ticket_id,
+            "due_date": due,
+            "message": "Request submitted successfully.",
+        }
 
 
 @app.put("/api/library/requests/{request_id}/approve")
 def approve_request(request_id: int, body: ApproveBody):
-    with _db() as con:
-        req = con.execute("SELECT * FROM borrow_requests WHERE id=?", (request_id,)).fetchone()
-        if not req:
-            raise HTTPException(404, "Request not found")
-        if req["status"] != "Pending":
-            raise HTTPException(400, f"Request is already {req['status']}")
+    # Use a single transaction with row-conditional copy assignment so two
+    # concurrent approvals can never both grab the same Available copy.
+    con = sqlite3.connect(DB_PATH, isolation_level=None)  # manual txn control
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    try:
+        for attempt in range(3):
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                req = con.execute("SELECT * FROM borrow_requests WHERE id=?", (request_id,)).fetchone()
+                if not req:
+                    con.execute("ROLLBACK")
+                    raise HTTPException(404, "Request not found")
+                if req["status"] != "Pending":
+                    con.execute("ROLLBACK")
+                    raise HTTPException(400, f"Request is already {req['status']}")
 
-        # Assign first available copy
-        copy = con.execute(
-            "SELECT * FROM book_copies WHERE book_id=? AND status='Available' ORDER BY copy_number LIMIT 1",
-            (req["book_id"],),
-        ).fetchone()
-        if not copy:
-            raise HTTPException(400, "No available copies left")
+                copy = con.execute(
+                    "SELECT * FROM book_copies WHERE book_id=? AND status='Available' ORDER BY copy_number LIMIT 1",
+                    (req["book_id"],),
+                ).fetchone()
+                if not copy:
+                    con.execute("ROLLBACK")
+                    raise HTTPException(400, "No available copies left")
 
-        due_date = body.due_date or (datetime.date.today() + datetime.timedelta(days=14)).isoformat()
-        now = datetime.datetime.utcnow().isoformat()
+                due_date = body.due_date or (datetime.date.today() + datetime.timedelta(days=14)).isoformat()
+                now = datetime.datetime.utcnow().isoformat()
 
-        con.execute(
-            "UPDATE book_copies SET status='Issued', current_employee_email=?, current_employee_name=?, issued_at=?, due_date=? WHERE id=?",
-            (req["employee_email"], req["employee_name"], now, due_date, copy["id"]),
-        )
-        con.execute(
-            "UPDATE borrow_requests SET status='Approved', copy_id=?, admin_remarks=?, approved_at=?, due_date=? WHERE id=?",
-            (copy["id"], body.admin_remarks, now, due_date, request_id),
-        )
-        _recalculate_book_counts(con, req["book_id"])
-        return {"message": "Request approved", "copy_number": copy["copy_number"], "due_date": due_date}
+                # Conditional UPDATE — only succeeds if the copy is still Available.
+                cur = con.execute(
+                    "UPDATE book_copies SET status='Issued', current_employee_email=?, current_employee_name=?, issued_at=?, due_date=? "
+                    "WHERE id=? AND status='Available'",
+                    (req["employee_email"], req["employee_name"], now, due_date, copy["id"]),
+                )
+                if cur.rowcount == 0:
+                    # Lost race against a concurrent approval — retry to pick another copy.
+                    con.execute("ROLLBACK")
+                    continue
+
+                con.execute(
+                    "UPDATE borrow_requests SET status='Approved', copy_id=?, admin_remarks=?, approved_at=?, due_date=? WHERE id=? AND status='Pending'",
+                    (copy["id"], body.admin_remarks, now, due_date, request_id),
+                )
+                _recalculate_book_counts(con, req["book_id"])
+                con.execute("COMMIT")
+                return {"message": "Request approved", "copy_number": copy["copy_number"], "due_date": due_date}
+            except HTTPException:
+                raise
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+        raise HTTPException(409, "Could not assign a copy due to contention. Try again.")
+    finally:
+        con.close()
 
 
 @app.put("/api/library/requests/{request_id}/reject")
@@ -540,8 +621,27 @@ def dashboard():
         """).fetchone()
 
         today = datetime.date.today().isoformat()
+        soon = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
+
         overdue = con.execute(
             "SELECT COUNT(*) FROM book_copies WHERE status='Issued' AND due_date < ?", (today,)
+        ).fetchone()[0]
+
+        due_soon = con.execute(
+            "SELECT COUNT(*) FROM book_copies WHERE status='Issued' AND due_date >= ? AND due_date <= ?",
+            (today, soon),
+        ).fetchone()[0]
+
+        pending_requests = con.execute(
+            "SELECT COUNT(*) FROM borrow_requests WHERE status='Pending'"
+        ).fetchone()[0]
+
+        pending_extensions = con.execute(
+            "SELECT COUNT(*) FROM extension_requests WHERE status='Pending'"
+        ).fetchone()[0]
+
+        active_borrowers = con.execute(
+            "SELECT COUNT(DISTINCT employee_email) FROM borrow_requests WHERE status='Approved'"
         ).fetchone()[0]
 
         popular = con.execute("""
@@ -564,6 +664,27 @@ def dashboard():
             ORDER BY r.due_date ASC
         """, (today,)).fetchall()
 
+        due_soon_list = con.execute("""
+            SELECT b.title, r.employee_name, r.employee_email, r.due_date, c.copy_number
+            FROM borrow_requests r
+            JOIN books b ON b.id=r.book_id
+            LEFT JOIN book_copies c ON c.id=r.copy_id
+            WHERE r.status='Approved' AND r.due_date >= ? AND r.due_date <= ?
+            ORDER BY r.due_date ASC
+        """, (today, soon)).fetchall()
+
+        assignment_list = con.execute("""
+            SELECT r.ticket_id, b.title as book_title, b.author as book_author,
+                   r.employee_name, r.employee_email,
+                   c.copy_number, c.issued_at, r.due_date,
+                   CASE WHEN r.due_date < ? THEN 'Overdue' ELSE 'Issued' END as status
+            FROM borrow_requests r
+            JOIN books b ON b.id=r.book_id
+            LEFT JOIN book_copies c ON c.id=r.copy_id
+            WHERE r.status='Approved'
+            ORDER BY r.due_date ASC
+        """, (today,)).fetchall()
+
         return {
             "metrics": {
                 "total_books": totals["total_books"] or 0,
@@ -572,6 +693,10 @@ def dashboard():
                 "issued_copies": totals["issued_copies"] or 0,
                 "reserved_copies": totals["reserved_copies"] or 0,
                 "overdue_books": overdue or 0,
+                "due_soon": due_soon or 0,
+                "pending_requests": pending_requests or 0,
+                "pending_extensions": pending_extensions or 0,
+                "active_borrowers": active_borrowers or 0,
                 "lost_books": totals["lost_copies"] or 0,
                 "damaged_books": totals["damaged_copies"] or 0,
             },
@@ -593,4 +718,159 @@ def dashboard():
                 }
                 for r in overdue_books
             ],
+            "due_soon_list": [
+                {
+                    "title": r["title"],
+                    "employee_name": r["employee_name"],
+                    "employee_email": r["employee_email"],
+                    "due_date": r["due_date"],
+                    "copy_number": r["copy_number"],
+                }
+                for r in due_soon_list
+            ],
+            "assignment_list": [
+                {
+                    "ticket_id": r["ticket_id"],
+                    "book_title": r["book_title"],
+                    "book_author": r["book_author"] or "",
+                    "employee_name": r["employee_name"],
+                    "employee_email": r["employee_email"],
+                    "copy_number": r["copy_number"],
+                    "issued_at": r["issued_at"],
+                    "due_date": r["due_date"],
+                    "status": r["status"],
+                }
+                for r in assignment_list
+            ],
         }
+
+
+# ── Extensions ────────────────────────────────────────────────────────────────
+
+@app.post("/api/library/requests/{request_id}/extension", status_code=201)
+def create_extension(request_id: int, body: ExtensionRequestBody):
+    with _db() as con:
+        req = con.execute("SELECT * FROM borrow_requests WHERE id=?", (request_id,)).fetchone()
+        if not req:
+            raise HTTPException(404, "Borrow request not found")
+        if req["employee_email"].lower() != body.employee_email.lower():
+            raise HTTPException(403, "You can only extend your own borrow")
+        if req["status"] != "Approved":
+            raise HTTPException(400, "Only approved (active) borrows can be extended")
+
+        existing_pending = con.execute(
+            "SELECT id FROM extension_requests WHERE request_id=? AND status='Pending'",
+            (request_id,),
+        ).fetchone()
+        if existing_pending:
+            raise HTTPException(400, "An extension request is already pending for this borrow")
+
+        if body.additional_days <= 0 or body.additional_days > 30:
+            raise HTTPException(400, "additional_days must be between 1 and 30")
+
+        cur = con.execute(
+            """INSERT INTO extension_requests
+               (request_id, employee_email, additional_days, reason, status, previous_due)
+               VALUES (?,?,?,?, 'Pending', ?)""",
+            (request_id, body.employee_email, body.additional_days, body.reason, req["due_date"]),
+        )
+        return {"id": cur.lastrowid, "message": "Extension request submitted"}
+
+
+@app.get("/api/library/extensions")
+def list_extensions(status: Optional[str] = Query(None)):
+    with _db() as con:
+        sql = """
+            SELECT e.*, r.ticket_id, r.employee_name, b.title as book_title, b.author as book_author,
+                   r.due_date as current_due_date
+            FROM extension_requests e
+            JOIN borrow_requests r ON r.id=e.request_id
+            JOIN books b ON b.id=r.book_id
+        """
+        params = ()
+        if status:
+            sql += " WHERE e.status=?"
+            params = (status,)
+        sql += " ORDER BY e.requested_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [
+            {
+                **_extension_row(r),
+                "ticket_id": r["ticket_id"],
+                "employee_name": r["employee_name"],
+                "book_title": r["book_title"],
+                "book_author": r["book_author"] or "",
+                "current_due_date": r["current_due_date"],
+            }
+            for r in rows
+        ]
+
+
+@app.get("/api/library/extensions/my")
+def my_extensions(email: str = Query(...)):
+    with _db() as con:
+        rows = con.execute(
+            """SELECT e.*, r.ticket_id, b.title as book_title, b.author as book_author,
+                      r.due_date as current_due_date
+               FROM extension_requests e
+               JOIN borrow_requests r ON r.id=e.request_id
+               JOIN books b ON b.id=r.book_id
+               WHERE e.employee_email=? ORDER BY e.requested_at DESC""",
+            (email,),
+        ).fetchall()
+        return [
+            {
+                **_extension_row(r),
+                "ticket_id": r["ticket_id"],
+                "book_title": r["book_title"],
+                "book_author": r["book_author"] or "",
+                "current_due_date": r["current_due_date"],
+            }
+            for r in rows
+        ]
+
+
+@app.put("/api/library/extensions/{ext_id}/approve")
+def approve_extension(ext_id: int, body: ExtensionActionBody):
+    with _db() as con:
+        ext = con.execute("SELECT * FROM extension_requests WHERE id=?", (ext_id,)).fetchone()
+        if not ext:
+            raise HTTPException(404, "Extension request not found")
+        if ext["status"] != "Pending":
+            raise HTTPException(400, f"Extension already {ext['status']}")
+
+        req = con.execute("SELECT * FROM borrow_requests WHERE id=?", (ext["request_id"],)).fetchone()
+        if not req or req["status"] != "Approved":
+            raise HTTPException(400, "Linked borrow is no longer active")
+
+        current_due = datetime.date.fromisoformat(req["due_date"])
+        new_due = (current_due + datetime.timedelta(days=ext["additional_days"])).isoformat()
+        now = datetime.datetime.utcnow().isoformat()
+
+        con.execute(
+            "UPDATE extension_requests SET status='Approved', admin_remarks=?, new_due_date=?, actioned_at=? WHERE id=?",
+            (body.admin_remarks, new_due, now, ext_id),
+        )
+        con.execute(
+            "UPDATE borrow_requests SET due_date=?, extension_count=COALESCE(extension_count,0)+1 WHERE id=?",
+            (new_due, ext["request_id"]),
+        )
+        if req["copy_id"]:
+            con.execute("UPDATE book_copies SET due_date=? WHERE id=?", (new_due, req["copy_id"]))
+        return {"message": "Extension approved", "new_due_date": new_due}
+
+
+@app.put("/api/library/extensions/{ext_id}/reject")
+def reject_extension(ext_id: int, body: ExtensionActionBody):
+    with _db() as con:
+        ext = con.execute("SELECT * FROM extension_requests WHERE id=?", (ext_id,)).fetchone()
+        if not ext:
+            raise HTTPException(404, "Extension request not found")
+        if ext["status"] != "Pending":
+            raise HTTPException(400, f"Extension already {ext['status']}")
+        now = datetime.datetime.utcnow().isoformat()
+        con.execute(
+            "UPDATE extension_requests SET status='Rejected', admin_remarks=?, actioned_at=? WHERE id=?",
+            (body.admin_remarks, now, ext_id),
+        )
+        return {"message": "Extension rejected"}

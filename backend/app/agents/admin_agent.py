@@ -156,7 +156,7 @@ def list_available_books():
     if not books:
         return "No books are currently available in the company library. Please check back later or contact Admin."
     lines = ["Here are the books currently available in our company library:\n"]
-    for b in books:
+    for b in books[:8]:  # cap the chat list — full list lives on /books
         avail = b["available_copies"]
         total = b["total_copies"]
         status = b.get("availability_status", "")
@@ -165,7 +165,9 @@ def list_available_books():
             + (f" ({b['category']})" if b['category'] else "")
             + f" — {avail}/{total} copies available | {status}"
         )
-    lines.append("\nTo request a book, just tell me the book title or ID.")
+    if len(books) > 8:
+        lines.append(f"\n…and {len(books) - 8} more.")
+    lines.append("\nTo request a book, just tell me the title. Or browse the full catalog here: <<NAV:/books|Open Book Catalog>>")
     return "\n".join(lines)
 
 
@@ -188,7 +190,10 @@ def request_book(
 def check_book_requests(state: Annotated[dict, InjectedState] = None):
     """Check the status of your book borrow requests (Bookshelf Buddy)."""
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
-    return BookshelfService.check_my_requests(email)
+    text = BookshelfService.check_my_requests(email)
+    if isinstance(text, str) and not text.startswith("You haven't"):
+        text += "\n\nManage your borrows here: <<NAV:/my-library|Open My Library>>"
+    return text
 
 
 @tool
@@ -211,6 +216,38 @@ def borrow_book_by_name(
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
     emp_name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
     return BookshelfService.request_book(email, emp_name, match["id"], notes)
+
+
+@tool
+def return_my_book(
+    ticket_id: str,
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Return one of your currently-borrowed books (Bookshelf Buddy).
+    REQUIRED: ticket_id — the borrow ticket (e.g. BK-...). Ask user for it, or call check_book_requests first if missing.
+    Only the original borrower can return their own book."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    result = BookshelfService.employee_return(email, ticket_id)
+    return result.get("message", "Done.")
+
+
+@tool
+def request_book_extension(
+    ticket_id: str,
+    additional_days: int = 7,
+    reason: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request an extension on an active borrow (Bookshelf Buddy).
+    REQUIRED: ticket_id (e.g. BK-...). additional_days defaults to 7 (max 30).
+    Admin is notified and must approve or reject. Use check_book_requests to find your ticket if needed."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    try:
+        days = int(additional_days)
+    except (TypeError, ValueError):
+        days = 7
+    result = BookshelfService.request_extension(email, ticket_id, days, reason or "")
+    return result.get("message", "Done.")
 
 
 @tool
@@ -249,12 +286,23 @@ tools = [
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
     list_available_books, borrow_book_by_name, request_book, check_book_requests,
+    return_my_book, request_book_extension,
     post_admin_announcement, update_admin_prompt,
+]
+
+_BOOKSHELF_TOOLS = [
+    list_available_books, borrow_book_by_name, request_book, check_book_requests,
+    return_my_book, request_book_extension,
 ]
 
 # Narrow tool sets per sub_intent — prevents the LLM from calling unrelated tools
 _TOOL_GROUPS: dict[str, list] = {
-    "bookshelf":          [list_available_books, borrow_book_by_name, request_book, check_book_requests],
+    "bookshelf":          _BOOKSHELF_TOOLS,
+    "bookshelf.discover": [list_available_books],
+    "bookshelf.borrow":   [list_available_books, borrow_book_by_name, request_book],
+    "bookshelf.status":   [check_book_requests],
+    "bookshelf.return":   [check_book_requests, return_my_book],
+    "bookshelf.extend":   [check_book_requests, request_book_extension],
     "parking_sticker":    [request_parking_sticker, surrender_parking_sticker, get_parking_info],
     "facility_complaint": [file_facility_complaint, check_complaint_status],
     "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],

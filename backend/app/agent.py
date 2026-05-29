@@ -642,11 +642,50 @@ _KW_ADMIN_ACCOM = re.compile(
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
 
+_KW_BOOKSHELF_RETURN = re.compile(
+    r'\b(return\s+(my\s+|the\s+|a\s+)?book|'
+    r'i\s+(have\s+)?finished\s+(reading|the\s+book)|'
+    r'give\s+back\s+(my\s+|the\s+|a\s+)?book|'
+    r'hand\s+(back|in)\s+(my\s+|the\s+|a\s+)?book)\b',
+    re.I,
+)
+
+_KW_BOOKSHELF_EXTEND = re.compile(
+    r'\b(extend\s+(my\s+|the\s+)?(book|due\s+date|borrow|loan)|'
+    r'renew\s+(my\s+|the\s+|a\s+)?book|'
+    r'(need|want)\s+more\s+time\s+(on|for|with)\s+(my\s+|the\s+)?book|'
+    r'keep\s+(the\s+|my\s+)?book\s+(for\s+)?(more|longer|another))\b',
+    re.I,
+)
+
+_KW_BOOKSHELF_STATUS = re.compile(
+    r'\b(my\s+(book\s+)?(borrows?|requests?)|'
+    r'check\s+(my\s+)?book\s+request|book\s+request\s+status|'
+    r'borrowed\s+books?|books?\s+i\s+(have\s+)?borrowed|'
+    r'what\s+books?\s+do\s+i\s+have|my\s+(borrowed\s+)?library)\b',
+    re.I,
+)
+
+# General discovery / browse — covers all the natural variations in the spec:
+# "I want a book", "need a book", "looking for something to read",
+# "I need learning material", "show books", "browse books", "recommend a book".
 _KW_BOOKSHELF = re.compile(
-    r'\b(bookshelf|book\s*shelf|borrow\s+a?\s*book|issue\s+a?\s*book|'
-    r'return\s+a?\s*book|company\s+library|office\s+library|'
-    r'available\s+books?|books?\s+available|book\s+request|request\s+a?\s*book|'
-    r'lend\s+me\s+a\s+book|check\s+(?:my\s+)?book\s+request)\b',
+    r'\b('
+    r'bookshelf|book\s*shelf|'
+    r'borrow\s+(a\s+|an\s+|the\s+)?book|'
+    r'issue\s+(a\s+|an\s+|the\s+)?book|'
+    r'company\s+library|office\s+library|library\s+(catalog|catalogue|books?)|'
+    r'available\s+books?|books?\s+available|'
+    r'book\s+request|request\s+(a\s+|an\s+|the\s+)?book|'
+    r'lend\s+me\s+(a\s+|an\s+|the\s+)?book|'
+    r'check\s+(?:my\s+)?book\s+request|'
+    # Natural discovery variations
+    r'(i\s+)?(want|need|like|require)\s+(a\s+|an\s+|some\s+)?book|'
+    r'looking\s+for\s+(a\s+|an\s+|some\s+)?(book|reading\s+material|something\s+to\s+read)|'
+    r'(reading|learning|study)\s+material|'
+    r'(show|browse|see|view|find|recommend|suggest)\s+(me\s+)?(some\s+|the\s+|any\s+)?(book|books|library)|'
+    r'books?\s+on\s+[a-z]'
+    r')\b',
     re.I,
 )
 
@@ -805,10 +844,22 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
 
-    # Admin — Bookshelf Buddy
-    if _KW_BOOKSHELF.search(text):
+    # Admin — Bookshelf Buddy (specific sub-intents first, then generic discovery)
+    if _KW_BOOKSHELF_EXTEND.search(text):
         return {"domain": "admin", "confidence": 0.97,
-                "reasoning": "Keyword: bookshelf / book borrow request",
+                "reasoning": "Keyword: extend / renew book borrow",
+                "sub_intent": "bookshelf.extend", "entities": {}}
+    if _KW_BOOKSHELF_RETURN.search(text):
+        return {"domain": "admin", "confidence": 0.97,
+                "reasoning": "Keyword: return a borrowed book",
+                "sub_intent": "bookshelf.return", "entities": {}}
+    if _KW_BOOKSHELF_STATUS.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: my borrows / book request status",
+                "sub_intent": "bookshelf.status", "entities": {}}
+    if _KW_BOOKSHELF.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: bookshelf / book discovery / borrow",
                 "sub_intent": "bookshelf", "entities": {}}
 
     # MS365 — read emails
