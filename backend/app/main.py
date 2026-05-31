@@ -177,6 +177,14 @@ class ParkingSubmitRequest(BaseModel):
     vehicle_make: Optional[str] = ""
     vehicle_model: Optional[str] = ""
 
+class VisitorPassSubmitRequest(BaseModel):
+    email: str
+    visitor_name: str
+    visit_date: str   # YYYY-MM-DD
+    purpose: str
+    visit_time: Optional[str] = ""
+    visitor_company: Optional[str] = ""
+
 class SendEmailDraftRequest(BaseModel):
     to: str
     subject: str
@@ -443,9 +451,24 @@ _CACHEABLE_DOMAINS = {"hr", "admin", "general"}
 # run live. (The frontend already intercepts most actions before /api/chat; this is belt-and-braces.)
 _CACHE_SKIP_RE = re.compile(
     r"\b(book|reserve|cancel|delete|remove|apply|submit|raise|create|install|"
-    r"approve|reject|send|update|change|set|add|draft|schedule)\b",
+    r"request|register|approve|reject|send|update|change|set|add|draft|schedule)\b",
     re.IGNORECASE,
 )
+
+# Action / dynamic sub-intents must NEVER be cached — even if the phrasing slips
+# past _CACHE_SKIP_RE — because their responses contain one-time IDs or create
+# records (e.g. a visitor pass with a fresh Pass ID). Only informational answers
+# (policy_query, company_info, greeting) are safe to serve verbatim later.
+_NON_CACHEABLE_SUBINTENTS = {
+    "visitor_pass", "parking_sticker", "desk_key_request", "accommodation",
+    "facility_complaint", "food_complaint", "food_feedback",
+    "document_request", "grievance", "submit_leave", "leave_balance",
+    "zoho_leave_fastpath", "powerapps_complaint", "setup_session",
+    "software_install", "software_install_confirm", "license_request",
+    "asset_request", "create_ticket", "hardware_issue", "my_tickets", "my_assets",
+    "send_email", "send_teams_message", "room_availability", "book_room",
+    "announcement", "prompt_config",
+}
 
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
@@ -837,6 +860,7 @@ async def chat(
                 settings.ANSWER_CACHE_ENABLED
                 and not error_msg
                 and routed_domain in _CACHEABLE_DOMAINS
+                and (routed_sub_intent or "") not in _NON_CACHEABLE_SUBINTENTS
                 and not post["interactive"]
                 and not post["download_url"]
                 and not post["images"]
@@ -1221,6 +1245,24 @@ async def submit_parking(req: ParkingSubmitRequest):
         req.vehicle_number,
         req.vehicle_make or "",
         req.vehicle_model or "",
+    )
+    return {"message": result}
+
+
+@app.post("/api/visitor-pass/submit")
+async def submit_visitor_pass(req: VisitorPassSubmitRequest):
+    # Deterministic form submit — no LLM, no router, no cache. The service guards
+    # against placeholder names / past dates as a backstop; the form enforces the
+    # rest. Run off the event loop since it writes to the DB and sends email.
+    from app.services.admin_service import AdminService
+    result = await asyncio.to_thread(
+        AdminService.request_visitor_pass,
+        req.email,
+        req.visitor_name,
+        req.visit_date,
+        req.purpose,
+        req.visit_time or "",
+        req.visitor_company or "",
     )
     return {"message": result}
 

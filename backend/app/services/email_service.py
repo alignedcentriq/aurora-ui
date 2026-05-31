@@ -31,11 +31,30 @@ def _nl2br(text: str) -> str:
     return html.escape(text).replace("\n", "<br>")
 
 
+def _run_coro(coro):
+    """Run an async coroutine to completion from sync code, whether or not an
+    event loop is already running in the calling thread.
+
+    `_send` is synchronous but is reached from async agent tools (running loop)
+    as well as from background daemon threads (no loop). asyncio.run() works in
+    the latter but raises inside a running loop, so fall back to a worker thread.
+    """
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # no loop in this thread — safe to run directly
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
 def _get_graph_token(user_email: str) -> str | None:
     """Return a valid Microsoft Graph token for user_email, or None if not connected."""
     try:
         from app.services.oauth_service import get_valid_token
-        return get_valid_token(user_email, "microsoft")
+        # get_valid_token is async (it may refresh) — resolve it from sync context.
+        return _run_coro(get_valid_token(user_email, "microsoft"))
     except Exception as e:
         logger.warning("[email] Cannot get Graph token for %s: %s", user_email, e)
         return None

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
+import { VisitorPassForm } from "./VisitorPassForm";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
@@ -309,6 +310,23 @@ export function AssistantView() {
           role: "ai",
           text: "Please fill in your vehicle details below to submit a parking sticker request.",
           interactive: { type: "parking_form" },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept visitor / guest pass requests — show a form, zero LLM.
+      // Structural match (mirrors backend _KW_ADMIN_VISITOR), not hardcoded names.
+      const isVisitorPass =
+        /\b(visitor|guest)\s+(pass|entry|registration)\b/i.test(text) ||
+        /\bregister\s+(a\s+|my\s+)?(visitor|guest)\b/i.test(text) ||
+        /\b(request|need|book|get)\b.{0,20}\b(visitor|guest)\s+pass\b/i.test(text);
+      if (isVisitorPass) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Sure — fill in the visitor's details below and I'll register the pass.",
+          interactive: { type: "visitor_pass_form" },
         });
         setInput("");
         return;
@@ -1089,6 +1107,15 @@ export function AssistantView() {
                             {t.interactive?.type === "parking_form" && (
                               <ParkingForm
                                 userEmail={user?.email || ""}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "visitor_pass_form" && (
+                              <VisitorPassForm
+                                userEmail={user?.email || ""}
+                                prefill={t.interactive.data as import("@/lib/chat-store").VisitorPassPrefill | undefined}
                                 onSubmitted={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }

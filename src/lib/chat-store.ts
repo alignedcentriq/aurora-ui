@@ -34,17 +34,26 @@ export interface SkillsEditorPrefill {
   skill?: string;
 }
 
+export interface VisitorPassPrefill {
+  visitorName?: string;
+  visitDate?: string;
+  visitTime?: string;
+  purpose?: string;
+  visitorCompany?: string;
+}
+
 export interface InteractivePayload {
   type:
     | "email_draft"
     | "parking_form"
+    | "visitor_pass_form"
     | "room_booking_form"
     | "cancel_booking_form"
     | "announcement_form"
     | "prompt_config_form"
     | "my_schedule"
     | "skills_editor";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill;
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill;
 }
 
 export interface Turn {

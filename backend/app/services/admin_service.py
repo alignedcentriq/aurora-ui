@@ -304,15 +304,31 @@ class AdminService:
         visit_time: str = "",
         visitor_company: str = "",
     ) -> str:
+        # Guard against LLM-invented placeholder values: never create a pass for
+        # a templated name or an unparseable/past visit date. Forces the agent to
+        # ask the user for real details instead of fabricating "John Doe / 2023".
+        name_clean = (visitor_name or "").strip()
+        _PLACEHOLDER_NAMES = {
+            "john doe", "jane doe", "test", "test visitor", "visitor", "visitor name",
+            "n/a", "na", "none", "example", "first last", "firstname lastname",
+        }
+        if not name_clean or name_clean.lower() in _PLACEHOLDER_NAMES:
+            return ("I need the visitor's actual name to register the pass. "
+                    "Who is visiting?")
+        try:
+            visit_date_obj = datetime.datetime.strptime(visit_date.strip(), "%Y-%m-%d").date()
+        except (ValueError, AttributeError):
+            return ("I couldn't read the visit date. Please give it as a real "
+                    "calendar date (YYYY-MM-DD), e.g. 2026-06-05.")
+        if visit_date_obj < datetime.date.today():
+            return (f"The visit date {visit_date} is in the past. "
+                    "Please provide the actual upcoming visit date.")
+
         db = SessionLocal()
         try:
             emp = AdminService._get_or_create_employee(db, email)
 
             pass_id = f"VP-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
-            try:
-                visit_date_obj = datetime.datetime.strptime(visit_date, "%Y-%m-%d").date()
-            except ValueError:
-                visit_date_obj = None
 
             new_p = VisitorPass(
                 pass_id=pass_id,

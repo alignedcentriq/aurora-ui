@@ -1028,11 +1028,24 @@ async def intent_router(state: AgentState):
             "entities": {},
         }
 
+    # Keyword fast-path is computed up-front so a clear, complete new intent can
+    # override stickiness. Terse follow-up answers ("B-07", "tomorrow 3pm") don't
+    # match any keyword route, so they still fall through to the sticky logic below.
+    keyword_result = _try_keyword_route(last_human)
+
     # Sticky domain: keep the same domain for follow-up messages that reference prior context.
     # Triggers on: (a) short reply to an agent question, OR (b) short message with context-reference
     # words after a substantive AI answer (e.g. "is there any timeline for applying it").
     existing_domain = state.get("domain")
-    if existing_domain in _STICKY_DOMAINS:
+    # A confident keyword match for a DIFFERENT domain is a genuine new request
+    # (e.g. "I need to request a visitor pass" while stuck in it_support) — never
+    # let stickiness swallow it.
+    keyword_overrides_sticky = bool(
+        keyword_result
+        and keyword_result["domain"] != existing_domain
+        and keyword_result.get("confidence", 0) >= 0.9
+    )
+    if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky:
         last_ai = _last_ai_message(state.get("messages", []))
         msg_len = len(last_human.strip())
         _CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "the", "about", "any"}
@@ -1072,7 +1085,7 @@ async def intent_router(state: AgentState):
         }
 
     # Keyword fast-path: classify via regex — 0 LLM calls, <1ms
-    keyword_result = _try_keyword_route(last_human)
+    # (computed above so it can override stickiness; reuse the result here)
     if keyword_result:
         print(
             f"[Router] Keyword fast-path → {keyword_result['domain']} "
