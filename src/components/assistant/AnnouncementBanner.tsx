@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/lib/auth-store";
 import { motion, AnimatePresence } from "framer-motion";
+import { flyBanner } from "@/lib/fly-banner";
 
 interface Announcement {
   id: number;
@@ -30,6 +31,18 @@ function getDismissed(): number[] {
 
 function saveDismissed(ids: number[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+}
+
+// IDs we've already flown the celebratory jet for, so it fires once per
+// announcement and never replays the existing backlog on refresh.
+const FLOWN_KEY = "centriq_flown_announcements";
+
+function getFlown(): number[] {
+  try {
+    return JSON.parse(localStorage.getItem(FLOWN_KEY) || "[]");
+  } catch {
+    return [];
+  }
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -66,6 +79,23 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
         if (active.length > 0 && expanded === null) {
           setExpanded(active[0].id);
         }
+
+        // Fly the jet for a newly-arrived announcement. On the very first
+        // run (no flag yet) we seed silently so the existing backlog never
+        // flies — only announcements that appear afterwards do.
+        const seeded = localStorage.getItem(FLOWN_KEY) !== null;
+        const flown = new Set(getFlown());
+        const fresh = active.filter((a) => !flown.has(a.id));
+        if (seeded && fresh.length > 0) {
+          const newest = fresh.reduce((a, b) =>
+            a.created_at > b.created_at ? a : b,
+          );
+          flyBanner(`📣 ${newest.title}`);
+        }
+        localStorage.setItem(
+          FLOWN_KEY,
+          JSON.stringify(active.map((a) => a.id)),
+        );
       })
       .catch(() => {});
   };

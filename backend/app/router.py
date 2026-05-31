@@ -28,7 +28,8 @@ DOMAIN_REGISTRY = {
         "description": "Office Administration — reimbursement (travel, medical, certification, equipment), "
                        "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
                        "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
-                       "courier services, ID cards, access management, desk key requests, desk assignments",
+                       "courier services, ID cards, access management, desk key requests, desk assignments, "
+                       "visitor / guest passes (registering a visitor coming to the office to meet an employee)",
         "status": "active",
     },
     "it_support": {
@@ -55,17 +56,19 @@ DOMAIN_REGISTRY = {
     },
     "functional_manager": {
         "description": "Functional Manager & Team Lead — who is on my team, who reports to me, "
-                       "my direct reports, team members, reportees, org structure, "
-                       "checking if a meeting room is available, booking a conference room",
+                       "my direct reports, team members, reportees, org structure. "
+                       "Do NOT use for meeting rooms or conference room booking — those go to ms365.",
         "status": "active",
     },
     "ms365": {
         "description": "Microsoft 365 & Viva Engage — reading emails from Outlook inbox, sending emails via Outlook, "
                        "checking calendar events, finding meetings by date or keyword, "
-                       "reading Teams chat messages, "
+                       "meeting rooms and conference rooms (list rooms, check availability, book a room), "
+                       "reading Teams chat messages, reading Teams channel messages, posting to Teams channels, "
                        "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities. "
                        "Use for: 'show my emails', 'send an email to X', 'what meetings do I have today', "
                        "'check my calendar for next week', 'read my Teams messages', 'any emails from John', "
+                       "'which rooms are free at 3pm', 'book conference room', 'is room X available tomorrow', "
                        "'show my Yammer feed', 'my communities', 'posts in X community', 'post to X community'. "
                        "Do NOT use for email access issues (password reset, can't login) — those go to it_support.",
         "status": "active",
@@ -132,10 +135,12 @@ EXAMPLES:
 - "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
 - "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
 - "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
+- "I need to request a visitor pass" → domain: admin, sub_intent: visitor_pass, entities: {{}}
+- "register a guest visiting me tomorrow" → domain: admin, sub_intent: visitor_pass, entities: {{"visit_date": "tomorrow"}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
-- "is Salween room free tomorrow 2-3pm" → domain: functional_manager, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "is Salween room free tomorrow 2-3pm" → domain: ms365, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}

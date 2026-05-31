@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -18,6 +19,7 @@ from typing import List, Optional
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
 from app.agents.deeplink_agent import get_deeplink_agent
+from app.concurrency import chat_gate
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings, ALIGNED_LLM_HOST
@@ -39,6 +41,8 @@ from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
 from app.routes.bluff_routes import router as bluff_router
+from app.routes.ms365_routes import router as ms365_router
+from app.routes.document_routes import router as document_router, public_router as document_public_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -118,8 +122,12 @@ app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
 app.include_router(bluff_router)
+app.include_router(ms365_router)
+app.include_router(document_router)
+app.include_router(document_public_router)
 
 app.add_middleware(BluffModeMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -224,6 +232,12 @@ async def llm_health():
         },
     )
 
+@app.get("/api/chat/load")
+async def chat_load():
+    """Live concurrency-gate stats — handy while load testing."""
+    return await chat_gate.stats()
+
+
 @app.post("/api/feedback")
 async def feedback(req: FeedbackRequest):
     rating_int = 1 if req.rating == "up" else -1
@@ -255,12 +269,12 @@ async def upload_file(file: UploadFile = File(...)):
 
     extracted = ""
     if filename.lower().endswith(".pdf"):
-        try:
+        def _extract_pdf(data: bytes) -> str:
             import pdfplumber
-            with pdfplumber.open(io.BytesIO(content_bytes)) as pdf:
-                extracted = "\n".join(
-                    page.extract_text() or "" for page in pdf.pages
-                ).strip()
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                return "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+        try:
+            extracted = await asyncio.to_thread(_extract_pdf, content_bytes)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"PDF extraction failed: {e}")
     else:
@@ -421,6 +435,18 @@ async def serve_policy_image(image_id: int):
 # (routing/context work, not the final answer)
 _SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup"}
 
+# Domains whose answers are safe & stable enough to serve from the semantic answer cache.
+# Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
+_CACHEABLE_DOMAINS = {"hr", "admin", "general"}
+
+# Cheap guard: skip the cache for obvious action / side-effecting phrasings so they always
+# run live. (The frontend already intercepts most actions before /api/chat; this is belt-and-braces.)
+_CACHE_SKIP_RE = re.compile(
+    r"\b(book|reserve|cancel|delete|remove|apply|submit|raise|create|install|"
+    r"approve|reject|send|update|change|set|add|draft|schedule)\b",
+    re.IGNORECASE,
+)
+
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
@@ -481,9 +507,19 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
 
     # Remove stray JSON blobs — only standalone blobs that start with {"
     # (tool output leaks), not curly braces inside natural prose
-    cleaned = re.sub(r'(?:^|\n)\s*\{\"[^}]{20,}\}', '', final_message, flags=re.DOTALL).strip()
+    _JSON_BLOB_RE = re.compile(r'(?:^|\n)\s*\{\"[^}]{20,}\}', re.DOTALL)
+    cleaned = _JSON_BLOB_RE.sub('', final_message).strip()
     if cleaned:
         final_message = cleaned
+    else:
+        # The entire response was a JSON blob (LLM echoed tool result verbatim).
+        # Try to extract a human-readable "message" field from it rather than
+        # showing a generic error.
+        import json as _json
+        _msg_match = re.search(r'"message"\s*:\s*"([^"]+)"', final_message)
+        if _msg_match:
+            final_message = _msg_match.group(1)
+        # else: keep final_message as-is (non-empty raw JSON) to avoid false "error"
 
     # Collapse excessive blank lines
     final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()
@@ -533,6 +569,20 @@ async def chat(
         except Exception:
             pass
 
+    # Detect user's office location from their M365 profile (officeLocation → city → country)
+    user_location: str | None = None
+    if effective_graph_token:
+        try:
+            from app.services.ms365_service import fetch_my_profile
+            _profile = await fetch_my_profile(effective_graph_token)
+            user_location = (
+                _profile.get("officeLocation")
+                or _profile.get("city")
+                or _profile.get("country")
+            ) or None
+        except Exception:
+            pass
+
     config = {"configurable": {"thread_id": request.session_id}}
     input_data = {
         "messages": [HumanMessage(content=request.message)],
@@ -540,13 +590,57 @@ async def chat(
         "user_role": user_role,
         "graph_token": effective_graph_token,
         "session_id": request.session_id,
+        "user_location": user_location,
     }
 
     async def generate():
         from app.models import AiRequestLog, AiLlmCallLog
 
+        # ── Semantic answer cache (instant path, zero LLM) ──────────────
+        # If a near-identical informational question was answered recently, stream the saved
+        # answer immediately and skip the concurrency gate + graph entirely. Guarded against
+        # action phrasings so side-effecting requests never short-circuit.
+        if settings.ANSWER_CACHE_ENABLED and not _CACHE_SKIP_RE.search(request.message):
+            try:
+                from app.services.answer_cache_service import AnswerCacheService
+                hit = await asyncio.to_thread(AnswerCacheService.lookup, request.message)
+            except Exception as _ce:
+                print(f"[AnswerCache] lookup error: {_ce}")
+                hit = None
+            if hit and hit.get("answer"):
+                cached_answer = hit["answer"]
+                cached_domain = hit.get("domain") or "general"
+                yield f"data: {json.dumps({'type': 'token', 'content': cached_answer})}\n\n"
+                # Observability: record a 0-LLM cache hit so hit-rate is measurable.
+                try:
+                    _db = SessionLocal()
+                    _db.add(AiRequestLog(
+                        session_id=request.session_id,
+                        user_email=user_email,
+                        user_message=request.message,
+                        domain=cached_domain,
+                        sub_intent=hit.get("sub_intent"),
+                        route_method="cache_hit",
+                        response_text=cached_answer[:2000],
+                        response_length=len(cached_answer),
+                        total_latency_ms=int((time.time() - start_time) * 1000),
+                        llm_call_count=0,
+                    ))
+                    _db.commit()
+                except Exception as _le:
+                    print(f"[observability] cache-hit log error: {_le}")
+                finally:
+                    try:
+                        _db.close()
+                    except Exception:
+                        pass
+                print(f"[AnswerCache] HIT sim={hit.get('similarity')} domain={cached_domain} session={request.session_id}")
+                yield f"data: {json.dumps({'type': 'done', 'domain': cached_domain})}\n\n"
+                return
+
         accumulated_text = ""
         routed_domain = "general"
+        routed_sub_intent: str | None = None
         final_messages = []
         llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
         completed_calls: list[dict] = []   # finished LLM calls for DB insert
@@ -559,6 +653,30 @@ async def chat(
             metadata={"message": request.message},
             tags=["chat"],
         )
+
+        # ── Concurrency gate: cap simultaneous LLM generations ──────────
+        # Cross-process (Redis-backed) cap with a bounded wait queue. We drive
+        # the wait here so we can stream a "queued" notice and periodic SSE
+        # keepalives to the client while it waits; once we hold a slot, a
+        # heartbeat keeps its lease alive so it can't leak if this worker dies.
+        slot = None
+        async for kind, payload in chat_gate.acquire():
+            if kind == "queued":
+                yield f"data: {json.dumps({'type': 'queued', 'message': 'High demand right now — holding your place in line…'})}\n\n"
+            elif kind == "keepalive":
+                yield ": keepalive\n\n"
+            elif kind in ("busy", "timeout"):
+                busy_msg = (
+                    "Centriq is handling a lot of requests right now. "
+                    "Please try again in a moment."
+                )
+                yield f"data: {json.dumps({'type': 'busy', 'message': busy_msg})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': 'general'})}\n\n"
+                return
+            elif kind == "acquired":
+                slot = payload
+
+        heartbeat_task = asyncio.ensure_future(chat_gate.slot_heartbeat(slot))
 
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
@@ -638,12 +756,21 @@ async def chat(
                 elif event_type == "on_chain_end" and event.get("name") == "LangGraph":
                     output = event["data"].get("output") or {}
                     routed_domain = output.get("domain") or routed_domain
+                    routed_sub_intent = output.get("sub_intent") or routed_sub_intent
                     final_messages = output.get("messages") or []
 
         except Exception as exc:
             error_msg = str(exc)
             print(f"[stream] error: {exc}")
             yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+        finally:
+            # Stop renewing and free the slot the moment generation ends.
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            await chat_gate.release(slot)
 
         # If nothing streamed (tool-only path, fast-path nodes, etc.), use last message
         if not accumulated_text and final_messages:
@@ -676,6 +803,7 @@ async def chat(
                 user_email=user_email,
                 user_message=request.message,
                 domain=routed_domain,
+                sub_intent=routed_sub_intent,
                 response_text=final_message[:2000] if final_message else None,
                 response_length=len(final_message) if final_message else 0,
                 total_latency_ms=latency_ms,
@@ -699,6 +827,34 @@ async def chat(
                 db.close()
             except Exception:
                 pass
+
+        # ── Store informational answers in the semantic cache (store-side safety gate) ──
+        # Only plain, stable, text-only answers are cached. Anything with a widget, download,
+        # image, error, or from an action/dynamic domain is never stored — which is exactly
+        # what makes future cache lookups safe to serve verbatim.
+        try:
+            if (
+                settings.ANSWER_CACHE_ENABLED
+                and not error_msg
+                and routed_domain in _CACHEABLE_DOMAINS
+                and not post["interactive"]
+                and not post["download_url"]
+                and not post["images"]
+                and not _CACHE_SKIP_RE.search(request.message)
+                and final_message
+                and len(final_message.strip()) >= 40
+            ):
+                from app.services.answer_cache_service import AnswerCacheService
+                await asyncio.to_thread(
+                    AnswerCacheService.store,
+                    request.message,
+                    final_message,
+                    routed_domain,
+                    routed_sub_intent,
+                    None,   # source_keys: domain-level invalidation handles freshness
+                )
+        except Exception as _se:
+            print(f"[AnswerCache] store error: {_se}")
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
 
@@ -744,6 +900,9 @@ async def get_suggestions(request: SuggestionsRequest):
         raw = completion.choices[0].message.content or "[]"
         # Strip markdown code fences if present
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+        # Extract just the JSON array — LLM may append extra explanation text
+        arr_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+        raw = arr_match.group(0) if arr_match else "[]"
         suggestions = json.loads(raw)
         if isinstance(suggestions, list):
             suggestions = [str(s) for s in suggestions[:3] if s]
@@ -899,119 +1058,123 @@ async def get_admin_analytics(_: CurrentUser = Depends(require_admin)):
     """Comprehensive analytics endpoint — all charts powered by real DB data."""
     from app.models import (
         Employee, ITTicket, FacilityComplaint, Reimbursement, Leave,
-        ChatFeedback, FoodComplaint, Project, FoodVendorFeedback,
+        ChatFeedback, Project, FoodVendorFeedback,
     )
     from sqlalchemy import func as sqlfunc
-    db = SessionLocal()
-    try:
-        dept_rows = (
-            db.query(Employee.department, sqlfunc.count(Employee.id))
-            .group_by(Employee.department)
-            .order_by(sqlfunc.count(Employee.id).desc())
-            .all()
-        )
-        ticket_cat_rows = (
-            db.query(ITTicket.category, sqlfunc.count(ITTicket.id))
-            .group_by(ITTicket.category)
-            .order_by(sqlfunc.count(ITTicket.id).desc())
-            .all()
-        )
-        ticket_status_rows = (
-            db.query(ITTicket.status, sqlfunc.count(ITTicket.id))
-            .group_by(ITTicket.status)
-            .all()
-        )
-        leave_rows = (
-            db.query(Leave.leave_type, Leave.status, sqlfunc.count(Leave.id))
-            .group_by(Leave.leave_type, Leave.status)
-            .all()
-        )
-        reimb_rows = (
-            db.query(
-                Reimbursement.type, Reimbursement.status,
-                sqlfunc.count(Reimbursement.id),
-                sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0),
+
+    def _fetch() -> dict:
+        db = SessionLocal()
+        try:
+            dept_rows = (
+                db.query(Employee.department, sqlfunc.count(Employee.id))
+                .group_by(Employee.department)
+                .order_by(sqlfunc.count(Employee.id).desc())
+                .all()
             )
-            .group_by(Reimbursement.type, Reimbursement.status)
-            .all()
-        )
-        facility_cat_rows = (
-            db.query(FacilityComplaint.category, sqlfunc.count(FacilityComplaint.id))
-            .group_by(FacilityComplaint.category)
-            .order_by(sqlfunc.count(FacilityComplaint.id).desc())
-            .all()
-        )
-        feedback_rows = (
-            db.query(ChatFeedback.domain, ChatFeedback.rating, sqlfunc.count(ChatFeedback.id))
-            .group_by(ChatFeedback.domain, ChatFeedback.rating)
-            .all()
-        )
-        total_feedback = db.query(ChatFeedback).count()
-        helpful = db.query(ChatFeedback).filter(ChatFeedback.rating == 1).count()
-        unhelpful = db.query(ChatFeedback).filter(ChatFeedback.rating == -1).count()
-        project_status_rows = (
-            db.query(Project.status, sqlfunc.count(Project.id))
-            .group_by(Project.status)
-            .all()
-        )
-        avg_completion = db.query(sqlfunc.avg(Project.completion_pct)).scalar() or 0.0
-        vendor_rows = (
-            db.query(
-                FoodVendorFeedback.vendor_name,
-                sqlfunc.avg(FoodVendorFeedback.rating),
-                sqlfunc.count(FoodVendorFeedback.id),
+            ticket_cat_rows = (
+                db.query(ITTicket.category, sqlfunc.count(ITTicket.id))
+                .group_by(ITTicket.category)
+                .order_by(sqlfunc.count(ITTicket.id).desc())
+                .all()
             )
-            .group_by(FoodVendorFeedback.vendor_name)
-            .order_by(sqlfunc.avg(FoodVendorFeedback.rating).desc())
-            .limit(5)
-            .all()
-        )
-        return {
-            "employees": {
-                "total": db.query(Employee).count(),
-                "by_department": [{"dept": r[0] or "Unknown", "count": r[1]} for r in dept_rows],
-            },
-            "it_tickets": {
-                "total": db.query(ITTicket).count(),
-                "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
-                "by_category": [{"category": r[0] or "Other", "count": r[1]} for r in ticket_cat_rows],
-                "by_status": [{"status": r[0], "count": r[1]} for r in ticket_status_rows],
-            },
-            "leaves": {
-                "total": db.query(Leave).count(),
-                "by_type_status": [{"type": r[0], "status": r[1], "count": r[2]} for r in leave_rows],
-            },
-            "reimbursements": {
-                "total": db.query(Reimbursement).count(),
-                "total_amount": float(db.query(sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0)).scalar()),
-                "by_type_status": [
-                    {"type": r[0], "status": r[1], "count": r[2], "amount": float(r[3])}
-                    for r in reimb_rows
+            ticket_status_rows = (
+                db.query(ITTicket.status, sqlfunc.count(ITTicket.id))
+                .group_by(ITTicket.status)
+                .all()
+            )
+            leave_rows = (
+                db.query(Leave.leave_type, Leave.status, sqlfunc.count(Leave.id))
+                .group_by(Leave.leave_type, Leave.status)
+                .all()
+            )
+            reimb_rows = (
+                db.query(
+                    Reimbursement.type, Reimbursement.status,
+                    sqlfunc.count(Reimbursement.id),
+                    sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0),
+                )
+                .group_by(Reimbursement.type, Reimbursement.status)
+                .all()
+            )
+            facility_cat_rows = (
+                db.query(FacilityComplaint.category, sqlfunc.count(FacilityComplaint.id))
+                .group_by(FacilityComplaint.category)
+                .order_by(sqlfunc.count(FacilityComplaint.id).desc())
+                .all()
+            )
+            feedback_rows = (
+                db.query(ChatFeedback.domain, ChatFeedback.rating, sqlfunc.count(ChatFeedback.id))
+                .group_by(ChatFeedback.domain, ChatFeedback.rating)
+                .all()
+            )
+            total_feedback = db.query(ChatFeedback).count()
+            helpful = db.query(ChatFeedback).filter(ChatFeedback.rating == 1).count()
+            unhelpful = db.query(ChatFeedback).filter(ChatFeedback.rating == -1).count()
+            project_status_rows = (
+                db.query(Project.status, sqlfunc.count(Project.id))
+                .group_by(Project.status)
+                .all()
+            )
+            avg_completion = db.query(sqlfunc.avg(Project.completion_pct)).scalar() or 0.0
+            vendor_rows = (
+                db.query(
+                    FoodVendorFeedback.vendor_name,
+                    sqlfunc.avg(FoodVendorFeedback.rating),
+                    sqlfunc.count(FoodVendorFeedback.id),
+                )
+                .group_by(FoodVendorFeedback.vendor_name)
+                .order_by(sqlfunc.avg(FoodVendorFeedback.rating).desc())
+                .limit(5)
+                .all()
+            )
+            return {
+                "employees": {
+                    "total": db.query(Employee).count(),
+                    "by_department": [{"dept": r[0] or "Unknown", "count": r[1]} for r in dept_rows],
+                },
+                "it_tickets": {
+                    "total": db.query(ITTicket).count(),
+                    "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
+                    "by_category": [{"category": r[0] or "Other", "count": r[1]} for r in ticket_cat_rows],
+                    "by_status": [{"status": r[0], "count": r[1]} for r in ticket_status_rows],
+                },
+                "leaves": {
+                    "total": db.query(Leave).count(),
+                    "by_type_status": [{"type": r[0], "status": r[1], "count": r[2]} for r in leave_rows],
+                },
+                "reimbursements": {
+                    "total": db.query(Reimbursement).count(),
+                    "total_amount": float(db.query(sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0)).scalar()),
+                    "by_type_status": [
+                        {"type": r[0], "status": r[1], "count": r[2], "amount": float(r[3])}
+                        for r in reimb_rows
+                    ],
+                },
+                "facility_complaints": {
+                    "total": db.query(FacilityComplaint).count(),
+                    "by_category": [{"category": r[0], "count": r[1]} for r in facility_cat_rows],
+                },
+                "feedback": {
+                    "total": total_feedback,
+                    "helpful": helpful,
+                    "unhelpful": unhelpful,
+                    "score_pct": round(helpful / total_feedback * 100) if total_feedback else 0,
+                    "by_domain": [{"domain": r[0], "rating": r[1], "count": r[2]} for r in feedback_rows],
+                },
+                "projects": {
+                    "total": db.query(Project).count(),
+                    "avg_completion": round(float(avg_completion), 1),
+                    "by_status": [{"status": r[0], "count": r[1]} for r in project_status_rows],
+                },
+                "food_vendors": [
+                    {"vendor": r[0], "avg_rating": round(float(r[1]), 1), "reviews": r[2]}
+                    for r in vendor_rows
                 ],
-            },
-            "facility_complaints": {
-                "total": db.query(FacilityComplaint).count(),
-                "by_category": [{"category": r[0], "count": r[1]} for r in facility_cat_rows],
-            },
-            "feedback": {
-                "total": total_feedback,
-                "helpful": helpful,
-                "unhelpful": unhelpful,
-                "score_pct": round(helpful / total_feedback * 100) if total_feedback else 0,
-                "by_domain": [{"domain": r[0], "rating": r[1], "count": r[2]} for r in feedback_rows],
-            },
-            "projects": {
-                "total": db.query(Project).count(),
-                "avg_completion": round(float(avg_completion), 1),
-                "by_status": [{"status": r[0], "count": r[1]} for r in project_status_rows],
-            },
-            "food_vendors": [
-                {"vendor": r[0], "avg_rating": round(float(r[1]), 1), "reviews": r[2]}
-                for r in vendor_rows
-            ],
-        }
-    finally:
-        db.close()
+            }
+        finally:
+            db.close()
+
+    return await asyncio.to_thread(_fetch)
 
 
 @app.get("/api/hr/dashboard")

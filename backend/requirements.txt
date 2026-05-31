@@ -25,6 +25,7 @@ openpyxl
 pgvector
 httpx
 cryptography
+pyjwt
 
 mcp
 langchain-mcp-adapters

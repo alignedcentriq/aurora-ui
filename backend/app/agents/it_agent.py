@@ -24,8 +24,10 @@ def request_software_install(
     software_name: str,
     state: Annotated[dict, InjectedState],
 ):
-    """Request software installation on your machine. Call immediately when user names a software.
-    Do NOT ask for justification or reason. Show the tool result as-is (it contains a mailto link)."""
+    """Request software installation on your machine. Call immediately when the user names an actual
+    software product (e.g. 'Node.js', 'Figma', 'Docker'). software_name must be the product name ONLY —
+    never a sentence or a non-software phrase. If no specific software is named, ask which software they
+    need instead of calling this. Do NOT ask for justification. Show the tool result as-is (mailto link)."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     return ITService.request_software_install(email, software_name)
 

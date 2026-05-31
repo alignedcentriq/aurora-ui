@@ -4,7 +4,8 @@ from app.database import SessionLocal
 from app.config import settings
 from app.models import (
     Employee, Reimbursement, ParkingSticker,
-    Accommodation, FacilityComplaint, FoodVendorFeedback, FoodComplaint
+    Accommodation, FacilityComplaint, FoodVendorFeedback, FoodComplaint,
+    VisitorPass
 )
 
 
@@ -288,6 +289,86 @@ class AdminService:
             return (
                 f"Accommodation request ({type}) at {location} from {check_in} to {check_out} submitted. "
                 f"The admin team will confirm availability shortly."
+            )
+        finally:
+            db.close()
+
+    # ── Visitor Passes ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def request_visitor_pass(
+        email: str,
+        visitor_name: str,
+        visit_date: str,
+        purpose: str,
+        visit_time: str = "",
+        visitor_company: str = "",
+    ) -> str:
+        db = SessionLocal()
+        try:
+            emp = AdminService._get_or_create_employee(db, email)
+
+            pass_id = f"VP-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
+            try:
+                visit_date_obj = datetime.datetime.strptime(visit_date, "%Y-%m-%d").date()
+            except ValueError:
+                visit_date_obj = None
+
+            new_p = VisitorPass(
+                pass_id=pass_id,
+                employee_id=emp.id,
+                visitor_name=visitor_name,
+                visitor_company=visitor_company,
+                visit_date=visit_date_obj,
+                visit_time=visit_time,
+                purpose=purpose,
+                status="Pending",
+            )
+            db.add(new_p)
+            db.commit()
+
+            try:
+                from app.services.email_service import send_visitor_pass_email
+                send_visitor_pass_email(
+                    user_email=email,
+                    employee_name=emp.name,
+                    employee_email=emp.email,
+                    visitor_name=visitor_name,
+                    visit_date=visit_date,
+                    purpose=purpose,
+                    pass_id=pass_id,
+                    visit_time=visit_time,
+                    visitor_company=visitor_company,
+                )
+            except Exception:
+                pass
+
+            try:
+                from app.services.email_service import send_notification_event
+                send_notification_event(
+                    email,
+                    "visitor_pass_requested",
+                    f"{visitor_name} visiting {emp.name} on {visit_date}",
+                    {
+                        "pass_id": pass_id,
+                        "host_name": emp.name,
+                        "host_email": emp.email,
+                        "visitor_name": visitor_name,
+                        "visitor_company": visitor_company,
+                        "visit_date": visit_date,
+                        "visit_time": visit_time,
+                        "purpose": purpose,
+                    }
+                )
+            except Exception:
+                pass
+
+            company = f" from {visitor_company}" if visitor_company else ""
+            when = f"{visit_date}" + (f" at {visit_time}" if visit_time else "")
+            return (
+                f"Visitor pass requested for **{visitor_name}**{company} on {when}. "
+                f"**Pass ID: {pass_id}**. The admin/reception team has been notified and will "
+                f"have the pass ready at the front desk."
             )
         finally:
             db.close()

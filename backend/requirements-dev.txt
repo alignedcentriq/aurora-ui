@@ -1,0 +1,3 @@
+# Dev / testing tools (not needed in production).
+#   pip install -r backend/requirements-dev.txt
+locust>=2.0

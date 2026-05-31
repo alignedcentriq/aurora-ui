@@ -4,6 +4,7 @@ import time
 import threading
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.orm import sessionmaker
 from app.models import (
     Base,
@@ -28,6 +29,7 @@ from app.models import (
     Announcement,
     FoodComplaint,
     ChatFeedback,
+    CachedAnswer,
     ApprovalToken,
     Grievance,
     CompanySettings,
@@ -37,9 +39,12 @@ from app.models import (
     ToolSession,
     AiRequestLog,
     AiLlmCallLog,
+    GeneratedDocument,
     LeaveType,
     LeaveBalance,
     HRQuery,
+    MS365User,
+    EmployeeSkill,
     SCHEMA,
 )
 from app.config import settings
@@ -49,7 +54,17 @@ import datetime
 DATABASE_URL = settings.DATABASE_URL
 
 
-_base_engine = create_engine(DATABASE_URL)
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+_base_engine = create_engine(
+    DATABASE_URL,
+    poolclass=NullPool if _is_sqlite else QueuePool,
+    **({} if _is_sqlite else {
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+    }),
+)
 if _base_engine.dialect.name == "sqlite":
     engine = _base_engine.execution_options(schema_translate_map={SCHEMA: None})
 else:
@@ -95,6 +110,7 @@ def init_db():
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
             for stmt in [
+                f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS location VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
@@ -109,19 +125,37 @@ def init_db():
                 f')',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
-                # Rename minio_key/minio_etag to source_key/source_etag
-                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key',
-                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag',
+                # Safe rename: only renames if the old column still exists
+                f'DO $$ BEGIN '
+                f'IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = \'{SCHEMA}\' AND table_name = \'policies\' AND column_name = \'minio_key\') '
+                f'THEN ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key; END IF; END $$',
+                f'DO $$ BEGIN '
+                f'IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = \'{SCHEMA}\' AND table_name = \'policies\' AND column_name = \'minio_etag\') '
+                f'THEN ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag; END IF; END $$',
                 # BM25 full-text search on policy chunks (Phase 2 RAG upgrade)
                 f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector '
                 f"GENERATED ALWAYS AS (to_tsvector('english', COALESCE(text, ''))) STORED",
                 # User memory HNSW index (created after table exists via Base.metadata.create_all)
                 f'CREATE INDEX IF NOT EXISTS idx_user_memories_email ON "{SCHEMA}".user_memories(user_email)',
+                # Self-serve skills editor: per-skill metadata + uploaded certification file
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS years_experience DOUBLE PRECISION',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS last_used DATE',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_data BYTEA',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_name VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_content_type VARCHAR',
+                # Document generation: approval-gated verification fields
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT \'draft\'',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verify_token VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_by_email VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP',
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_generated_documents_verify_token ON "{SCHEMA}".generated_documents(verify_token)',
             ]:
                 try:
                     conn.execute(text(stmt))
                     conn.commit()
                 except Exception as e:
+                    conn.rollback()  # clear error state so the next migration can still run
                     print(f"Migration notice: {e}")
 
     # pgvector column migrations: convert TEXT embeddings to vector(768)
@@ -164,6 +198,9 @@ def init_db():
                 # HNSW index for user memory semantic search
                 f'CREATE INDEX IF NOT EXISTS idx_user_memories_embedding_hnsw ON "{SCHEMA}".user_memories '
                 f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the semantic answer cache (instant repeat-question lookups)
+                f'CREATE INDEX IF NOT EXISTS idx_cached_answers_embedding_hnsw ON "{SCHEMA}".cached_answers '
+                f'USING hnsw (query_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))

@@ -146,6 +146,7 @@ class AgentState(TypedDict):
     conversation_summary: Optional[str]  # rolling summary of older turns (context manager)
     user_role: Optional[str]           # "employee" | "hr" | "admin" | "manager" | "it" | "pmo"
     graph_token: Optional[str]         # user's delegated Microsoft Graph token (from frontend)
+    user_location: Optional[str]       # detected from M365 profile (officeLocation / city)
 
 
 PENDING_IT_EMAIL_DRAFTS: dict[str, dict] = {}
@@ -165,6 +166,14 @@ def _is_confirmation(text: str) -> bool:
 def _is_cancellation(text: str) -> bool:
     normalized = text.strip().lower()
     return normalized in {"no", "cancel", "stop", "discard", "do not send", "don't send"}
+
+
+# ── Location helper ──────────────────────────────────────────────────────────
+
+def _location_prefix(state: "AgentState") -> str:
+    """Return a one-line location block to prepend to feedback_context, or '' if unknown."""
+    loc = state.get("user_location")
+    return f"[User office location: {loc}]\n" if loc else ""
 
 
 # ── Role Instructions ─────────────────────────────────────────────────────────
@@ -249,7 +258,11 @@ async def context_manager_node(state: AgentState) -> dict:
 
     session_id = state.get("session_id")
     if session_id:
-        _save_conversation_summary(session_id, summary_text, state.get("domain"))
+        # Fire-and-forget: don't block the pipeline on a DB write
+        import asyncio as _asyncio
+        _asyncio.get_event_loop().run_in_executor(
+            None, _save_conversation_summary, session_id, summary_text, state.get("domain")
+        )
 
     # Inject summary as a prefix to feedback_context — all agents append this to their system prompt
     existing_feedback = state.get("feedback_context") or ""
@@ -642,6 +655,12 @@ _KW_ADMIN_ACCOM = re.compile(
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
 
+_KW_ADMIN_VISITOR = re.compile(
+    r'\b(visitor|guest)\s+(pass|entry|registration|register)|'
+    r'register\s+(a\s+|my\s+)?(visitor|guest)|'
+    r'(request|need|book|get)\s+(a\s+|an\s+)?(visitor|guest)\s+pass\b', re.I
+)
+
 _KW_IT_HARDWARE = re.compile(
     r'\b(laptop|system|computer|device|machine|workstation)\s+'
     r'(is\s+)?(slow|hanging|crashing|overheating|heating|hot|'
@@ -652,10 +671,26 @@ _KW_IT_HARDWARE = re.compile(
 _KW_IT_TICKETS = re.compile(r'\bmy\s+(it\s+)?(tickets?|requests?|issues?)\b', re.I)
 _KW_IT_ASSETS = re.compile(r'\bmy\s+(it\s+)?(assets?|equipment|devices?)\b', re.I)
 _KW_IT_CREATE = re.compile(r'\b(create|raise|log|open)\s+(a\s+|an\s+)?(it\s+)?ticket\b', re.I)
+# Strong, install-specific verbs — safe to fire on their own.
+# The negative lookahead rejects determiner/infinitive phrasing ("install the app
+# for me" stays, but a bare "a/an/the/to <noun>" is never a product name).
 _KW_IT_INSTALL = re.compile(
-    r'\b(?:install|need|want|get\s+me|setup|set\s+up)\s+'
+    r'\b(?:install|re-?install|setup|set\s+up)\s+'
+    r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
     r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
     r'(?:\s+(?:on|for|please|pls|in|app|software)\b|[.!?]?\s*$)', re.I
+)
+
+# Generic desire verbs (need/want/get me) are install requests ONLY when an
+# explicit install cue trails the product name ("I want Slack installed").
+# Bare "I need Figma" / "I need help" deliberately fall through to the LLM router,
+# which disambiguates far better than a keyword grab — this is what prevented
+# "I need <anything>" from being mistaken for a software install.
+_KW_IT_INSTALL_NEED = re.compile(
+    r'\b(?:need|want|get\s+me|require|requesting)\s+'
+    r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
+    r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
+    r'\s+(?:installed|installation|set\s*up)\b', re.I
 )
 _KW_IT_VPN = re.compile(
     r'\b(vpn\s+(not|issue|problem|access|connect)|'
@@ -674,7 +709,13 @@ _KW_PMO = re.compile(
 
 _KW_MANAGER = re.compile(
     r'\b(my\s+team|who\s+reports\s+to\s+me|direct\s+reports|'
-    r'my\s+reportees|team\s+members|meeting\s+room|conference\s+room)\b', re.I
+    r'my\s+reportees|team\s+members)\b', re.I
+)
+_KW_MS365_ROOMS = re.compile(
+    r'\b(meeting\s+room|conference\s+room|book\s+(a\s+)?\w+\s+room|book\s+(a\s+)?room|'
+    r'reserve\s+(a\s+)?\w+\s+room|reserve\s+(a\s+)?room|'
+    r'room\s+(available|free|booked|availability)|which\s+rooms?\s+(are\s+)?(free|available)|'
+    r'available\s+rooms?|rooms?\s+to\s+book|cabin\s+(available|free|book))\b', re.I
 )
 
 _KW_DEEPLINK_SETUP = re.compile(r'\bsetup\s+(zoho|powerapps|payroll)\b', re.I)
@@ -797,6 +838,13 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
 
+    # Admin — visitor / guest pass (must precede IT install to avoid
+    # "I need to request a visitor pass" → software_install misroute)
+    if _KW_ADMIN_VISITOR.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: visitor/guest pass",
+                "sub_intent": "visitor_pass", "entities": {}}
+
     # MS365 — read emails
     if _KW_MS365_EMAIL.search(text):
         return {"domain": "ms365", "confidence": 0.95,
@@ -869,9 +917,15 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: create IT ticket",
                 "sub_intent": "create_ticket", "entities": {}}
 
+    # MS365 — rooms (must be before IT install to avoid "want to book a room" → software_install)
+    if _KW_MS365_ROOMS.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: meeting room / conference room query",
+                "sub_intent": "room_availability", "entities": {}}
+
     # IT — software install (with entity extraction)
-    m = _KW_IT_INSTALL.search(text)
-    if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs)\b', text, re.I):
+    m = _KW_IT_INSTALL.search(text) or _KW_IT_INSTALL_NEED.search(text)
+    if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs|room|meeting|book|visitor|guest|pass)\b', text, re.I):
         sw = m.group(1).strip()
         if sw and 1 < len(sw) < 35:
             return {"domain": "it_support", "confidence": 0.9,
@@ -885,7 +939,7 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: PMO/project query",
                 "sub_intent": "list_projects", "entities": {}}
 
-    # Manager — team / room
+    # Manager — team structure
     if _KW_MANAGER.search(text):
         return {"domain": "functional_manager", "confidence": 0.95,
                 "reasoning": "Keyword: team/manager query",
@@ -1054,24 +1108,32 @@ async def intent_router(state: AgentState):
 _feedback_count_cache: dict = {"count": 0, "ts": 0.0}
 _FEEDBACK_COUNT_TTL = 300.0  # re-check every 5 minutes
 
+# Short-lived cache: avoid re-embedding the same query within 2 minutes
+_feedback_result_cache: dict[str, tuple[str, float]] = {}
+_FEEDBACK_RESULT_TTL = 120.0
 
-def feedback_lookup(state: AgentState) -> dict:
+
+async def feedback_lookup(state: AgentState) -> dict:
     """Fetch relevant past feedback for the current query and store as prompt context.
 
-    Optimization: skips the expensive Ollama embedding call when fewer than 3
-    feedback entries exist in the database (checked with a 5-minute cache).
+    Runs the blocking Ollama embedding + DB query off the event loop via
+    asyncio.to_thread so it never stalls the async pipeline.
     """
     import time as _t
+    import asyncio
     now = _t.time()
     if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
         try:
             from app.database import SessionLocal as _SL
             from app.models import ChatFeedback as _CF
-            _db = _SL()
-            try:
-                _feedback_count_cache.update({"count": _db.query(_CF).count(), "ts": now})
-            finally:
-                _db.close()
+            def _count():
+                _db = _SL()
+                try:
+                    return _db.query(_CF).count()
+                finally:
+                    _db.close()
+            count = await asyncio.to_thread(_count)
+            _feedback_count_cache.update({"count": count, "ts": now})
         except Exception:
             _feedback_count_cache.update({"count": 0, "ts": now})
 
@@ -1083,12 +1145,33 @@ def feedback_lookup(state: AgentState) -> dict:
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
         "",
     )
+    if not last_human:
+        return {}
+
+    # Cache key: domain + first 120 chars of query
+    cache_key = f"{domain}:{last_human[:120]}"
+    cached = _feedback_result_cache.get(cache_key)
+    if cached:
+        ctx, ts = cached
+        if now - ts < _FEEDBACK_RESULT_TTL:
+            return {"feedback_context": ctx} if ctx else {}
+
     try:
-        relevant = FeedbackService.get_relevant_feedback(domain, last_human, limit=3)
+        relevant = await asyncio.to_thread(
+            FeedbackService.get_relevant_feedback, domain, last_human, 3
+        )
         ctx = FeedbackService.build_feedback_prompt(relevant)
     except Exception:
         ctx = ""
-    return {"feedback_context": ctx}
+
+    _feedback_result_cache[cache_key] = (ctx, now)
+    # Prevent unbounded growth
+    if len(_feedback_result_cache) > 500:
+        oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
+        for k in oldest[:100]:
+            _feedback_result_cache.pop(k, None)
+
+    return {"feedback_context": ctx} if ctx else {}
 
 
 def hr_agent(state: AgentState):
@@ -1097,10 +1180,12 @@ def hr_agent(state: AgentState):
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
         role_instruction = _get_role_instruction(state)
+        _loc = state.get("user_location")
+        _loc_line = f" Office: {_loc}." if _loc else ""
         base = PromptService.get_system_prompt(
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
-            f"Employee email: {user_email}. Never ask who the user is.\n"
+            f"Employee email: {user_email}.{_loc_line} Never ask who the user is.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
             f"- Leave balance → get_leave_balance(email='{user_email}')\n"
@@ -1196,7 +1281,7 @@ async def pmo_agent_node(state: AgentState):
     result = await pmo_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": state.get("feedback_context") or "",
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
         "sub_intent": state.get("sub_intent") or "",
         "entities": state.get("entities") or {},
         "user_role": state.get("user_role") or "employee",
@@ -1212,7 +1297,7 @@ async def admin_agent_node(state: AgentState):
     """Admin Agent - handles reimbursement, parking, etc."""
     sub_intent = state.get("sub_intent") or ""
     entities = state.get("entities") or {}
-    feedback_ctx = state.get("feedback_context") or ""
+    feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
 
     # Execute-first for policy queries: search embeddings/chunks at Python level,
     # avoiding an unreliable LLM tool-calling round-trip.
@@ -1295,7 +1380,7 @@ async def it_agent_node(state: AgentState):
     result = await it_agent.ainvoke({
         "messages": state["messages"],
         "user_email": user_email,
-        "feedback_context": (state.get("feedback_context") or "") + entity_hint,
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or "") + entity_hint,
         "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
@@ -1307,7 +1392,7 @@ async def manager_agent_node(state: AgentState):
     result = await manager_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": state.get("feedback_context") or "",
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
         "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
@@ -1360,7 +1445,7 @@ async def ms365_agent_node(state: AgentState):
         if result.get("success"):
             pre_fetched = f"[PRE-FETCHED YAMMER FEED]\n{json.dumps(result)}\n[END]"
 
-    feedback_ctx = state.get("feedback_context") or ""
+    feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
     if pre_fetched:
         feedback_ctx = pre_fetched + "\n\n" + feedback_ctx
 

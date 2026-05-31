@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { flyBanner } from "@/lib/fly-banner";
 
 export const Route = createFileRoute("/_layout/admin-portal")({
   component: AdminPortal,
@@ -131,7 +132,8 @@ function ReimbursementsTab({ authHeaders }: { authHeaders: Record<string, string
     try {
       const res = await fetch(`/api/portal/admin/reimbursements/${id}/${type}`, { method: "PUT", headers: authHeaders });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success(`Reimbursement ${type}d`);
+      if (type === "approve") flyBanner("Reimbursement approved");
+      else toast.success("Reimbursement rejected");
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -226,7 +228,7 @@ function ParkingTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         body: JSON.stringify({ sticker_number: sticker }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success("Parking sticker approved and issued");
+      flyBanner("Parking sticker approved & issued");
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }

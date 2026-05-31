@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { flyBanner } from "@/lib/fly-banner";
 
 export const Route = createFileRoute("/_layout/it-portal")({
   component: ITPortal,
@@ -248,7 +249,8 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     try {
       const res = await fetch(`/api/it/portal/software-requests/${id}/${type}`, { method: "PUT", headers: authHeaders });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success(`Software request ${type}d`);
+      if (type === "approve") flyBanner("Software request approved");
+      else toast.success("Software request rejected");
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }

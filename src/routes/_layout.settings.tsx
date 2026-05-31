@@ -1,37 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import {
-  User,
   Palette,
-  Globe,
-  Bell,
   Shield,
   Moon,
   Sun,
   Monitor,
-  MessageSquare,
-  Volume2,
-  VolumeX,
-  Keyboard,
-  Eye,
-  EyeOff,
-  Download,
-  Trash2,
-  ChevronRight,
-  Brain,
-  AlignLeft,
-  ShieldCheck,
-  Zap,
   Link2,
   Unlink,
   CheckCircle2,
   Loader2,
-  Mail,
-  Calendar,
   ExternalLink,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSettings } from "@/lib/settings-store";
+import { useSettings, BUDDY_PRESETS } from "@/lib/settings-store";
+import { ThinkingBuddy } from "@/components/assistant/ThinkingBuddy";
+import { ListeningBuddy } from "@/components/assistant/ListeningBuddy";
+import { BUDDY_CHARACTERS } from "@/components/assistant/characters";
 import { motion } from "framer-motion";
 import { useState, useEffect, useCallback, useMemo } from "react";
 
@@ -334,7 +320,7 @@ function ConnectedAccounts({ userEmail }: { userEmail: string }) {
 
 function SettingsPage() {
   const { user } = useAuth();
-  const { theme, setTheme } = useSettings();
+  const { theme, setTheme, buddyColorId, setBuddyColorId, buddyCharId, setBuddyCharId } = useSettings();
 
   if (!user) return null;
 
@@ -376,11 +362,11 @@ function SettingsPage() {
                   className="h-12 w-12 sm:h-16 sm:w-16 rounded-2xl object-cover shadow-md shrink-0"
                 />
               ) : (
-                <div className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-accent-cyan/10 text-lg sm:text-xl font-bold text-primary shadow-sm shrink-0">
-                  {user.name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("")}
+                <div
+                  className="flex h-12 w-12 sm:h-16 sm:w-16 items-center justify-center rounded-2xl text-lg sm:text-xl font-bold text-white shadow-sm shrink-0"
+                  style={{ background: "var(--gradient-primary)" }}
+                >
+                  {user.name.split(" ").map((n) => n[0]).join("")}
                 </div>
               )}
               <div className="flex-1 min-w-0">
@@ -403,7 +389,7 @@ function SettingsPage() {
           <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
             <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
               <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Palette className="h-4 w-4 text-violet-500" /> Appearance
+                <Palette className="h-4 w-4" style={{ color: "var(--clarity)" }} /> Appearance
               </h3>
             </div>
             <div className="p-4 sm:p-6 space-y-2">
@@ -452,11 +438,129 @@ function SettingsPage() {
             </div>
           </motion.div>
 
+          {/* Buddy Character */}
+          <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
+              <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
+                <Bot className="h-4 w-4" style={{ color: "var(--clarity)" }} /> Buddy Character
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Customize how your AI buddy looks when thinking and listening.
+              </p>
+            </div>
+            <div className="p-4 sm:p-6 space-y-5">
+              {/* Character picker */}
+              <div>
+                <p className="text-[12px] sm:text-[13px] font-medium text-foreground mb-3">Character</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {BUDDY_CHARACTERS.map((char) => {
+                    const isSelected = buddyCharId === char.id;
+                    return (
+                      <motion.button
+                        key={char.id}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => setBuddyCharId(char.id)}
+                        className={cn(
+                          "relative flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3.5 transition-all duration-150",
+                          isSelected
+                            ? "border-primary bg-primary/5"
+                            : "border-[var(--border)] hover:border-[var(--border-strong)] hover:bg-secondary/30",
+                        )}
+                      >
+                        {isSelected && (
+                          <motion.div
+                            layoutId="settings-buddy-char"
+                            className="absolute inset-0 rounded-[10px] border-2 border-primary bg-primary/5"
+                            transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                          />
+                        )}
+                        <span className="relative z-10 text-2xl">{char.emoji}</span>
+                        <span
+                          className={cn(
+                            "relative z-10 text-[12px] font-semibold",
+                            isSelected ? "text-primary" : "text-foreground",
+                          )}
+                        >
+                          {char.label}
+                        </span>
+                        <span className="relative z-10 text-[10px] text-muted-foreground text-center leading-tight">
+                          {char.description}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Color preset picker */}
+              <div>
+                <p className="text-[12px] sm:text-[13px] font-medium text-foreground mb-3">Color Theme</p>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {BUDDY_PRESETS.map((preset) => {
+                    const isSelected = buddyColorId === preset.id;
+                    return (
+                      <motion.button
+                        key={preset.id}
+                        whileTap={{ scale: 0.93 }}
+                        onClick={() => setBuddyColorId(preset.id)}
+                        className={cn(
+                          "relative flex flex-col items-center gap-1.5 rounded-xl border-2 px-2 py-3 transition-all duration-150",
+                          isSelected
+                            ? "border-primary bg-primary/5"
+                            : "border-[var(--border)] hover:border-[var(--border-strong)]",
+                        )}
+                      >
+                        {isSelected && (
+                          <motion.div
+                            layoutId="settings-buddy-color"
+                            className="absolute inset-0 rounded-[10px] border-2 border-primary bg-primary/5"
+                            transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                          />
+                        )}
+                        <div
+                          className="relative z-10 h-7 w-7 rounded-full shadow-sm ring-1 ring-black/10"
+                          style={{ background: preset.swatch }}
+                        />
+                        <span
+                          className={cn(
+                            "relative z-10 text-[10px] font-medium text-center leading-tight",
+                            isSelected ? "text-primary" : "text-muted-foreground",
+                          )}
+                        >
+                          {preset.label}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Live preview */}
+              <div>
+                <p className="text-[12px] sm:text-[13px] font-medium text-foreground mb-3">Preview</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-4">
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Thinking</p>
+                    <div className="transform scale-110">
+                      <ThinkingBuddy activity="Preview mode" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-muted/30 p-4">
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold">Listening</p>
+                    <div className="transform scale-110 py-2">
+                      <ListeningBuddy />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
           {/* Connected Accounts */}
           <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
             <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
               <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Link2 className="h-4 w-4 text-blue-500" /> Connected Accounts
+                <Link2 className="h-4 w-4" style={{ color: "var(--clarity)" }} /> Connected Accounts
               </h3>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 Connect your accounts to enable mail, calendar, and chat features through the assistant.

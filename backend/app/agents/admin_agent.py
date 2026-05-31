@@ -95,6 +95,22 @@ def request_accommodation(
     return AdminService.request_accommodation(email, type, check_in, check_out, location)
 
 @tool
+def request_visitor_pass(
+    visitor_name: str,
+    visit_date: str,
+    purpose: str,
+    visit_time: str = "",
+    visitor_company: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a visitor/guest pass for someone coming to the office to meet the employee.
+    REQUIRED: visitor_name, visit_date (YYYY-MM-DD), purpose — ask for any that are missing, one at a time.
+    visit_time and visitor_company are optional — only include if the user states them, never guess.
+    Do NOT call with placeholder values. Admin/reception is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return AdminService.request_visitor_pass(email, visitor_name, visit_date, purpose, visit_time, visitor_company)
+
+@tool
 def file_facility_complaint(
     category: str,
     description: str,
@@ -178,7 +194,7 @@ def update_admin_prompt(new_prompt: str):
 tools = [
     submit_reimbursement, check_reimbursement_status, search_admin_policies,
     request_parking_sticker, surrender_parking_sticker, get_parking_info,
-    request_accommodation,
+    request_accommodation, request_visitor_pass,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
     post_admin_announcement, update_admin_prompt,

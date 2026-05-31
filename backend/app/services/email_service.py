@@ -182,6 +182,38 @@ def send_parking_request_email(
     return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
 
 
+def send_visitor_pass_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    visitor_name: str,
+    visit_date: str,
+    purpose: str,
+    pass_id: str,
+    visit_time: str = "",
+    visitor_company: str = "",
+) -> bool:
+    """Notify the admin / reception team of a new visitor pass request."""
+    subject = f"[Admin] Visitor Pass Request — {visitor_name} | {pass_id}"
+    html_body = f"""
+    <html><body style="font-family: Arial, sans-serif; color: #333;">
+      <h2 style="color:#1a73e8;">Visitor Pass Request — Centriq AI</h2>
+      <table cellpadding="8" style="border-collapse:collapse; width:100%; max-width:600px;">
+        <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Pass ID</td><td>{pass_id}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Host</td><td>{employee_name} ({employee_email})</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Visitor Name</td><td>{visitor_name}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Visitor Company</td><td>{visitor_company or "—"}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Visit Date</td><td>{visit_date}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;">Visit Time</td><td>{visit_time or "—"}</td></tr>
+        <tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Purpose</td>
+            <td>{_nl2br(purpose)}</td></tr>
+      </table>
+      <p style="color:#888;font-size:12px;margin-top:24px;">Submitted via Centriq AI. Reply to respond directly to the host.</p>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
+
+
 def send_food_complaint_email(
     user_email: str,
     employee_name: str,

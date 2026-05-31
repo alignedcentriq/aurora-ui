@@ -39,6 +39,19 @@ def _category_for_folder(folder: str) -> str:
     return _FOLDER_CATEGORY.get(folder.lower(), "General")
 
 
+# ── Folder → semantic-answer-cache domain (for invalidation on doc change) ────
+_FOLDER_CACHE_DOMAIN = {
+    "admin":      "admin",
+    "hr":         "hr",
+    "it support": "it_support",
+    "pmo":        "pmo",
+}
+
+
+def _cache_domain_for_folder(folder: str) -> str | None:
+    return _FOLDER_CACHE_DOMAIN.get(folder.lower())
+
+
 def _sp_key(relative_path: str, folder: str) -> str:
     """Build a unique source_key value for a SharePoint-sourced file.
     e.g. sp:ADMIN/SubDir/Leave Policy.pdf"""
@@ -230,6 +243,22 @@ def sync_folder(folder: str) -> dict:
         logger.error(f"[SP sync] Error syncing folder '{folder}': {e}")
     finally:
         db.close()
+
+    # ── Invalidate the semantic answer cache when this folder's policies changed ──
+    # Guarantees users never get a cached answer built from a now-stale policy.
+    if (new + updated + deleted) > 0:
+        try:
+            from app.services.answer_cache_service import AnswerCacheService
+            cache_domain = _cache_domain_for_folder(folder)
+            removed = 0
+            if cache_domain:
+                removed += AnswerCacheService.invalidate_domain(cache_domain)
+            # 'general' answers may reference any policy — clear them too, to be safe.
+            removed += AnswerCacheService.invalidate_domain("general")
+            if removed:
+                logger.info(f"  [CACHE] invalidated {removed} cached answers (folder '{folder}' changed)")
+        except Exception as e:
+            logger.warning(f"  [CACHE] invalidation skipped for folder '{folder}': {e}")
 
     result = {"new": new, "updated": updated, "skipped": skipped,
               "deleted": deleted, "errors": errors}

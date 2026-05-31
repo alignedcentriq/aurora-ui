@@ -119,6 +119,14 @@ class Config:
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
 
+    # ── Semantic Answer Cache (instant repeat-question answers, zero LLM) ──
+    ANSWER_CACHE_ENABLED = os.getenv("ANSWER_CACHE_ENABLED", "true").lower() == "true"
+    # Cosine similarity required to serve a cached answer. High by design — a near-miss must
+    # recompute rather than risk returning a subtly-wrong answer.
+    ANSWER_CACHE_SIM_THRESHOLD = float(os.getenv("ANSWER_CACHE_SIM_THRESHOLD", "0.93"))
+    # Safety net: never serve a cached answer older than this, even if not explicitly invalidated.
+    ANSWER_CACHE_MAX_AGE_DAYS = int(os.getenv("ANSWER_CACHE_MAX_AGE_DAYS", "7"))
+
     # Database
     DATABASE_URL = _resolve_db_url()
 
@@ -148,6 +156,15 @@ class Config:
         )
     )(os.getenv("SHAREPOINT_FOLDER_PATH", "").strip("/").strip())
 
+    # ── AI chat concurrency gate ──────────────────────────────────────────────
+    # Caps simultaneous LLM generations so a burst of users doesn't overwhelm the
+    # shared GPU server. Extra requests wait in a bounded queue; when the queue is
+    # full they're rejected fast with a "busy" signal. Tune CHAT_MAX_CONCURRENCY to
+    # the number of parallel generations ml01 sustains at acceptable latency.
+    CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "8"))
+    CHAT_MAX_QUEUE = int(os.getenv("CHAT_MAX_QUEUE", "50"))
+    CHAT_QUEUE_TIMEOUT = float(os.getenv("CHAT_QUEUE_TIMEOUT_SECONDS", "90"))
+
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
     PORT = int(os.getenv("PORT", "8080"))
@@ -156,6 +173,7 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
+    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "it-support@alignedautomation.com")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
     # Power Automate — SharePoint/PowerApps complaint sync
@@ -190,7 +208,9 @@ class Config:
         "Mail.Read Mail.ReadWrite Mail.Send "
         "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
         "Chat.Read Chat.ReadWrite "
-        "Place.Read.All",
+        "Place.Read.All "
+        "Team.ReadBasic.All Channel.ReadBasic.All "
+        "ChannelMessage.Read.All ChannelMessage.Send",
     )
     # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
     TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
@@ -219,5 +239,35 @@ class Config:
     SHAREPOINT_POLICY_FOLDERS = os.getenv("SHAREPOINT_POLICY_FOLDERS", "ADMIN,IT PMO")
     # How often (seconds) to poll SharePoint for new/changed files (default 10 min)
     SHAREPOINT_SYNC_INTERVAL = int(os.getenv("SHAREPOINT_SYNC_INTERVAL_SECONDS", "600"))
+
+    # ── Observability content-reveal access (Azure AD groups, validated JWT) ───
+    # When enabled, the /observability reveal endpoints validate the Azure access
+    # token (signature/audience/issuer) and read the `groups` claim. When disabled
+    # (local dev), they fall back to header identity + DEV_REVEAL_DOMAINS.
+    AZURE_JWT_ENABLED = os.getenv("AZURE_JWT_ENABLED", "false").lower() == "true"
+    AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID") or os.getenv("GRAPH_TENANT_ID", "")
+    AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID") or os.getenv("VITE_MSAL_CLIENT_ID", "")
+    AZURE_API_AUDIENCE = os.getenv("AZURE_API_AUDIENCE") or (
+        f"api://{os.getenv('AZURE_CLIENT_ID') or os.getenv('VITE_MSAL_CLIENT_ID', '')}"
+    )
+    # Domains a dev user may reveal when AZURE_JWT_ENABLED is false.
+    DEV_REVEAL_DOMAINS = [
+        d.strip() for d in os.getenv(
+            "DEV_REVEAL_DOMAINS", "hr,it_support,pmo,admin,general"
+        ).split(",") if d.strip()
+    ]
+
+    # Map of conversation domain → set of Azure AD security-group object IDs whose
+    # members may reveal that domain's content. Each env var is a CSV of GUIDs.
+    REVEAL_GROUP_DOMAIN_MAP = {
+        domain: {g.strip() for g in os.getenv(env_var, "").split(",") if g.strip()}
+        for domain, env_var in (
+            ("hr", "REVEAL_GROUP_HR"),
+            ("it_support", "REVEAL_GROUP_IT"),
+            ("pmo", "REVEAL_GROUP_PMO"),
+            ("admin", "REVEAL_GROUP_ADMIN"),
+            ("general", "REVEAL_GROUP_GENERAL"),
+        )
+    }
 
 settings = Config()

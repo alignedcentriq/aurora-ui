@@ -21,6 +21,7 @@ class Employee(Base):
     email = Column(String, unique=True, index=True)
     department = Column(String)
     designation = Column(String)
+    location = Column(String)  # Pune, Indore, Dubai, US
     manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
     joining_date = Column(Date)
     employment_type = Column(String) # Full-time, Contract
@@ -28,10 +29,11 @@ class Employee(Base):
     insurance_plan = Column(String)
     tax_regime = Column(String) # Old, New
     shift_type = Column(String) # Day, Night
-    
+
     # Relationships
     leaves = relationship("Leave", back_populates="employee")
     attendance = relationship("Attendance", back_populates="employee")
+    skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
 
 class Leave(Base):
     __tablename__ = "leaves"
@@ -229,6 +231,21 @@ class Accommodation(Base):
     location = Column(String)
     status = Column(String, default="Pending")
     approved_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class VisitorPass(Base):
+    __tablename__ = "visitor_passes"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    pass_id = Column(String, unique=True, index=True)  # VP-001
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))  # host
+    visitor_name = Column(String)
+    visitor_company = Column(String, nullable=True)
+    visit_date = Column(Date)
+    visit_time = Column(String, nullable=True)  # free-text, e.g. "2:00 PM" or "afternoon"
+    purpose = Column(Text)
+    status = Column(String, default="Pending")  # Pending, Approved, Rejected, Completed
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class FacilityComplaint(Base):
@@ -571,6 +588,29 @@ class ChatFeedback(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class CachedAnswer(Base):
+    """Semantic answer cache: a previously-answered informational question + its final answer.
+    Looked up by embedding similarity so near-identical repeat questions return instantly with
+    zero LLM calls. Only informational answers are ever stored (never actions/widgets/drafts) —
+    that store-side filter is what makes lookups inherently safe. Policy-derived rows carry
+    source_keys so they can be invalidated the moment the underlying SharePoint doc changes.
+    """
+    __tablename__ = "cached_answers"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    query_text = Column(Text, nullable=False)
+    query_embedding = Column(Vector(768), nullable=True)
+    answer_text = Column(Text, nullable=False)
+    domain = Column(String, nullable=True, index=True)       # hr, admin, it_support, pmo, general
+    sub_intent = Column(String, nullable=True)
+    source_keys = Column(JSON, nullable=True)                # list of Policy.source_key used to build answer
+    is_seed = Column(Boolean, default=False)                 # True for curated warm-FAQ entries
+    hit_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class LeaveBalanceCache(Base):
     """Stores the most recent leave balance scraped from Zoho People for each user.
     Refreshed in the background every LEAVE_BALANCE_SYNC_INTERVAL_SECONDS (default 30 min).
@@ -765,5 +805,82 @@ class AiLlmCallLog(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     request = relationship("AiRequestLog", back_populates="llm_calls")
+
+
+class GeneratedDocument(Base):
+    """One row per generated letter/document (NOC, experience cert, project proposal, etc.).
+
+    Stores the finalised letter text so the PDF can be rebuilt on download, and records
+    who it was generated for (subject) vs who generated it (actor) for audit. Non-HR
+    self-serve docs are marked is_official=False and carry a draft watermark on download."""
+    __tablename__ = "generated_documents"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_type = Column(String, index=True)              # no_objection_certificate, experience_certificate, ...
+    title = Column(String)
+    subject_email = Column(String, index=True)         # employee the document is about
+    subject_name = Column(String)
+    generated_by_email = Column(String, index=True)    # who clicked generate
+    is_official = Column(Boolean, default=False)        # mirror of status == "verified" (kept for back-compat)
+    status = Column(String, default="draft", index=True)  # draft | verified
+    verify_token = Column(String, unique=True, index=True)  # unguessable token for the public verify page
+    verified_by_email = Column(String, nullable=True)  # HR/Admin who approved & released
+    verified_at = Column(DateTime, nullable=True)
+    purpose = Column(Text, nullable=True)
+    additional_info = Column(Text, nullable=True)
+    content = Column(Text, nullable=True)              # full finalised letter text
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class ContentRevealAudit(Base):
+    """Audit trail for revealing conversation content. One row per actual view. Access is
+    gated by Azure AD group membership (validated server-side); this records who saw whose
+    conversation, for which domain, and why."""
+    __tablename__ = "content_reveal_audits"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_log_id = Column(Integer, ForeignKey(f"{SCHEMA}.ai_request_logs.id", ondelete="CASCADE"), index=True)
+    viewer_email = Column(String, index=True)
+    viewer_oid = Column(String, nullable=True)               # Azure AD object id (when JWT-validated)
+    domain = Column(String)                                  # domain of the revealed log
+    reason = Column(Text)                                    # required justification
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class MS365User(Base):
+    """Azure AD / Microsoft 365 user directory synced via Graph API."""
+    __tablename__ = "ms365_users"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    azure_id = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=True)
+    job_title = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    office_location = Column(String, nullable=True)
+    synced_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class EmployeeSkill(Base):
+    """A skill held by an employee, paired with its certification. Child of Employee."""
+    __tablename__ = "employee_skills"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id", ondelete="CASCADE"), index=True, nullable=False)
+    skill = Column(String, nullable=False)
+    certification = Column(String, nullable=True)        # certification title/name (text)
+    is_primary = Column(Boolean, default=False)          # the employee's primary skill (at most one)
+    years_experience = Column(Float, nullable=True)      # years of experience in this skill
+    last_used = Column(Date, nullable=True)              # when the skill was last used
+    cert_file_data = Column(LargeBinary, nullable=True)  # uploaded certification image/PDF
+    cert_file_name = Column(String, nullable=True)
+    cert_content_type = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    employee = relationship("Employee", back_populates="skills")
 
 

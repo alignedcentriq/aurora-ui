@@ -13,7 +13,10 @@ import { cn } from "../lib/utils";
 import { Logo } from "../components/Logo";
 import { BrandName } from "../components/BrandName";
 import { AnimatedBackground } from "../components/AnimatedBackground";
+import { FlyingBanner } from "../components/FlyingBanner";
 import { motion } from "framer-motion";
+import { LoadingCharacterDisplay, LoadingDots } from "../components/LoadingCharacter";
+import { useSettings } from "../lib/settings-store";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -109,124 +112,272 @@ function RootComponent() {
   );
 }
 
-/** Premium splash / loading screen */
+/** 4C brand splash with customizable loading character */
 function SplashScreen() {
+  const { loadingCharId = "centriq", loadingCharCustom = "" } = (typeof useSettings === "function" ? useSettings() : {}) as { loadingCharId?: string; loadingCharCustom?: string };
+
+  const FOUR_C = [
+    { key: "Clarity",       color: "var(--clarity)",       desc: "Clear. Precise. Actionable." },
+    { key: "Connectivity",  color: "var(--connectivity)",  desc: "Systems united as one." },
+    { key: "Collaboration", color: "var(--collaboration)", desc: "People + AI, together." },
+    { key: "Capacity",      color: "var(--capacity)",      desc: "Freed to do the remarkable." },
+  ] as const;
+
+  const [activeC, setActiveC] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setActiveC((p) => (p + 1) % 4), 1200);
+    return () => clearInterval(t);
+  }, []);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background relative overflow-hidden">
       <AnimatedBackground />
+
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.92 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        className="flex flex-col items-center gap-6"
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="flex flex-col items-center gap-8 z-10"
       >
-        <motion.div
-          animate={{ scale: [1, 1.05, 1] }}
-          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-        >
-          <Logo size="lg" className="shadow-2xl shadow-primary/20" />
-        </motion.div>
-        <div className="h-1 w-40 overflow-hidden rounded-full bg-muted">
-          <motion.div
-            className="h-full rounded-full"
-            style={{ background: "var(--gradient-primary)" }}
-            initial={{ x: "-100%" }}
-            animate={{ x: "200%" }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-          />
+        {/* Loading character */}
+        <LoadingCharacterDisplay charId={loadingCharId} customChar={loadingCharCustom} size="lg" />
+
+        {/* Brand */}
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-2xl font-black tracking-tight text-4c">Centriq AI</h1>
+          <p className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground/50">
+            Intelligent Workplace
+          </p>
         </div>
+
+        {/* 4C Carousel */}
+        <div className="relative h-10 flex flex-col items-center justify-center">
+          {FOUR_C.map((c, i) => (
+            <motion.div
+              key={c.key}
+              className="absolute flex items-center gap-2"
+              animate={{
+                opacity: activeC === i ? 1 : 0,
+                y: activeC === i ? 0 : activeC > i ? -12 : 12,
+              }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+            >
+              <div className="h-1.5 w-1.5 rounded-full" style={{ background: c.color }} />
+              <span className="text-[13px] font-semibold" style={{ color: c.color }}>{c.key}</span>
+              <span className="text-[12px] text-muted-foreground font-medium">— {c.desc}</span>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* 4C progress bar */}
+        <div className="flex gap-1">
+          {FOUR_C.map((c, i) => (
+            <motion.div
+              key={c.key}
+              className="h-[3px] rounded-full"
+              style={{ background: c.color }}
+              animate={{ width: activeC === i ? 32 : 8, opacity: activeC === i ? 1 : 0.3 }}
+              transition={{ duration: 0.4 }}
+            />
+          ))}
+        </div>
+
+        {/* Loading dots */}
+        <LoadingDots />
       </motion.div>
     </div>
   );
 }
 
+/** 4C Enterprise Login */
 function LoginView() {
   const { login, isInteracting } = useAuth();
+  const { loadingCharId = "centriq", loadingCharCustom = "" } = (typeof useSettings === "function" ? useSettings() : {}) as { loadingCharId?: string; loadingCharCustom?: string };
+
+  const FOUR_C = [
+    { key: "C", label: "Clarity",       color: "var(--clarity)" },
+    { key: "C", label: "Connectivity",  color: "var(--connectivity)" },
+    { key: "C", label: "Collaboration", color: "var(--collaboration)" },
+    { key: "C", label: "Capacity",      color: "var(--capacity)" },
+  ] as const;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 relative overflow-hidden">
+    <div className="flex min-h-screen bg-background relative overflow-hidden">
       <AnimatedBackground />
 
+      {/* Left side — 4C brand panel */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-        className="relative w-full max-w-sm space-y-8 text-center z-10"
+        initial={{ opacity: 0, x: -40 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        className="hidden lg:flex flex-col justify-between w-[420px] shrink-0 relative p-12 border-r border-white/[0.06] overflow-hidden"
+        style={{ background: "var(--gradient-sidebar)" }}
       >
-        {/* Logo with glow */}
-        <div className="flex flex-col items-center gap-5">
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.1, duration: 0.5, type: "spring", stiffness: 200 }}
-          >
-            <Logo size="xl" className="shadow-2xl shadow-primary/25" />
-          </motion.div>
+        {/* Left brand strip */}
+        <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: "var(--gradient-primary)" }} />
 
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25, duration: 0.5 }}
-          >
-            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
-              Welcome to{" "}
-              <span className="text-gradient">Centriq</span>
-            </h1>
-            <p className="text-muted-foreground font-medium mt-2">
-              Your intelligent workplace concierge
-            </p>
-          </motion.div>
+        {/* Hex overlay */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.05]"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V16L28 0l28 16v34L28 66zm0-6l22-13V19L28 6 6 19v28l22 13z' fill='none' stroke='%233B8FE8' stroke-width='0.5'/%3E%3C/svg%3E")`,
+            backgroundSize: "56px 100px",
+          }}
+        />
+
+        {/* Top logo */}
+        <div className="flex items-center gap-3 relative z-10">
+          <Logo size="sm" />
+          <BrandName className="text-[16px] text-white font-bold" withAI={true} />
         </div>
 
-        {/* Sign-in button */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4, duration: 0.5 }}
-        >
-          <motion.button
-            whileHover={{ scale: 1.01, y: -1 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => login()}
-            disabled={isInteracting}
-            className={cn(
-              "group relative flex w-full items-center justify-center gap-3 rounded-2xl border border-border bg-card/80 backdrop-blur-sm p-4 text-[15px] font-semibold text-foreground transition-all hover:shadow-xl hover:shadow-primary/10 hover:border-primary/20",
-              isInteracting && "opacity-50 cursor-not-allowed",
-            )}
-          >
-            {isInteracting ? (
-              <div className="flex items-center gap-2">
-                <motion.div
-                  className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent"
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                />
-                Signing in...
+        {/* 4C cards */}
+        <div className="space-y-5 relative z-10">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/30 mb-6">
+            Built on 4 Pillars
+          </p>
+          {FOUR_C.map((c, i) => (
+            <motion.div
+              key={c.label}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.3 + i * 0.12, duration: 0.5 }}
+              className="flex items-center gap-4 group"
+            >
+              <div
+                className="flex h-10 w-10 items-center justify-center rounded-xl shrink-0 font-black text-white text-[16px]"
+                style={{
+                  background: `color-mix(in oklab, ${c.color} 18%, transparent)`,
+                  border: `1px solid color-mix(in oklab, ${c.color} 25%, transparent)`,
+                  color: c.color,
+                }}
+              >
+                {c.key}
               </div>
-            ) : (
-              <>
-                <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
-                  <path
-                    d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z"
-                    fill="currentColor"
-                  />
-                </svg>
-                <span>Sign in with Microsoft</span>
-              </>
-            )}
-          </motion.button>
-        </motion.div>
+              <span className="text-[14px] font-semibold" style={{ color: c.color }}>{c.label}</span>
+            </motion.div>
+          ))}
+        </div>
 
-        {/* Footer */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-          className="text-[11px] text-muted-foreground/50 font-medium"
-        >
-          Powered by AI · Enterprise grade security
-        </motion.p>
+        {/* Bottom tagline */}
+        <p className="text-[11px] text-white/20 font-medium relative z-10">
+          Enterprise Intelligence · Unified Workforce
+        </p>
       </motion.div>
+
+      {/* Right side — login card */}
+      <div className="flex flex-1 items-center justify-center px-6">
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          className="relative w-full max-w-sm z-10"
+        >
+          {/* Card */}
+          <div
+            className="rounded-3xl border p-8 shadow-2xl space-y-7 relative overflow-hidden"
+            style={{
+              background: "rgba(255,255,255,0.92)",
+              borderColor: "rgba(27,111,200,0.12)",
+              backdropFilter: "blur(24px)",
+            }}
+          >
+            {/* Scan-line effect */}
+            <div className="scan-line-overlay absolute inset-0 pointer-events-none" />
+
+            {/* Logo */}
+            <div className="flex flex-col items-center gap-4 text-center">
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: 0.1, duration: 0.5, type: "spring", stiffness: 200 }}
+                className="relative"
+              >
+                <LoadingCharacterDisplay charId={loadingCharId} customChar={loadingCharCustom} size="md" />
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+              >
+                <h1 className="text-2xl font-black tracking-tight">
+                  Welcome to{" "}
+                  <span className="text-4c">Centriq</span>
+                </h1>
+                <p className="text-[13px] text-muted-foreground font-medium mt-1.5">
+                  Your intelligent workplace concierge
+                </p>
+              </motion.div>
+            </div>
+
+            {/* 4C indicator dots */}
+            <div className="flex justify-center gap-2">
+              {FOUR_C.map((c) => (
+                <motion.div
+                  key={c.label}
+                  className="h-1.5 w-8 rounded-full"
+                  style={{ background: c.color }}
+                  animate={{ opacity: [0.5, 1, 0.5] }}
+                  transition={{ duration: 2, repeat: Infinity, delay: FOUR_C.indexOf(c) * 0.5 }}
+                  title={c.label}
+                />
+              ))}
+            </div>
+
+            {/* Sign-in button */}
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+            >
+              <motion.button
+                whileHover={{ scale: 1.015, y: -2 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => login()}
+                disabled={isInteracting}
+                className={cn(
+                  "group relative flex w-full items-center justify-center gap-3 rounded-2xl p-4 text-[14px] font-bold text-white transition-all overflow-hidden",
+                  isInteracting && "opacity-70 cursor-not-allowed",
+                )}
+                style={{ background: "var(--gradient-primary)" }}
+              >
+                {/* Shimmer overlay */}
+                <motion.div
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{
+                    background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.15) 50%, transparent 60%)",
+                  }}
+                  animate={{ x: ["-100%", "200%"] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                />
+
+                {isInteracting ? (
+                  <>
+                    <LoadingDots />
+                    <span>Signing in...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
+                      <path
+                        d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                    <span>Sign in with Microsoft</span>
+                  </>
+                )}
+              </motion.button>
+            </motion.div>
+
+            {/* Footer */}
+            <p className="text-center text-[11px] text-muted-foreground/50 font-medium">
+              Powered by AI · Enterprise-grade security
+            </p>
+          </div>
+        </motion.div>
+      </div>
     </div>
   );
 }
@@ -250,6 +401,7 @@ function AuthenticatedApp() {
       <AnimatedBackground />
       <Outlet />
       <Toaster position="top-right" expand={false} richColors />
+      <FlyingBanner />
     </>
   );
 }

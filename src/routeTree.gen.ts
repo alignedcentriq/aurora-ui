@@ -17,6 +17,7 @@ import { Route as LayoutPeopleRouteImport } from './routes/_layout.people'
 import { Route as LayoutObservabilityRouteImport } from './routes/_layout.observability'
 import { Route as LayoutItPortalRouteImport } from './routes/_layout.it-portal'
 import { Route as LayoutHrPortalRouteImport } from './routes/_layout.hr-portal'
+import { Route as LayoutDocumentsRouteImport } from './routes/_layout.documents'
 import { Route as LayoutConfigRouteImport } from './routes/_layout.config'
 import { Route as LayoutAdminPortalRouteImport } from './routes/_layout.admin-portal'
 import { Route as LayoutAdminRouteImport } from './routes/_layout.admin'
@@ -60,6 +61,11 @@ const LayoutHrPortalRoute = LayoutHrPortalRouteImport.update({
   path: '/hr-portal',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutDocumentsRoute = LayoutDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutConfigRoute = LayoutConfigRouteImport.update({
   id: '/config',
   path: '/config',
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof LayoutAdminRoute
   '/admin-portal': typeof LayoutAdminPortalRoute
   '/config': typeof LayoutConfigRoute
+  '/documents': typeof LayoutDocumentsRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
   '/observability': typeof LayoutObservabilityRoute
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/admin': typeof LayoutAdminRoute
   '/admin-portal': typeof LayoutAdminPortalRoute
   '/config': typeof LayoutConfigRoute
+  '/documents': typeof LayoutDocumentsRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
   '/observability': typeof LayoutObservabilityRoute
@@ -106,6 +114,7 @@ export interface FileRoutesById {
   '/_layout/admin': typeof LayoutAdminRoute
   '/_layout/admin-portal': typeof LayoutAdminPortalRoute
   '/_layout/config': typeof LayoutConfigRoute
+  '/_layout/documents': typeof LayoutDocumentsRoute
   '/_layout/hr-portal': typeof LayoutHrPortalRoute
   '/_layout/it-portal': typeof LayoutItPortalRoute
   '/_layout/observability': typeof LayoutObservabilityRoute
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/admin-portal'
     | '/config'
+    | '/documents'
     | '/hr-portal'
     | '/it-portal'
     | '/observability'
@@ -132,6 +142,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/admin-portal'
     | '/config'
+    | '/documents'
     | '/hr-portal'
     | '/it-portal'
     | '/observability'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/_layout/admin'
     | '/_layout/admin-portal'
     | '/_layout/config'
+    | '/_layout/documents'
     | '/_layout/hr-portal'
     | '/_layout/it-portal'
     | '/_layout/observability'
@@ -216,6 +228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutHrPortalRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/documents': {
+      id: '/_layout/documents'
+      path: '/documents'
+      fullPath: '/documents'
+      preLoaderRoute: typeof LayoutDocumentsRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/config': {
       id: '/_layout/config'
       path: '/config'
@@ -244,6 +263,7 @@ interface LayoutRouteChildren {
   LayoutAdminRoute: typeof LayoutAdminRoute
   LayoutAdminPortalRoute: typeof LayoutAdminPortalRoute
   LayoutConfigRoute: typeof LayoutConfigRoute
+  LayoutDocumentsRoute: typeof LayoutDocumentsRoute
   LayoutHrPortalRoute: typeof LayoutHrPortalRoute
   LayoutItPortalRoute: typeof LayoutItPortalRoute
   LayoutObservabilityRoute: typeof LayoutObservabilityRoute
@@ -257,6 +277,7 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminRoute: LayoutAdminRoute,
   LayoutAdminPortalRoute: LayoutAdminPortalRoute,
   LayoutConfigRoute: LayoutConfigRoute,
+  LayoutDocumentsRoute: LayoutDocumentsRoute,
   LayoutHrPortalRoute: LayoutHrPortalRoute,
   LayoutItPortalRoute: LayoutItPortalRoute,
   LayoutObservabilityRoute: LayoutObservabilityRoute,
