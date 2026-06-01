@@ -173,7 +173,7 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
-    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "it-support@alignedautomation.com")
+    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "shivam.sharma@alignedautomation.com")
     # Bookshelf Buddy — book request notifications go to this admin
     BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     # Nexus Library mock server — single source of truth for book inventory
