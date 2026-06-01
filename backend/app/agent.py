@@ -803,6 +803,15 @@ _KW_MS365_YAMMER = re.compile(
     r'viva\s+engage\s+(feed|posts?|messages?))\b', re.I
 )
 
+# Explicit community search: capture group 1 = the topic to search for
+_KW_MS365_COMMUNITY_SEARCH = re.compile(
+    r'(?:'
+    r'search\s+(?:the\s+|our\s+|in\s+)?(?:communit(?:y|ies)|viva\s+engage|yammer)\s+(?:for|about|on)\s+'
+    r'|what(?:\'?s|\s+has\s+been|\s+did\s+anyone|\s+has\s+anyone)?\s+(?:posted?|shared|said|discussed|mentioned)\s+(?:about|on|regarding)\s+'
+    r'|has\s+anyone\s+(?:posted|asked|mentioned|discussed|shared|said)\s+(?:about|on)\s+'
+    r')(.+)', re.I
+)
+
 _KW_COMPANY_INFO = re.compile(
     r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
     r'company\s+(info|details|overview|profile)|'
@@ -939,6 +948,15 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "ms365", "confidence": 0.95,
                 "reasoning": "Keyword: Teams messages",
                 "sub_intent": "teams_messages", "entities": {}}
+
+    # MS365 — explicit community search (check before generic Yammer feed route)
+    _cs = _KW_MS365_COMMUNITY_SEARCH.search(text)
+    if _cs:
+        topic = _cs.group(1).strip().rstrip("?.! ")
+        if topic:
+            return {"domain": "ms365", "confidence": 0.95,
+                    "reasoning": "Keyword: search Viva Engage communities",
+                    "sub_intent": "community_search", "entities": {"query": topic}}
 
     # MS365 — Yammer / Viva Engage
     if _KW_MS365_YAMMER.search(text):
@@ -1526,6 +1544,20 @@ async def ms365_agent_node(state: AgentState):
         result = await yammer_service.fetch_my_feed(yammer_token)
         if result.get("success"):
             pre_fetched = f"[PRE-FETCHED YAMMER FEED]\n{json.dumps(result)}\n[END]"
+
+    elif yammer_token and sub_intent == "community_search":
+        from app.services import yammer_service
+        q = (state.get("entities") or {}).get("query") or next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        )
+        result = await yammer_service.search_with_replies(yammer_token, q)
+        if result.get("success"):
+            pre_fetched = (
+                f"[COMMUNITY SEARCH RESULTS for '{q}']\n{json.dumps(result)}\n[END]\n"
+                f"Each thread has the original post AND its replies/comments — the answer is often "
+                f"in a reply, not the question. Synthesize a direct answer from the whole thread and "
+                f"cite the author + web_url. If nothing relevant, say so plainly."
+            )
 
     feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
     if pre_fetched:

@@ -71,11 +71,12 @@ def _resolve_redis_url() -> str:
 
 
 def _resolve_router_model() -> str:
-    """Use qwen2.5:14b for routing/admin/IT/PMO/manager — lighter and fast enough for structured output."""
+    """Use llama3.2:3b for routing/admin/IT/PMO/manager — tiny, instant, and reliable
+    at the structured (tool-calling) output the router needs via .with_structured_output."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    return "qwen2.5:14b"
+    return "llama3.2:3b"
 
 
 class Config:
@@ -91,13 +92,14 @@ class Config:
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── General Model (greetings, small talk) ──
-    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "qwen2.5:14b")
+    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "llama3.2:3b")
 
     # ── Summarizer Model (context_manager_node, conversation summaries) ──
-    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "qwen2.5:14b")
+    # 8B (not 3B) here — summarization benefits from the extra capacity.
+    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "llama3.1:8b")
 
     # ── Fast Model (lightweight agents: manager, general, summarizer, suggestions) ──
-    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "qwen2.5:7b")
+    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "llama3.2:3b")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")

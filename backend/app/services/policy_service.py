@@ -110,6 +110,20 @@ _QUERY_SYNONYMS: dict[str, str] = {
 }
 
 
+# Common English words that must never be fuzzy-matched to an acronym.
+# (e.g. "any"/"can"/"van" share two chars with "uan" → 0.67 similarity.)
+_FUZZY_STOPWORDS: frozenset[str] = frozenset({
+    "any", "can", "man", "van", "ban", "ran", "tan", "fan", "pan", "san",
+    "the", "for", "you", "are", "was", "but", "not", "all", "out", "our",
+    "use", "new", "has", "had", "his", "her", "its", "who", "why", "how",
+    "may", "say", "way", "day", "get", "got", "let", "set", "see", "two",
+    "ten", "one", "now", "off", "own", "per", "via", "yes", "and", "any",
+    "have", "this", "that", "with", "what", "when", "your", "from", "they",
+    "them", "then", "than", "some", "such", "into", "over", "more", "most",
+    "will", "want", "need", "does", "done", "make", "made", "many", "much",
+})
+
+
 def _expand_query(query: str) -> tuple[str, str | None]:
     """Expand known acronyms and fuzzy-correct near-misses.
 
@@ -127,11 +141,13 @@ def _expand_query(query: str) -> tuple[str, str | None]:
         if re.search(r'\b' + re.escape(term) + r'\b', lower):
             extras.append(expansion)
 
-    # 2. Fuzzy correction — only when no exact synonym matched
+    # 2. Fuzzy correction — only when no exact synonym matched.
+    # Require length >= 4 and skip common English words so everyday words
+    # ("any", "can", "what") don't collide with short acronyms ("uan").
     if not extras:
         synonym_keys = list(_QUERY_SYNONYMS.keys())
         for word in words:
-            if len(word) < 3:
+            if len(word) < 4 or word in _FUZZY_STOPWORDS:
                 continue
             # Only compare against keys of similar length (±1 char) to avoid
             # common words like "tell" fuzzy-matching short acronyms like "el".

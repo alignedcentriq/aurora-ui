@@ -511,6 +511,25 @@ async def post_to_community(
     return json.dumps(result)
 
 
+@tool
+async def search_communities(
+    query: str,
+    top: int = 15,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Search ALL Viva Engage (Yammer) communities for posts about ANY topic or question.
+    Use when the answer likely lives in what colleagues have discussed/shared in communities
+    rather than in official policy docs or other tools — e.g. internal know-how, tools, events,
+    announcements, recommendations, or anything employees post about. The query can be anything.
+    Returns matching threads, each with the original post AND its replies/comments (the answer is
+    often in a reply, not the question). Synthesize a direct answer and cite the author + web_url."""
+    token = (state or {}).get("yammer_token")
+    if not token:
+        return _YAMMER_NOT_CONNECTED
+    result = await yammer_service.search_with_replies(token, query)
+    return json.dumps(result)
+
+
 # -- Agent assembly -----------------------------------------------------------
 
 tools = [
@@ -520,6 +539,7 @@ tools = [
     read_teams_messages, send_teams_message,
     list_org_users, list_team_members,
     read_yammer_feed, list_my_communities, read_community_posts, post_to_community,
+    search_communities,
 ]
 tool_node = ToolNode(tools)
 
@@ -561,7 +581,8 @@ def ms365_assistant(state: MS365State):
         f"- Viva Engage/Yammer feed → read_yammer_feed\n"
         f"- My communities → list_my_communities\n"
         f"- Community posts → read_community_posts (ask for community name if not stated)\n"
-        f"- Post to community → post_to_community (confirm with user first)\n\n"
+        f"- Post to community → post_to_community (confirm with user first)\n"
+        f"- Search communities / 'what's posted about X' / internal tribal-knowledge question → search_communities; then write a direct answer and cite the author + post link.\n\n"
         f"Format emails as readable summaries: sender, subject, time.\n"
         f"Format calendar as time-ordered schedule: time, subject, location.\n"
         f"Always respond in natural language. Never output raw JSON.\n"

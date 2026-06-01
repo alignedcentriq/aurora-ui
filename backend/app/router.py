@@ -68,7 +68,10 @@ DOMAIN_REGISTRY = {
                        "checking calendar events, finding meetings by date or keyword, "
                        "meeting rooms and conference rooms (list rooms, check availability, book a room), "
                        "reading Teams chat messages, reading Teams channel messages, posting to Teams channels, "
-                       "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities. "
+                       "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities, "
+                       "searching communities for answers to ANY question whose answer is likely something "
+                       "colleagues have discussed or shared in communities (internal know-how, tools, events, "
+                       "recommendations, announcements, etc.) rather than in official policy docs. "
                        "Use for: 'show my emails', 'send an email to X', 'what meetings do I have today', "
                        "'check my calendar for next week', 'read my Teams messages', 'any emails from John', "
                        "'which rooms are free at 3pm', 'book conference room', 'is room X available tomorrow', "
@@ -156,6 +159,10 @@ EXAMPLES:
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
 - "is Salween room free tomorrow 2-3pm" → domain: ms365, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "search the community for X" → domain: ms365, sub_intent: community_search, entities: {{"query": "X"}}   (X can be ANY topic)
+- "has anyone in the communities posted about the new cafeteria menu" → domain: ms365, sub_intent: community_search, entities: {{"query": "new cafeteria menu"}}
+- "what's been shared on Viva Engage about the hackathon" → domain: ms365, sub_intent: community_search, entities: {{"query": "hackathon"}}
+- "does anyone know if the company hosts its own LLM models" → domain: ms365, sub_intent: community_search, entities: {{"query": "company hosted LLM models"}}
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}

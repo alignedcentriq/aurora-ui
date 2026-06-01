@@ -365,11 +365,6 @@ export function AssistantView() {
         return;
       }
 
-      setSuggestions([]);
-      addTurn(activeId, { role: "user", text });
-      setInput("");
-      setThinking(true);
-
       // Intercept room booking requests.
       // Matches: "book/reserve a room", "book [named room] for/on/at [time or date]"
       // Does NOT rely on hardcoded room names — uses structure instead.

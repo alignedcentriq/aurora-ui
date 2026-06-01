@@ -323,6 +323,7 @@ _TOOL_GROUPS: dict[str, list] = {
     "facility_complaint": [file_facility_complaint, check_complaint_status],
     "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],
     "accommodation":      [request_accommodation, search_admin_policies],
+    "visitor_pass":       [request_visitor_pass],
     "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
     "desk_key_request":   [search_admin_policies],
 }

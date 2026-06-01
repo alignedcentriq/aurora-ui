@@ -10,7 +10,7 @@ import socket
 import time
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
@@ -312,224 +312,348 @@ async def download_document(file_id: str):
     )
 
 
-def _approval_html(title: str, message: str, color: str = "#16a34a") -> str:
-    return f"""
-    <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><title>{title}</title>
-    <style>body{{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;}}
-    .card{{background:#fff;border-radius:12px;padding:40px 48px;max-width:480px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08);}}
-    h1{{color:{color};font-size:24px;margin-bottom:12px;}} p{{color:#64748b;font-size:15px;line-height:1.6;}}</style>
-    </head><body><div class="card"><h1>{title}</h1><p>{message}</p>
-    <p style="margin-top:24px;font-size:13px;color:#94a3b8;">Centriq AI &mdash; Aligned Automation</p>
+def _approval_html(title: str, message: str, color: str = "#16A34A") -> str:
+    """Branded Gradient Hero confirmation page shown after a manager clicks an
+    Approve/Reject link — matches the email so the hand-off feels like one product."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:64px;height:64px;display:block;margin:0 auto 12px;">'
+        if _BUDDY_B64 else ""
+    )
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:26px 24px 22px;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:30px 40px 34px;}}
+    h1{{color:{color};font-size:23px;margin:0 0 12px;}}
+    p{{color:#64748b;font-size:15px;line-height:1.6;margin:0;}}
+    .foot{{margin-top:22px;font-size:13px;color:#94a3b8;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body"><h1>{title}</h1><p>{message}</p>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p></div>
     </div></body></html>
     """
 
 
+_REJECT_LABELS = {
+    "leave": "Reject Leave Request",
+    "book_request": "Reject Borrow Request",
+    "book_extension": "Reject Extension Request",
+}
+
+
+def _entity_label(tok) -> str:
+    return _REJECT_LABELS.get(tok.entity_type, "Reject Request")
+
+
+def _reject_reason_form(token: str, subtitle: str, error: str = "") -> str:
+    """Branded page asking the approver to enter a mandatory rejection reason."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:60px;height:60px;display:block;margin:0 auto 10px;">'
+        if _BUDDY_B64 else ""
+    )
+    err_html = (
+        f'<div style="background:#fee2e2;color:#b91c1c;font-size:13px;padding:10px 14px;'
+        f'border-radius:8px;margin-bottom:14px;">{html.escape(error)}</div>'
+        if error else ""
+    )
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(subtitle)}</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:24px;text-align:center;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:28px 32px 30px;}}
+    h1{{color:#0d1b2e;font-size:20px;margin:0 0 6px;}}
+    p.sub{{color:#64748b;font-size:14px;margin:0 0 18px;line-height:1.5;}}
+    label{{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;}}
+    textarea{{width:100%;min-height:120px;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font:400 14px 'Segoe UI',Arial,sans-serif;color:#0d1b2e;resize:vertical;}}
+    textarea:focus{{outline:none;border-color:#1B6FC8;box-shadow:0 0 0 3px rgba(27,111,200,.15);}}
+    button{{margin-top:16px;width:100%;background:#dc2626;color:#fff;border:0;border-radius:25px;padding:14px;font:700 15px 'Segoe UI',Arial,sans-serif;cursor:pointer;}}
+    button:hover{{background:#b91c1c;}}
+    .foot{{margin-top:16px;font-size:12px;color:#94a3b8;text-align:center;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body">
+    <h1>{html.escape(subtitle)}</h1>
+    <p class="sub">A reason is required before this request can be rejected. The employee will see this note.</p>
+    {err_html}
+    <form method="post" action="/api/approve/{token}/reject">
+      <label for="reason">Reason for rejection</label>
+      <textarea id="reason" name="reason" required placeholder="e.g. Insufficient leave balance — please discuss with your manager before re-applying."></textarea>
+      <button type="submit">Confirm Rejection</button>
+    </form>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p>
+    </div></div></body></html>
+    """
+
+
+def _validate_token(db, token: str):
+    """Return (tok, error_response). error_response is None when the token is usable."""
+    tok = db.query(ApprovalToken).filter(ApprovalToken.token == token).first()
+    if not tok:
+        return None, HTMLResponse(_approval_html("Invalid Link", "This approval link is invalid or does not exist.", "#dc2626"), status_code=404)
+    if tok.used:
+        return None, HTMLResponse(_approval_html("Already Actioned", "This approval link has already been used.", "#f59e0b"))
+    if tok.expires_at < datetime.datetime.utcnow():
+        return None, HTMLResponse(_approval_html("Link Expired", "This approval link has expired. Please ask the employee to resubmit.", "#f59e0b"))
+    return tok, None
+
+
 @app.get("/api/approve/{token}", response_class=HTMLResponse)
 async def process_approval(token: str):
-    """Manager clicks this link from the leave approval email."""
+    """Approve link → finalize immediately. Reject link → show the reason form first
+    (a rejection cannot be finalized without a reason)."""
     db = SessionLocal()
     try:
-        tok = db.query(ApprovalToken).filter(ApprovalToken.token == token).first()
-        if not tok:
-            return HTMLResponse(_approval_html("Invalid Link", "This approval link is invalid or does not exist.", "#dc2626"), status_code=404)
-        if tok.used:
-            return HTMLResponse(_approval_html("Already Actioned", "This approval link has already been used.", "#f59e0b"))
-        if tok.expires_at < datetime.datetime.utcnow():
-            return HTMLResponse(_approval_html("Link Expired", "This approval link has expired. Please ask the employee to resubmit.", "#f59e0b"))
+        tok, err = _validate_token(db, token)
+        if err:
+            return err
+        if tok.action == "reject":
+            # Do NOT mark the token used or change any state — just collect the reason.
+            return HTMLResponse(_reject_reason_form(token, _entity_label(tok)))
+        return _finalize_decision(db, tok, "Approved", "")
+    finally:
+        db.close()
 
-        tok.used = True
-        decision = "Approved" if tok.action == "approve" else "Rejected"
 
-        if tok.entity_type == "leave":
-            leave = db.query(Leave).filter(Leave.id == tok.entity_id).first()
-            if leave:
-                leave.status = decision
-                # Invalidate the sibling token (the other action)
-                db.query(ApprovalToken).filter(
-                    ApprovalToken.entity_type == "leave",
-                    ApprovalToken.entity_id == tok.entity_id,
-                    ApprovalToken.token != token,
-                    ApprovalToken.used == False,
-                ).update({"used": True})
+@app.post("/api/approve/{token}/reject", response_class=HTMLResponse)
+async def submit_rejection(token: str, reason: str = Form("")):
+    """Finalize a rejection. Proceeds only when a non-empty reason is supplied."""
+    db = SessionLocal()
+    try:
+        tok, err = _validate_token(db, token)
+        if err:
+            return err
+        if tok.action != "reject":
+            return HTMLResponse(_approval_html("Invalid Link", "This link cannot be used to reject a request.", "#dc2626"), status_code=400)
+        reason = (reason or "").strip()
+        if not reason:
+            return HTMLResponse(
+                _reject_reason_form(token, _entity_label(tok), error="A reason is required to reject this request."),
+                status_code=400,
+            )
+        return _finalize_decision(db, tok, "Rejected", reason)
+    finally:
+        db.close()
 
-                # Deduct leave balance on approval
-                if decision == "Approved":
-                    try:
-                        from app.hr_service import HRService
-                        days = (leave.end_date - leave.start_date).days + 1
-                        HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
-                    except Exception as e:
-                        print(f"[Approval] Balance deduction error (non-fatal): {e}")
 
-                db.commit()
-                # Notify employee
+def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse:
+    """Apply an approve/reject decision for the token's entity, notify the employee,
+    and return the branded confirmation page. `reason` is required for rejections and
+    is surfaced to the employee."""
+    tok.used = True
+    reject_note = reason if decision == "Rejected" else ""
+    reason_block = (
+        f"<br><br><strong>Reason:</strong> {html.escape(reject_note)}" if reject_note else ""
+    )
+
+    if tok.entity_type == "leave":
+        leave = db.query(Leave).filter(Leave.id == tok.entity_id).first()
+        if leave:
+            leave.status = decision
+            # Invalidate the sibling token (the other action)
+            db.query(ApprovalToken).filter(
+                ApprovalToken.entity_type == "leave",
+                ApprovalToken.entity_id == tok.entity_id,
+                ApprovalToken.token != tok.token,
+                ApprovalToken.used == False,
+            ).update({"used": True})
+
+            # Deduct leave balance on approval
+            if decision == "Approved":
                 try:
-                    from app.services.email_service import send_leave_decision_notification
-                    from app.models import Employee
-                    emp = db.query(Employee).filter(Employee.id == leave.employee_id).first()
-                    if emp:
-                        send_leave_decision_notification(
-                            employee_email=emp.email,
-                            employee_name=emp.name,
-                            leave_type=leave.leave_type,
-                            start_date=str(leave.start_date),
-                            end_date=str(leave.end_date),
-                            decision=decision,
-                            decided_by=tok.approver_email,
-                        )
+                    from app.hr_service import HRService
+                    days = (leave.end_date - leave.start_date).days + 1
+                    HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
                 except Exception as e:
-                    print(f"[Approval] Notification email error: {e}")
+                    print(f"[Approval] Balance deduction error (non-fatal): {e}")
 
-                if decision == "Approved":
-                    try:
-                        from app.services.admin_service import AdminService
-                        AdminService._fire_webhook(settings.PA_WEBHOOK_LEAVE_APPROVED, {
-                            "event": "leave_approved",
+            db.commit()
+            # Notify employee
+            try:
+                from app.services.email_service import send_leave_decision_notification
+                from app.models import Employee
+                emp = db.query(Employee).filter(Employee.id == leave.employee_id).first()
+                if emp:
+                    send_leave_decision_notification(
+                        user_email=tok.approver_email,
+                        employee_email=emp.email,
+                        employee_name=emp.name,
+                        leave_type=leave.leave_type,
+                        start_date=str(leave.start_date),
+                        end_date=str(leave.end_date),
+                        decision=decision,
+                        decided_by=tok.approver_email,
+                        reason=reject_note,
+                    )
+            except Exception as e:
+                print(f"[Approval] Notification email error: {e}")
+
+            if decision == "Approved":
+                try:
+                    from app.services.admin_service import AdminService
+                    AdminService._fire_webhook(settings.PA_WEBHOOK_LEAVE_APPROVED, {
+                        "event": "leave_approved",
+                        "employee_email": tok.employee_email,
+                        "leave_type": leave.leave_type,
+                        "start_date": str(leave.start_date),
+                        "end_date": str(leave.end_date),
+                        "approved_by": tok.approver_email,
+                    })
+                except Exception:
+                    pass
+                try:
+                    from app.services.email_service import send_notification_event
+                    send_notification_event(
+                        user_email=tok.approver_email,
+                        event_type="leave_approved",
+                        subject_suffix=f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
+                        data={
                             "employee_email": tok.employee_email,
                             "leave_type": leave.leave_type,
                             "start_date": str(leave.start_date),
                             "end_date": str(leave.end_date),
                             "approved_by": tok.approver_email,
-                        })
-                    except Exception:
-                        pass
-                    try:
-                        from app.services.email_service import send_notification_event
-                        send_notification_event(
-                            "leave_approved",
-                            f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
-                            {
-                                "employee_email": tok.employee_email,
-                                "leave_type": leave.leave_type,
-                                "start_date": str(leave.start_date),
-                                "end_date": str(leave.end_date),
-                                "approved_by": tok.approver_email,
-                            }
-                        )
-                    except Exception:
-                        pass
+                        },
+                    )
+                except Exception:
+                    pass
 
-                color = "#16a34a" if tok.action == "approve" else "#dc2626"
-                return HTMLResponse(_approval_html(
-                    f"Leave {decision}",
-                    f"The leave request has been <strong>{decision}</strong>. The employee has been notified by email.",
-                    color,
-                ))
-
-        if tok.entity_type == "book_request":
-            from app.services.bookshelf_service import BookshelfService
-            from app.services.email_service import send_book_decision_email
-            # Invalidate the sibling token
-            db.query(ApprovalToken).filter(
-                ApprovalToken.entity_type == "book_request",
-                ApprovalToken.entity_id == tok.entity_id,
-                ApprovalToken.token != token,
-                ApprovalToken.used == False,
-            ).update({"used": True})
-            db.commit()
-
-            book_title = "your book"
-            due_date = ""
-            try:
-                if decision == "Approved":
-                    result = BookshelfService.approve_request(tok.entity_id, admin_remarks="Approved via email")
-                    due_date = (result or {}).get("due_date", "")
-                else:
-                    BookshelfService.reject_request(tok.entity_id, admin_remarks="Rejected via email")
-                # Look up book title for the employee notification.
-                for req in BookshelfService.list_requests() or []:
-                    if req.get("id") == tok.entity_id:
-                        book_title = req.get("book_title") or book_title
-                        ticket_id = req.get("ticket_id") or f"#{tok.entity_id}"
-                        employee_name = req.get("employee_name") or ""
-                        if not due_date:
-                            due_date = req.get("due_date") or ""
-                        break
-                else:
-                    ticket_id = f"#{tok.entity_id}"
-                    employee_name = ""
-            except Exception as e:
-                color = "#dc2626"
-                return HTMLResponse(_approval_html(
-                    "Action Failed",
-                    f"We couldn't update the borrow request: {html.escape(str(e))}",
-                    color,
-                ), status_code=502)
-
-            try:
-                send_book_decision_email(
-                    user_email=tok.approver_email,
-                    employee_email=tok.employee_email,
-                    employee_name=employee_name,
-                    book_title=book_title,
-                    ticket_id=ticket_id,
-                    decision=decision,
-                    due_date=due_date,
-                    admin_remarks="",
-                )
-            except Exception as e:
-                print(f"[Approval] Book decision email error: {e}")
-
-            color = "#16a34a" if decision == "Approved" else "#dc2626"
+            color = "#16A34A" if decision == "Approved" else "#dc2626"
             return HTMLResponse(_approval_html(
-                f"Borrow Request {decision}",
-                f"The borrow request for <strong>{html.escape(book_title)}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.",
+                f"Leave {decision}",
+                f"The leave request has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
                 color,
             ))
 
-        if tok.entity_type == "book_extension":
-            from app.services.bookshelf_service import BookshelfService
-            from app.services.email_service import send_extension_decision_email
-            db.query(ApprovalToken).filter(
-                ApprovalToken.entity_type == "book_extension",
-                ApprovalToken.entity_id == tok.entity_id,
-                ApprovalToken.token != token,
-                ApprovalToken.used == False,
-            ).update({"used": True})
-            db.commit()
-
-            ext_record = BookshelfService.get_extension(tok.entity_id) or {}
-            new_due_date = ""
-            try:
-                if decision == "Approved":
-                    result = BookshelfService.approve_extension(tok.entity_id, admin_remarks="Approved via email")
-                    new_due_date = (result or {}).get("new_due_date", "")
-                else:
-                    BookshelfService.reject_extension(tok.entity_id, admin_remarks="Rejected via email")
-            except Exception as e:
-                color = "#dc2626"
-                return HTMLResponse(_approval_html(
-                    "Action Failed",
-                    f"We couldn't update the extension: {html.escape(str(e))}",
-                    color,
-                ), status_code=502)
-
-            try:
-                send_extension_decision_email(
-                    user_email=tok.approver_email,
-                    employee_email=tok.employee_email,
-                    employee_name=ext_record.get("employee_name") or "",
-                    book_title=ext_record.get("book_title") or "your book",
-                    ticket_id=ext_record.get("ticket_id") or f"#{tok.entity_id}",
-                    decision=decision,
-                    new_due_date=new_due_date,
-                    admin_remarks="",
-                )
-            except Exception as e:
-                print(f"[Approval] Extension decision email error: {e}")
-
-            color = "#16a34a" if decision == "Approved" else "#dc2626"
-            return HTMLResponse(_approval_html(
-                f"Extension {decision}",
-                f"The extension request for <strong>{html.escape(ext_record.get('book_title') or 'the book')}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.",
-                color,
-            ))
-
+    if tok.entity_type == "book_request":
+        from app.services.bookshelf_service import BookshelfService
+        from app.services.email_service import send_book_decision_email
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "book_request",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
         db.commit()
-        return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
-    finally:
-        db.close()
+
+        book_title = "your book"
+        due_date = ""
+        try:
+            if decision == "Approved":
+                result = BookshelfService.approve_request(tok.entity_id, admin_remarks="Approved via email")
+                due_date = (result or {}).get("due_date", "")
+            else:
+                BookshelfService.reject_request(tok.entity_id, admin_remarks=reject_note)
+            # Look up book title for the employee notification.
+            for req in BookshelfService.list_requests() or []:
+                if req.get("id") == tok.entity_id:
+                    book_title = req.get("book_title") or book_title
+                    ticket_id = req.get("ticket_id") or f"#{tok.entity_id}"
+                    employee_name = req.get("employee_name") or ""
+                    if not due_date:
+                        due_date = req.get("due_date") or ""
+                    break
+            else:
+                ticket_id = f"#{tok.entity_id}"
+                employee_name = ""
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed",
+                f"We couldn't update the borrow request: {html.escape(str(e))}",
+                "#dc2626",
+            ), status_code=502)
+
+        try:
+            send_book_decision_email(
+                user_email=tok.approver_email,
+                employee_email=tok.employee_email,
+                employee_name=employee_name,
+                book_title=book_title,
+                ticket_id=ticket_id,
+                decision=decision,
+                due_date=due_date,
+                admin_remarks=reject_note,
+            )
+        except Exception as e:
+            print(f"[Approval] Book decision email error: {e}")
+
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Borrow Request {decision}",
+            f"The borrow request for <strong>{html.escape(book_title)}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    if tok.entity_type == "book_extension":
+        from app.services.bookshelf_service import BookshelfService
+        from app.services.email_service import send_extension_decision_email
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "book_extension",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+
+        ext_record = BookshelfService.get_extension(tok.entity_id) or {}
+        new_due_date = ""
+        try:
+            if decision == "Approved":
+                result = BookshelfService.approve_extension(tok.entity_id, admin_remarks="Approved via email")
+                new_due_date = (result or {}).get("new_due_date", "")
+            else:
+                BookshelfService.reject_extension(tok.entity_id, admin_remarks=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed",
+                f"We couldn't update the extension: {html.escape(str(e))}",
+                "#dc2626",
+            ), status_code=502)
+
+        try:
+            send_extension_decision_email(
+                user_email=tok.approver_email,
+                employee_email=tok.employee_email,
+                employee_name=ext_record.get("employee_name") or "",
+                book_title=ext_record.get("book_title") or "your book",
+                ticket_id=ext_record.get("ticket_id") or f"#{tok.entity_id}",
+                decision=decision,
+                new_due_date=new_due_date,
+                admin_remarks=reject_note,
+            )
+        except Exception as e:
+            print(f"[Approval] Extension decision email error: {e}")
+
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Extension {decision}",
+            f"The extension request for <strong>{html.escape(ext_record.get('book_title') or 'the book')}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    db.commit()
+    return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
 
 @app.get("/api/policy-images/{image_id}")

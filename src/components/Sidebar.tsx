@@ -24,6 +24,7 @@ import {
   Activity,
   BookOpen,
   Library as LibraryIcon,
+  FileText,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
