@@ -9,15 +9,6 @@ const infraComposeFile = "docker-compose.infra.yml";
 const processes = [];
 let shuttingDown = false;
 
-const commandExists = (command, args = ["--version"]) => {
-  try {
-    execFileSync(command, args, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 // 5 minutes — enough for Docker cold-start + venv install + DB init + uvicorn boot
 const BACKEND_READY_TIMEOUT_MS = 300_000;
 
@@ -115,35 +106,13 @@ const windowsPathToWslPath = (windowsPath) => {
 const shutdownDockerInfra = () => {
   if (!isWindows || process.env.SKIP_DOCKER === "true") return;
   console.log("\n--- Stopping Docker infrastructure ---");
-
-  const hasNativeDocker = commandExists("docker", ["--version"]);
-  const hasLegacyCompose = commandExists("docker-compose", ["--version"]);
-  const hasWsl = commandExists("wsl", ["--version"]);
-
   try {
-    if (hasNativeDocker) {
-      execFileSync(
-        "docker",
-        ["compose", "-f", infraComposeFile, "down"],
-        { stdio: "inherit", timeout: 30_000 }
-      );
-    } else if (hasLegacyCompose) {
-      execFileSync(
-        "docker-compose",
-        ["-f", infraComposeFile, "down"],
-        { stdio: "inherit", timeout: 30_000 }
-      );
-    } else if (hasWsl) {
-      const wslPath = windowsPathToWslPath(repoRoot);
-      execFileSync(
-        "wsl",
-        ["--cd", wslPath, "docker", "compose", "-f", infraComposeFile, "down"],
-        { stdio: "inherit", timeout: 30_000 }
-      );
-    } else {
-      throw new Error("No Docker CLI available to stop infrastructure.");
-    }
-
+    const wslPath = windowsPathToWslPath(repoRoot);
+    execFileSync(
+      "wsl",
+      ["--cd", wslPath, "docker", "compose", "-f", infraComposeFile, "down"],
+      { stdio: "inherit", timeout: 30_000 }
+    );
     console.log("--- Docker infrastructure stopped ---");
   } catch (err) {
     console.warn("Could not stop Docker infrastructure:", err.message);
