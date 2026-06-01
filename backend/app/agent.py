@@ -30,6 +30,7 @@ from langchain_core.tools import tool
 
 from app.hr_service import HRService
 from app.config import settings
+from app.services import llm_controls_service as llm_controls
 from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
 from app.agents.pmo_agent import pmo_agent
 from app.agents.admin_agent import admin_agent
@@ -241,7 +242,7 @@ async def context_manager_node(state: AgentState) -> dict:
         "requests made, and decisions reached. Be concise and factual."
     )
     try:
-        summary_response = await summary_llm.ainvoke(
+        summary_response = await llm_controls.get_llm("summarizer", default_timeout=20).ainvoke(
             [
                 SystemMessage(content=summary_prompt),
                 HumanMessage(content="\n".join(
@@ -543,39 +544,14 @@ hr_tool_node = ToolNode(hr_tools)
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. LLM INSTANCES
 # ═══════════════════════════════════════════════════════════════════════════════
-# Agent LLM — used for reasoning and tool calling (HR, PMO, Admin, IT, Manager)
-agent_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    max_retries=2,
-    timeout=45,
-)
-
-# General LLM — lighter qwen2.5:14b for greetings/small talk/announcements
-general_llm_base = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=0.7,
-    max_retries=2,
-    timeout=20,
-)
-
-
-# Agent LLM with HR tools bound
-hr_llm = agent_llm.bind_tools(hr_tools)
-
-
-summary_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=0.3,
-    max_retries=2,
-    timeout=20,
-)
+# LLM instances are built on demand by the runtime factory
+# (app.services.llm_controls_service.get_llm) so IT can tune model / temperature /
+# max_tokens / timeout live without a restart. Tier → call-site mapping:
+#   agent      → HR reasoning (hr_tools)           default_timeout=45
+#   general    → greetings / announcements / policy default_timeout=20
+#   summarizer → context + tool-result summaries    default_timeout=20
+# The factory caches each client by its effective param signature, so these are
+# rebuilt only when IT actually changes a value — no per-request construction cost.
 
 
 
@@ -1304,7 +1280,7 @@ def hr_agent(state: AgentState):
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
 
     try:
-        response = hr_llm.invoke(messages)
+        response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, the HR system is currently unreachable.")]}
 
@@ -1596,7 +1572,6 @@ async def ms365_agent_node(state: AgentState):
 
 general_tools = [get_announcements, search_hr_policies]
 general_tool_node = ToolNode(general_tools)
-general_llm = general_llm_base.bind_tools(general_tools)
 
 
 def _greeting_response(state: AgentState) -> str:
@@ -1634,7 +1609,7 @@ def general_agent(state: AgentState):
     feedback_ctx = state.get("feedback_context") or ""
     messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + state["messages"]
     try:
-        response = general_llm.invoke(messages)
+        response = llm_controls.get_llm("general", default_timeout=20).bind_tools(general_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
     return {"messages": [response]}
@@ -1680,7 +1655,7 @@ INSTRUCTIONS:
 """)
     ]
     try:
-        response = summary_llm.invoke(prompt)
+        response = llm_controls.get_llm("summarizer", default_timeout=20).invoke(prompt)
         content = response.content.strip()
         
         # Fallback if content is empty or model hallucinated the example tag
@@ -1697,8 +1672,31 @@ INSTRUCTIONS:
 # 5. ROUTING LOGIC
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Friendly names for the per-domain disable message.
+_DOMAIN_LABELS = {
+    "hr": "HR", "admin": "Admin Services", "it_support": "IT Support",
+    "pmo": "PMO", "ms365": "Microsoft 365", "functional_manager": "Manager",
+}
+
+
+def disabled_agent(state: AgentState):
+    """Terminal node for domains IT has switched off — emits a friendly notice
+    instead of running the (disabled) domain agent. No LLM call."""
+    domain = state.get("domain", "")
+    label = _DOMAIN_LABELS.get(domain, "This")
+    msg = (
+        f"⚠️ The {label} assistant is temporarily unavailable — it's been paused by IT, "
+        f"likely for maintenance or to manage system load. Please try again shortly, or "
+        f"reach out to the IT helpdesk if it's urgent."
+    )
+    return {"messages": [AIMessage(content=msg)]}
+
+
 def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
+    # IT kill-switch for individual domains — short-circuit before the agent runs.
+    if domain in llm_controls.disabled_domains():
+        return "disabled_agent"
     status = get_domain_status(domain)
     if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
@@ -1753,6 +1751,7 @@ workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
 workflow.add_node("placeholder_agent", placeholder_agent)
+workflow.add_node("disabled_agent", disabled_agent)
 workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
 
@@ -1775,5 +1774,6 @@ workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("ms365_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
+workflow.add_edge("disabled_agent", END)
 
 app_agent = workflow.compile(checkpointer=checkpointer)

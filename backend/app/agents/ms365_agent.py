@@ -543,13 +543,8 @@ tools = [
 ]
 tool_node = ToolNode(tools)
 
-_ms365_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=60,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (agent tier).
+from app.services import llm_controls_service as llm_controls
 
 
 def ms365_assistant(state: MS365State):
@@ -594,7 +589,8 @@ def ms365_assistant(state: MS365State):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_ms365_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("agent", default_timeout=60).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: MS365State):

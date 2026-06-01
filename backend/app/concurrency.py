@@ -33,6 +33,7 @@ import uuid
 from typing import AsyncIterator, Optional, Tuple
 
 from app.config import settings
+from app.services import llm_controls_service as llm_controls
 
 # How often a waiting request re-checks for a free slot.
 POLL_INTERVAL = 0.4
@@ -46,9 +47,25 @@ class BaseChatGate:
     """Shared wait/queue/keepalive logic; backends implement the primitives."""
 
     def __init__(self, max_concurrency: int, max_queue: int, acquire_timeout: float):
-        self.max_concurrency = max_concurrency
-        self.max_queue = max_queue
+        # Env values become the fallback defaults; the live caps come from the IT
+        # controls (cached ~5s) so IT can throttle GPU load without a restart.
+        self._default_max_concurrency = max_concurrency
+        self._default_max_queue = max_queue
         self.acquire_timeout = acquire_timeout
+
+    @property
+    def max_concurrency(self) -> int:
+        try:
+            return llm_controls.concurrency_limits()[0]
+        except Exception:  # noqa: BLE001 — never let a config blip break the gate
+            return self._default_max_concurrency
+
+    @property
+    def max_queue(self) -> int:
+        try:
+            return llm_controls.concurrency_limits()[1]
+        except Exception:  # noqa: BLE001
+            return self._default_max_queue
 
     # ── primitives implemented per-backend ──────────────────────────────
     async def _try_acquire(self) -> Optional[str]:

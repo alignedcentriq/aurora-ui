@@ -289,16 +289,12 @@ _compiled_agent = None
 
 
 def _build_graph(tools):
+    from app.services import llm_controls_service as llm_controls
     tool_node = ToolNode(tools)
-    llm = ChatOpenAI(
-        base_url=settings.AGENT_BASE_URL,
-        api_key=settings.AGENT_API_KEY,
-        model=settings.AGENT_MODEL_NAME,
-        temperature=0,
-        timeout=45,
-    ).bind_tools(tools)
 
     def deeplink_assistant(state: DeeplinkState):
+        # Built per call from the live IT-tunable params (agent tier).
+        llm = llm_controls.get_llm("agent", default_timeout=45).bind_tools(tools)
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + state["messages"]
         return {"messages": [llm.invoke(messages)]}
 

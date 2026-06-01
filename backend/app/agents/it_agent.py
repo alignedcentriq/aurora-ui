@@ -71,13 +71,8 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
 tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets]
 tool_node = ToolNode(tools)
 
-_it_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=45,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 # -- Agent Node ---------------------------------------------------------------
@@ -99,7 +94,8 @@ def it_assistant(state: ITState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_it_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: ITState):

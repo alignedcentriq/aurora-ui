@@ -33,13 +33,8 @@ class ManagerState(TypedDict):
 tools = [get_my_team, search_people_directory]
 tool_node = ToolNode(tools)
 
-_manager_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=30,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 def manager_assistant(state: ManagerState):
@@ -56,7 +51,8 @@ def manager_assistant(state: ManagerState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_manager_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("router", default_timeout=30).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: ManagerState):

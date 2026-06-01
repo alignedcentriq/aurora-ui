@@ -197,15 +197,8 @@ pmo_tools = [
     search_people_directory,
 ]
 
-pmo_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    max_retries=2,
-    timeout=45,
-)
-pmo_llm_with_tools = pmo_llm.bind_tools(pmo_tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -356,7 +349,8 @@ def pmo_assistant(state: PMOState):
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
     try:
-        return {"messages": [pmo_llm_with_tools.invoke(messages)]}
+        llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(pmo_tools)
+        return {"messages": [llm.invoke(messages)]}
     except Exception as exc:
         print(f"PMO Agent LLM error: {exc}")
         return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}

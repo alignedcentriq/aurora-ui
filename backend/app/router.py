@@ -10,6 +10,7 @@ from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
+from app.services import llm_controls_service as llm_controls
 from app.services.policy_service import _expand_query
 
 # ── Domain Registry ──────────────────────────────────────────────────────────
@@ -172,14 +173,13 @@ EXAMPLES:
 
 # ── Router LLM ───────────────────────────────────────────────────────────────
 
-_router_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=0,
-    max_tokens=256,
-    timeout=30,
-).with_structured_output(RouterOutput)
+def _get_router_llm():
+    """Router LLM with structured output, built from the live IT-tunable params
+    (model / temperature / max_tokens / timeout). Cached by the factory; rebuilt
+    only when IT changes a value."""
+    return llm_controls.get_llm(
+        "router", default_timeout=30, default_max_tokens=256
+    ).with_structured_output(RouterOutput)
 
 
 async def classify_intent_async(user_message: str) -> dict:
@@ -192,7 +192,7 @@ async def classify_intent_async(user_message: str) -> dict:
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = await _router_llm.ainvoke([system, human])
+        result: RouterOutput = await _get_router_llm().ainvoke([system, human])
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY:
@@ -234,7 +234,7 @@ def classify_intent(user_message: str) -> dict:
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = _router_llm.invoke([system, human])
+        result: RouterOutput = _get_router_llm().invoke([system, human])
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY:

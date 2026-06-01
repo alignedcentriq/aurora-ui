@@ -24,6 +24,7 @@ from app.concurrency import chat_gate
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings, ALIGNED_LLM_HOST
+from app.services import llm_controls_service as llm_controls
 from app.database import init_db, SessionLocal
 from app.models import Leave, ApprovalToken
 from app.document_store import get_pdf
@@ -39,6 +40,7 @@ from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.llm_controls_routes import router as llm_controls_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
@@ -121,6 +123,7 @@ app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(observability_router)
+app.include_router(llm_controls_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
@@ -854,6 +857,18 @@ async def chat(
 
     async def generate():
         from app.models import AiRequestLog, AiLlmCallLog
+
+        # ── Global kill switch (IT) ─────────────────────────────────────
+        # When IT pauses AI chat, short-circuit every request — including the
+        # cache path — with a friendly notice and zero LLM calls.
+        if not llm_controls.is_chat_enabled():
+            paused_msg = (
+                "🛠️ AI assistance is temporarily paused by IT, likely for maintenance "
+                "or to manage system load. Please try again shortly."
+            )
+            yield f"data: {json.dumps({'type': 'token', 'content': paused_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'domain': 'general'})}\n\n"
+            return
 
         # ── Semantic answer cache (instant path, zero LLM) ──────────────
         # If a near-identical informational question was answered recently, stream the saved

@@ -333,13 +333,10 @@ _SUB_INTENT_RE = _re.compile(r'\[SUB_INTENT:([^\]]+)\]')
 
 tool_node = ToolNode(tools)
 
-_admin_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=120,
-)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
+
+
 def admin_assistant(state: AdminState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
     default_prompt = (
@@ -373,7 +370,7 @@ def admin_assistant(state: AdminState):
         active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = _admin_llm.bind_tools(active_tools).invoke(messages)
+    response = llm_controls.get_llm("router", default_timeout=120).bind_tools(active_tools).invoke(messages)
 
     # If the model returned empty text with no tool calls, surface the last tool result directly.
     # This prevents the "unable to generate a text summary" fallback on weak models.
