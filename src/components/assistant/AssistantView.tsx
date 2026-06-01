@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X, ArrowDown } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -56,11 +57,44 @@ interface ThreadData {
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
 
+// ── Book intent helpers ─────────────────────────────────────────────────────
+// Client-side intercept for the most common book-discovery / status / return /
+// extension intents. Matches the same phrasings the backend router covers, so
+// the user is taken straight to the right page without waiting for an LLM call.
+
+const BOOK_DISCOVER_RE = /\b(?:bookshelf|book\s*shelf|company\s+library|office\s+library|library\s+(?:catalog|catalogue|books?)|available\s+books?|books?\s+available|browse\s+(?:the\s+)?(?:library|books)|show\s+(?:me\s+)?(?:some\s+|the\s+|any\s+)?(?:books?|library)|recommend\s+(?:me\s+)?(?:a\s+)?book|(?:i\s+)?(?:want|need|like)\s+(?:a\s+|an\s+|some\s+)?book|looking\s+for\s+(?:a\s+|an\s+|some\s+)?(?:book|reading\s+material|something\s+to\s+read)|(?:learning|reading|study)\s+material|borrow\s+a\s+book|issue\s+a\s+book|lend\s+me\s+a\s+book)\b/i;
+
+const BOOK_MY_RE = /\b(?:my\s+(?:borrowed\s+)?(?:books?|library|borrows?|book\s+requests?)|books?\s+i\s+(?:have\s+)?borrowed|check\s+(?:my\s+)?book\s+request|my\s+book\s+request\s+status|return\s+(?:my\s+|the\s+|a\s+)?book|i\s+(?:have\s+)?finished\s+(?:reading|the\s+book)|extend\s+(?:my\s+|the\s+)?(?:book|due\s+date|borrow)|renew\s+(?:my\s+|the\s+|a\s+)?book|(?:need|want)\s+more\s+time\s+(?:on|for|with)\s+(?:my\s+|the\s+)?book)\b/i;
+
+// Stationery-style phrases that look like book intents but are not.
+const NOT_BOOK_RE = /\bborrow\s+(?:a\s+)?(?:pen|pencil|charger|cable|notebook(?!\s+book)|stapler|marker)\b/i;
+
+function detectBookIntent(text: string): { path: string; label: string; reply: string } | null {
+  const t = text.toLowerCase();
+  if (NOT_BOOK_RE.test(t)) return null;
+  if (BOOK_MY_RE.test(t)) {
+    return {
+      path: "/my-library",
+      label: "Open My Library",
+      reply: "Opening **My Library** so you can manage your borrows, requests, and extensions.",
+    };
+  }
+  if (BOOK_DISCOVER_RE.test(t)) {
+    return {
+      path: "/books",
+      label: "Open Book Catalog",
+      reply: "Opening the **company library** — browse and request any book you'd like.",
+    };
+  }
+  return null;
+}
+
 export function AssistantView() {
   const { threads, activeId, thinking, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
   const { theme } = useSettings();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [input, setInput] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -156,6 +190,22 @@ export function AssistantView() {
           interactive: { type: "parking_form" },
         });
         setInput("");
+        return;
+      }
+
+      // Intercept book-related intents → route to /books or /my-library directly.
+      // This is the spec's "User Query → Intent Detection → Route to Page" path.
+      const bookIntent = detectBookIntent(text);
+      if (bookIntent) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: `${bookIntent.reply}\n\n<<NAV:${bookIntent.path}|${bookIntent.label}>>`,
+          domain: "admin",
+        });
+        setInput("");
+        // Auto-navigate a moment later so the message is visible first.
+        window.setTimeout(() => navigate({ to: bookIntent.path }), 400);
         return;
       }
 
@@ -551,14 +601,42 @@ export function AssistantView() {
                           live={t.streaming}
                         >
                           <div className="space-y-4">
-                            {t.text && (
-                              <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{t.text}</ReactMarkdown>
-                                {t.streaming && (
-                                  <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
-                                )}
-                              </div>
-                            )}
+                            {t.text && (() => {
+                              const navTokens: { path: string; label: string }[] = [];
+                              const cleaned = t.text.replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
+                                navTokens.push({ path: String(path).trim(), label: String(label).trim() });
+                                return "";
+                              }).trim();
+                              return (
+                                <>
+                                  {cleaned && (
+                                    <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+                                      {t.streaming && (
+                                        <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
+                                      )}
+                                    </div>
+                                  )}
+                                  {navTokens.length > 0 && !t.streaming && (
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                      {navTokens.map((n, idx) => {
+                                        const Icon = n.path === "/my-library" ? LibraryIcon : BookOpen;
+                                        return (
+                                          <button
+                                            key={idx}
+                                            onClick={() => navigate({ to: n.path })}
+                                            className="inline-flex items-center gap-2 rounded-xl bg-primary/15 px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/25 transition-colors border border-primary/20"
+                                          >
+                                            <Icon className="h-3.5 w-3.5" />
+                                            {n.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {t.images && t.images.length > 0 && (
                               <div className="mt-3 flex flex-col gap-3">
                                 {t.images.map((url, imgIdx) => (

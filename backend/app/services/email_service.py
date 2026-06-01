@@ -11,6 +11,8 @@ Used by:
   - HR Agent     → leave approval, queries, grievances, onboarding/offboarding
 """
 
+import asyncio
+import concurrent.futures
 import json
 import logging
 import html
@@ -32,10 +34,26 @@ def _nl2br(text: str) -> str:
 
 
 def _get_graph_token(user_email: str) -> str | None:
-    """Return a valid Microsoft Graph token for user_email, or None if not connected."""
+    """Return a valid Microsoft Graph token for user_email, or None if not connected.
+
+    Resolves the async `get_valid_token` from both sync and async contexts: if an
+    event loop is already running, the coroutine is run on a worker thread with
+    its own loop; otherwise `asyncio.run` is used directly.
+    """
     try:
         from app.services.oauth_service import get_valid_token
-        return get_valid_token(user_email, "microsoft")
+        try:
+            asyncio.get_running_loop()
+            in_loop = True
+        except RuntimeError:
+            in_loop = False
+
+        if in_loop:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(
+                    asyncio.run, get_valid_token(user_email, "microsoft")
+                ).result()
+        return asyncio.run(get_valid_token(user_email, "microsoft"))
     except Exception as e:
         logger.warning("[email] Cannot get Graph token for %s: %s", user_email, e)
         return None
@@ -339,6 +357,240 @@ def send_reimbursement_email(
     </body></html>
     """
     return _send(user_email=user_email, to=settings.NOTIFY_TO_EMAIL, subject=subject, html_body=html_body)
+
+
+# ── Bookshelf Buddy ───────────────────────────────────────────────────────────
+
+def send_book_request_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    book_title: str,
+    book_author: str,
+    ticket_id: str,
+    notes: str = "",
+    approve_url: str = "",
+    reject_url: str = "",
+) -> bool:
+    """Notify the Bookshelf POC about a new book issue request.
+    Sends to BOOKSHELF_NOTIFY_EMAIL (not NOTIFY_TO_EMAIL) to keep out of the real admin inbox.
+    """
+    to = settings.BOOKSHELF_NOTIFY_EMAIL
+    if not to:
+        logger.warning("[bookshelf email] BOOKSHELF_NOTIFY_EMAIL not set — skipping notification.")
+        return False
+    subject = f"[Bookshelf] Book Request — {book_title} | {ticket_id}"
+    notes_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Notes</td>'
+        f'<td>{_nl2br(html.escape(notes))}</td></tr>'
+        if notes else ""
+    )
+    if approve_url and reject_url:
+        actions_block = f"""
+        <p>Click below to action this request directly from email:</p>
+        <div style="margin:20px 0;">
+          <a href="{html.escape(approve_url)}" style="background:#16a34a;color:#fff;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;margin-right:12px;">
+            ✓ Approve Request
+          </a>
+          <a href="{html.escape(reject_url)}" style="background:#dc2626;color:#fff;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">
+            ✗ Reject Request
+          </a>
+        </div>
+        <p style="color:#888;font-size:12px;">Links expire in 72 hours. You can also action this from <strong>Admin Portal → Bookshelf Buddy</strong>.</p>
+        """
+    else:
+        actions_block = "<p>Please review and approve / reject this request from the <strong>Admin Portal → Bookshelf Buddy</strong> tab.</p>"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Bookshelf Buddy — Book Issue Request</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>A new book issue request has been submitted via Centriq AI.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Requested By</td><td>{html.escape(employee_name)} ({html.escape(employee_email)})</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Book Title</td><td>{html.escape(book_title)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Author</td><td>{html.escape(book_author)}</td></tr>
+          {notes_row}
+        </table>
+        {actions_block}
+        <p style="color:#888;font-size:12px;">Submitted via Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=to, subject=subject, html_body=html_body)
+
+
+def send_book_decision_email(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    book_title: str,
+    ticket_id: str,
+    decision: str,
+    due_date: str = "",
+    admin_remarks: str = "",
+) -> bool:
+    """Notify the requesting employee that their borrow request was Approved / Rejected."""
+    color = "#16a34a" if decision == "Approved" else "#dc2626"
+    headline = "Your book request was approved!" if decision == "Approved" else "Your book request was not approved"
+    body_intro = (
+        f"Good news, {html.escape(employee_name) or 'there'} — your borrow request has been <strong style=\"color:{color};\">approved</strong>."
+        if decision == "Approved"
+        else f"Hi {html.escape(employee_name) or 'there'}, your borrow request was unfortunately <strong style=\"color:{color};\">rejected</strong>."
+    )
+    due_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;">Return By</td><td><strong>{html.escape(due_date)}</strong></td></tr>'
+        if decision == "Approved" and due_date else ""
+    )
+    remarks_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Admin Note</td>'
+        f'<td>{_nl2br(html.escape(admin_remarks))}</td></tr>'
+        if admin_remarks else ""
+    )
+    subject = f"[Bookshelf] Book Request {decision} — {book_title} | {ticket_id}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">{html.escape(headline)}</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>{body_intro}</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Book</td><td>{html.escape(book_title)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Decision</td><td style="color:{color};font-weight:bold;">{html.escape(decision)}</td></tr>
+          {due_row}
+          {remarks_row}
+        </table>
+        <p style="color:#888;font-size:12px;">View your borrows in Centriq AI → <strong>My Library</strong>.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
+
+
+def send_book_return_confirmation(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    book_title: str,
+    ticket_id: str,
+) -> bool:
+    subject = f"[Bookshelf] Return Confirmed — {book_title} | {ticket_id}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Book Returned — Thank you!</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>Hi {html.escape(employee_name) or 'there'}, we've recorded your return of <strong>{html.escape(book_title)}</strong> (ticket {html.escape(ticket_id)}).</p>
+        <p style="color:#888;font-size:12px;">You can borrow more titles any time from Centriq AI → <strong>Library</strong>.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
+
+
+def send_extension_request_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    book_title: str,
+    ticket_id: str,
+    additional_days: int,
+    current_due_date: str,
+    reason: str = "",
+    approve_url: str = "",
+    reject_url: str = "",
+) -> bool:
+    """Notify admin that an employee has requested a borrow extension."""
+    to = settings.BOOKSHELF_NOTIFY_EMAIL
+    if not to:
+        return False
+    reason_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Reason</td>'
+        f'<td>{_nl2br(html.escape(reason))}</td></tr>'
+        if reason else ""
+    )
+    if approve_url and reject_url:
+        actions_block = f"""
+        <div style="margin:20px 0;">
+          <a href="{html.escape(approve_url)}" style="background:#16a34a;color:#fff;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;margin-right:12px;">
+            ✓ Approve Extension
+          </a>
+          <a href="{html.escape(reject_url)}" style="background:#dc2626;color:#fff;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block;">
+            ✗ Reject Extension
+          </a>
+        </div>
+        """
+    else:
+        actions_block = "<p>Please review from the <strong>Admin Portal → Bookshelf Buddy</strong> tab.</p>"
+    subject = f"[Bookshelf] Extension Request — {book_title} | {ticket_id}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Bookshelf Buddy — Extension Request</h2>
+      </div>
+      <div style="padding:24px;">
+        <p><strong>{html.escape(employee_name) or html.escape(employee_email)}</strong> has requested an extension.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:170px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Book</td><td>{html.escape(book_title)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Employee</td><td>{html.escape(employee_name)} ({html.escape(employee_email)})</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Current Due Date</td><td>{html.escape(current_due_date)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Additional Days</td><td><strong>{int(additional_days)}</strong></td></tr>
+          {reason_row}
+        </table>
+        {actions_block}
+        <p style="color:#888;font-size:12px;">Links expire in 72 hours. Submitted via Centriq AI.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=to, subject=subject, html_body=html_body)
+
+
+def send_extension_decision_email(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    book_title: str,
+    ticket_id: str,
+    decision: str,
+    new_due_date: str = "",
+    admin_remarks: str = "",
+) -> bool:
+    color = "#16a34a" if decision == "Approved" else "#dc2626"
+    due_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;">New Due Date</td><td><strong>{html.escape(new_due_date)}</strong></td></tr>'
+        if decision == "Approved" and new_due_date else ""
+    )
+    remarks_row = (
+        f'<tr><td style="background:#f5f5f5;font-weight:bold;vertical-align:top;">Admin Note</td>'
+        f'<td>{_nl2br(html.escape(admin_remarks))}</td></tr>'
+        if admin_remarks else ""
+    )
+    subject = f"[Bookshelf] Extension {decision} — {book_title} | {ticket_id}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
+      <div style="background:#0A2540;padding:20px 24px;">
+        <h2 style="color:#00D4AA;margin:0;font-size:18px;">Extension {html.escape(decision)}</h2>
+      </div>
+      <div style="padding:24px;">
+        <p>Hi {html.escape(employee_name) or 'there'}, your extension request has been <strong style="color:{color};">{html.escape(decision)}</strong>.</p>
+        <table cellpadding="8" style="border-collapse:collapse;width:100%;max-width:500px;margin:16px 0;">
+          <tr><td style="background:#f5f5f5;font-weight:bold;width:160px;">Ticket ID</td><td>{html.escape(ticket_id)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Book</td><td>{html.escape(book_title)}</td></tr>
+          <tr><td style="background:#f5f5f5;font-weight:bold;">Decision</td><td style="color:{color};font-weight:bold;">{html.escape(decision)}</td></tr>
+          {due_row}
+          {remarks_row}
+        </table>
+        <p style="color:#888;font-size:12px;">View your borrows in Centriq AI → <strong>My Library</strong>.</p>
+      </div>
+    </body></html>
+    """
+    return _send(user_email=user_email, to=employee_email, subject=subject, html_body=html_body)
 
 
 # ── Leave Notifications ───────────────────────────────────────────────────────

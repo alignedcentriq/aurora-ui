@@ -12,6 +12,7 @@ from app.services.prompt_service import PromptService
 
 
 PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation. You have access to a real company project database.
+Always respond in English regardless of the language of the user's message.
 
 CONVERSATION MEMORY RULE:
 Read the full conversation history before responding.
@@ -354,7 +355,8 @@ def pmo_assistant(state: PMOState):
         base_prompt = PromptService.get_system_prompt("pmo", PMO_SYSTEM_PROMPT)
         guardrail = PromptService.get_guardrail("pmo")
         feedback_ctx = state.get("feedback_context") or ""
-        messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
+        english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
+        messages = [SystemMessage(content=base_prompt + english_rule + guardrail + feedback_ctx)] + messages
     try:
         return {"messages": [pmo_llm_with_tools.invoke(messages)]}
     except Exception as exc:

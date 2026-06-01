@@ -1,5 +1,5 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, InjectedState
@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 
 from app.services.admin_service import AdminService
 from app.services.announcement_service import AnnouncementService
+from app.services.bookshelf_service import BookshelfService
 from app.services.prompt_service import PromptService
 from app.hr_service import HRService
 from app.config import settings
@@ -147,6 +148,109 @@ def get_vendor_ratings(vendor_name: str):
     return AdminService.get_vendor_ratings(vendor_name)
 
 @tool
+def list_available_books():
+    """Show all books currently available to borrow from the company library (Bookshelf Buddy).
+    Call this ONLY when the user asks to see the full list without naming a specific book.
+    If the user names a specific book they want to borrow, use borrow_book_by_name instead."""
+    books = BookshelfService.list_available_books()
+    if not books:
+        return "No books are currently available in the company library. Please check back later or contact Admin."
+    lines = ["Here are the books currently available in our company library:\n"]
+    for b in books[:8]:  # cap the chat list — full list lives on /books
+        avail = b["available_copies"]
+        total = b["total_copies"]
+        status = b.get("availability_status", "")
+        lines.append(
+            f"**[{b['id']}] {b['title']}** by {b['author']}"
+            + (f" ({b['category']})" if b['category'] else "")
+            + f" — {avail}/{total} copies available | {status}"
+        )
+    if len(books) > 8:
+        lines.append(f"\n…and {len(books) - 8} more.")
+    lines.append("\nTo request a book, just tell me the title. Or browse the full catalog here: <<NAV:/books|Open Book Catalog>>")
+    return "\n".join(lines)
+
+
+@tool
+def request_book(
+    book_id: int,
+    notes: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Submit a request to borrow a book from the company library (Bookshelf Buddy).
+    REQUIRED: book_id — get this from list_available_books first.
+    notes: optional reason or message for the admin.
+    Admin is notified by email. Request status can be tracked with check_book_requests."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    return BookshelfService.request_book(email, name, book_id, notes)
+
+
+@tool
+def check_book_requests(state: Annotated[dict, InjectedState] = None):
+    """Check the status of your book borrow requests (Bookshelf Buddy)."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    text = BookshelfService.check_my_requests(email)
+    if isinstance(text, str) and not text.startswith("You haven't"):
+        text += "\n\nManage your borrows here: <<NAV:/my-library|Open My Library>>"
+    return text
+
+
+@tool
+def borrow_book_by_name(
+    book_name: str,
+    notes: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Borrow a book by title — searches the library and submits the request in one step.
+    Use this INSTEAD of list_available_books + request_book when the user names a specific book.
+    book_name: partial or full title (case-insensitive match). Admin is notified by email."""
+    books = BookshelfService.list_available_books()
+    if not books:
+        return "No books are currently available in the company library."
+    name_lower = book_name.lower()
+    match = next((b for b in books if name_lower in b["title"].lower()), None)
+    if not match:
+        titles = ", ".join(b["title"] for b in books[:5])
+        return f"No available book matching '{book_name}' found. Available books include: {titles}."
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    emp_name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    return BookshelfService.request_book(email, emp_name, match["id"], notes)
+
+
+@tool
+def return_my_book(
+    ticket_id: str,
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Return one of your currently-borrowed books (Bookshelf Buddy).
+    REQUIRED: ticket_id — the borrow ticket (e.g. BK-...). Ask user for it, or call check_book_requests first if missing.
+    Only the original borrower can return their own book."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    result = BookshelfService.employee_return(email, ticket_id)
+    return result.get("message", "Done.")
+
+
+@tool
+def request_book_extension(
+    ticket_id: str,
+    additional_days: int = 7,
+    reason: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request an extension on an active borrow (Bookshelf Buddy).
+    REQUIRED: ticket_id (e.g. BK-...). additional_days defaults to 7 (max 30).
+    Admin is notified and must approve or reject. Use check_book_requests to find your ticket if needed."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    try:
+        days = int(additional_days)
+    except (TypeError, ValueError):
+        days = 7
+    result = BookshelfService.request_extension(email, ticket_id, days, reason or "")
+    return result.get("message", "Done.")
+
+
+@tool
 def post_admin_announcement(title: str, body: str, category: str = "General", target_audience: str = "all"):
     """
     Publish an announcement from the Admin team (Admin role only).
@@ -181,8 +285,34 @@ tools = [
     request_accommodation,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
+    list_available_books, borrow_book_by_name, request_book, check_book_requests,
+    return_my_book, request_book_extension,
     post_admin_announcement, update_admin_prompt,
 ]
+
+_BOOKSHELF_TOOLS = [
+    list_available_books, borrow_book_by_name, request_book, check_book_requests,
+    return_my_book, request_book_extension,
+]
+
+# Narrow tool sets per sub_intent — prevents the LLM from calling unrelated tools
+_TOOL_GROUPS: dict[str, list] = {
+    "bookshelf":          _BOOKSHELF_TOOLS,
+    "bookshelf.discover": [list_available_books],
+    "bookshelf.borrow":   [list_available_books, borrow_book_by_name, request_book],
+    "bookshelf.status":   [check_book_requests],
+    "bookshelf.return":   [check_book_requests, return_my_book],
+    "bookshelf.extend":   [check_book_requests, request_book_extension],
+    "parking_sticker":    [request_parking_sticker, surrender_parking_sticker, get_parking_info],
+    "facility_complaint": [file_facility_complaint, check_complaint_status],
+    "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],
+    "accommodation":      [request_accommodation, search_admin_policies],
+    "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
+    "desk_key_request":   [search_admin_policies],
+}
+
+import re as _re
+_SUB_INTENT_RE = _re.compile(r'\[SUB_INTENT:([^\]]+)\]')
 
 tool_node = ToolNode(tools)
 
@@ -191,13 +321,14 @@ _admin_llm = ChatOpenAI(
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    timeout=45,
+    timeout=120,
 )
 def admin_assistant(state: AdminState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
     default_prompt = (
         f"You are the Admin Services Assistant for Aligned Automation.\n"
         f"Employee email: {user_email}. Never ask for it.\n\n"
+        f"Always respond in English regardless of the language of the user's message.\n"
         f"Answer from tool results and provided policy context only.\n"
         f"If [PRE-SEARCHED POLICY] is in context, answer from it directly — do not call search_admin_policies.\n"
         f"If [POLICY SEARCH RESULT] says none found, tell user and suggest contacting Admin team or Zoho (expense.zoho@alignedautomation.com).\n"
@@ -208,15 +339,38 @@ def admin_assistant(state: AdminState):
     base_prompt = PromptService.get_system_prompt("admin", default_prompt)
     guardrail = PromptService.get_guardrail("admin")
     feedback_ctx = state.get("feedback_context") or ""
-    system_prompt = base_prompt + guardrail + feedback_ctx
+    # Always enforce English regardless of what the stored prompt says
+    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
+    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
 
-    # If policy was already pre-fetched by the parent graph node, strip search_admin_policies
-    # from the tools list so the LLM cannot trigger a redundant second embedding + tool call.
+    # Detect sub_intent injected by admin_agent_node and select a narrow tool set.
+    # Fallback to all tools when sub_intent is unknown or a follow-up.
+    _m = _SUB_INTENT_RE.search(feedback_ctx)
+    detected_sub = _m.group(1).strip() if _m else ""
     pre_fetched = "[PRE-SEARCHED POLICY]" in feedback_ctx or "[POLICY SEARCH RESULT]" in feedback_ctx
-    active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
+
+    if detected_sub in _TOOL_GROUPS:
+        active_tools = _TOOL_GROUPS[detected_sub]
+        # Still strip search_admin_policies when policy was already pre-fetched
+        if pre_fetched:
+            active_tools = [t for t in active_tools if t.name != "search_admin_policies"]
+    else:
+        # Unknown / followup — show all, strip search if already pre-fetched
+        active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     response = _admin_llm.bind_tools(active_tools).invoke(messages)
+
+    # If the model returned empty text with no tool calls, surface the last tool result directly.
+    # This prevents the "unable to generate a text summary" fallback on weak models.
+    if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
+        last_tool = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, ToolMessage) and m.content),
+            None,
+        )
+        if last_tool:
+            response = AIMessage(content=last_tool.content)
+
     return {"messages": [response]}
 
 

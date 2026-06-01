@@ -642,6 +642,53 @@ _KW_ADMIN_ACCOM = re.compile(
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
 
+_KW_BOOKSHELF_RETURN = re.compile(
+    r'\b(return\s+(my\s+|the\s+|a\s+)?book|'
+    r'i\s+(have\s+)?finished\s+(reading|the\s+book)|'
+    r'give\s+back\s+(my\s+|the\s+|a\s+)?book|'
+    r'hand\s+(back|in)\s+(my\s+|the\s+|a\s+)?book)\b',
+    re.I,
+)
+
+_KW_BOOKSHELF_EXTEND = re.compile(
+    r'\b(extend\s+(my\s+|the\s+)?(book|due\s+date|borrow|loan)|'
+    r'renew\s+(my\s+|the\s+|a\s+)?book|'
+    r'(need|want)\s+more\s+time\s+(on|for|with)\s+(my\s+|the\s+)?book|'
+    r'keep\s+(the\s+|my\s+)?book\s+(for\s+)?(more|longer|another))\b',
+    re.I,
+)
+
+_KW_BOOKSHELF_STATUS = re.compile(
+    r'\b(my\s+(book\s+)?(borrows?|requests?)|'
+    r'check\s+(my\s+)?book\s+request|book\s+request\s+status|'
+    r'borrowed\s+books?|books?\s+i\s+(have\s+)?borrowed|'
+    r'what\s+books?\s+do\s+i\s+have|my\s+(borrowed\s+)?library)\b',
+    re.I,
+)
+
+# General discovery / browse — covers all the natural variations in the spec:
+# "I want a book", "need a book", "looking for something to read",
+# "I need learning material", "show books", "browse books", "recommend a book".
+_KW_BOOKSHELF = re.compile(
+    r'\b('
+    r'bookshelf|book\s*shelf|'
+    r'borrow\s+(a\s+|an\s+|the\s+)?book|'
+    r'issue\s+(a\s+|an\s+|the\s+)?book|'
+    r'company\s+library|office\s+library|library\s+(catalog|catalogue|books?)|'
+    r'available\s+books?|books?\s+available|'
+    r'book\s+request|request\s+(a\s+|an\s+|the\s+)?book|'
+    r'lend\s+me\s+(a\s+|an\s+|the\s+)?book|'
+    r'check\s+(?:my\s+)?book\s+request|'
+    # Natural discovery variations
+    r'(i\s+)?(want|need|like|require)\s+(a\s+|an\s+|some\s+)?book|'
+    r'looking\s+for\s+(a\s+|an\s+|some\s+)?(book|reading\s+material|something\s+to\s+read)|'
+    r'(reading|learning|study)\s+material|'
+    r'(show|browse|see|view|find|recommend|suggest)\s+(me\s+)?(some\s+|the\s+|any\s+)?(book|books|library)|'
+    r'books?\s+on\s+[a-z]'
+    r')\b',
+    re.I,
+)
+
 _KW_IT_HARDWARE = re.compile(
     r'\b(laptop|system|computer|device|machine|workstation)\s+'
     r'(is\s+)?(slow|hanging|crashing|overheating|heating|hot|'
@@ -796,6 +843,24 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "admin", "confidence": 0.95,
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
+
+    # Admin — Bookshelf Buddy (specific sub-intents first, then generic discovery)
+    if _KW_BOOKSHELF_EXTEND.search(text):
+        return {"domain": "admin", "confidence": 0.97,
+                "reasoning": "Keyword: extend / renew book borrow",
+                "sub_intent": "bookshelf.extend", "entities": {}}
+    if _KW_BOOKSHELF_RETURN.search(text):
+        return {"domain": "admin", "confidence": 0.97,
+                "reasoning": "Keyword: return a borrowed book",
+                "sub_intent": "bookshelf.return", "entities": {}}
+    if _KW_BOOKSHELF_STATUS.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: my borrows / book request status",
+                "sub_intent": "bookshelf.status", "entities": {}}
+    if _KW_BOOKSHELF.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: bookshelf / book discovery / borrow",
+                "sub_intent": "bookshelf", "entities": {}}
 
     # MS365 — read emails
     if _KW_MS365_EMAIL.search(text):
@@ -1101,6 +1166,7 @@ def hr_agent(state: AgentState):
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
             f"Employee email: {user_email}. Never ask who the user is.\n"
+            f"Always respond in English regardless of the language of the user's message.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
             f"- Leave balance → get_leave_balance(email='{user_email}')\n"
@@ -1248,6 +1314,10 @@ async def admin_agent_node(state: AgentState):
                 policy_result = HRService.search_policies(str(original_topic), limit=2)
                 if policy_result and "No policies found" not in policy_result:
                     feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
+
+    # Stamp sub_intent into feedback_ctx so admin_agent can select the right tool group
+    if sub_intent:
+        feedback_ctx = f"[SUB_INTENT:{sub_intent}]\n" + feedback_ctx
 
     result = await admin_agent.ainvoke({
         "messages": state["messages"],

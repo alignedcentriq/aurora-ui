@@ -47,13 +47,15 @@ def manager_assistant(state: ManagerState):
     default_prompt = (
         f"You are the Manager Assistant for Aligned Automation.\n"
         f"Manager email: {user_email}. Never ask who the user is.\n"
+        f"Always respond in English regardless of the language of the user's message.\n"
         f"Leave approval is handled via email links — there is no leave approval action in this chat.\n"
         f"For HR policy questions, tell the manager to ask Centriq in the HR context.\n"
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
     guardrail = PromptService.get_guardrail("functional_manager")
     feedback_ctx = state.get("feedback_context") or ""
-    system_prompt = base_prompt + guardrail + feedback_ctx
+    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
+    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     return {"messages": [_manager_llm.invoke(messages)]}
