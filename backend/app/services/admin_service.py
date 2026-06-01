@@ -359,26 +359,6 @@ class AdminService:
             except Exception:
                 pass
 
-            try:
-                from app.services.email_service import send_notification_event
-                send_notification_event(
-                    email,
-                    "visitor_pass_requested",
-                    f"{visitor_name} visiting {emp.name} on {visit_date}",
-                    {
-                        "pass_id": pass_id,
-                        "host_name": emp.name,
-                        "host_email": emp.email,
-                        "visitor_name": visitor_name,
-                        "visitor_company": visitor_company,
-                        "visit_date": visit_date,
-                        "visit_time": visit_time,
-                        "purpose": purpose,
-                    }
-                )
-            except Exception:
-                pass
-
             company = f" from {visitor_company}" if visitor_company else ""
             when = f"{visit_date}" + (f" at {visit_time}" if visit_time else "")
             return (

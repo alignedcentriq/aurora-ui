@@ -147,6 +147,13 @@ async def microsoft_exchange_code(code: str, state: str) -> dict:
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(token_url, data=payload)
+        if not resp.is_success:
+            log.error(
+                "[oauth] Microsoft token exchange %s — redirect_uri=%s — body=%s",
+                resp.status_code,
+                payload["redirect_uri"],
+                resp.text,
+            )
         resp.raise_for_status()
         data = resp.json()
 
