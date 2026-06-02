@@ -25,8 +25,11 @@ async def main():
 
     Base.metadata.create_all(bind=engine, tables=[MS365User.__table__])
 
-    from app.services.oauth_service import get_valid_token
-    token = await get_valid_token("shivam.sharma@alignedautomation.com", "microsoft")
+    # Org-wide directory read → app-only token (application User.Read.All on the
+    # GRAPH_* app), matching ms365_service. The delegated flow no longer carries
+    # User.Read.All, so this must NOT use a per-user token.
+    from app.services.ms365_service import _app_token
+    token = _app_token()
     if not token:
         print("ERROR: No token", flush=True); return
 

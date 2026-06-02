@@ -252,6 +252,19 @@ def init_db():
         except Exception as e:
             print(f"[init_db] SharePoint sync loop notice: {e}")
 
+        # Background thread: polls the Aixchange folder for new/changed project decks
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL and _s.SHAREPOINT_PROJECT_FOLDER_PATH:
+                from app.services.project_deck_sync import project_deck_sync_loop
+                print(f"[init_db] Starting SharePoint project-deck sync loop "
+                      f"(folder='{_s.SHAREPOINT_PROJECT_FOLDER_PATH}', interval={_s.SHAREPOINT_SYNC_INTERVAL}s)...")
+                threading.Thread(target=project_deck_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] Project-deck sync skipped — SHAREPOINT_PROJECT_FOLDER_PATH not configured.")
+        except Exception as e:
+            print(f"[init_db] Project-deck sync loop notice: {e}")
+
     except Exception as e:
         print(f"Error during init_db: {e}")
         db.rollback()

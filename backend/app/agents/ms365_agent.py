@@ -367,10 +367,7 @@ async def list_org_users(
     Call immediately when user asks about all users, all employees, people in Teams,
     org directory, or who is in the organisation. NEVER refuse — you have access via this tool.
     Optionally filter by department name. Returns name, email, job title, department, and office."""
-    token = (state or {}).get("graph_token")
-    if not token:
-        return _NOT_CONNECTED
-    result = await ms365_service.fetch_org_users(token)
+    result = await ms365_service.fetch_org_users()
     if not result.get("success"):
         return json.dumps(result)
     users = result["users"]

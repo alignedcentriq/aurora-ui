@@ -20,6 +20,7 @@ reportlab
 pdfplumber
 pymupdf
 python-docx
+python-pptx
 pandas
 openpyxl
 pgvector

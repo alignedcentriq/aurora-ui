@@ -26,6 +26,11 @@ POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-20
 CHUNK_SIZE = settings.POLICY_CHUNK_SIZE
 CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP
 
+# Category tag for weekly flash-review / project-showcase decks (Aixchange folder).
+# Kept in the Policy table but isolated from policy search by category filtering,
+# so project content never bleeds into HR/Admin/IT policy answers.
+PROJECT_DECK_CATEGORY = "Project Showcase"
+
 # ── Category mapping from filename ───────────────────────────────────────────
 CATEGORY_MAP = {
     "leave": "Leave & Attendance",
@@ -224,6 +229,41 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
         return []
 
 
+def _extract_images_from_pptx_bytes(data: bytes) -> list:
+    """
+    Return list of (position_ratio, image_bytes, ext) tuples — same shape as the
+    DOCX extractor, so the ratio-based chunk assignment path is reused.
+    position_ratio = slide_index / num_slides (0.0–1.0).
+    Skips images smaller than 20 KB (logos, headers, decorations).
+    """
+    try:
+        import io as _io
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        prs = Presentation(_io.BytesIO(data))
+        slides = list(prs.slides)
+        total = len(slides)
+        results = []
+        for s_idx, slide in enumerate(slides):
+            position_ratio = s_idx / max(total, 1)
+            for shape in slide.shapes:
+                if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+                    continue
+                try:
+                    blob = shape.image.blob
+                except Exception:
+                    continue
+                if len(blob) < _MIN_IMAGE_BYTES:
+                    continue
+                ext = (shape.image.ext or "png").lower()
+                results.append((position_ratio, blob, ext))
+        return results
+    except Exception as e:
+        print(f"[PolicyService] PPTX image extraction error: {e}")
+        return []
+
+
 def _upload_policy_images(policy_id: int, title: str, raw_images: list, db, is_docx: bool = False) -> list:
     """
     Store extracted images in the PolicyImage table.
@@ -320,6 +360,42 @@ def _extract_text_from_docx_bytes(data: bytes) -> str:
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     except Exception as e:
         print(f"[PolicyService] DOCX bytes read error: {e}")
+        return ""
+
+
+def _extract_text_from_pptx_bytes(data: bytes) -> str:
+    """Extract text from a PowerPoint deck: per slide, pull shape text frames,
+    table cells, and speaker notes. Slides are separated by blank lines so the
+    sentence chunker keeps slide boundaries reasonably intact."""
+    try:
+        import io as _io
+        from pptx import Presentation
+
+        prs = Presentation(_io.BytesIO(data))
+        parts = []
+        for slide in prs.slides:
+            slide_lines = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        line = "".join(run.text for run in para.runs).strip()
+                        if line:
+                            slide_lines.append(line)
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                        if cells:
+                            slide_lines.append(" | ".join(cells))
+            # Speaker notes often carry the real narrative of a flash-review deck
+            if slide.has_notes_slide:
+                notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+                if notes:
+                    slide_lines.append(notes)
+            if slide_lines:
+                parts.append("\n".join(slide_lines))
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[PolicyService] PPTX bytes read error: {e}")
         return ""
 
 
@@ -638,6 +714,26 @@ class PolicyService:
 
     @staticmethod
     def search_policies(query: str, limit: int = 4) -> str:
+        """Hybrid search over policy documents only. Project-showcase decks are
+        excluded so project content never pollutes a policy answer."""
+        return PolicyService._hybrid_search(
+            query, limit, category_not_in=[PROJECT_DECK_CATEGORY]
+        )
+
+    @staticmethod
+    def search_project_decks(query: str, limit: int = 4) -> str:
+        """Hybrid search restricted to weekly flash-review / project-showcase decks."""
+        return PolicyService._hybrid_search(
+            query, limit, category_in=[PROJECT_DECK_CATEGORY]
+        )
+
+    @staticmethod
+    def _hybrid_search(
+        query: str,
+        limit: int = 4,
+        category_in: list | None = None,
+        category_not_in: list | None = None,
+    ) -> str:
         """
         Hybrid BM25 + pgvector search with Reciprocal Rank Fusion.
 
@@ -646,6 +742,9 @@ class PolicyService:
         3. RRF fusion of both ranked lists
         4. Fallback: keyword search on chunks/policies if no embeddings available
         Returns top `limit` (default 4) unique-policy chunks.
+
+        `category_in` / `category_not_in` scope the candidate set by Policy.category
+        at the SQL level (so excluded categories never steal candidate slots).
         """
         from app.models import PolicyChunk
         from sqlalchemy import text as sql_text
@@ -658,6 +757,14 @@ class PolicyService:
             query_keywords = [w for w in query.lower().split() if len(w) > 2]
             policy_title_map = {p.id: (p.title or "").lower() for p in db.query(Policy).all()}
 
+            def _apply_cat(q):
+                """Apply category filters to an ORM query already joined to Policy."""
+                if category_in:
+                    q = q.filter(Policy.category.in_(category_in))
+                if category_not_in:
+                    q = q.filter(Policy.category.notin_(category_not_in))
+                return q
+
             sem_ids: list = []
             bm25_ids: list = []
 
@@ -665,29 +772,38 @@ class PolicyService:
             query_emb = PolicyService._get_embedding(query)
             if query_emb:
                 dist_expr = PolicyChunk.embedding.cosine_distance(query_emb)
-                sem_rows = (
+                sem_q = (
                     db.query(PolicyChunk.id, dist_expr.label("dist"))
+                    .join(Policy, Policy.id == PolicyChunk.policy_id)
                     .filter(
                         PolicyChunk.embedding.isnot(None),
                         dist_expr < 0.65,
                     )
-                    .order_by(dist_expr)
-                    .limit(20)
-                    .all()
                 )
+                sem_rows = _apply_cat(sem_q).order_by(dist_expr).limit(20).all()
                 sem_ids = [r.id for r in sem_rows]
 
             # ── 2. BM25 keyword search via tsvector ───────────────────────────
             try:
+                bm25_params = {"q": query}
+                cat_sql = ""
+                if category_in:
+                    cat_sql += " AND p.category = ANY(:cat_in)"
+                    bm25_params["cat_in"] = list(category_in)
+                if category_not_in:
+                    cat_sql += " AND p.category <> ALL(:cat_not_in)"
+                    bm25_params["cat_not_in"] = list(category_not_in)
                 bm25_rows = db.execute(
                     sql_text(
-                        f"SELECT id FROM \"{SCHEMA}\".policy_chunks "
-                        f"WHERE text_tsv IS NOT NULL "
-                        f"AND text_tsv @@ plainto_tsquery('english', :q) "
-                        f"ORDER BY ts_rank(text_tsv, plainto_tsquery('english', :q)) DESC "
+                        f"SELECT pc.id FROM \"{SCHEMA}\".policy_chunks pc "
+                        f"JOIN \"{SCHEMA}\".policies p ON p.id = pc.policy_id "
+                        f"WHERE pc.text_tsv IS NOT NULL "
+                        f"AND pc.text_tsv @@ plainto_tsquery('english', :q)"
+                        f"{cat_sql} "
+                        f"ORDER BY ts_rank(pc.text_tsv, plainto_tsquery('english', :q)) DESC "
                         f"LIMIT 20"
                     ),
-                    {"q": query},
+                    bm25_params,
                 ).fetchall()
                 bm25_ids = [r[0] for r in bm25_rows]
             except Exception as bm25_err:
@@ -741,7 +857,9 @@ class PolicyService:
                     return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 4. Keyword fallback on chunks ──────────────────────────────────
-            chunks_all = db.query(PolicyChunk).all()
+            chunks_all = _apply_cat(
+                db.query(PolicyChunk).join(Policy, Policy.id == PolicyChunk.policy_id)
+            ).all()
             if chunks_all:
                 keywords = PolicyService._expand_keywords(query)
                 scored = []
@@ -782,7 +900,9 @@ class PolicyService:
                         return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 5. Last resort: keyword search on full Policy.content ──────────
-            fallback = PolicyService._fallback_policy_search(query, db, limit)
+            fallback = PolicyService._fallback_policy_search(
+                query, db, limit, category_in=category_in, category_not_in=category_not_in
+            )
             if fallback.startswith("No policies found") and did_you_mean:
                 return f"I couldn't find a policy matching your query. Did you mean **{did_you_mean}**? Please try again with the correct term."
             return fallback
@@ -801,10 +921,18 @@ class PolicyService:
         return list(expanded)
 
     @staticmethod
-    def _fallback_policy_search(query: str, db, limit: int = 2) -> str:
+    def _fallback_policy_search(
+        query: str, db, limit: int = 2,
+        category_in: list | None = None, category_not_in: list | None = None,
+    ) -> str:
         """Keyword search directly on Policy.content — no chunks needed."""
         keywords = PolicyService._expand_keywords(query)
-        policies = db.query(Policy).all()
+        pq = db.query(Policy)
+        if category_in:
+            pq = pq.filter(Policy.category.in_(category_in))
+        if category_not_in:
+            pq = pq.filter(Policy.category.notin_(category_not_in))
+        policies = pq.all()
         if not policies:
             return "No policies found in the system."
 

@@ -33,9 +33,10 @@ class DeeplinkState(TypedDict):
 # -- Native tools (no MCP subprocess overhead) ---------------------------------
 
 @tool
-def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: str = "") -> str:
+def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: str = "", user_email: str = "") -> str:
     """Apply leave via Zoho People API. Falls back to a direct Zoho link if API is unavailable.
     start_date and end_date must be YYYY-MM-DD format. leave_type: Casual, Sick, Earned, or Optional."""
+    email = user_email or settings.DEFAULT_USER_EMAIL
     zoho_link = (
         ((settings.ZOHO_PEOPLE_URL or "").rstrip("/") + "#leavetracker/applyleave")
         if settings.ZOHO_PEOPLE_URL
@@ -46,7 +47,7 @@ def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: s
     try:
         from app.hr_service import HRService
         result_msg = HRService.apply_leave(
-            settings.DEFAULT_USER_EMAIL, start_date, end_date, leave_type, reason or ""
+            email, start_date, end_date, leave_type, reason or ""
         )
         return json.dumps({"success": True, "message": result_msg})
     except Exception as exc:
@@ -178,14 +179,15 @@ def setup_powerapps_session() -> str:
 
 
 @tool
-def get_zoho_leave_balance() -> str:
+def get_zoho_leave_balance(user_email: str = "") -> str:
     """Return the employee's current leave balance from Zoho People.
-    Served from DB cache when fresh (< 15 min old); otherwise runs a headless
-    scrape for this user only, caches the result, and returns it."""
+    Served from DB cache when fresh (< 15 min old); otherwise calls Zoho API
+    for this user only, caches the result, and returns it."""
     try:
         from app.config import settings as _settings
         from app.services.leave_balance_sync import get_or_refresh
-        return json.dumps(get_or_refresh(_settings.DEFAULT_USER_EMAIL))
+        email = user_email or _settings.DEFAULT_USER_EMAIL
+        return json.dumps(get_or_refresh(email))
     except Exception as exc:
         return json.dumps({"success": False, "error": f"Failed to fetch leave balance: {exc}"})
 

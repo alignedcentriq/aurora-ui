@@ -122,9 +122,8 @@ async def my_room_bookings(
 @router.post("/users/sync")
 async def sync_users(user: CurrentUser = Depends(get_current_user)):
     """Pull all @alignedautomation.com users from Azure AD and upsert into the database."""
-    token = await _require_token(user)
     from app.services.ms365_service import sync_users_to_db
-    result = await sync_users_to_db(token)
+    result = await sync_users_to_db()
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error", "Sync failed"))
     return result
@@ -182,9 +181,8 @@ async def list_users(
 @router.get("/users/{email}/profile")
 async def get_user_profile(email: str, user: CurrentUser = Depends(get_current_user)):
     """Look up any org user's full profile by email/UPN, live from Graph."""
-    token = await _require_token(user)
     from app.services.ms365_service import fetch_user_by_email
-    result = await fetch_user_by_email(token, email)
+    result = await fetch_user_by_email(email)
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error", "User lookup failed"))
     return result
@@ -193,9 +191,8 @@ async def get_user_profile(email: str, user: CurrentUser = Depends(get_current_u
 @router.get("/users/{email}/manager")
 async def get_user_manager(email: str, user: CurrentUser = Depends(get_current_user)):
     """Return a user's manager from Azure AD."""
-    token = await _require_token(user)
     from app.services.ms365_service import fetch_user_manager
-    result = await fetch_user_manager(token, email)
+    result = await fetch_user_manager(email)
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error", "Manager lookup failed"))
     return result
@@ -204,9 +201,8 @@ async def get_user_manager(email: str, user: CurrentUser = Depends(get_current_u
 @router.get("/users/{email}/reports")
 async def get_user_reports(email: str, user: CurrentUser = Depends(get_current_user)):
     """Return a user's direct reports from Azure AD."""
-    token = await _require_token(user)
     from app.services.ms365_service import fetch_user_direct_reports
-    result = await fetch_user_direct_reports(token, email)
+    result = await fetch_user_direct_reports(email)
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error", "Direct reports lookup failed"))
     return result

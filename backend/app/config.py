@@ -205,9 +205,13 @@ class Config:
         or os.getenv("VITE_MSAL_TENANT_ID")
         or os.getenv("GRAPH_TENANT_ID", "")
     )
+    # NOTE: org-directory reads (all users, any user's profile/manager/reports) use the
+    # *application* User.Read.All on the GRAPH_* app via client-credentials — NOT a
+    # delegated scope (see ms365_service._app_token). So User.Read.All is deliberately
+    # absent here; the delegated flow only needs the signed-in user's own + basic reads.
     MICROSOFT_OAUTH_SCOPES = os.getenv(
         "MICROSOFT_OAUTH_SCOPES",
-        "openid profile email offline_access User.Read User.ReadBasic.All User.Read.All "
+        "openid profile email offline_access User.Read User.ReadBasic.All "
         "Mail.Read Mail.ReadWrite Mail.Send "
         "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
         "Chat.Read Chat.ReadWrite "
@@ -224,10 +228,16 @@ class Config:
     ZOHO_CLIENT_ID     = os.getenv("ZOHO_CLIENT_ID", "")
     ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")
     ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "")
-    ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "https://accounts.zoho.com")
-    ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "https://people.zoho.com")
+    ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "") or "https://accounts.zoho.com"
+    ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "") or "https://people.zoho.com"
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
+
+    # ── Alchemy Skills Portal (Azure AD-secured internal API) ─────────────────
+    ALCHEMY_BASE_URL          = os.getenv("ALCHEMY_BASE_URL", "https://apps.alignedautomation.com/alchemyapi/api/v1")
+    # Prefix prepended to numeric employee IDs when calling the Alchemy API.
+    # DB stores "1540", Alchemy expects "AASPL-1540" → prefix = "AASPL-"
+    ALCHEMY_EMPLOYEE_PREFIX   = os.getenv("ALCHEMY_EMPLOYEE_PREFIX", "AASPL-")
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.
@@ -240,6 +250,20 @@ class Config:
     # Comma-separated folder names in the document library to sync as policies
     # These are top-level folder names, e.g. "ADMIN,IT PMO,HR"
     SHAREPOINT_POLICY_FOLDERS = os.getenv("SHAREPOINT_POLICY_FOLDERS", "ADMIN,IT PMO")
+    # Comma-separated folder paths inside the SAME site's document library that hold
+    # weekly flash-review / project content. Synced into the Project Showcase category
+    # (DOCX/PDF/PPTX). Empty → project-deck sync disabled.
+    SHAREPOINT_PROJECT_FOLDER_PATH = os.getenv(
+        "SHAREPOINT_PROJECT_FOLDER_PATH",
+        "General/AIXChange/Transcripts & Summary,General/AIXChange/Flash Review Transcripts",
+    )
+    # Path segments (comma-separated, case-insensitive) to skip during project sync —
+    # e.g. raw masked meeting "Transcript" subfolders (summaries only).
+    SHAREPOINT_PROJECT_EXCLUDE_SEGMENTS = os.getenv("SHAREPOINT_PROJECT_EXCLUDE_SEGMENTS", "transcript")
+    # Folder of AI-governance PDFs that live under AIXChange but are real policies —
+    # routed into the POLICY pipeline (normal category, found by search_hr_policies),
+    # NOT tagged as project decks. Empty → skipped.
+    SHAREPOINT_AI_POLICY_FOLDER_PATH = os.getenv("SHAREPOINT_AI_POLICY_FOLDER_PATH", "General/AIXChange/Policy")
     # How often (seconds) to poll SharePoint for new/changed files (default 10 min)
     SHAREPOINT_SYNC_INTERVAL = int(os.getenv("SHAREPOINT_SYNC_INTERVAL_SECONDS", "600"))
 

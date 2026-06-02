@@ -19,9 +19,15 @@ from app.services.policy_service import _expand_query
 
 DOMAIN_REGISTRY = {
     "hr": {
-        "description": "Human Resources — attendance, HR policies, employee benefits, onboarding, "
-                       "offboarding, referral bonuses, appraisals, PIP, performance reviews, "
-                       "work from home policy, holidays, comp-off. "
+        "description": "Human Resources — HR policies, employee benefits, onboarding, offboarding, "
+                       "referral bonuses, PIP, work from home policy, holidays, comp-off, "
+                       "grievances, HR document generation (experience certificate, NOC, salary letter), "
+                       "employee directory, org chart, announcements. "
+                       "Also handles personal Zoho People data: my timesheet, work hours logged, "
+                       "my attendance summary (present/absent/WFH/late), my appraisal status and cycle, "
+                       "my training records (completed or upcoming courses/programs). "
+                       "Also handles Alchemy Skills Portal: my skills, my skill set, skills in alchemy, "
+                       "org skills overview, top skills by interest, trending skills across the company. "
                        "Do NOT use for leave balance queries or leave applications — both go through Zoho (deeplink).",
         "status": "active",
     },

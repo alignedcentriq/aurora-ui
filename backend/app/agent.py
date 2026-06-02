@@ -18,7 +18,7 @@ import re
 from typing import TypedDict, Annotated, List, Optional
 
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import ToolNode, InjectedState
 from langgraph.checkpoint.memory import MemorySaver
 
 from langchain_openai import ChatOpenAI
@@ -305,6 +305,16 @@ def search_hr_policies(query: str):
     return HRService.search_policies(query, limit=4)
 
 
+@tool
+def search_project_decks(query: str):
+    """Search internal project-showcase / weekly flash-review decks for project details:
+    what was built, tech/tools used, outcomes, owners, the project shown in a given week.
+    Call for any question about company projects, flash reviews, or the Aixchange decks.
+    Answer from the result only; cite the project/deck name once. Never invent project facts."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_project_decks(query, limit=4)
+
+
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
 
 @tool
@@ -525,6 +535,208 @@ def submit_hr_query(
     return HRService.submit_hr_query(email, category, subject, description)
 
 
+# ── Zoho People — per-user delegated tools ────────────────────────────────────
+
+def _zoho_token_or_error(email: str) -> str | None:
+    """Return valid Zoho token or None. Uses _run_coro to bridge async → sync."""
+    try:
+        from app.services.email_service import _run_coro
+        from app.services.oauth_service import get_valid_token
+        return _run_coro(get_valid_token(email, "zoho"))
+    except Exception:
+        return None
+
+_ZOHO_CONNECT_MSG = "Please connect your Zoho account first. Go to **Settings > Connected Accounts** and click **Connect Zoho**."
+
+@tool
+def get_my_timesheet(week: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my timesheet hours for a given week.
+    week: start date of the week in YYYY-MM-DD format (Monday). Leave blank for current week."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_timesheet
+        data = get_timesheet(token, week)
+        if not data.get("success"):
+            return "Could not retrieve timesheet data. Please try again."
+        logs = data.get("logs", [])
+        total = data.get("total_hours", 0)
+        if not logs:
+            return f"No timesheet entries found for the week of {data.get('week_start', week)}."
+        lines = [f"**Timesheet — week of {data['week_start']} to {data['week_end']}**\n"]
+        for log in logs:
+            lines.append(f"- {log['date']}: {log['hours']}h — {log['job'] or 'General'}")
+        lines.append(f"\n**Total: {total} hours**")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching timesheet: {exc}"
+
+
+@tool
+def get_my_attendance(month: str = "", year: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my monthly attendance summary: days present, absent, WFH, and late arrivals.
+    month: numeric month 1-12. year: 4-digit year. Leave blank for current month."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_attendance_summary
+        data = get_attendance_summary(token, month, year)
+        if not data.get("success"):
+            return "Could not retrieve attendance data. Please try again."
+        return (
+            f"**Attendance — {data['month']}**\n\n"
+            f"- Present: {data['present']} days\n"
+            f"- Absent: {data['absent']} days\n"
+            f"- Work From Home: {data['wfh']} days\n"
+            f"- Late arrivals: {data['late']} days"
+        )
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching attendance: {exc}"
+
+
+@tool
+def get_my_appraisal_status(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my current appraisal cycle status, due dates, and any pending tasks."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_appraisal_status
+        data = get_appraisal_status(token)
+        if not data.get("success"):
+            return "Could not retrieve appraisal data. Please try again."
+        cycles = data.get("cycles", [])
+        if not cycles:
+            return "No active appraisal cycles found at this time."
+        lines = ["**Appraisal Status**\n"]
+        for c in cycles:
+            lines.append(f"- **{c['name']}** — {c['status']}")
+            if c.get("start_date") and c.get("end_date"):
+                lines.append(f"  Period: {c['start_date']} to {c['end_date']}")
+            if c.get("due_date"):
+                lines.append(f"  Due: {c['due_date']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching appraisal status: {exc}"
+
+
+@tool
+def get_my_training_records(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my completed and upcoming training programs from Zoho People."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_training_records
+        data = get_training_records(token)
+        if not data.get("success"):
+            return "Could not retrieve training records. Please try again."
+        lines = []
+        completed = data.get("completed", [])
+        upcoming = data.get("upcoming", [])
+        if completed:
+            lines.append("**Completed Trainings**")
+            for t in completed:
+                lines.append(f"- {t['name']} ({t['end_date']})")
+        if upcoming:
+            lines.append("\n**Upcoming Trainings**")
+            for t in upcoming:
+                lines.append(f"- {t['name']} — starts {t['start_date']}")
+        if not lines:
+            return "No training records found."
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching training records: {exc}"
+
+
+_ALCHEMY_CONNECT_MSG = (
+    "Please connect your Microsoft account first. "
+    "Go to **Settings > Connected Accounts** and click **Connect Microsoft**."
+)
+
+
+def _alchemy_token_or_none(email: str) -> str | None:
+    try:
+        from app.services.email_service import _run_coro
+        from app.services.oauth_service import get_alchemy_token
+        return _run_coro(get_alchemy_token(email))
+    except Exception:
+        return None
+
+
+@tool
+def get_my_alchemy_skills(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my skills from the Alchemy skills portal."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _alchemy_token_or_none(email)
+    if not token:
+        return _ALCHEMY_CONNECT_MSG
+    try:
+        from app.services.alchemy_service import get_my_skills, get_employee_id
+        emp_id = get_employee_id(email)
+        if not emp_id:
+            return "Could not find your employee ID. Please contact IT support."
+        data = get_my_skills(token, emp_id)
+        skills = data if isinstance(data, list) else data.get("data", data.get("skills", []))
+        if not skills:
+            return "No skills found in your Alchemy profile."
+        lines = ["**Your Skills (Alchemy)**"]
+        for s in skills:
+            name = s.get("skillName") or s.get("name") or s.get("skill", "Unknown")
+            level = s.get("proficiencyLevel") or s.get("level") or ""
+            lines.append(f"- {name}" + (f" — {level}" if level else ""))
+        return "\n".join(lines)
+    except PermissionError:
+        return _ALCHEMY_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching skills: {exc}"
+
+
+@tool
+def get_alchemy_skills_overview(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get org-wide skills summary and top skills by interest from Alchemy."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _alchemy_token_or_none(email)
+    if not token:
+        return _ALCHEMY_CONNECT_MSG
+    try:
+        from app.services.alchemy_service import get_skills_stats_summary, get_top_skills_by_interest
+        summary = get_skills_stats_summary(token)
+        top = get_top_skills_by_interest(token)
+        lines = ["**Org Skills Overview (Alchemy)**"]
+        # Summary stats
+        if isinstance(summary, dict):
+            for k, v in summary.items():
+                lines.append(f"- {k}: {v}")
+        # Top skills by interest
+        top_list = top if isinstance(top, list) else top.get("data", top.get("skills", []))
+        if top_list:
+            lines.append("\n**Top Skills by Interest**")
+            for s in top_list[:10]:
+                name = s.get("skillName") or s.get("name") or s.get("skill", "")
+                count = s.get("count") or s.get("userCount") or ""
+                lines.append(f"- {name}" + (f" ({count} employees)" if count else ""))
+        return "\n".join(lines)
+    except PermissionError:
+        return _ALCHEMY_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching skills overview: {exc}"
+
+
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
@@ -537,6 +749,8 @@ hr_tools = [
     submit_grievance, submit_grievance_for,
     trigger_onboarding_checklist, trigger_offboarding_checklist,
     submit_hr_query,
+    get_my_timesheet, get_my_attendance, get_my_appraisal_status, get_my_training_records,
+    get_my_alchemy_skills, get_alchemy_skills_overview,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -730,6 +944,15 @@ _KW_PMO = re.compile(
     r'udemy\s+(license|seat|access)|training\s+license)\b', re.I
 )
 
+# Weekly flash-review / project-showcase decks (Aixchange). Distinct from the
+# structured PMO project-status queries above — these are knowledge questions
+# answered from the ingested decks via the general agent's search_project_decks.
+_KW_PROJECT_DECK = re.compile(
+    r'\b(flash\s+review|aix\s*change|project\s+(deck|presentation|showcase|demo)|'
+    r'(last|this|previous)\s+week\'?s?\s+project|project\s+of\s+the\s+week|'
+    r'weekly\s+(review|showcase)\s+project|project\s+shown\s+(in|at|during))\b', re.I
+)
+
 _KW_MANAGER = re.compile(
     r'\b(my\s+team|who\s+reports\s+to\s+me|direct\s+reports|'
     r'my\s+reportees|team\s+members)\b', re.I
@@ -794,6 +1017,33 @@ _KW_COMPANY_INFO = re.compile(
     r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company))\b', re.I
 )
 
+# Zoho People — delegated per-user data
+_KW_ZOHO_TIMESHEET = re.compile(
+    r'\b(my\s+timesheet|timesheet|hours?\s+logged|work\s+hours?|log\s+hours?|'
+    r'did\s+i\s+log|time\s+entries?)\b', re.I
+)
+_KW_ZOHO_ATTENDANCE = re.compile(
+    r'\b(my\s+attendance|attendance\s+(summary|report|this\s+month)|'
+    r'days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark|punch\s+in|punch\s+out)\b', re.I
+)
+_KW_ZOHO_APPRAISAL = re.compile(
+    r'\b(my\s+appraisal|appraisal\s+status|performance\s+review|'
+    r'kpi\s+status|goal\s+setting|rating\s+status|appraisal\s+cycle)\b', re.I
+)
+_KW_ZOHO_TRAINING = re.compile(
+    r'\b(my\s+training(s|s\s+records?)?|training\s+history|courses?\s+completed|'
+    r'learning\s+history|upcoming\s+training|training\s+programs?)\b', re.I
+)
+_KW_ALCHEMY_MY_SKILLS = re.compile(
+    r'\b(my\s+skills?\s+(in\s+alchemy|portal|directory)?|alchemy\s+skills?|'
+    r'skills?\s+in\s+alchemy|what\s+skills?\s+do\s+i\s+have|my\s+skill\s+set)\b', re.I
+)
+_KW_ALCHEMY_ORG = re.compile(
+    r'\b(org\s+(skills?|capabilities)|top\s+skills?\s+in\s+(company|org|team)|'
+    r'skills?\s+(overview|summary|stats)|popular\s+skills?|trending\s+skills?|'
+    r'skills?\s+by\s+interest|alchemy\s+(overview|summary|stats))\b', re.I
+)
+
 
 def _try_keyword_route(message: str) -> dict | None:
     """Classify intent via keyword/regex matching — 0 LLM calls, <1ms.
@@ -832,6 +1082,42 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.9,
                 "reasoning": "Keyword: people/directory search",
                 "sub_intent": "employee_search", "entities": {}}
+
+    # HR — Zoho People delegated: timesheet
+    if _KW_ZOHO_TIMESHEET.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: timesheet query",
+                "sub_intent": "timesheet", "entities": {}}
+
+    # HR — Zoho People delegated: attendance
+    if _KW_ZOHO_ATTENDANCE.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: attendance summary",
+                "sub_intent": "attendance", "entities": {}}
+
+    # HR — Zoho People delegated: appraisal
+    if _KW_ZOHO_APPRAISAL.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: appraisal status",
+                "sub_intent": "appraisal", "entities": {}}
+
+    # HR — Zoho People delegated: training
+    if _KW_ZOHO_TRAINING.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: training records",
+                "sub_intent": "training", "entities": {}}
+
+    # HR — Alchemy skills portal: my skills
+    if _KW_ALCHEMY_MY_SKILLS.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: alchemy my skills",
+                "sub_intent": "alchemy_my_skills", "entities": {}}
+
+    # HR — Alchemy skills portal: org overview
+    if _KW_ALCHEMY_ORG.search(text):
+        return {"domain": "hr", "confidence": 0.92,
+                "reasoning": "Keyword: alchemy org skills overview",
+                "sub_intent": "alchemy_skills_overview", "entities": {}}
 
     # Admin — reimbursement / expense
     if _KW_ADMIN_REIMB.search(text):
@@ -991,6 +1277,13 @@ def _try_keyword_route(message: str) -> dict | None:
                     "reasoning": "Keyword: software install",
                     "sub_intent": "software_install",
                     "entities": {"software_name": sw}}
+
+    # Project-showcase / flash-review decks — route to general (search_project_decks).
+    # Checked BEFORE PMO so deck questions don't fall into structured project status.
+    if _KW_PROJECT_DECK.search(text):
+        return {"domain": "general", "confidence": 0.9,
+                "reasoning": "Keyword: project showcase / flash-review deck query",
+                "sub_intent": "project_decks", "entities": {}}
 
     # PMO — projects / training licenses
     if _KW_PMO.search(text):
@@ -1288,12 +1581,12 @@ def hr_agent(state: AgentState):
 
 async def deeplink_agent_node(state: AgentState):
     """Deep-Link Agent — automates Zoho leave, PowerApps complaints, and Payroll via Playwright."""
-    # Fast-path: leave balance — call tool directly, format response, 0 LLM calls
+    # Fast-path: leave balance — call service directly, format response, 0 LLM calls
     if state.get("sub_intent") == "leave_balance":
         try:
-            from app.agents.deeplink_agent import get_zoho_leave_balance
-            result_json = get_zoho_leave_balance.invoke({})
-            result_data = json.loads(result_json)
+            from app.services.leave_balance_sync import get_or_refresh
+            user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+            result_data = get_or_refresh(user_email)
             if result_data.get("success"):
                 balances = result_data.get("balances") or []
                 if balances:
@@ -1308,14 +1601,10 @@ async def deeplink_agent_node(state: AgentState):
                         else:
                             lines.append(f"{leave_type} — {balance} days remaining")
                     return {"messages": [AIMessage(content="Here is your current leave balance:\n\n" + "\n".join(lines))]}
-                raw = result_data.get("raw_text", "")
-                if raw:
-                    # Fall through to LLM to parse raw_text
-                    pass
                 else:
                     return {"messages": [AIMessage(content="Your leave balance data was retrieved but appears empty. Please try again or check Zoho People directly.")]}
-            elif result_data.get("action") == "run_setup":
-                return {"messages": [AIMessage(content="Your Zoho session isn't set up yet. Please type 'setup zoho session' to log in once via SSO, then ask again.")]}
+            elif result_data.get("error") == "not_connected":
+                return {"messages": [AIMessage(content="Please connect your Zoho account first. Go to **Settings > Connected Accounts** and click **Connect Zoho**.")]}
             elif result_data.get("error"):
                 return {"messages": [AIMessage(content=f"I couldn't fetch your leave balance: {result_data['error']}. Please try again.")]}
         except Exception as _lb_err:
@@ -1327,7 +1616,8 @@ async def deeplink_agent_node(state: AgentState):
         if entities.get("start_date") and entities.get("end_date"):
             try:
                 from app.agents.deeplink_agent import submit_zoho_leave
-                result_json = submit_zoho_leave.invoke(entities)
+                entities_with_email = {**entities, "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL}
+                result_json = submit_zoho_leave.invoke(entities_with_email)
                 result_data = json.loads(result_json)
                 if result_data.get("success"):
                     return {"messages": [AIMessage(content=result_data["message"])]}
@@ -1570,7 +1860,7 @@ async def ms365_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
-general_tools = [get_announcements, search_hr_policies]
+general_tools = [get_announcements, search_hr_policies, search_project_decks]
 general_tool_node = ToolNode(general_tools)
 
 
@@ -1600,8 +1890,10 @@ def general_agent(state: AgentState):
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
-        "You handle company announcements and general policy questions. "
-        "Tools: get_announcements (news/updates), search_hr_policies (policy lookups). "
+        "You handle company announcements, general policy questions, and questions about "
+        "company projects shown in the weekly flash-review sessions. "
+        "Tools: get_announcements (news/updates), search_hr_policies (policy lookups), "
+        "search_project_decks (project/flash-review deck lookups — what was built, tech used, outcomes). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
         "Do not offer further assistance unless asked.",
     )

@@ -23,6 +23,19 @@ def _headers(token: str, extra: dict | None = None) -> dict:
     return h
 
 
+def _app_token() -> str:
+    """App-only Graph token (client-credentials) for org-directory reads.
+
+    Org-wide reads (all users, any user's profile/manager/reports) use the
+    *application* User.Read.All permission on the GRAPH_* app — NOT the delegated
+    per-user token. This is why these calls need no Connected Account and never
+    hit the delegated-consent ("admin approval") wall. See graph_sync.GraphClient.
+    Token is cached ~1h inside GraphClient, so the sync fetch runs rarely.
+    """
+    from app.graph_sync import graph_client
+    return graph_client._get_token()
+
+
 def _error(msg: str, status: int | None = None) -> dict:
     log.warning("[ms365] %s (status=%s)", msg, status)
     if status == 401:
@@ -45,8 +58,8 @@ async def fetch_my_profile(token: str) -> dict:
         return resp.json()
 
 
-async def fetch_user_by_email(token: str, email: str) -> dict:
-    """Look up any org user's full profile by email/UPN (requires User.Read.All).
+async def fetch_user_by_email(email: str) -> dict:
+    """Look up any org user's full profile by email/UPN (app-only User.Read.All).
 
     The email/UPN is a valid Graph key, so /users/{email} resolves directly.
     Returns a normalized profile dict with the manager expanded inline.
@@ -56,7 +69,7 @@ async def fetch_user_by_email(token: str, email: str) -> dict:
     params = {"$select": USER_SELECT, "$expand": USER_EXPAND}
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(url, headers=_headers(token), params=params)
+            resp = await client.get(url, headers=_headers(_app_token()), params=params)
             resp.raise_for_status()
             data = resp.json()
         row = _normalize_user_row(data)
@@ -71,14 +84,14 @@ async def fetch_user_by_email(token: str, email: str) -> dict:
         return _error(f"Failed to look up user: {e}")
 
 
-async def fetch_user_manager(token: str, user: str) -> dict:
-    """Fetch a user's manager (requires User.Read.All). `user` is an email/UPN or id."""
+async def fetch_user_manager(user: str) -> dict:
+    """Fetch a user's manager (app-only User.Read.All). `user` is an email/UPN or id."""
     from urllib.parse import quote
     url = f"{GRAPH_BASE}/users/{quote(user.strip())}/manager"
     params = {"$select": "id,displayName,mail,jobTitle,department"}
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(url, headers=_headers(token), params=params)
+            resp = await client.get(url, headers=_headers(_app_token()), params=params)
             resp.raise_for_status()
             m = resp.json()
         return {
@@ -98,13 +111,14 @@ async def fetch_user_manager(token: str, user: str) -> dict:
         return _error(f"Failed to fetch manager: {e}")
 
 
-async def fetch_user_direct_reports(token: str, user: str) -> dict:
-    """Fetch a user's direct reports (requires User.Read.All). `user` is an email/UPN or id."""
+async def fetch_user_direct_reports(user: str) -> dict:
+    """Fetch a user's direct reports (app-only User.Read.All). `user` is an email/UPN or id."""
     from urllib.parse import quote
     url = f"{GRAPH_BASE}/users/{quote(user.strip())}/directReports"
     params = {"$select": "id,displayName,mail,jobTitle,department"}
     try:
         reports = []
+        token = _app_token()
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             while url:
                 resp = await client.get(url, headers=_headers(token), params=params)
@@ -821,12 +835,13 @@ _MS365_UPSERT_COLS = (
 )
 
 
-async def fetch_org_users(token: str, top: int = 100) -> dict:
+async def fetch_org_users(top: int = 100) -> dict:
     """Fetch org users whose mail is on the company domain, filtered server-side.
 
-    Uses Graph advanced query (`$filter=endsWith(...)` + `$count=true` +
-    `ConsistencyLevel: eventual`) so the directory's tens of thousands of guest
-    and resource objects are never paginated client-side.
+    App-only (application User.Read.All). Uses Graph advanced query
+    (`$filter=endsWith(...)` + `$count=true` + `ConsistencyLevel: eventual`) so the
+    directory's tens of thousands of guest/resource objects are never paginated
+    client-side.
     """
     url = f"{GRAPH_BASE}/users"
     params = {
@@ -836,7 +851,7 @@ async def fetch_org_users(token: str, top: int = 100) -> dict:
         "$count": "true",
         "$top": str(min(top, 999)),
     }
-    headers = _headers(token, {"ConsistencyLevel": "eventual"})
+    headers = _headers(_app_token(), {"ConsistencyLevel": "eventual"})
     try:
         users = []
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -866,12 +881,12 @@ async def fetch_org_users(token: str, top: int = 100) -> dict:
         return _error(f"Failed to fetch org users: {e}")
 
 
-async def sync_users_to_db(token: str, limit: int = 100) -> dict:
+async def sync_users_to_db(limit: int = 100) -> dict:
     """Fetch company-domain users from Azure AD and bulk-upsert into ms365_users.
 
-    Filters server-side (see fetch_org_users) and caps at `limit` users (default
-    100) so a single Graph page is fetched — no full-directory pagination. Upserts
-    in one statement keyed on azure_id.
+    App-only (application User.Read.All). Filters server-side (see fetch_org_users)
+    and caps at `limit` users (default 100) so a single Graph page is fetched — no
+    full-directory pagination. Upserts in one statement keyed on azure_id.
     """
     import httpx as _httpx
     from app.database import SessionLocal
@@ -887,7 +902,7 @@ async def sync_users_to_db(token: str, limit: int = 100) -> dict:
         "$count": "true",
         "$top": str(min(limit, 999)),
     }
-    headers = _headers(token, {"ConsistencyLevel": "eventual"})
+    headers = _headers(_app_token(), {"ConsistencyLevel": "eventual"})
 
     seen: dict[str, dict] = {}
     try:

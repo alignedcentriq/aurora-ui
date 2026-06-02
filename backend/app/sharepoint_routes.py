@@ -69,3 +69,24 @@ async def sync_sharepoint_policies(background_tasks: BackgroundTasks):
         "message": "SharePoint policy sync started in background.",
         "folders": folders,
     }
+
+
+@router.post("/sharepoint/sync-projects")
+async def sync_sharepoint_projects(background_tasks: BackgroundTasks):
+    """
+    Sync the Aixchange project-showcase folder (weekly flash-review decks) from
+    SharePoint into the DB under the Project Showcase category. PPTX/PDF/DOCX →
+    extract → chunk → embed. Runs in background — returns immediately.
+    """
+    from app.config import settings
+    if not settings.SHAREPOINT_SITE_URL:
+        raise HTTPException(status_code=400, detail="SHAREPOINT_SITE_URL is not configured.")
+    if not settings.SHAREPOINT_PROJECT_FOLDER_PATH:
+        raise HTTPException(status_code=400, detail="SHAREPOINT_PROJECT_FOLDER_PATH is not configured.")
+
+    from app.services.project_deck_sync import sync_project_decks
+    background_tasks.add_task(sync_project_decks)
+    return {
+        "message": "SharePoint project-deck sync started in background.",
+        "folder": settings.SHAREPOINT_PROJECT_FOLDER_PATH,
+    }
