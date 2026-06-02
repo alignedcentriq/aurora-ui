@@ -45,6 +45,87 @@ async def fetch_my_profile(token: str) -> dict:
         return resp.json()
 
 
+async def fetch_user_by_email(token: str, email: str) -> dict:
+    """Look up any org user's full profile by email/UPN (requires User.Read.All).
+
+    The email/UPN is a valid Graph key, so /users/{email} resolves directly.
+    Returns a normalized profile dict with the manager expanded inline.
+    """
+    from urllib.parse import quote
+    url = f"{GRAPH_BASE}/users/{quote(email.strip())}"
+    params = {"$select": USER_SELECT, "$expand": USER_EXPAND}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        row = _normalize_user_row(data)
+        if row is None:
+            return _error(f"No user profile for '{email}'.")
+        return {"success": True, "user": row}
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return _error(f"User '{email}' not found in the directory.")
+        return _error(f"User lookup error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to look up user: {e}")
+
+
+async def fetch_user_manager(token: str, user: str) -> dict:
+    """Fetch a user's manager (requires User.Read.All). `user` is an email/UPN or id."""
+    from urllib.parse import quote
+    url = f"{GRAPH_BASE}/users/{quote(user.strip())}/manager"
+    params = {"$select": "id,displayName,mail,jobTitle,department"}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            m = resp.json()
+        return {
+            "success": True,
+            "manager": {
+                "name": m.get("displayName", ""),
+                "email": (m.get("mail") or "").lower(),
+                "job_title": m.get("jobTitle", ""),
+                "department": m.get("department", ""),
+            },
+        }
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return {"success": True, "manager": None}  # top of the chain / no manager set
+        return _error(f"Manager lookup error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch manager: {e}")
+
+
+async def fetch_user_direct_reports(token: str, user: str) -> dict:
+    """Fetch a user's direct reports (requires User.Read.All). `user` is an email/UPN or id."""
+    from urllib.parse import quote
+    url = f"{GRAPH_BASE}/users/{quote(user.strip())}/directReports"
+    params = {"$select": "id,displayName,mail,jobTitle,department"}
+    try:
+        reports = []
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            while url:
+                resp = await client.get(url, headers=_headers(token), params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                for r in data.get("value", []):
+                    reports.append({
+                        "name": r.get("displayName", ""),
+                        "email": (r.get("mail") or "").lower(),
+                        "job_title": r.get("jobTitle", ""),
+                        "department": r.get("department", ""),
+                    })
+                url = data.get("@odata.nextLink")
+                params = {}
+        return {"success": True, "count": len(reports), "reports": reports}
+    except httpx.HTTPStatusError as e:
+        return _error(f"Direct reports error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch direct reports: {e}")
+
+
 # -- Emails -------------------------------------------------------------------
 
 async def fetch_my_emails(token: str, top: int = 15) -> dict:
@@ -676,6 +757,70 @@ def _is_non_human(name: str, email: str) -> bool:
     return any(seg in _NON_HUMAN_SEG for seg in re.split(r"[._\-]", local))
 
 
+# Full profile field set, available with User.Read.All. $expand pulls the
+# manager in the same request so no per-user round-trip is needed.
+USER_SELECT = (
+    "id,displayName,mail,userPrincipalName,jobTitle,department,officeLocation,"
+    "employeeId,employeeType,companyName,mobilePhone,businessPhones,"
+    "city,state,country,accountEnabled,employeeHireDate"
+)
+USER_EXPAND = "manager($select=displayName,mail)"
+
+
+def _parse_graph_dt(value: str | None):
+    """Parse a Graph ISO-8601 timestamp (e.g. employeeHireDate) to a datetime, or None."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_user_row(u: dict) -> dict | None:
+    """Map a Graph /users object (optionally with expanded manager) to an
+    ms365_users row dict. Returns None for accounts that lack an id or look
+    non-human. Does not set synced_at (caller stamps it)."""
+    azure_id = u.get("id", "")
+    if not azure_id:
+        return None
+    email = (u.get("mail") or u.get("userPrincipalName") or "").lower()
+    name = u.get("displayName", "")
+    if _is_non_human(name, email):
+        return None
+    phones = u.get("businessPhones") or []
+    mgr = u.get("manager") or {}
+    return {
+        "azure_id": azure_id,
+        "email": email,
+        "name": name,
+        "job_title": u.get("jobTitle") or "",
+        "department": u.get("department") or "",
+        "office_location": u.get("officeLocation") or "",
+        "employee_id": u.get("employeeId") or "",
+        "employee_type": u.get("employeeType") or "",
+        "company_name": u.get("companyName") or "",
+        "mobile_phone": u.get("mobilePhone") or "",
+        "business_phone": (phones[0] if phones else "") or "",
+        "city": u.get("city") or "",
+        "state": u.get("state") or "",
+        "country": u.get("country") or "",
+        "account_enabled": u.get("accountEnabled"),
+        "hire_date": _parse_graph_dt(u.get("employeeHireDate")),
+        "manager_email": (mgr.get("mail") or "").lower(),
+        "manager_name": mgr.get("displayName") or "",
+    }
+
+
+# Columns updated on conflict during upsert (everything except the PK/azure_id).
+_MS365_UPSERT_COLS = (
+    "email", "name", "job_title", "department", "office_location",
+    "employee_id", "employee_type", "company_name", "mobile_phone",
+    "business_phone", "city", "state", "country", "account_enabled",
+    "hire_date", "manager_email", "manager_name", "synced_at",
+)
+
+
 async def fetch_org_users(token: str, top: int = 100) -> dict:
     """Fetch org users whose mail is on the company domain, filtered server-side.
 
@@ -685,8 +830,9 @@ async def fetch_org_users(token: str, top: int = 100) -> dict:
     """
     url = f"{GRAPH_BASE}/users"
     params = {
-        "$select": "id,displayName,mail,jobTitle,department,officeLocation,userPrincipalName",
-        "$filter": f"endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
+        "$select": USER_SELECT,
+        "$expand": USER_EXPAND,
+        "$filter": f"accountEnabled eq true and endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
         "$count": "true",
         "$top": str(min(top, 999)),
     }
@@ -699,16 +845,17 @@ async def fetch_org_users(token: str, top: int = 100) -> dict:
                 resp.raise_for_status()
                 data = resp.json()
                 for u in data.get("value", []):
-                    email = u.get("mail") or u.get("userPrincipalName", "")
-                    name = u.get("displayName", "")
-                    if _is_non_human(name, email):
+                    row = _normalize_user_row(u)
+                    if row is None:
                         continue
                     users.append({
-                        "name": name,
-                        "email": email,
-                        "job_title": u.get("jobTitle", ""),
-                        "department": u.get("department", ""),
-                        "office": u.get("officeLocation", ""),
+                        "name": row["name"],
+                        "email": row["email"],
+                        "job_title": row["job_title"],
+                        "department": row["department"],
+                        "office": row["office_location"],
+                        "manager_email": row["manager_email"],
+                        "manager_name": row["manager_name"],
                     })
                 url = data.get("@odata.nextLink")
                 params = {}  # nextLink already has params baked in
@@ -734,8 +881,9 @@ async def sync_users_to_db(token: str, limit: int = 100) -> dict:
 
     url = f"{GRAPH_BASE}/users"
     params = {
-        "$select": "id,displayName,mail,userPrincipalName,jobTitle,department,officeLocation",
-        "$filter": f"endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
+        "$select": USER_SELECT,
+        "$expand": USER_EXPAND,
+        "$filter": f"accountEnabled eq true and endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
         "$count": "true",
         "$top": str(min(limit, 999)),
     }
@@ -749,21 +897,10 @@ async def sync_users_to_db(token: str, limit: int = 100) -> dict:
                 resp.raise_for_status()
                 data = resp.json()
                 for u in data.get("value", []):
-                    azure_id = u.get("id", "")
-                    if not azure_id:
+                    row = _normalize_user_row(u)
+                    if row is None:
                         continue
-                    email = (u.get("mail") or u.get("userPrincipalName") or "").lower()
-                    name = u.get("displayName", "")
-                    if _is_non_human(name, email):
-                        continue
-                    seen[azure_id] = {  # dedupe by azure_id to satisfy ON CONFLICT
-                        "azure_id": azure_id,
-                        "email": email,
-                        "name": name,
-                        "job_title": u.get("jobTitle") or "",
-                        "department": u.get("department") or "",
-                        "office_location": u.get("officeLocation") or "",
-                    }
+                    seen[row["azure_id"]] = row  # dedupe by azure_id to satisfy ON CONFLICT
                     if len(seen) >= limit:
                         break
                 url = data.get("@odata.nextLink")
@@ -786,14 +923,7 @@ async def sync_users_to_db(token: str, limit: int = 100) -> dict:
         stmt = pg_insert(MS365User).values(rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=["azure_id"],
-            set_={
-                "email": stmt.excluded.email,
-                "name": stmt.excluded.name,
-                "job_title": stmt.excluded.job_title,
-                "department": stmt.excluded.department,
-                "office_location": stmt.excluded.office_location,
-                "synced_at": stmt.excluded.synced_at,
-            },
+            set_={col: getattr(stmt.excluded, col) for col in _MS365_UPSERT_COLS},
         )
         db.execute(stmt)
         db.commit()

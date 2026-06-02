@@ -16,7 +16,9 @@ MAX_PAGES = 1500
 async def main():
     from app.database import engine, SessionLocal
     from app.models import Base, MS365User
-    from app.services.ms365_service import _is_non_human
+    from app.services.ms365_service import (
+        _normalize_user_row, _MS365_UPSERT_COLS, USER_SELECT, USER_EXPAND,
+    )
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy import text
     import httpx
@@ -30,7 +32,8 @@ async def main():
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     params = {
-        "$select": "id,displayName,mail,userPrincipalName,jobTitle,department,officeLocation",
+        "$select": USER_SELECT,
+        "$expand": USER_EXPAND,
         "$top": "999",
     }
     url = f"{GRAPH_BASE}/users"
@@ -43,11 +46,7 @@ async def main():
             stmt = pg_insert(MS365User).values(rows)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["azure_id"],
-                set_={
-                    "email": stmt.excluded.email, "name": stmt.excluded.name,
-                    "job_title": stmt.excluded.job_title, "department": stmt.excluded.department,
-                    "office_location": stmt.excluded.office_location, "synced_at": stmt.excluded.synced_at,
-                },
+                set_={col: getattr(stmt.excluded, col) for col in _MS365_UPSERT_COLS},
             )
             db.execute(stmt); db.commit()
         finally:
@@ -74,21 +73,16 @@ async def main():
                 mail = (u.get("mail") or "").lower()
                 if not mail.endswith(ORG_DOMAIN):
                     continue
-                name = u.get("displayName", "")
-                if _is_non_human(name, mail):
+                # Skip explicitly disabled accounts (ex-employees); accountEnabled
+                # comes from the expanded $select (requires User.Read.All).
+                if u.get("accountEnabled") is False:
                     continue
-                aid = u.get("id", "")
-                if not aid or aid in seen:
+                row = _normalize_user_row(u)  # also drops non-human / id-less accounts
+                if row is None or row["azure_id"] in seen:
                     continue
-                seen.add(aid)
-                rows.append({
-                    "azure_id": aid, "email": mail,
-                    "name": name,
-                    "job_title": u.get("jobTitle") or "",
-                    "department": u.get("department") or "",
-                    "office_location": u.get("officeLocation") or "",
-                    "synced_at": now,
-                })
+                seen.add(row["azure_id"])
+                row["synced_at"] = now
+                rows.append(row)
             commit(rows)
             stall = stall + 1 if not rows else 0
             url = data.get("@odata.nextLink")

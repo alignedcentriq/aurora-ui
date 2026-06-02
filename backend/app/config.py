@@ -207,7 +207,7 @@ class Config:
     )
     MICROSOFT_OAUTH_SCOPES = os.getenv(
         "MICROSOFT_OAUTH_SCOPES",
-        "openid profile email offline_access User.Read User.ReadBasic.All "
+        "openid profile email offline_access User.Read User.ReadBasic.All User.Read.All "
         "Mail.Read Mail.ReadWrite Mail.Send "
         "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
         "Chat.Read Chat.ReadWrite "

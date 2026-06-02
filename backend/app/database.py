@@ -150,6 +150,19 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_by_email VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP',
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_generated_documents_verify_token ON "{SCHEMA}".generated_documents(verify_token)',
+                # MS365 directory: richer profile fields + manager hierarchy (require User.Read.All)
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_id VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_type VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS company_name VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS mobile_phone VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS business_phone VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS city VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS state VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS country VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS account_enabled BOOLEAN',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS hire_date TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_email VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_name VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))

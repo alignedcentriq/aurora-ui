@@ -157,12 +157,59 @@ async def list_users(
                 "job_title": r.job_title,
                 "department": r.department,
                 "office_location": r.office_location,
+                "employee_id": r.employee_id,
+                "employee_type": r.employee_type,
+                "company_name": r.company_name,
+                "mobile_phone": r.mobile_phone,
+                "business_phone": r.business_phone,
+                "city": r.city,
+                "state": r.state,
+                "country": r.country,
+                "account_enabled": r.account_enabled,
+                "hire_date": r.hire_date.isoformat() if r.hire_date else None,
+                "manager_email": r.manager_email,
+                "manager_name": r.manager_name,
             }
             for r in rows
         ]
         return {"count": len(users), "users": users}
     finally:
         db.close()
+
+
+# ── User profile / hierarchy (on-demand Graph lookup, requires User.Read.All) ────
+
+@router.get("/users/{email}/profile")
+async def get_user_profile(email: str, user: CurrentUser = Depends(get_current_user)):
+    """Look up any org user's full profile by email/UPN, live from Graph."""
+    token = await _require_token(user)
+    from app.services.ms365_service import fetch_user_by_email
+    result = await fetch_user_by_email(token, email)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "User lookup failed"))
+    return result
+
+
+@router.get("/users/{email}/manager")
+async def get_user_manager(email: str, user: CurrentUser = Depends(get_current_user)):
+    """Return a user's manager from Azure AD."""
+    token = await _require_token(user)
+    from app.services.ms365_service import fetch_user_manager
+    result = await fetch_user_manager(token, email)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Manager lookup failed"))
+    return result
+
+
+@router.get("/users/{email}/reports")
+async def get_user_reports(email: str, user: CurrentUser = Depends(get_current_user)):
+    """Return a user's direct reports from Azure AD."""
+    token = await _require_token(user)
+    from app.services.ms365_service import fetch_user_direct_reports
+    result = await fetch_user_direct_reports(token, email)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Direct reports lookup failed"))
+    return result
 
 
 # ── Cancel Event ───────────────────────────────────────────────────────────────
