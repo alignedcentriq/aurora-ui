@@ -124,39 +124,39 @@ CLASSIFICATION RULES:
 5. confidence is your certainty: 0.9+ = very clear, 0.7-0.9 = likely, 0.5-0.7 = uncertain, <0.5 = very ambiguous
 
 EXAMPLES:
-- "install Node.js" → domain: it_support, sub_intent: software_install, entities: {{"software_name": "Node.js"}}
-- "my laptop is overheating" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "overheating"}}
-- "my system is very slow" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "performance"}}
-- "I need a GitHub Copilot license" → domain: it_support, sub_intent: license_request, entities: {{"license_name": "GitHub Copilot"}}
-- "request a monitor for my desk" → domain: it_support, sub_intent: asset_request, entities: {{"asset_type": "monitor"}}
-- "how many leaves do I have" → domain: deeplink, sub_intent: leave_balance, entities: {{}}
-- "apply sick leave from Monday" → domain: deeplink, sub_intent: submit_leave, entities: {{"leave_type": "sick"}}
-- "raise a complaint about AC not working" → domain: deeplink, sub_intent: powerapps_complaint, entities: {{"issue": "AC not working"}}
-- "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
-- "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
-- "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
-- "I want to borrow Atomic Habits" → domain: admin, sub_intent: bookshelf.borrow, entities: {{"book_name": "Atomic Habits"}}
-- "what books are available in the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
-- "I need a book" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
-- "looking for some reading material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
-- "I need learning material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
-- "recommend a book on machine learning" → domain: admin, sub_intent: bookshelf.discover, entities: {{"topic": "machine learning"}}
-- "browse the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
-- "I want to borrow a pen" → domain: admin, sub_intent: general_admin, entities: {{"item": "pen"}}
-- "check my book request status" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
-- "show my borrowed books" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
-- "return my book BK-12345" → domain: admin, sub_intent: bookshelf.return, entities: {{"ticket_id": "BK-12345"}}
-- "I finished reading Clean Code" → domain: admin, sub_intent: bookshelf.return, entities: {{"book_name": "Clean Code"}}
-- "extend my borrow for 7 more days" → domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
-- "renew Atomic Habits, I need more time" → domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
-- "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
-- "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
-- "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
-- "is Salween room free tomorrow 2-3pm" → domain: functional_manager, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
-- "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
-- "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
-- "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
-- "hi" → domain: general, sub_intent: greeting, entities: {{}}
+- "install Node.js" -> domain: it_support, sub_intent: software_install, entities: {{"software_name": "Node.js"}}
+- "my laptop is overheating" -> domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "overheating"}}
+- "my system is very slow" -> domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "performance"}}
+- "I need a GitHub Copilot license" -> domain: it_support, sub_intent: license_request, entities: {{"license_name": "GitHub Copilot"}}
+- "request a monitor for my desk" -> domain: it_support, sub_intent: asset_request, entities: {{"asset_type": "monitor"}}
+- "how many leaves do I have" -> domain: deeplink, sub_intent: leave_balance, entities: {{}}
+- "apply sick leave from Monday" -> domain: deeplink, sub_intent: submit_leave, entities: {{"leave_type": "sick"}}
+- "raise a complaint about AC not working" -> domain: deeplink, sub_intent: powerapps_complaint, entities: {{"issue": "AC not working"}}
+- "certification reimbursement policy" -> domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
+- "I need a parking sticker for my car" -> domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
+- "key for desk B-07" -> domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
+- "I want to borrow Atomic Habits" -> domain: admin, sub_intent: bookshelf.borrow, entities: {{"book_name": "Atomic Habits"}}
+- "what books are available in the library" -> domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need a book" -> domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "looking for some reading material" -> domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need learning material" -> domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "recommend a book on machine learning" -> domain: admin, sub_intent: bookshelf.discover, entities: {{"topic": "machine learning"}}
+- "browse the library" -> domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I want to borrow a pen" -> domain: admin, sub_intent: general_admin, entities: {{"item": "pen"}}
+- "check my book request status" -> domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "show my borrowed books" -> domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "return my book BK-12345" -> domain: admin, sub_intent: bookshelf.return, entities: {{"ticket_id": "BK-12345"}}
+- "I finished reading Clean Code" -> domain: admin, sub_intent: bookshelf.return, entities: {{"book_name": "Clean Code"}}
+- "extend my borrow for 7 more days" -> domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
+- "renew Atomic Habits, I need more time" -> domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
+- "show all company projects" -> domain: pmo, sub_intent: list_projects, entities: {{}}
+- "who has Udemy licenses" -> domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
+- "who reports to me" -> domain: functional_manager, sub_intent: team_structure, entities: {{}}
+- "is Salween room free tomorrow 2-3pm" -> domain: functional_manager, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "I need an experience certificate" -> domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
+- "generate an NOC for my visa" -> domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
+- "leave policy" -> domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
+- "hi" -> domain: general, sub_intent: greeting, entities: {{}}
 """
 
 
@@ -176,7 +176,7 @@ async def classify_intent_async(user_message: str) -> dict:
     """Async version of classify_intent — uses ainvoke to avoid blocking the event loop."""
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        print(f"[Router] Query expanded: '{user_message}' -> '{expanded_message}'")
 
     system = SystemMessage(content=_build_router_prompt())
     human = HumanMessage(content=expanded_message)
@@ -218,7 +218,7 @@ def classify_intent(user_message: str) -> dict:
     """
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        print(f"[Router] Query expanded: '{user_message}' -> '{expanded_message}'")
 
     system = SystemMessage(content=_build_router_prompt())
     human = HumanMessage(content=expanded_message)
