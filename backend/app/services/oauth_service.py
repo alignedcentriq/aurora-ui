@@ -227,7 +227,14 @@ async def _microsoft_profile(access_token: str) -> dict:
 
 ZOHO_SCOPES = os.getenv(
     "ZOHO_OAUTH_SCOPES",
-    "ZohoPeople.forms.ALL,ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,ZohoPeople.timetracker.ALL,ZohoPeople.performance.ALL,ZohoPeople.employee.ALL",
+    # Zoho uses ONE unified OAuth (accounts.zoho.com) across all products, so a single
+    # connection can carry People + Expense + Recruit scopes. Exact scope names depend on
+    # the org's Zoho edition; these are the read-only defaults. After changing this, the
+    # user must RECONNECT Zoho so the new scopes are consented (existing tokens won't have
+    # them — they return OAUTH_SCOPE_MISMATCH / code 57).
+    "ZohoPeople.forms.ALL,ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,ZohoPeople.timetracker.ALL,ZohoPeople.performance.ALL,ZohoPeople.employee.ALL,"
+    "ZohoExpense.expensereport.READ,ZohoExpense.reports.READ,ZohoExpense.organizations.READ,"
+    "ZohoRecruit.modules.READ,ZohoRecruit.settings.READ",
 )
 
 

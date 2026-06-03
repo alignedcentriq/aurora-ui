@@ -1,5 +1,5 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import InjectedState, ToolNode
@@ -104,13 +104,33 @@ def should_continue(state: ITState):
     return END
 
 
+# Read-only lookups whose service output is already display-ready and that never
+# feed a follow-up tool call — these skip the LLM re-read (no latency, no drift).
+_PASSTHROUGH_TOOLS = {"check_ticket_status", "get_my_tickets", "get_my_assets"}
+
+
+def it_passthrough(state: ITState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def route_after_tools(state: ITState):
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "it_assistant"
+
+
 # -- Graph --------------------------------------------------------------------
 
 workflow = StateGraph(ITState)
 workflow.add_node("it_assistant", it_assistant)
 workflow.add_node("tools", tool_node)
+workflow.add_node("passthrough", it_passthrough)
 workflow.set_entry_point("it_assistant")
 workflow.add_conditional_edges("it_assistant", should_continue, ["tools", END])
-workflow.add_edge("tools", "it_assistant")
+workflow.add_conditional_edges("tools", route_after_tools, ["passthrough", "it_assistant"])
+workflow.add_edge("passthrough", END)
 
 it_agent = workflow.compile()

@@ -1,6 +1,5 @@
 import { createRootRoute, Outlet, HeadContent, Scripts } from "@tanstack/react-router";
 import * as React from "react";
-import { BluffApp } from "../components/BluffApp";
 import { DefaultCatchBoundary } from "../components/DefaultCatchBoundary";
 import { NotFound } from "../components/NotFound";
 import appCss from "../styles.css?url";
@@ -52,23 +51,6 @@ export const Route = createRootRoute({
 function RootComponent() {
   const isBrowser = typeof window !== "undefined";
   const [isMsalInitialized, setIsMsalInitialized] = React.useState(false);
-  // Bluff ON by default (null or "1"). Only "0" means real UI.
-  const [isBluff, setIsBluff] = React.useState(
-    !isBrowser || localStorage.getItem("centriq_bluff") !== "0"
-  );
-
-  // Secret toggle: Ctrl+Shift+B flips bluff mode
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === "B") {
-        const next = localStorage.getItem("centriq_bluff") !== "0" ? "0" : "1";
-        localStorage.setItem("centriq_bluff", next);
-        setIsBluff(next !== "0");
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
 
   // MSAL initialization — must run before any conditional returns (Rules of Hooks)
   React.useEffect(() => {
@@ -84,14 +66,6 @@ function RootComponent() {
         });
     }
   }, [isBrowser]);
-
-  if (isBrowser && isBluff) {
-    return (
-      <RootDocument>
-        <BluffApp />
-      </RootDocument>
-    );
-  }
 
   if (!isBrowser || !isMsalInitialized) {
     return (
@@ -112,79 +86,20 @@ function RootComponent() {
   );
 }
 
-/** 4C brand splash with customizable loading character */
+/** Brand splash — just the Centriq AI heading */
 function SplashScreen() {
-  const { loadingCharId = "centriq", loadingCharCustom = "" } = (typeof useSettings === "function" ? useSettings() : {}) as { loadingCharId?: string; loadingCharCustom?: string };
-
-  const FOUR_C = [
-    { key: "Clarity",       color: "var(--clarity)",       desc: "Clear. Precise. Actionable." },
-    { key: "Connectivity",  color: "var(--connectivity)",  desc: "Systems united as one." },
-    { key: "Collaboration", color: "var(--collaboration)", desc: "People + AI, together." },
-    { key: "Capacity",      color: "var(--capacity)",      desc: "Freed to do the remarkable." },
-  ] as const;
-
-  const [activeC, setActiveC] = React.useState(0);
-  React.useEffect(() => {
-    const t = setInterval(() => setActiveC((p) => (p + 1) % 4), 1200);
-    return () => clearInterval(t);
-  }, []);
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background relative overflow-hidden">
       <AnimatedBackground />
 
-      <motion.div
-        initial={{ opacity: 0, scale: 0.92 }}
+      <motion.h1
+        initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-        className="flex flex-col items-center gap-8 z-10"
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        className="relative z-10 text-4xl font-black tracking-tight text-4c"
       >
-        {/* Loading character */}
-        <LoadingCharacterDisplay charId={loadingCharId} customChar={loadingCharCustom} size="lg" />
-
-        {/* Brand */}
-        <div className="flex flex-col items-center gap-1">
-          <h1 className="text-2xl font-black tracking-tight text-4c">Centriq AI</h1>
-          <p className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground/50">
-            Intelligent Workplace
-          </p>
-        </div>
-
-        {/* 4C Carousel */}
-        <div className="relative h-10 flex flex-col items-center justify-center">
-          {FOUR_C.map((c, i) => (
-            <motion.div
-              key={c.key}
-              className="absolute flex items-center gap-2"
-              animate={{
-                opacity: activeC === i ? 1 : 0,
-                y: activeC === i ? 0 : activeC > i ? -12 : 12,
-              }}
-              transition={{ duration: 0.4, ease: "easeOut" }}
-            >
-              <div className="h-1.5 w-1.5 rounded-full" style={{ background: c.color }} />
-              <span className="text-[13px] font-semibold" style={{ color: c.color }}>{c.key}</span>
-              <span className="text-[12px] text-muted-foreground font-medium">— {c.desc}</span>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* 4C progress bar */}
-        <div className="flex gap-1">
-          {FOUR_C.map((c, i) => (
-            <motion.div
-              key={c.key}
-              className="h-[3px] rounded-full"
-              style={{ background: c.color }}
-              animate={{ width: activeC === i ? 32 : 8, opacity: activeC === i ? 1 : 0.3 }}
-              transition={{ duration: 0.4 }}
-            />
-          ))}
-        </div>
-
-        {/* Loading dots */}
-        <LoadingDots />
-      </motion.div>
+        Centriq AI
+      </motion.h1>
     </div>
   );
 }

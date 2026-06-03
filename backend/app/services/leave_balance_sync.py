@@ -95,6 +95,16 @@ def get_or_refresh(email: str) -> dict:
         {"success": True,  "balances": [...], "source": "cache"|"live", "cached_at": "..."}
         {"success": False, "error": "..."}
     """
+    from app.config import settings
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return {
+            "success":   True,
+            "balances":  zoho_demo_data.leave_balances(),
+            "source":    "demo",
+            "cached_at": datetime.datetime.utcnow().isoformat(),
+        }
+
     cached = _read_cache(email)
     if cached and cached["age_seconds"] < CACHE_TTL and cached["sync_status"] == "ok":
         return {

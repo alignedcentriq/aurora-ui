@@ -266,7 +266,11 @@ async def _microsoft_profile(access_token: str) -> dict:
 
 ZOHO_SCOPES = os.getenv(
     "ZOHO_OAUTH_SCOPES",
-    "ZOHOPEOPLE.forms.ALL,ZOHOPEOPLE.leave.ALL,ZOHOPEOPLE.attendance.ALL",
+    # People + Expense + Recruit on one unified Zoho OAuth connection. Reconnect required
+    # after adding scopes (existing tokens lack them → OAUTH_SCOPE_MISMATCH).
+    "ZohoPeople.forms.ALL,ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,"
+    "ZohoExpense.expensereport.READ,ZohoExpense.reports.READ,ZohoExpense.organizations.READ,"
+    "ZohoRecruit.modules.READ,ZohoRecruit.settings.READ",
 )
 
 

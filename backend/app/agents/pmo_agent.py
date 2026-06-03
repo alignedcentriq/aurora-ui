@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, List, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -358,10 +358,35 @@ def pmo_assistant(state: PMOState):
 
 # ── Workflow ───────────────────────────────────────────────────────────────────
 
+# Tools whose output is display-ready and never feeds a follow-up tool call.
+# Report tools especially benefit: they carry a [DOWNLOAD_PDF:...] tag the LLM is
+# only *instructed* to preserve — passing them through verbatim removes the risk
+# of the model mangling or dropping the tag. list_projects is excluded because the
+# PMO prompt deliberately chains it (call list_projects → answer from the names).
+_PASSTHROUGH_TOOLS = {
+    "generate_project_report", "generate_multi_project_report",
+    "get_project_status", "get_project_achievements", "search_people_directory",
+}
+
+
+def pmo_passthrough(state: PMOState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def _route_after_tools(state: PMOState) -> str:
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "pmo_assistant"
+
+
 pmo_workflow = StateGraph(PMOState)
 pmo_workflow.add_node("smart_dispatcher", smart_dispatcher)
 pmo_workflow.add_node("pmo_assistant", pmo_assistant)
 pmo_workflow.add_node("tools", ToolNode(pmo_tools))
+pmo_workflow.add_node("passthrough", pmo_passthrough)
 
 pmo_workflow.set_entry_point("smart_dispatcher")
 pmo_workflow.add_conditional_edges(
@@ -370,6 +395,7 @@ pmo_workflow.add_conditional_edges(
     {"done": END, "tools": "tools", "pmo_assistant": "pmo_assistant"},
 )
 pmo_workflow.add_conditional_edges("pmo_assistant", tools_condition)
-pmo_workflow.add_edge("tools", "pmo_assistant")
+pmo_workflow.add_conditional_edges("tools", _route_after_tools, ["passthrough", "pmo_assistant"])
+pmo_workflow.add_edge("passthrough", END)
 
 pmo_agent = pmo_workflow.compile()

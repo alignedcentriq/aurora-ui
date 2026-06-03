@@ -392,14 +392,39 @@ def should_continue(state: AdminState):
     return END
 
 
+# Read-only lookups whose service output is already display-ready AND that never
+# feed a follow-up tool call. These skip the LLM re-read entirely (no latency, no
+# paraphrase drift). Tools that can chain (e.g. list_available_books → request_book)
+# are deliberately excluded so ReAct flows still work.
+_PASSTHROUGH_TOOLS = {
+    "check_reimbursement_status", "get_parking_info", "get_vendor_ratings",
+    "check_complaint_status", "check_book_requests",
+}
+
+
+def admin_passthrough(state: AdminState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def route_after_tools(state: AdminState):
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "admin_assistant"
+
+
 # ── Graph ─────────────────────────────────────────────────────────────────────
 
 workflow = StateGraph(AdminState)
 workflow.add_node("admin_assistant", admin_assistant)
 workflow.add_node("tools", tool_node)
+workflow.add_node("passthrough", admin_passthrough)
 
 workflow.set_entry_point("admin_assistant")
 workflow.add_conditional_edges("admin_assistant", should_continue, ["tools", END])
-workflow.add_edge("tools", "admin_assistant")
+workflow.add_conditional_edges("tools", route_after_tools, ["passthrough", "admin_assistant"])
+workflow.add_edge("passthrough", END)
 
 admin_agent = workflow.compile()

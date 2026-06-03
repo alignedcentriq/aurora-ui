@@ -539,6 +539,10 @@ def submit_hr_query(
 
 def _zoho_token_or_error(email: str) -> str | None:
     """Return valid Zoho token or None. Uses _run_coro to bridge async → sync."""
+    # In demo mode the services return mock data and ignore the token, so don't require
+    # a real Zoho connection — hand back a dummy token so tools don't show "connect Zoho".
+    if settings.ZOHO_DEMO_MODE:
+        return "demo-mode-token"
     try:
         from app.services.email_service import _run_coro
         from app.services.oauth_service import get_valid_token
@@ -576,11 +580,36 @@ def get_my_timesheet(week: str = "", state: Annotated[dict, InjectedState] = Non
         return f"Error fetching timesheet: {exc}"
 
 
+def _format_attendance(data: dict, who: str = "") -> str:
+    title = f"Attendance — {who} — {data['month']}" if who else f"Attendance — {data['month']}"
+    lines = [
+        f"**{title}**\n",
+        f"- Present: {data['present']} days",
+        f"- Absent: {data['absent']} days",
+        f"- Work From Home: {data['wfh']} days",
+        f"- Late arrivals: {data['late']} days",
+    ]
+    if data.get("half_day"):
+        lines.append(f"- Half-days: {data['half_day']} days")
+    return "\n".join(lines)
+
+
 @tool
 def get_my_attendance(month: str = "", year: str = "", state: Annotated[dict, InjectedState] = None) -> str:
     """Get my monthly attendance summary: days present, absent, WFH, and late arrivals.
     month: numeric month 1-12. year: 4-digit year. Leave blank for current month."""
     email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    # Attendance is backed by the internal `attendance` table (demo data). In demo mode read
+    # from the DB; otherwise fall back to the live Zoho People API.
+    if settings.ZOHO_DEMO_MODE:
+        try:
+            from app.services.attendance_service import summary
+            data = summary(email, month, year)
+            if not data.get("success"):
+                return "No attendance records found for your account."
+            return _format_attendance(data)
+        except Exception as exc:
+            return f"Error fetching attendance: {exc}"
     token = _zoho_token_or_error(email)
     if not token:
         return _ZOHO_CONNECT_MSG
@@ -589,15 +618,35 @@ def get_my_attendance(month: str = "", year: str = "", state: Annotated[dict, In
         data = get_attendance_summary(token, month, year)
         if not data.get("success"):
             return "Could not retrieve attendance data. Please try again."
-        return (
-            f"**Attendance — {data['month']}**\n\n"
-            f"- Present: {data['present']} days\n"
-            f"- Absent: {data['absent']} days\n"
-            f"- Work From Home: {data['wfh']} days\n"
-            f"- Late arrivals: {data['late']} days"
-        )
+        return _format_attendance(data)
     except ValueError:
         return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching attendance: {exc}"
+
+
+@tool
+def get_employee_attendance(employee: str, month: str = "", year: str = "",
+                            state: Annotated[dict, InjectedState] = None) -> str:
+    """Get the monthly attendance summary for one of your direct reportees, by name or email.
+    Managers can only view attendance for employees who report directly to them (and themselves).
+    employee: the reportee's full name or email address.
+    month: numeric month 1-12. year: 4-digit year. Leave blank for current month."""
+    if not settings.ZOHO_DEMO_MODE:
+        return ("Per-employee attendance requires Zoho admin API access, which isn't enabled "
+                "yet. Only your own attendance is available right now.")
+    requester_email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    try:
+        from app.services.attendance_service import summary_for_manager
+        data = summary_for_manager(requester_email, employee, month, year)
+        if not data.get("success"):
+            err = data.get("error")
+            if err == "not_authorized":
+                return data.get("message", "You can only view attendance for your direct reportees.")
+            if err == "requester_not_found":
+                return "Could not find your employee profile, so reportee access can't be verified."
+            return f"No employee found matching '{employee}'. Try their full name or work email."
+        return _format_attendance(data, who=data.get("employee", employee))
     except Exception as exc:
         return f"Error fetching attendance: {exc}"
 
@@ -661,6 +710,118 @@ def get_my_training_records(state: Annotated[dict, InjectedState] = None) -> str
         return _ZOHO_CONNECT_MSG
     except Exception as exc:
         return f"Error fetching training records: {exc}"
+
+
+@tool
+def get_my_expense_reports(status: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my expense reports from Zoho Expense, with their approval/reimbursement status.
+    status: optional filter — submitted, approved, reimbursed. Leave blank for all."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_expense_service import get_my_expense_reports as _fetch
+        data = _fetch(token, status)
+        if not data.get("success"):
+            return "Could not retrieve expense reports. Please try again."
+        reports = data.get("reports", [])
+        if not reports:
+            return "No expense reports found."
+        lines = ["**Expense Reports**\n"]
+        for r in reports:
+            amt = f"{r['total']} {r['currency']}".strip()
+            lines.append(f"- **{r['name']}** — {r['status']} — {amt}")
+            if r.get("submitted_date"):
+                lines.append(f"  Submitted: {r['submitted_date']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching expense reports: {exc}"
+
+
+@tool
+def get_my_reimbursement_status(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my pending and reimbursed expense totals from Zoho Expense."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_expense_service import get_reimbursement_status
+        data = get_reimbursement_status(token)
+        if not data.get("success"):
+            return "Could not retrieve reimbursement status. Please try again."
+        pending = data.get("pending", [])
+        lines = [
+            "**Reimbursement Status**\n",
+            f"- Pending reimbursement: **{data['pending_total']}**",
+            f"- Already reimbursed: **{data['reimbursed_total']}**",
+        ]
+        if pending:
+            lines.append("\n**Awaiting reimbursement:**")
+            for r in pending:
+                lines.append(f"- {r['name']} — {r['status']} — {r['reimbursable']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching reimbursement status: {exc}"
+
+
+@tool
+def get_open_positions(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get currently open job openings from Zoho Recruit."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_recruit_service import get_open_positions as _fetch
+        data = _fetch(token)
+        if not data.get("success"):
+            return "Could not retrieve open positions. Please try again."
+        positions = data.get("positions", [])
+        if not positions:
+            return "No open positions found at this time."
+        lines = ["**Open Positions**\n"]
+        for p in positions:
+            loc = f" — {p['city']}" if p.get("city") else ""
+            lines.append(f"- **{p['title']}**{loc} ({p['status']})")
+            if p.get("date_opened"):
+                lines.append(f"  Opened: {p['date_opened']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching open positions: {exc}"
+
+
+@tool
+def get_candidate_status(email_address: str, state: Annotated[dict, InjectedState] = None) -> str:
+    """Look up a candidate's recruitment pipeline status in Zoho Recruit by their email.
+    email_address: the candidate's email to search for."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_recruit_service import get_candidate_status as _fetch
+        data = _fetch(token, email_address)
+        if not data.get("success"):
+            return "Could not retrieve candidate status. Please try again."
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return f"No candidate found for {email_address}."
+        lines = ["**Candidate Status**\n"]
+        for c in candidates:
+            lines.append(f"- **{c['name']}** ({c['email']}) — {c['status']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching candidate status: {exc}"
 
 
 _ALCHEMY_CONNECT_MSG = (
@@ -749,7 +910,10 @@ hr_tools = [
     submit_grievance, submit_grievance_for,
     trigger_onboarding_checklist, trigger_offboarding_checklist,
     submit_hr_query,
-    get_my_timesheet, get_my_attendance, get_my_appraisal_status, get_my_training_records,
+    get_my_timesheet, get_my_attendance, get_employee_attendance,
+    get_my_appraisal_status, get_my_training_records,
+    get_my_expense_reports, get_my_reimbursement_status,
+    get_open_positions, get_candidate_status,
     get_my_alchemy_skills, get_alchemy_skills_overview,
 ]
 hr_tool_node = ToolNode(hr_tools)
@@ -1556,7 +1720,8 @@ def hr_agent(state: AgentState):
             f"- Leave balance → get_leave_balance(email='{user_email}')\n"
             f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
             f"- Policy question → search_hr_policies, answer from result\n"
-            f"- Employee search → search_employee_directory\n"
+            f"- Who is X / single person's profile → get_employee_profile(name_or_email)\n"
+            f"- Employee search (by skill/function/multiple people) → search_employee_directory\n"
             f"- Org chart / team → get_org_chart or get_team_roster\n"
             f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
             f"- Document → generate_hr_document(target_email='{user_email}')\n"
@@ -1927,11 +2092,36 @@ def placeholder_agent(state: AgentState):
     return {"messages": [AIMessage(content=get_placeholder_response(domain))]}
 
 
+# Read-only directory / data tools that already return display-ready Markdown.
+# Their output is deterministic structured data — running it through the
+# summarizer LLM only adds latency and paraphrase drift (e.g. turning a clean
+# profile into a chatty letter signed "[Your Name]"), so we pass it through
+# verbatim and skip the LLM entirely.
+_PASSTHROUGH_TOOLS = {
+    "search_employee_directory", "get_employee_profile", "get_org_chart",
+    "get_team_roster", "find_skills_expert", "get_department_headcount",
+    "search_people_directory", "get_leave_balance", "get_announcements",
+    "get_team_absence", "get_team_absence_for",
+    "get_my_timesheet", "get_my_attendance", "get_my_appraisal_status",
+    "get_my_training_records", "get_my_expense_reports", "get_my_reimbursement_status",
+    "get_open_positions", "get_candidate_status",
+    "get_my_alchemy_skills", "get_alchemy_skills_overview",
+}
+
+
 def summarizer(state: AgentState):
-    """Converts tool results to natural language, preserving download tags."""
+    """Converts tool results to natural language, preserving download tags.
+
+    For deterministic directory/data tools (see _PASSTHROUGH_TOOLS) the result
+    is already formatted, so it is returned as-is with no LLM call."""
     tool_message = state["messages"][-1]
     tool_output = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
-    
+
+    # Zero-LLM fast path for display-ready structured results.
+    tool_name = getattr(tool_message, "name", "")
+    if tool_name in _PASSTHROUGH_TOOLS:
+        return {"messages": [AIMessage(content=str(tool_output).strip())]}
+
     # Use HumanMessage as some models (like llama3.2) return empty for SystemMessage-only prompts
     prompt = [
         HumanMessage(content=f"""You are an HR Assistant. Summarize this tool result for the employee.
@@ -1949,11 +2139,18 @@ INSTRUCTIONS:
     try:
         response = llm_controls.get_llm("summarizer", default_timeout=20).invoke(prompt)
         content = response.content.strip()
-        
-        # Fallback if content is empty or model hallucinated the example tag
-        if not content or "[DOWNLOAD_PDF:url:title]" in content:
+
+        # A download tag in the summary is only legitimate if the underlying tool
+        # result actually produced one. Otherwise the model has parroted the
+        # example tag from the prompt (e.g. "[DOWNLOAD_PDF:url:title]"), which
+        # leaks a bogus "Download title" link into the UI. Strip any invented tag.
+        if not DOWNLOAD_TAG_PATTERN.search(tool_output):
+            content = DOWNLOAD_TAG_PATTERN.sub("", content).strip()
+
+        # Fallback if content is empty after cleanup
+        if not content:
             content = f"I've retrieved the information for you: {tool_output}"
-            
+
         return {"messages": [AIMessage(content=content)]}
     except Exception as e:
         return {"messages": [AIMessage(content=f"The operation was successful, but I had trouble summarizing the result: {tool_output}")]}

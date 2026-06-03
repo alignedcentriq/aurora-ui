@@ -31,6 +31,10 @@ def get_timesheet(token: str, week_start: str = "") -> dict:
 
     Returns: {"success": True, "logs": [...], "total_hours": float}
     """
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return zoho_demo_data.timesheet(week_start)
+
     if not week_start:
         today = datetime.date.today()
         week_start = (today - datetime.timedelta(days=today.weekday())).isoformat()
@@ -72,6 +76,10 @@ def get_attendance_summary(token: str, month: str = "", year: str = "") -> dict:
 
     Returns: {"success": True, "month": "June 2026", "present": int, "absent": int, "wfh": int, "late": int}
     """
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return zoho_demo_data.attendance_summary(month, year)
+
     today = datetime.date.today()
     m = int(month) if month else today.month
     y = int(year) if year else today.year
@@ -110,6 +118,10 @@ def get_appraisal_status(token: str) -> dict:
 
     Returns: {"success": True, "cycles": [...]}
     """
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return zoho_demo_data.appraisal_status()
+
     resp = requests.get(
         f"{_BASE}/people/api/v2/performance/appraisals",
         headers=_headers(token),
@@ -137,6 +149,10 @@ def get_training_records(token: str) -> dict:
 
     Returns: {"success": True, "completed": [...], "upcoming": [...]}
     """
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return zoho_demo_data.training_records()
+
     resp = requests.get(
         f"{_BASE}/people/api/v2/training/trainings",
         headers=_headers(token),

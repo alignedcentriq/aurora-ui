@@ -230,6 +230,15 @@ class Config:
     ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "")
     ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "") or "https://accounts.zoho.com"
     ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "") or "https://people.zoho.com"
+    # Expense and Recruit live on different hosts than People (cannot reuse ZOHO_BASE_URL).
+    # Recruit's data API is recruit.zoho.com/recruit/v2 (the www.zohoapis.com/recruit form
+    # bounces to a CRM error page). On the .in datacenter, override these env vars to .in.
+    ZOHO_EXPENSE_BASE_URL = os.getenv("ZOHO_EXPENSE_BASE_URL", "") or "https://www.zohoapis.com/expense/v1"
+    ZOHO_RECRUIT_BASE_URL = os.getenv("ZOHO_RECRUIT_BASE_URL", "") or "https://recruit.zoho.com/recruit/v2"
+    # DEMO MODE: when true, all Zoho service calls (People/Expense/Recruit) return realistic
+    # mock data instead of hitting the live API. Used for competition demos while real API
+    # access is pending org approval. Flip to false once the admin grants API access.
+    ZOHO_DEMO_MODE     = os.getenv("ZOHO_DEMO_MODE", "true").lower() in ("1", "true", "yes", "on")
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
 

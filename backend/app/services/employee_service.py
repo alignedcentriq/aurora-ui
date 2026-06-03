@@ -6,7 +6,7 @@ Used by the HR agent for directory search, org-chart, skill-matching, etc.
 from typing import Optional
 from sqlalchemy import or_, func
 from app.database import SessionLocal
-from app.models import Employee, EmployeeZohoProfile
+from app.models import Employee, EmployeeZohoProfile, MS365User, EmployeeSkill
 
 
 class EmployeeService:
@@ -26,6 +26,8 @@ class EmployeeService:
                 q = q.filter(or_(
                     EmployeeZohoProfile.first_name.ilike(term),
                     EmployeeZohoProfile.last_name.ilike(term),
+                    # Match the full "First Last" name, e.g. "tejas autkar"
+                    (EmployeeZohoProfile.first_name + " " + EmployeeZohoProfile.last_name).ilike(term),
                     EmployeeZohoProfile.designation.ilike(term),
                     EmployeeZohoProfile.function.ilike(term),
                     EmployeeZohoProfile.skill_set.ilike(term),
@@ -39,6 +41,12 @@ class EmployeeService:
 
             results = q.limit(limit).all()
             if not results:
+                # Fall back to the MS365 / Azure AD directory — many people exist
+                # there (synced via Graph) without a Zoho profile yet.
+                if query:
+                    ms = EmployeeService._search_ms365(query, limit)
+                    if ms:
+                        return ms
                 return "No employees found matching your search."
 
             lines = []
@@ -54,11 +62,88 @@ class EmployeeService:
             db.close()
 
     @staticmethod
+    def _search_ms365(query: str, limit: int = 10) -> Optional[str]:
+        """Fallback lookup against the MS365 / Azure AD directory (ms365_users)."""
+        db = SessionLocal()
+        try:
+            term = f"%{query}%"
+            rows = (
+                db.query(MS365User)
+                .filter(or_(
+                    MS365User.name.ilike(term),
+                    MS365User.email.ilike(term),
+                    MS365User.job_title.ilike(term),
+                    MS365User.department.ilike(term),
+                ))
+                .limit(limit)
+                .all()
+            )
+            if not rows:
+                return None
+            lines = []
+            for u in rows:
+                mgr = u.manager_name or "N/A"
+                lines.append(
+                    f"• **{u.name or u.email}** | {u.job_title or 'N/A'} | {u.department or 'N/A'} | "
+                    f"Reporting to: {mgr} | Email: {u.email or 'N/A'}"
+                )
+            return (
+                f"Found {len(rows)} employee(s) in the Microsoft 365 directory:\n"
+                + "\n".join(lines)
+            )
+        finally:
+            db.close()
+
+    @staticmethod
+    def _real_skills(db, email: str) -> str:
+        """Return the employee's self-entered skills (employee_skills table),
+        formatted for display. Empty string if none on file."""
+        if not email:
+            return ""
+        emp = db.query(Employee).filter(Employee.email.ilike(email)).first()
+        if not emp:
+            return ""
+        rows = (
+            db.query(EmployeeSkill)
+            .filter(EmployeeSkill.employee_id == emp.id)
+            .order_by(EmployeeSkill.is_primary.desc())
+            .all()
+        )
+        parts = []
+        for s in rows:
+            label = s.skill
+            extras = []
+            if s.is_primary:
+                extras.append("primary")
+            if s.years_experience:
+                extras.append(f"{s.years_experience:g} yrs")
+            if s.certification:
+                extras.append(f"cert: {s.certification}")
+            if extras:
+                label += f" ({', '.join(extras)})"
+            parts.append(label)
+        return ", ".join(parts)
+
+    @staticmethod
     def get_profile(identifier: str) -> str:
-        """Get full non-sensitive profile by name or email."""
+        """Get a non-sensitive profile by name or email.
+
+        Authoritative live fields (designation, office location, manager,
+        department) come from the MS365 / Azure AD directory (User.Read.All).
+        Skills come from the self-entered employee_skills table. The Zoho CSV
+        profile is used only to fill fields MS365 doesn't carry.
+        """
         db = SessionLocal()
         try:
             term = f"%{identifier}%"
+
+            # Real, live record from Azure AD.
+            ms = db.query(MS365User).filter(or_(
+                MS365User.email.ilike(term),
+                MS365User.name.ilike(term),
+            )).first()
+
+            # Supplementary CSV-sourced record (may be stale / missing).
             profile = db.query(EmployeeZohoProfile).filter(or_(
                 EmployeeZohoProfile.official_email.ilike(term),
                 EmployeeZohoProfile.first_name.ilike(term),
@@ -66,33 +151,52 @@ class EmployeeService:
                 (EmployeeZohoProfile.first_name + " " + EmployeeZohoProfile.last_name).ilike(term),
             )).first()
 
-            if not profile:
+            if not ms and not profile:
                 return f"No employee profile found for '{identifier}'."
 
-            name = f"{profile.first_name or ''} {profile.last_name or ''}".strip()
+            def pick(*vals):
+                for v in vals:
+                    if v:
+                        return v
+                return "N/A"
+
+            email = pick(
+                ms.email if ms else None,
+                profile.official_email if profile else None,
+            )
+            name = pick(
+                ms.name if ms else None,
+                f"{profile.first_name or ''} {profile.last_name or ''}".strip() if profile else None,
+                identifier,
+            )
+
+            # Office location: prefer the explicit Azure AD officeLocation,
+            # then fall back to city/state/country.
+            office = "N/A"
+            if ms:
+                geo = ", ".join([p for p in (ms.city, ms.state, ms.country) if p])
+                office = pick(ms.office_location, geo)
+
+            skills = EmployeeService._real_skills(db, email if email != "N/A" else "")
+
             lines = [
                 f"**Employee Profile — {name}**",
-                f"• **Email:** {profile.official_email or 'N/A'}",
-                f"• **Designation:** {profile.designation or 'N/A'}",
-                f"• **Function:** {profile.function or 'N/A'}",
-                f"• **Level / Grade:** {profile.level or 'N/A'} / {profile.grade or 'N/A'}",
-                f"• **Employment Type:** {profile.employment_type or 'N/A'}",
-                f"• **Work Phone:** {profile.work_phone or 'N/A'} (Ext: {profile.extension or 'N/A'})",
-                f"• **Reporting Manager:** {profile.reporting_manager or 'N/A'}",
-                f"• **Functional Manager:** {profile.functional_manager or 'N/A'}",
-                f"• **Project Manager:** {profile.project_manager or 'N/A'}",
-                f"• **Date of Joining:** {profile.date_of_joining or 'N/A'}",
-                f"• **Tenure at AA:** {profile.tenure_in_aa or 'N/A'}",
-                f"• **Total Experience:** {profile.total_experience or 'N/A'}",
-                f"• **Skills:** {profile.skill_set or 'N/A'}",
-                f"• **Expertise / Ask Me About:** {profile.expertise or 'N/A'}",
-                f"• **Languages Known:** {profile.language_known or 'N/A'}",
-                f"• **About:** {profile.about_me or 'N/A'}",
-                f"• **Blood Group:** {profile.blood_group or 'N/A'}",
-                f"• **Onboarding Status:** {profile.onboarding_status or 'N/A'}",
-                f"• **Nationality:** {profile.nationality or 'N/A'}",
-                f"• **Tags:** {profile.tags or 'N/A'}",
+                f"• **Email:** {email}",
+                f"• **Designation:** {pick(ms.job_title if ms else None, profile.designation if profile else None)}",
+                f"• **Department / Function:** {pick(ms.department if ms else None, profile.function if profile else None)}",
+                f"• **Office Location:** {office}",
+                f"• **Reporting Manager:** {pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)}",
+                f"• **Skills:** {skills or 'None on file'}",
             ]
+            # Supplementary detail from the Zoho profile, only where present.
+            if profile:
+                lines.extend([
+                    f"• **Level / Grade:** {profile.level or 'N/A'} / {profile.grade or 'N/A'}",
+                    f"• **Employment Type:** {pick(profile.employment_type, ms.employee_type if ms else None)}",
+                    f"• **Total Experience:** {profile.total_experience or 'N/A'}",
+                    f"• **Expertise / Ask Me About:** {profile.expertise or 'N/A'}",
+                    f"• **Languages Known:** {profile.language_known or 'N/A'}",
+                ])
             return "\n".join(lines)
         finally:
             db.close()
