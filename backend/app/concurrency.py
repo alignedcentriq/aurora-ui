@@ -291,7 +291,13 @@ def _build_chat_gate() -> BaseChatGate:
 
     if use_redis:
         try:
+            import redis as sync_redis
             import redis.asyncio as aioredis
+
+            # Probe synchronously at startup so we fall back before any request hits.
+            probe = sync_redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+            probe.ping()
+            probe.close()
 
             client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
             print(
