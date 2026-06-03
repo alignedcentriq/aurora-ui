@@ -2,7 +2,7 @@
 Centriq AI — Multi-Agent LangGraph Brain
 
 Architecture:
-  User Message → Intent Router (gpt-oss:latest / 20.9B) → Domain Agent (gpt-oss:latest / 20.9B)
+  User Message -> Intent Router (gpt-oss:latest / 20.9B) -> Domain Agent (gpt-oss:latest / 20.9B)
                                          ↓
                               HR Agent (active, with tools)
                               Admin Agent (placeholder)
@@ -256,7 +256,7 @@ async def context_manager_node(state: AgentState) -> dict:
     updated_feedback = (
         f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{summary_text}\n\n{existing_feedback}"
     )
-    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens → summary)")
+    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens -> summary)")
     return {
         "conversation_summary": summary_text,
         "feedback_context": updated_feedback,
@@ -1030,11 +1030,11 @@ async def intent_router(state: AgentState):
         re.IGNORECASE,
     )
     if _LB_RE.search(last_human):
-        print("[Router] Fast-path leave balance → deeplink")
+        print("[Router] Fast-path leave balance -> deeplink")
         return {
             "domain": "deeplink",
             "route_confidence": 1.0,
-            "route_reasoning": "Fast-path: leave balance query → deeplink/Zoho.",
+            "route_reasoning": "Fast-path: leave balance query -> deeplink/Zoho.",
             "sub_intent": "leave_balance",
             "entities": {},
         }
@@ -1086,7 +1086,7 @@ async def intent_router(state: AgentState):
     keyword_result = _try_keyword_route(last_human)
     if keyword_result:
         print(
-            f"[Router] Keyword fast-path → {keyword_result['domain']} "
+            f"[Router] Keyword fast-path -> {keyword_result['domain']} "
             f"({keyword_result['sub_intent']})"
         )
         return {
@@ -1169,17 +1169,17 @@ def hr_agent(state: AgentState):
             f"Always respond in English regardless of the language of the user's message.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
-            f"- Leave balance → get_leave_balance(email='{user_email}')\n"
-            f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
-            f"- Policy question → search_hr_policies, answer from result\n"
-            f"- Employee search → search_employee_directory\n"
-            f"- Org chart / team → get_org_chart or get_team_roster\n"
-            f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
-            f"- Document → generate_hr_document(target_email='{user_email}')\n"
-            f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
-            f"- Onboarding → trigger_onboarding_checklist\n"
-            f"- Offboarding → trigger_offboarding_checklist\n"
-            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
+            f"- Leave balance -> get_leave_balance(email='{user_email}')\n"
+            f"- Apply leave -> apply_leave with inferred leave_type (default Casual)\n"
+            f"- Policy question -> search_hr_policies, answer from result\n"
+            f"- Employee search -> search_employee_directory\n"
+            f"- Org chart / team -> get_org_chart or get_team_roster\n"
+            f"- Team absence -> get_team_absence_for(manager_email='{user_email}')\n"
+            f"- Document -> generate_hr_document(target_email='{user_email}')\n"
+            f"- Grievance -> collect category + description + ask if anonymous, THEN submit_grievance_for\n"
+            f"- Onboarding -> trigger_onboarding_checklist\n"
+            f"- Offboarding -> trigger_offboarding_checklist\n"
+            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) -> "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
             f"Never answer from training knowledge — use tools only.\n",
@@ -1187,6 +1187,14 @@ def hr_agent(state: AgentState):
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
+
+    user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    try:
+        context_answer = PromptService.check_context_relevance("hr", user_question)
+        if context_answer:
+            return {"messages": [AIMessage(content=context_answer)]}
+    except Exception:
+        pass  # non-fatal — fall through to normal agent
 
     try:
         response = hr_llm.invoke(messages)
@@ -1629,7 +1637,7 @@ workflow.add_node("summarizer", summarizer)
 
 workflow.set_entry_point("intent_router")
 # context_manager sits between router and feedback_lookup:
-# intent_router → context_manager (compress if >6000 tokens) → feedback_lookup → domain agent
+# intent_router -> context_manager (compress if >6000 tokens) -> feedback_lookup -> domain agent
 workflow.add_edge("intent_router", "context_manager")
 workflow.add_edge("context_manager", "feedback_lookup")
 workflow.add_conditional_edges("feedback_lookup", route_to_agent)
