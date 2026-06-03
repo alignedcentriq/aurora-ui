@@ -1,23 +1,49 @@
 
+import os
+import time
+import threading
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.models import (
     Base,
     Employee,
     Leave,
-    Payroll,
     Attendance,
     Policy,
+    PolicyChunk,
+    PolicyImage,
     Project,
-    Sprint,
-    TeamCapacity,
-    Milestone,
+    Reimbursement,
+    ITTicket,
+    PromptConfig,
+    PromptDraft,
+    HITLRequest,
+    ParkingSticker,
+    Accommodation,
+    FacilityComplaint,
+    FoodVendorFeedback,
+    EmployeeZohoProfile,
+    EmployeeAllocation,
+    Announcement,
+    FoodComplaint,
+    ChatFeedback,
+    ApprovalToken,
+    Grievance,
+    CompanySettings,
+    LeaveBalanceCache,
+    ConversationSummary,
+    UserMemory,
+    ToolSession,
+    AiRequestLog,
+    AiLlmCallLog,
+    LeaveType,
+    LeaveBalance,
+    HRQuery,
     SCHEMA,
 )
 from app.config import settings
 import datetime
-
-import random
 
 # Database engine initialization
 DATABASE_URL = settings.DATABASE_URL
@@ -30,49 +56,152 @@ else:
     engine = _base_engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def _background_embed_policies():
+    """Runs in a daemon thread — chunks + embeds all un-chunked policies."""
+    try:
+        from app.services.policy_service import PolicyService
+        PolicyService.embed_all_policies()
+    except Exception as e:
+        print(f"[background] Policy embedding failed: {e}")
+
+
+
 def init_db():
-    # Ensure schema exists
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
             conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
-        
+
     Base.metadata.create_all(bind=engine)
-    
-    # Simple migration: ensure achievements column exists in projects table
+
+    # Drop removed tables
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
             try:
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT'))
+                conn.execute(text(f'DROP TABLE IF EXISTS "{SCHEMA}".payroll CASCADE'))
                 conn.commit()
-            except Exception as e:
-                print(f"Migration notice (achievements column): {e}")
+            except Exception:
+                pass
+
+    # Migrations: add columns that may not exist in older deployments
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            for stmt in [
+                f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
+                f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_url VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS image_urls JSONB',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".company_settings ('
+                f'  key VARCHAR PRIMARY KEY, value TEXT NOT NULL DEFAULT \'\','
+                f'  updated_at TIMESTAMP, updated_by VARCHAR'
+                f')',
+                f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
+                # Rename minio_key/minio_etag to source_key/source_etag
+                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key',
+                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag',
+                # BM25 full-text search on policy chunks (Phase 2 RAG upgrade)
+                f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector '
+                f"GENERATED ALWAYS AS (to_tsvector('english', COALESCE(text, ''))) STORED",
+                # User memory HNSW index (created after table exists via Base.metadata.create_all)
+                f'CREATE INDEX IF NOT EXISTS idx_user_memories_email ON "{SCHEMA}".user_memories(user_email)',
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Migration notice: {e}")
+
+    # pgvector column migrations: convert TEXT embeddings to vector(768)
+    if _base_engine.dialect.name != "sqlite":
+        with engine.connect() as conn:
+            # policy_chunks.embedding: TEXT → vector(768)
+            row = conn.execute(text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = 'policy_chunks' AND column_name = 'embedding'"
+            ), {"s": SCHEMA}).fetchone()
+            if row and row[0] == "text":
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks DROP COLUMN embedding'))
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Migrated policy_chunks.embedding to vector(768)")
+
+            # chat_feedback.user_message_embedding: add as vector(768) or convert from TEXT
+            row = conn.execute(text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = 'chat_feedback' AND column_name = 'user_message_embedding'"
+            ), {"s": SCHEMA}).fetchone()
+            if row is None:
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Added chat_feedback.user_message_embedding as vector(768)")
+            elif row[0] == "text":
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback DROP COLUMN user_message_embedding'))
+                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                conn.commit()
+                print("[init_db] Migrated chat_feedback.user_message_embedding to vector(768)")
+
+            # HNSW indexes for fast approximate nearest-neighbour search
+            for idx_stmt in [
+                f'CREATE INDEX IF NOT EXISTS idx_policy_chunks_embedding_hnsw ON "{SCHEMA}".policy_chunks '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                f'CREATE INDEX IF NOT EXISTS idx_chat_feedback_embedding_hnsw ON "{SCHEMA}".chat_feedback '
+                f'USING hnsw (user_message_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # GIN index for BM25 full-text search on policy chunks
+                f'CREATE INDEX IF NOT EXISTS idx_policy_chunks_tsv ON "{SCHEMA}".policy_chunks USING gin(text_tsv)',
+                # HNSW index for user memory semantic search
+                f'CREATE INDEX IF NOT EXISTS idx_user_memories_embedding_hnsw ON "{SCHEMA}".user_memories '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+            ]:
+                try:
+                    conn.execute(text(idx_stmt))
+                    conn.commit()
+                except Exception as e:
+                    print(f"[init_db] Index notice: {e}")
 
     db = SessionLocal()
 
     try:
-        # Check if we need to re-seed HR data
-        if db.query(Employee).count() == 0:
-            _seed_hr_data(db)
-        
-        # Check if we need to re-seed PMO data
-        project_count = db.query(Project).count()
-        needs_pmo_seed = project_count == 0
-        if project_count > 0:
-            first_project = db.query(Project).first()
-            if first_project and first_project.achievements is None:
-                print("Detected missing achievements. Clearing PMO tables for clean re-seed...")
-                needs_pmo_seed = True
+        if db.query(PromptConfig).count() == 0:
+            _seed_prompt_configs(db)
+        else:
+            _migrate_prompt_configs(db)
+        if db.query(LeaveType).count() == 0:
+            _seed_leave_types(db)
+        _ = db.query(ChatFeedback).count()
 
-        if needs_pmo_seed:
-            # Clear all PMO tables to avoid UniqueViolations
-            db.query(Milestone).delete()
-            db.query(Sprint).delete()
-            db.query(TeamCapacity).delete()
-            db.query(Project).delete()
-            db.commit()
-            _seed_pmo_data(db)
-            
+        # Background thread: embeds any chunks still missing vectors
+        try:
+            print("[init_db] Starting background embedding pass...")
+            threading.Thread(target=_background_embed_policies, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Embedding thread notice: {e}")
+
+        # Background thread: polls SharePoint for new/changed policy documents
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL:
+                from app.services.sharepoint_policy_sync import sharepoint_sync_loop
+                _sp_interval = _s.SHAREPOINT_SYNC_INTERVAL
+                print(f"[init_db] Starting SharePoint policy sync loop (interval={_sp_interval}s)...")
+                threading.Thread(target=sharepoint_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] SharePoint sync skipped — SHAREPOINT_SITE_URL not configured.")
+        except Exception as e:
+            print(f"[init_db] SharePoint sync loop notice: {e}")
+
     except Exception as e:
         print(f"Error during init_db: {e}")
         db.rollback()
@@ -82,249 +211,34 @@ def init_db():
 
 
 
-def _seed_hr_data(db):
-    print("Seeding dummy HR data...")
-    
-    departments = ["Engineering", "HR", "IT", "Marketing", "Sales", "Finance", "Product"]
-    locations = ["Mumbai", "Bangalore", "Gurgaon", "Pune", "Hyderabad"]
-    designations = {
-        "Engineering": ["SDE I", "SDE II", "Senior SDE", "Engineering Manager"],
-        "HR": ["HR Associate", "HR Manager", "Talent Acquisition"],
-        "IT": ["IT Support", "System Admin", "Security Analyst"],
-        "Finance": ["Accountant", "Finance Manager"],
-        "Product": ["Product Manager", "UI/UX Designer"]
-    }
 
-    # Create 50 employees
-    employees = []
-    for i in range(1, 51):
-        dept = random.choice(departments)
-        desig = random.choice(designations.get(dept, ["Associate"]))
-        
-        emp = Employee(
-            employee_id=f"EMP{1000+i}",
-            name=f"Employee {i}",
-            email=f"employee{i}@centriq.ai",
-            department=dept,
-            designation=desig,
-            joining_date=datetime.date(2022, 1, 1) + datetime.timedelta(days=random.randint(0, 365*2)),
-            employment_type="Full-time",
-            location=random.choice(locations),
-            pf_number=f"PF{random.randint(100000, 999999)}",
-            insurance_plan=random.choice(["Gold", "Silver", "Platinum"]),
-            tax_regime=random.choice(["Old", "New"]),
-            shift_type="Day"
-        )
-        db.add(emp)
-        employees.append(emp)
-    
+
+def _seed_leave_types(db):
+    """Seed the four standard leave types."""
+    print("Seeding leave types...")
+    db.add_all([
+        LeaveType(name="Casual Leave", code="CL", annual_entitlement=12, is_earned=False, carry_forward=False),
+        LeaveType(name="Privileged Leave", code="PL", annual_entitlement=15, is_earned=False, carry_forward=True),
+        LeaveType(name="Leave Without Pay", code="LWP", annual_entitlement=None, is_earned=False, carry_forward=False),
+        LeaveType(name="Compensatory Off", code="CO", annual_entitlement=None, is_earned=True, carry_forward=False),
+    ])
     db.commit()
-
-    # Seed some leaves for the first 10 employees
-    for i in range(10):
-        emp = employees[i]
-        for _ in range(3):
-            leave = Leave(
-                employee_id=emp.id,
-                leave_type=random.choice(["Casual", "Sick", "Earned"]),
-                start_date=datetime.date.today() - datetime.timedelta(days=random.randint(1, 30)),
-                end_date=datetime.date.today() - datetime.timedelta(days=random.randint(0, 1)),
-                status=random.choice(["Approved", "Pending", "Rejected"]),
-                reason="Personal work"
-            )
-            db.add(leave)
-    
-    # Seed Payroll for current month
-    for emp in employees:
-        base = random.randint(50000, 150000)
-        bonus = random.randint(0, 10000)
-        tax = base * 0.1
-        payroll = Payroll(
-            employee_id=emp.id,
-            month=datetime.date.today().month,
-            year=datetime.date.today().year,
-            base_salary=base,
-            bonus=bonus,
-            deductions=tax,
-            net_salary=base + bonus - tax,
-            tax_paid=tax,
-            status="Paid"
-        )
-        db.add(payroll)
-
-    # Seed HR Policies
-    policies = [
-        ("Leave Policy", "Leave", "Employees are entitled to 20 days of Earned Leave per year. Sick leave is capped at 12 days."),
-        ("WFH Policy", "Work", "Hybrid model: 3 days from office, 2 days from home."),
-        ("Reimbursement Policy", "Finance", "Expenses up to $500 can be approved by managers. Higher amounts require Finance VP approval."),
-        ("POSH Policy", "Legal", "Zero tolerance for harassment. Reach out to the IC committee for any concerns.")
-    ]
-    for title, cat, content in policies:
-        policy = Policy(title=title, category=cat, content=content)
-        db.add(policy)
-
-    db.commit()
-    print("HR seeding complete.")
+    print("Leave types seeding complete.")
 
 
-def _seed_pmo_data(db):
-    print("Seeding dummy PMO data...")
+def _migrate_prompt_configs(db):
+    """Disable any DB-stored admin system prompt so the detailed hardcoded one in admin_agent.py is used."""
+    config = db.query(PromptConfig).filter(
+        PromptConfig.agent_domain == "admin",
+        PromptConfig.prompt_key == "system_prompt",
+        PromptConfig.is_active == True,
+    ).first()
+    if config:
+        config.is_active = False
+        db.commit()
+        print("Disabled DB-stored admin system_prompt — using hardcoded detailed prompt with multi-turn RULE 5/6 logic.")
 
-    db.add_all([
-        Project(name="Centriq AI", status="In Progress", completion_pct=65.0,
-                sprint_name="Sprint 5", next_milestone="UAT",
-                next_milestone_date="2026-05-20", owner="Suraj G.",
-                achievements="Successfully integrated multi-agent LangGraph; Implemented real-time HR data sync."),
-        Project(name="Aurora UI", status="In Progress", completion_pct=72.0,
-                sprint_name="Sprint 5", next_milestone="Frontend Integration",
-                next_milestone_date="2026-05-19", owner="Suraj G.",
-                achievements="Migrated to TanStack Start; Implemented responsive glassmorphic chat interface."),
-        Project(name="HR Integration", status="In Progress", completion_pct=45.0,
-                sprint_name="Sprint 4", next_milestone="API Finalization",
-                next_milestone_date="2026-05-22", owner="Shivam K.",
-                achievements="Secured payroll API endpoints; Completed employee document extraction pipeline."),
-        Project(name="Admin Dashboard", status="In Progress", completion_pct=55.0,
-                sprint_name="Sprint 5", next_milestone="Grafana Setup",
-                next_milestone_date="2026-05-21", owner="Priyanka M.",
-                achievements="Configured real-time system monitoring; Visualized agent routing latency."),
-        Project(name="IT Support Agent", status="Planning", completion_pct=20.0,
-                sprint_name="Sprint 3", next_milestone="DB Schema",
-                next_milestone_date="2026-05-18", owner="Kajal S.",
-                achievements="Finalized IT ticketing workflow; Defined asset management integration."),
-        Project(name="LangGraph Routing Engine", status="In Progress", completion_pct=60.0,
-                sprint_name="Sprint 5", next_milestone="Intent Classifier v1",
-                next_milestone_date="2026-05-19", owner="Shivani R.",
-                achievements="Achieved 95% classification accuracy on test sets; Optimized routing path latency."),
-        Project(name="Vector Search Pipeline", status="In Progress", completion_pct=50.0,
-                sprint_name="Sprint 4", next_milestone="Embedding Indexing",
-                next_milestone_date="2026-05-20", owner="Shivani R.",
-                achievements="Successfully indexed 500+ HR policy documents; Integrated Nomic-embed-text."),
-        Project(name="Document Generation Service", status="In Progress", completion_pct=70.0,
-                sprint_name="Sprint 5", next_milestone="PDF Template Polish",
-                next_milestone_date="2026-05-18", owner="Suraj G.",
-                achievements="Implemented dynamic PDF generation from DB state; Standardized project status report templates."),
-        Project(name="Redis Cache Layer", status="In Progress", completion_pct=40.0,
-                sprint_name="Sprint 4", next_milestone="Session Store Integration",
-                next_milestone_date="2026-05-22", owner="Suraj G.",
-                achievements="Reduced session load time by 40%; Implemented RedisJSON for complex state storage."),
-        Project(name="Feedback Analytics", status="Planning", completion_pct=15.0,
-                sprint_name="Sprint 3", next_milestone="Schema Design",
-                next_milestone_date="2026-05-23", owner="Suraj G.",
-                achievements="Designed feedback collection loop; Integrated sentiment analysis placeholder."),
-        Project(name="Power Automate Integration", status="In Progress", completion_pct=35.0,
-                sprint_name="Sprint 4", next_milestone="Approval Flow Trigger",
-                next_milestone_date="2026-05-24", owner="Shivam K.",
-                achievements="Mapped SharePoint triggers to backend webhooks; Optimized approval notification latency."),
-        Project(name="Grafana Monitoring", status="Planning", completion_pct=25.0,
-                sprint_name="Sprint 3", next_milestone="Loki Log Ingestion",
-                next_milestone_date="2026-05-21", owner="Priyanka M.",
-                achievements="Successfully deployed Loki instance; Configured centralized logging for backend services."),
 
-    ])
-
-    db.add_all([
-        Sprint(team="Centriq Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=42, committed=38, completed=28, blockers_count=2),
-        Sprint(team="Centriq Team", name="Sprint 4", start_date="2026-04-21",
-               end_date="2026-05-04", velocity=38, committed=35, completed=35, blockers_count=0),
-        Sprint(team="Centriq Team", name="Sprint 3", start_date="2026-04-07",
-               end_date="2026-04-20", velocity=35, committed=30, completed=27, blockers_count=1),
-        Sprint(team="Dev Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=50, committed=45, completed=38, blockers_count=3),
-        Sprint(team="Dev Team", name="Sprint 4", start_date="2026-04-21",
-               end_date="2026-05-04", velocity=48, committed=44, completed=44, blockers_count=0),
-        Sprint(team="PMO Team", name="Sprint 5", start_date="2026-05-05",
-               end_date="2026-05-19", velocity=30, committed=28, completed=20, blockers_count=1),
-    ])
-
-    db.add_all([
-        TeamCapacity(team="Centriq Team", total_members=5, available=4, on_leave=1, capacity_pct=80.0),
-        TeamCapacity(team="Dev Team", total_members=6, available=5, on_leave=1, capacity_pct=83.0),
-        TeamCapacity(team="PMO Team", total_members=3, available=3, on_leave=0, capacity_pct=100.0),
-        TeamCapacity(team="QA Team", total_members=4, available=3, on_leave=1, capacity_pct=75.0),
-        TeamCapacity(team="HR Team", total_members=4, available=4, on_leave=0, capacity_pct=100.0),
-    ])
-
-    db.add_all([
-        Milestone(project_name="Centriq AI", name="Requirements Finalized",
-                  due_date="2026-04-10", status="DONE"),
-        Milestone(project_name="Centriq AI", name="Architecture Design",
-                  due_date="2026-04-25", status="DONE"),
-        Milestone(project_name="Centriq AI", name="Backend APIs",
-                  due_date="2026-05-15", status="IN_PROGRESS"),
-        Milestone(project_name="Centriq AI", name="Frontend Integration",
-                  due_date="2026-05-19", status="IN_PROGRESS"),
-        Milestone(project_name="Centriq AI", name="UAT",
-                  due_date="2026-05-20", status="UPCOMING"),
-        Milestone(project_name="Centriq AI", name="Production Deploy",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Aurora UI", name="Component Library Setup",
-                  due_date="2026-04-15", status="DONE"),
-        Milestone(project_name="Aurora UI", name="Auth Integration",
-                  due_date="2026-04-28", status="DONE"),
-        Milestone(project_name="Aurora UI", name="Chat UI",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="Aurora UI", name="PMO Agent UI",
-                  due_date="2026-05-19", status="IN_PROGRESS"),
-        Milestone(project_name="Aurora UI", name="Final QA",
-                  due_date="2026-05-22", status="UPCOMING"),
-        Milestone(project_name="HR Integration", name="HR Agent Design",
-                  due_date="2026-04-20", status="DONE"),
-        Milestone(project_name="HR Integration", name="LangFuse Setup",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="HR Integration", name="API Finalization",
-                  due_date="2026-05-22", status="UPCOMING"),
-        Milestone(project_name="Admin Dashboard", name="Wireframes Approved",
-                  due_date="2026-04-18", status="DONE"),
-        Milestone(project_name="Admin Dashboard", name="KPI Charts",
-                  due_date="2026-05-08", status="DONE"),
-        Milestone(project_name="Admin Dashboard", name="Grafana Setup",
-                  due_date="2026-05-21", status="IN_PROGRESS"),
-        Milestone(project_name="Admin Dashboard", name="Loki Integration",
-                  due_date="2026-05-23", status="UPCOMING"),
-        Milestone(project_name="IT Support Agent", name="Requirements Gathering",
-                  due_date="2026-04-22", status="DONE"),
-        Milestone(project_name="IT Support Agent", name="DB Schema",
-                  due_date="2026-05-18", status="IN_PROGRESS"),
-        Milestone(project_name="IT Support Agent", name="Agent Logic",
-                  due_date="2026-05-24", status="UPCOMING"),
-        Milestone(project_name="IT Support Agent", name="Testing",
-                  due_date="2026-05-26", status="UPCOMING"),
-        Milestone(project_name="Document Generation Service", name="PDF Template Design",
-                  due_date="2026-05-10", status="DONE"),
-        Milestone(project_name="Document Generation Service", name="Report Generator",
-                  due_date="2026-05-15", status="DONE"),
-        Milestone(project_name="Document Generation Service", name="PDF Template Polish",
-                  due_date="2026-05-18", status="IN_PROGRESS"),
-        Milestone(project_name="Document Generation Service", name="Frontend Integration",
-                  due_date="2026-05-21", status="UPCOMING"),
-        Milestone(project_name="Redis Cache Layer", name="Redis Docker Setup",
-                  due_date="2026-05-05", status="DONE"),
-        Milestone(project_name="Redis Cache Layer", name="Session Store Integration",
-                  due_date="2026-05-22", status="IN_PROGRESS"),
-        Milestone(project_name="Redis Cache Layer", name="Rate Limiting",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Feedback Analytics", name="Schema Design",
-                  due_date="2026-05-23", status="IN_PROGRESS"),
-        Milestone(project_name="Feedback Analytics", name="Store Thumbs Up/Down",
-                  due_date="2026-05-26", status="UPCOMING"),
-        Milestone(project_name="Feedback Analytics", name="Admin Dashboard Widget",
-                  due_date="2026-05-28", status="UPCOMING"),
-        Milestone(project_name="Power Automate Integration", name="Flow Design",
-                  due_date="2026-04-30", status="DONE"),
-        Milestone(project_name="Power Automate Integration", name="Approval Flow Trigger",
-                  due_date="2026-05-24", status="IN_PROGRESS"),
-        Milestone(project_name="Power Automate Integration", name="Email Notifications",
-                  due_date="2026-05-27", status="UPCOMING"),
-        Milestone(project_name="Grafana Monitoring", name="Grafana Docker Setup",
-                  due_date="2026-05-08", status="DONE"),
-        Milestone(project_name="Grafana Monitoring", name="Loki Log Ingestion",
-                  due_date="2026-05-21", status="IN_PROGRESS"),
-        Milestone(project_name="Grafana Monitoring", name="API Latency Dashboard",
-                  due_date="2026-05-25", status="UPCOMING"),
-        Milestone(project_name="Grafana Monitoring", name="Alerting Rules",
-                  due_date="2026-05-28", status="UPCOMING"),
-    ])
-
-    db.commit()
-    print("PMO seeding complete.")
+def _seed_prompt_configs(db):
+    # Prompts are configured by domain managers via the Config page — no defaults seeded.
+    pass

@@ -1,8 +1,8 @@
-import { Sparkles, CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send, Copy, Check } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
-import { BrandName } from "@/components/BrandName";
+import { motion } from "framer-motion";
 
 export function UserMessage({
   name,
@@ -14,63 +14,207 @@ export function UserMessage({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-full justify-end animate-[fade-in_.4s_ease-out_both] gap-3">
+    <div className="flex w-full justify-end gap-3">
       <div className="chat-bubble-user">
         <div className="text-[15px] leading-relaxed">{children}</div>
       </div>
-      {initials ? (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-sm">
-          {initials}
-        </div>
-      ) : (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white text-[11px] font-bold">
-          U
-        </div>
-      )}
     </div>
   );
 }
+
+const DOMAIN_BADGE: Record<string, { label: string; classes: string; borderColor: string }> = {
+  hr: { label: "HR", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", borderColor: "border-l-emerald-500" },
+  admin: { label: "Admin", classes: "bg-amber-500/10 text-amber-600 dark:text-amber-400", borderColor: "border-l-amber-500" },
+  it_support: { label: "IT Support", classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400", borderColor: "border-l-blue-500" },
+  pmo: { label: "PMO", classes: "bg-violet-500/10 text-violet-600 dark:text-violet-400", borderColor: "border-l-violet-500" },
+  functional_manager: { label: "Manager", classes: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", borderColor: "border-l-indigo-500" },
+  general: { label: "General", classes: "bg-muted text-muted-foreground", borderColor: "border-l-muted-foreground" },
+};
+
+type FeedbackState = "idle" | "up" | "down_pending" | "submitted";
 
 export function AIMessage({
   children,
   live,
   onFeedback,
+  domain,
+  text,
 }: {
   children: ReactNode;
   live?: boolean;
-  onFeedback?: (rating: "up" | "down") => void;
+  onFeedback?: (rating: "up" | "down", feedbackText?: string) => void;
+  domain?: string;
+  text?: string;
 }) {
+  const badge = domain ? DOMAIN_BADGE[domain] : null;
+  const [feedbackState, setFeedbackState] = useState<FeedbackState>("idle");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const handleThumbsUp = () => {
+    if (feedbackState !== "idle") return;
+    setFeedbackState("up");
+    onFeedback?.("up");
+  };
+
+  const handleThumbsDown = () => {
+    if (feedbackState !== "idle") return;
+    setFeedbackState("down_pending");
+  };
+
+  const handleSubmitNegative = () => {
+    onFeedback?.("down", feedbackText.trim());
+    setFeedbackState("submitted");
+  };
+
+  const handleSkipReason = () => {
+    onFeedback?.("down");
+    setFeedbackState("submitted");
+  };
+
+  const handleCopy = () => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <div className="flex w-full justify-start animate-[slide-up_.5s_cubic-bezier(0.16,1,0.3,1)_both]">
-      <div className="flex max-w-[85%] gap-3">
-        <Logo size="sm" className="mt-1 shadow-sm shrink-0" />
+    <div className="flex w-full justify-start">
+      <div className="group flex max-w-[90%] lg:max-w-[85%] gap-3">
+        {/* AI Avatar with subtle breathe animation */}
+        <motion.div
+          animate={live ? { scale: [1, 1.05, 1] } : {}}
+          transition={live ? { duration: 2, repeat: Infinity, ease: "easeInOut" } : {}}
+          className="mt-1 shrink-0"
+        >
+          <Logo size="sm" className="shadow-sm" />
+        </motion.div>
 
-        <div className="flex-1 space-y-2">
-          <div className="chat-bubble-assistant">
-            <div className="group/msg relative">{children}</div>
+        <div className="flex-1 min-w-0 space-y-1.5">
+          {/* Message bubble with domain border accent */}
+          <div className={cn(
+            "chat-bubble-assistant",
+            badge && `border-l-2 ${badge.borderColor}`,
+          )}>
+            <div className="relative">{children}</div>
           </div>
 
-          <div className="flex items-center justify-between px-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60 flex items-center">
-              <BrandName withAI />
-            </div>
-            {!live && onFeedback && (
-              <div className="flex items-center gap-1 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100">
-                <button
-                  onClick={() => onFeedback("up")}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-primary transition-all"
+          {/* Action bar — copy + feedback */}
+          {!live && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+              className="flex items-center gap-1 px-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity duration-200"
+            >
+              {/* Copy */}
+              {text && (
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={handleCopy}
+                  title="Copy response"
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-all",
+                    copied
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  )}
                 >
-                  <ThumbsUp className="h-3 w-3" />
-                </button>
-                <button
-                  onClick={() => onFeedback("down")}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-destructive transition-all"
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </motion.button>
+              )}
+
+              {onFeedback && feedbackState === "idle" && (
+                <>
+                  {text && <div className="w-px h-3.5 bg-border/60 mx-0.5" />}
+                  <motion.button
+                    whileTap={{ scale: 0.85 }}
+                    onClick={handleThumbsUp}
+                    title="Helpful"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-emerald-500 transition-all"
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.85 }}
+                    onClick={handleThumbsDown}
+                    title="Not helpful"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive transition-all"
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                  </motion.button>
+                </>
+              )}
+
+              {feedbackState === "up" && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex items-center gap-1 text-[11px] font-medium text-emerald-500 px-1"
                 >
-                  <ThumbsDown className="h-3 w-3" />
+                  <ThumbsUp className="h-3.5 w-3.5" />
+                  Helpful
+                </motion.span>
+              )}
+
+              {feedbackState === "submitted" && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="text-[11px] font-medium text-muted-foreground px-1"
+                >
+                  Thanks for the feedback
+                </motion.span>
+              )}
+            </motion.div>
+          )}
+
+          {/* Inline negative-feedback form */}
+          {!live && feedbackState === "down_pending" && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 space-y-2 mx-1 overflow-hidden"
+            >
+              <p className="text-[11px] font-medium text-foreground/70">
+                What was wrong with this answer? <span className="text-muted-foreground">(optional)</span>
+              </p>
+              <textarea
+                autoFocus
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmitNegative();
+                  }
+                  if (e.key === "Escape") handleSkipReason();
+                }}
+                placeholder="e.g. The policy details were incorrect, or it gave a generic answer..."
+                rows={2}
+                className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-destructive/30 transition-all"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={handleSkipReason}
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Skip
                 </button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleSubmitNegative}
+                  className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-[11px] font-semibold text-destructive hover:bg-destructive/20 transition-all"
+                >
+                  <Send className="h-3 w-3" />
+                  Send feedback
+                </motion.button>
               </div>
-            )}
-          </div>
+            </motion.div>
+          )}
         </div>
       </div>
     </div>
@@ -89,7 +233,12 @@ export function AnswerCard({
   cta?: { label: string; onClick?: () => void };
 }) {
   return (
-    <div className="glass-card mt-3 overflow-hidden rounded-xl p-5 shadow-sm border-[var(--border)]">
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.2, type: "spring", stiffness: 300, damping: 30 }}
+      className="glass-card mt-3 overflow-hidden rounded-2xl p-5"
+    >
       <div className="flex items-start justify-between">
         <div>
           <div className="text-sm font-bold text-foreground tracking-tight">{title}</div>
@@ -104,11 +253,14 @@ export function AnswerCard({
       </div>
 
       <div className="mt-4 space-y-2">
-        {rows.map((r) => (
-          <div
+        {rows.map((r, i) => (
+          <motion.div
             key={r.label}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 + i * 0.05 }}
             className={cn(
-              "flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors",
+              "flex items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors",
               r.highlight
                 ? "bg-primary/5 text-primary border border-primary/10"
                 : "bg-muted/30 text-foreground border border-transparent",
@@ -116,21 +268,23 @@ export function AnswerCard({
           >
             <span className="opacity-70 font-medium">{r.label}</span>
             <span className={cn("font-bold", r.highlight && "text-primary")}>{r.value}</span>
-          </div>
+          </motion.div>
         ))}
       </div>
 
       {cta && (
         <div className="mt-4 flex justify-end">
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
             onClick={cta.onClick}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-primary/90 active:scale-95"
+            className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white shadow-sm shadow-primary/20 transition-all hover:bg-primary/90"
           >
             {cta.label}
             <ArrowRight className="h-3.5 w-3.5" />
-          </button>
+          </motion.button>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

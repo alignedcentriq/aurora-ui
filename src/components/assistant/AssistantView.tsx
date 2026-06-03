@@ -1,10 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { QuickActions } from "./QuickActions";
+import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
-import { SuggestionsBar, type SuggestionCategory } from "./SuggestionsBar";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -19,144 +18,370 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
+import { ParkingForm } from "./ParkingForm";
+import { ThinkingBuddy } from "./ThinkingBuddy";
+import { SmartWidgets } from "./SmartWidgets";
+import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-type Turn =
-  | { role: "user"; text: string }
-  | { role: "ai"; text: string; card?: boolean; downloadUrl?: string; downloadTitle?: string };
+import type { Turn } from "@/lib/chat-store";
+
+function getGreeting(name: string): { heading: string; subheading: string } {
+  const firstName = name.split(" ")[0];
+  const hour = new Date().getHours();
+
+  if (hour >= 5 && hour < 9) {
+    return { heading: `Early start, ${firstName}.`, subheading: "Let's make the most of the morning." };
+  } else if (hour >= 9 && hour < 12) {
+    return { heading: `Good morning, ${firstName}.`, subheading: "What can I help you with today?" };
+  } else if (hour >= 12 && hour < 14) {
+    return { heading: `Good afternoon, ${firstName}.`, subheading: "What's on your plate?" };
+  } else if (hour >= 14 && hour < 17) {
+    return { heading: `Afternoon, ${firstName}.`, subheading: "How can I help you power through the day?" };
+  } else if (hour >= 17 && hour < 20) {
+    return { heading: `Good evening, ${firstName}.`, subheading: "Wrapping up or just getting started?" };
+  } else if (hour >= 20 && hour < 23) {
+    return { heading: `Night owl mode, ${firstName}.`, subheading: "I'm here. What's on your mind?" };
+  } else {
+    return { heading: `Up late, ${firstName}.`, subheading: "The quiet hours. What do you need?" };
+  }
+}
 
 interface ThreadData {
   id: string;
   turns: Turn[];
 }
 
-const initialTurns: Turn[] = [
-  {
-    role: "user",
-    text: "How many leave days do I have left this year, and can I apply for 2 days next Monday?",
-  },
-  {
-    role: "ai",
-    text: "You currently have **12 earned leaves** remaining for 2026. Next Monday (May 4) is open on your calendar and clashes with no team OOO. I can file the request with your manager, Priya, in one click.",
-    card: true,
-  },
-];
-
-const initialId = "chat-" + Date.now();
-
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
 
+// ── Book intent helpers ─────────────────────────────────────────────────────
+// Client-side intercept for the most common book-discovery / status / return /
+// extension intents. Matches the same phrasings the backend router covers, so
+// the user is taken straight to the right page without waiting for an LLM call.
+
+const BOOK_DISCOVER_RE = /\b(?:bookshelf|book\s*shelf|company\s+library|office\s+library|library\s+(?:catalog|catalogue|books?)|available\s+books?|books?\s+available|browse\s+(?:the\s+)?(?:library|books)|show\s+(?:me\s+)?(?:some\s+|the\s+|any\s+)?(?:books?|library)|recommend\s+(?:me\s+)?(?:a\s+)?book|(?:i\s+)?(?:want|need|like)\s+(?:a\s+|an\s+|some\s+)?book|looking\s+for\s+(?:a\s+|an\s+|some\s+)?(?:book|reading\s+material|something\s+to\s+read)|(?:learning|reading|study)\s+material|borrow\s+a\s+book|issue\s+a\s+book|lend\s+me\s+a\s+book)\b/i;
+
+const BOOK_MY_RE = /\b(?:my\s+(?:borrowed\s+)?(?:books?|library|borrows?|book\s+requests?)|books?\s+i\s+(?:have\s+)?borrowed|check\s+(?:my\s+)?book\s+request|my\s+book\s+request\s+status|return\s+(?:my\s+|the\s+|a\s+)?book|i\s+(?:have\s+)?finished\s+(?:reading|the\s+book)|extend\s+(?:my\s+|the\s+)?(?:book|due\s+date|borrow)|renew\s+(?:my\s+|the\s+|a\s+)?book|(?:need|want)\s+more\s+time\s+(?:on|for|with)\s+(?:my\s+|the\s+)?book)\b/i;
+
+// Stationery-style phrases that look like book intents but are not.
+const NOT_BOOK_RE = /\bborrow\s+(?:a\s+)?(?:pen|pencil|charger|cable|notebook(?!\s+book)|stapler|marker)\b/i;
+
+function detectBookIntent(text: string): { path: string; label: string; reply: string } | null {
+  const t = text.toLowerCase();
+  if (NOT_BOOK_RE.test(t)) return null;
+  if (BOOK_MY_RE.test(t)) {
+    return {
+      path: "/my-library",
+      label: "Open My Library",
+      reply: "Opening **My Library** so you can manage your borrows, requests, and extensions.",
+    };
+  }
+  if (BOOK_DISCOVER_RE.test(t)) {
+    return {
+      path: "/books",
+      label: "Open Book Catalog",
+      reply: "Opening the **company library** — browse and request any book you'd like.",
+    };
+  }
+  return null;
+}
+
 export function AssistantView() {
-  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, createThread } =
+  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
-  const { aiTone, userNickname, reasoningDepth, responseFormat, actionExecution } = useSettings();
+  const { theme } = useSettings();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [input, setInput] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<SuggestionCategory>("all");
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+  const [activity, setActivity] = useState("");
+  const [vpnWarning, setVpnWarning] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialize a new thread on every fresh mount (refresh)
-  const initialized = useRef(false);
+  // Create a thread whenever there is no active one
   useEffect(() => {
-    if (!initialized.current) {
+    if (!activeId) {
       createThread();
-      initialized.current = true;
     }
-  }, [createThread]);
+  }, [activeId, createThread]);
+
+  // Clear suggestion chips whenever the active thread changes
+  useEffect(() => {
+    setSuggestions([]);
+  }, [activeId]);
+
+  // Listen for quick-action events from CommandPalette
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ prompt: string }>) => {
+      if (e.detail?.prompt) {
+        send(e.detail.prompt);
+      }
+    };
+    window.addEventListener("centriq:quick-action", handler as EventListener);
+    return () => window.removeEventListener("centriq:quick-action", handler as EventListener);
+  }, [activeId, threads]);
+
+  // Check LLM reachability on mount
+  useEffect(() => {
+    fetch("/api/health/llm")
+      .then((res) => { if (!res.ok) setVpnWarning(true); })
+      .catch(() => { /* backend itself unreachable */ });
+  }, []);
+
+  // Poll health endpoint while VPN warning is active
+  useEffect(() => {
+    if (!vpnWarning) return;
+    const id = setInterval(() => {
+      fetch("/api/health/llm")
+        .then((res) => {
+          if (res.ok) {
+            setVpnWarning(false);
+            toast.success("VPN connected", { description: "You're back on the office network." });
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [vpnWarning]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
+  // Scroll handling
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [activeThread.turns.length, thinking]);
 
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
+  }, []);
+
+  const scrollToBottom = () => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  };
+
   const send = useCallback(
     (override?: string) => {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
-      // 1. Intercept Software Install requests for approval workflow
+      // Intercept parking sticker requests
       if (
-        text.toLowerCase().includes("software install") ||
-        text.toLowerCase().includes("install figma")
+        text.toLowerCase().includes("parking sticker") ||
+        (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
-          text: "Software installations require **Admin Credentials**. I have initiated an approval request to **IT Support (support@centriq.ai)**. Once approved, you will receive an installation link via email.",
-          card: false,
+          text: "Please fill in your vehicle details below to submit a parking sticker request.",
+          interactive: { type: "parking_form" },
         });
         setInput("");
-        toast.success("IT Approval Request Sent", {
-          description: "Sent to IT Support for software installation.",
-        });
         return;
       }
 
+      // Intercept book-related intents → route to /books or /my-library directly.
+      // This is the spec's "User Query → Intent Detection → Route to Page" path.
+      const bookIntent = detectBookIntent(text);
+      if (bookIntent) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: `${bookIntent.reply}\n\n<<NAV:${bookIntent.path}|${bookIntent.label}>>`,
+          domain: "admin",
+        });
+        setInput("");
+        // Auto-navigate a moment later so the message is visible first.
+        window.setTimeout(() => navigate({ to: bookIntent.path }), 400);
+        return;
+      }
+
+      setSuggestions([]);
       addTurn(activeId, { role: "user", text });
       setInput("");
       setThinking(true);
 
-      // Always send history now that AI Memory toggle is removed
       const history = (threads[activeId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
       }));
 
-      // Real API call to backend
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 180000);
+      const activitySteps = getActivitySteps(text);
+      setActivity(activitySteps[0]);
+      const activityTimers = activitySteps
+        .slice(1)
+        .map((step, index) => window.setTimeout(() => setActivity(step), (index + 1) * 1800));
+
+      const fetchSuggestions = (userText: string, aiText: string, domain: string) => {
+        fetch("/api/suggestions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(user?.email ? { "x-user-email": user.email } : {}),
+          },
+          body: JSON.stringify({ message: userText, response: aiText, domain }),
+        })
+          .then((r) => (r.ok ? r.json() : { suggestions: [] }))
+          .then((d) => {
+            if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
+              setSuggestions(d.suggestions);
+            }
+          })
+          .catch(() => {});
+      };
+
       fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(user?.email ? { "x-user-email": user.email } : {}),
+          ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+        },
         body: JSON.stringify({
           message: text,
           history,
-          preferences: {
-            tone: aiTone,
-            nickname: userNickname,
-            reasoningDepth,
-            responseFormat,
-            actionExecution,
-          },
+          session_id: activeId,
+          preferences: {},
         }),
       })
         .then(async (res) => {
+          // Non-2xx responses still return JSON error bodies
           if (!res.ok) {
-            const errorData = await res
-              .json()
-              .catch(() => ({ detail: "Failed to connect to the server" }));
-            throw new Error(errorData.detail || "Server Error");
+            const errorData = await res.json().catch(() => ({}));
+            const detail = errorData.detail;
+            if (detail && typeof detail === "object" && detail.code === "VPN_REQUIRED") {
+              setVpnWarning(true);
+              const err = new Error(detail.message) as Error & { code: string };
+              err.code = "VPN_REQUIRED";
+              throw err;
+            }
+            throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
           }
-          return res.json();
+
+          // SSE stream reader
+          const reader = res.body!.getReader();
+          const decoder = new TextDecoder();
+          let aiTurnAdded = false;
+          let accumulatedText = "";
+          let buffer = "";
+
+          const processLine = (line: string) => {
+            if (!line.startsWith("data: ")) return;
+            let evt: Record<string, unknown>;
+            try { evt = JSON.parse(line.slice(6)); } catch { return; }
+
+            if (evt.type === "token") {
+              const content = (evt.content as string) ?? "";
+              accumulatedText += content;
+              if (!aiTurnAdded) {
+                // First token — switch from "thinking" to streaming message
+                setThinking(false);
+                activityTimers.forEach((t) => window.clearTimeout(t));
+                setActivity("");
+                addTurn(activeId, { role: "ai", text: content, streaming: true });
+                aiTurnAdded = true;
+              } else {
+                updateLastAITurn(activeId, { text: accumulatedText });
+              }
+            } else if (evt.type === "replace") {
+              accumulatedText = (evt.content as string) ?? accumulatedText;
+              updateLastAITurn(activeId, { text: accumulatedText });
+            } else if (evt.type === "done") {
+              updateLastAITurn(activeId, {
+                streaming: false,
+                domain: (evt.domain as string) ?? undefined,
+                interactive: (evt.interactive as Turn["interactive"]) ?? undefined,
+                downloadUrl: (evt.download_url as string) ?? undefined,
+                images:
+                  Array.isArray(evt.images) && evt.images.length > 0
+                    ? (evt.images as string[])
+                    : undefined,
+              });
+              fetchSuggestions(text, accumulatedText, (evt.domain as string) ?? "general");
+            } else if (evt.type === "error") {
+              if (!aiTurnAdded) {
+                setThinking(false);
+                setActivity("");
+                addTurn(activeId, {
+                  role: "ai",
+                  text: "Sorry, something went wrong. Please try again.",
+                });
+                aiTurnAdded = true;
+              }
+            }
+          };
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) processLine(line.trim());
+          }
+          if (buffer.trim()) processLine(buffer.trim());
+
+          // If stream ended without a done event and we never got tokens
+          if (!aiTurnAdded) {
+            setThinking(false);
+            setActivity("");
+            addTurn(activeId, {
+              role: "ai",
+              text: "Sorry, I received an empty response. Please try again.",
+            });
+          }
         })
-        .then((data) => {
-          const responseText =
-            data.response || "Sorry, I received an empty response from the server.";
+        .catch((err: Error & { code?: string }) => {
+          console.error("Backend Error:", err);
+          const isVpn = err.code === "VPN_REQUIRED";
+          const isTimeout = err.name === "AbortError";
+
           addTurn(activeId, {
             role: "ai",
-            text: responseText,
-            downloadUrl: data.download_url ?? undefined,
-            downloadTitle: data.download_title ?? undefined,
+            text: isVpn
+              ? "I can't reach the AI service right now.\n\n**You appear to be outside the office network.** Please connect to the VPN and try again."
+              : isTimeout
+              ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
+              : "I couldn't complete that request right now. Please try again in a moment.",
           });
-        })
-        .catch((err) => {
-          console.error("Backend Error:", err);
-          toast.error("Assistant is unavailable", {
-            description: err.message || "Please try again later.",
-          });
+
+          if (isVpn) {
+            toast.error("VPN not connected", {
+              description: "Connect to the office VPN to use Centriq AI.",
+              duration: 8000,
+            });
+          } else {
+            toast.error("Service unavailable", {
+              description: isTimeout
+                ? "The request timed out after 90 seconds."
+                : err.message || "Please try again later.",
+            });
+          }
         })
         .finally(() => {
+          window.clearTimeout(timeoutId);
+          activityTimers.forEach((timer) => window.clearTimeout(timer));
+          setActivity("");
           setThinking(false);
         });
     },
-    [activeId, input, threads, addTurn, setThinking, aiTone, userNickname, reasoningDepth, responseFormat, actionExecution],
+    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role],
   );
 
   const handleNewChat = () => {
@@ -169,14 +394,24 @@ export function AssistantView() {
     setIsSidebarOpen(false);
   };
 
-  const handleFeedback = (rating: "up" | "down", index: number) => {
+  const handleFeedback = (rating: "up" | "down", index: number, feedbackText?: string) => {
+    const turns = (activeId ? threads[activeId]?.turns : undefined) || [];
+    const aiTurn = turns[index];
+    const prevUserTurn = turns.slice(0, index).reverse().find((t: Turn) => t.role === "user");
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, index, threadId: activeId }),
+      body: JSON.stringify({
+        rating,
+        threadId: activeId,
+        domain: aiTurn?.role === "ai" ? aiTurn.domain : undefined,
+        user_message: prevUserTurn?.text || "",
+        ai_response: aiTurn?.text || "",
+        feedback_text: feedbackText || "",
+      }),
     })
       .then(() => {
-        toast.success(rating === "up" ? "Glad I could help!" : "Thanks for the feedback");
+        if (rating === "up") toast.success("Glad I could help!");
       })
       .catch(() => toast.error("Failed to save feedback"));
   };
@@ -227,30 +462,92 @@ export function AssistantView() {
     }
   };
 
-  const sidebarThreads = Object.values(threads)
-    .filter((t) => t.turns.length > 0)
-    .map((t) => ({
-      id: t.id,
-      title: t.turns[0].text,
-      domain: "Centriq",
-      time: "Now",
-    }))
-    .reverse();
-
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* Top bar */}
+        {/* VPN Warning */}
+        <AnimatePresence>
+          {vpnWarning && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300 overflow-hidden"
+            >
+              <WifiOff className="h-4 w-4 shrink-0" />
+              <span>
+                <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
+              </span>
+              <button
+                onClick={() => setVpnWarning(false)}
+                className="ml-auto shrink-0 rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto scroll-smooth no-scrollbar">
-          <div className={cn("mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col", activeThread.turns.length === 0 ? "min-h-full justify-center py-12" : "py-12")}>
+        {/* Messages Area */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="relative flex-1 overflow-y-auto scroll-smooth"
+        >
+          <div className={cn(
+            "mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col",
+            activeThread.turns.length === 0 ? "min-h-full justify-center py-8" : "py-8",
+          )}>
             {activeThread.turns.length === 0 ? (
-              <section className="flex w-full flex-col items-center justify-center text-center animate-[fade-in_.6s_ease-out_both] max-w-5xl mx-auto">
-                <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl mb-12">
-                  Hi, how can I help you?
-                </h1>
-                
-                <div className="w-full max-w-3xl mb-12">
+              /* ──── Empty State ──── */
+              <motion.section
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.6 }}
+                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto"
+              >
+                {(() => {
+                  const { heading, subheading } = getGreeting(user?.name || "there");
+                  return (
+                    <>
+                      <motion.h1
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+                        className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-2"
+                      >
+                        <span className="text-gradient">{heading}</span>
+                      </motion.h1>
+                      <motion.p
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.2 }}
+                        className="text-base text-muted-foreground mb-8"
+                      >
+                        {subheading}
+                      </motion.p>
+                    </>
+                  );
+                })()}
+
+                {/* Smart Widgets */}
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.3 }}
+                  className="w-full max-w-3xl mb-8"
+                >
+                  <SmartWidgets onAction={(prompt) => !thinking && send(prompt)} />
+                </motion.div>
+
+                {/* Composer */}
+                <motion.div
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.45 }}
+                  className="w-full max-w-3xl"
+                >
                   <Composer
                     value={input}
                     onChange={setInput}
@@ -260,93 +557,204 @@ export function AssistantView() {
                       toast("Attachments", { description: "This feature is currently in preview." })
                     }
                     onQuickAction={(p) => !thinking && send(p)}
+                    suggestions={suggestions}
+                    onSuggestionSelect={(t) => !thinking && send(t)}
                   />
-                </div>
-
-                <div className="w-full max-w-5xl mt-4">
-                  <QuickActions onPick={(p) => !thinking && send(p)} />
-                </div>
-              </section>
+                </motion.div>
+              </motion.section>
             ) : (
-              <section className="space-y-10 pb-10">
-                {activeThread.turns.map((t, i) =>
-                  t.role === "user" ? (
-                    <UserMessage 
-                      key={i} 
-                      initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
-                    >
-                      {t.text}
-                    </UserMessage>
-                  ) : (
-                    <AIMessage key={i} onFeedback={(rating) => handleFeedback(rating, i)}>
-                      <div className="space-y-4">
-                        <div className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                          {renderInline(t.text)}
-                        </div>
-                        {t.downloadUrl && (
-                          <a
-                            href={t.downloadUrl}
-                            download={t.downloadTitle ?? "report"}
-                            className="mt-1 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90 active:scale-95"
-                          >
-                            <Download className="h-4 w-4" />
-                            {t.downloadTitle ?? "Download Report"}
-                          </a>
-                        )}
-                        {t.card && (
-                          <AnswerCard
-                            title="Leave Balance · 2026"
-                            meta="System Source: HR Connect"
-                            rows={[
-                              { label: "Total Earned Leaves", value: "12 days", highlight: true },
-                              { label: "Casual Leaves", value: "4 days" },
-                              { label: "Sick Leaves", value: "7 days" },
-                              { label: "Upcoming (May 4)", value: "2 days" },
-                            ]}
-                            cta={{
-                              label: "File Leave Request",
-                              onClick: () => {
-                                toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
-                                  loading: "Processing request...",
-                                  success: "Leave request filed with Priya!",
-                                  error: "Failed to file request",
-                                });
-                              },
-                            }}
-                          />
-                        )}
-                      </div>
-                    </AIMessage>
-                  ),
-                )}
+              /* ──── Chat Messages ──── */
+              <section className="space-y-6 pb-6">
+                <AnimatePresence mode="popLayout">
+                  {activeThread.turns.map((t, i) =>
+                    t.role === "user" ? (
+                      <motion.div
+                        key={`msg-${i}`}
+                        initial={{ opacity: 0, y: 16, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                        layout
+                      >
+                        <UserMessage
+                          initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                        >
+                          {t.text}
+                        </UserMessage>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key={`msg-${i}`}
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 30,
+                          delay: 0.05,
+                        }}
+                        layout
+                      >
+                        <AIMessage
+                          onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)}
+                          domain={t.role === "ai" ? t.domain : undefined}
+                          text={t.text}
+                          live={t.streaming}
+                        >
+                          <div className="space-y-4">
+                            {t.text && (() => {
+                              const navTokens: { path: string; label: string }[] = [];
+                              const cleaned = t.text.replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
+                                navTokens.push({ path: String(path).trim(), label: String(label).trim() });
+                                return "";
+                              }).trim();
+                              return (
+                                <>
+                                  {cleaned && (
+                                    <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+                                      {t.streaming && (
+                                        <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
+                                      )}
+                                    </div>
+                                  )}
+                                  {navTokens.length > 0 && !t.streaming && (
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                      {navTokens.map((n, idx) => {
+                                        const Icon = n.path === "/my-library" ? LibraryIcon : BookOpen;
+                                        return (
+                                          <button
+                                            key={idx}
+                                            onClick={() => navigate({ to: n.path })}
+                                            className="inline-flex items-center gap-2 rounded-xl bg-primary/15 px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/25 transition-colors border border-primary/20"
+                                          >
+                                            <Icon className="h-3.5 w-3.5" />
+                                            {n.label}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                            {t.images && t.images.length > 0 && (
+                              <div className="mt-3 flex flex-col gap-3">
+                                {t.images.map((url, imgIdx) => (
+                                  <a key={imgIdx} href={url} target="_blank" rel="noopener noreferrer">
+                                    <img
+                                      src={url}
+                                      alt={`Policy image ${imgIdx + 1}`}
+                                      className="max-w-full rounded-xl border border-border shadow-sm hover:shadow-md transition-shadow cursor-zoom-in"
+                                      loading="lazy"
+                                    />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                            {t.downloadUrl && (
+                              <motion.a
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.97 }}
+                                href={t.downloadUrl}
+                                download={t.downloadTitle ?? "report"}
+                                className="mt-1 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md shadow-primary/20 transition-all hover:bg-primary/90"
+                              >
+                                <Download className="h-4 w-4" />
+                                {t.downloadTitle ?? "Download Report"}
+                              </motion.a>
+                            )}
+                            {t.card && (
+                              <AnswerCard
+                                title="Leave Balance · 2026"
+                                meta="System Source: HR Connect"
+                                rows={[
+                                  { label: "Total Earned Leaves", value: "12 days", highlight: true },
+                                  { label: "Casual Leaves", value: "4 days" },
+                                  { label: "Sick Leaves", value: "7 days" },
+                                  { label: "Upcoming (May 4)", value: "2 days" },
+                                ]}
+                                cta={{
+                                  label: "File Leave Request",
+                                  onClick: () => {
+                                    toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
+                                      loading: "Processing request...",
+                                      success: "Leave request filed with Priya!",
+                                      error: "Failed to file request",
+                                    });
+                                  },
+                                }}
+                              />
+                            )}
+                            {t.interactive?.type === "parking_form" && (
+                              <ParkingForm
+                                userEmail={user?.email || ""}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "email_draft" && t.interactive.data && (
+                              <InteractiveEmailDraft
+                                data={t.interactive.data}
+                                userEmail={user?.email}
+                                onSent={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                                }
+                              />
+                            )}
+                          </div>
+                        </AIMessage>
+                      </motion.div>
+                    ),
+                  )}
+                </AnimatePresence>
 
-                {thinking && (
-                  <AIMessage live>
-                    <div className="flex gap-1.5 py-2">
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "150ms" }}
-                      />
-                      <div
-                        className="h-2 w-2 rounded-full bg-primary/40 animate-bounce"
-                        style={{ animationDelay: "300ms" }}
-                      />
-                    </div>
-                  </AIMessage>
-                )}
+                {/* Thinking state */}
+                <AnimatePresence>
+                  {thinking && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    >
+                      <AIMessage live>
+                        <ThinkingBuddy />
+                      </AIMessage>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </section>
             )}
           </div>
+
+          {/* Scroll-to-bottom FAB */}
+          <AnimatePresence>
+            {showScrollBtn && activeThread.turns.length > 0 && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={scrollToBottom}
+                className="fixed bottom-28 right-8 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-card border border-border shadow-lg text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ArrowDown className="h-4 w-4" />
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Input Area */}
+        {/* Input Area — visible when there are messages */}
         {activeThread.turns.length > 0 && (
-          <footer className="relative border-t border-[var(--border)] bg-background/80 backdrop-blur-md px-4 pb-8 pt-4 sm:px-8">
-            <div className="mx-auto w-full max-w-4xl space-y-6">
+          <motion.footer
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="relative border-t border-border bg-background/60 backdrop-blur-xl px-4 pb-6 pt-4 sm:px-8"
+          >
+            <div className="mx-auto w-full max-w-4xl space-y-4">
               <Composer
                 value={input}
                 onChange={setInput}
@@ -357,11 +765,15 @@ export function AssistantView() {
                 }
                 onQuickAction={(p) => !thinking && send(p)}
                 onGenerateDoc={openDocModal}
+                suggestions={suggestions}
+                onSuggestionSelect={(t) => !thinking && send(t)}
               />
             </div>
-          </footer>
+          </motion.footer>
         )}
       </main>
+
+      {/* Document Generation Modal */}
       <Dialog open={showDocModal} onOpenChange={setShowDocModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -373,7 +785,7 @@ export function AssistantView() {
               <select
                 value={docType}
                 onChange={(event) => setDocType(event.target.value)}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
               >
                 <option value="project_status_report">Project Status Report</option>
                 <option value="sprint_summary">Sprint Summary</option>
@@ -403,16 +815,22 @@ export function AssistantView() {
   );
 }
 
-function renderInline(text: string | undefined) {
-  if (!text) return null;
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) =>
-    p.startsWith("**") && p.endsWith("**") ? (
-      <strong key={i} className="font-bold text-foreground">
-        {p.slice(2, -2)}
-      </strong>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  );
+
+function getActivitySteps(text: string) {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("install") ||
+    lower.includes("software") ||
+    lower.includes("nodejs") ||
+    lower.includes("node.js") ||
+    lower.includes("figma")
+  ) {
+    return ["Routing to IT Support...", "Preparing email draft...", "Waiting for response..."];
+  }
+
+  if (/\b(yes|send|confirm|ok|okay)\b/.test(lower)) {
+    return ["Checking pending draft...", "Sending email...", "Finalizing response..."];
+  }
+
+  return ["Routing request...", "Selecting the right service...", "Preparing response..."];
 }

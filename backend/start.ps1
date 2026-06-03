@@ -1,7 +1,7 @@
 # Centriq AI Backend Startup Script (Windows Native)
 
 Write-Host "--- Starting Centriq AI Backend Infrastructure ---" -ForegroundColor Cyan
-docker compose -f ../docker-compose.yml up -d redis db minio createbuckets loki grafana langfuse-server
+docker compose -f ../docker-compose.infra.yml up -d redis db langfuse-server
 
 # Create virtual environment if not exists
 if (!(Test-Path "venv")) {
@@ -13,11 +13,6 @@ if (!(Test-Path "venv")) {
 } else {
     .\venv\Scripts\activate
 }
-
-# Ensure database exists and is initialized
-Write-Host "--- Ensuring database is ready ---" -ForegroundColor Yellow
-python create_db.py
-python init_db_script.py
 
 # Set environment variables
 $env:LANGFUSE_OTEL="false"

@@ -20,7 +20,9 @@ export function BrandName({ className, withAI = false, plain = false }: BrandNam
         Centriq
       </span>
       {withAI && (
-        <span className="ml-1.5 flex items-center justify-center rounded-md bg-primary/10 px-1.5 py-0.5 text-[0.7em] font-black uppercase tracking-widest text-primary ring-1 ring-inset ring-primary/20">
+        <span className="ml-1.5 flex items-center justify-center rounded-md px-1.5 py-0.5 text-[0.65em] font-black uppercase tracking-widest text-transparent bg-clip-text"
+          style={{ background: "var(--gradient-primary)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}
+        >
           AI
         </span>
       )}

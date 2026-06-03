@@ -1,6 +1,7 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useSettings } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
+import { motion } from "framer-motion";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useSettings();
@@ -14,7 +15,7 @@ export function ThemeToggle() {
     <div
       role="radiogroup"
       aria-label="Theme"
-      className="glass relative inline-flex items-center gap-1 rounded-full p-1 bg-muted/30"
+      className="relative inline-flex items-center gap-0.5 rounded-full p-1 bg-muted/40 border border-border ml-2"
     >
       {options.map((opt) => {
         const Icon = opt.icon;
@@ -27,23 +28,25 @@ export function ThemeToggle() {
             aria-label={opt.label}
             onClick={() => setTheme(opt.value)}
             className={cn(
-              "relative flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200",
+              "relative flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-200 z-10",
               active
-                ? "text-white shadow-md scale-110 z-10"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                ? "text-white"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {active && (
-              <span
+              <motion.span
+                layoutId="theme-pill"
                 aria-hidden
-                className="absolute inset-0 rounded-full animate-[fade-in_.2s_ease-out]"
+                className="absolute inset-0 rounded-full"
                 style={{
                   background: "var(--gradient-primary)",
-                  boxShadow: "0 4px 12px -2px color-mix(in oklab, var(--primary) 40%, transparent)",
+                  boxShadow: "0 2px 8px -2px color-mix(in oklab, var(--primary) 40%, transparent)",
                 }}
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
               />
             )}
-            <Icon className="relative z-10 h-4 w-4" strokeWidth={active ? 2.5 : 2} />
+            <Icon className="relative z-10 h-3.5 w-3.5" strokeWidth={active ? 2.5 : 2} />
           </button>
         );
       })}

@@ -1,4 +1,16 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+export interface EmailDraftData {
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export interface InteractivePayload {
+  type: "email_draft" | "parking_form";
+  data?: EmailDraftData;
+}
 
 export interface Turn {
   role: "user" | "ai";
@@ -6,6 +18,10 @@ export interface Turn {
   card?: boolean;
   downloadUrl?: string;
   downloadTitle?: string;
+  domain?: string;
+  interactive?: InteractivePayload;
+  images?: string[];
+  streaming?: boolean;
 }
 
 export interface Thread {
@@ -22,48 +38,95 @@ interface ChatState {
   setThinking: (thinking: boolean) => void;
   createThread: () => string;
   addTurn: (threadId: string, turn: Turn) => void;
+  updateLastAITurn: (threadId: string, updates: Partial<Turn>) => void;
   deleteThread: (id: string) => void;
 }
 
-export const useChatStore = create<ChatState>((set) => ({
-  threads: {},
-  activeId: null,
-  thinking: false,
-  setActiveId: (id) => set({ activeId: id }),
-  setThinking: (thinking) => set({ thinking }),
-  createThread: () => {
-    const id = "chat-" + Date.now();
-    set((state) => ({
-      threads: {
-        ...state.threads,
-        [id]: { id, turns: [], updatedAt: Date.now() },
-      },
-      activeId: id,
-    }));
-    return id;
-  },
-  addTurn: (threadId, turn) =>
-    set((state) => {
-      const thread = state.threads[threadId];
-      if (!thread) return state;
-      return {
-        threads: {
-          ...state.threads,
-          [threadId]: {
-            ...thread,
-            turns: [...thread.turns, turn],
-            updatedAt: Date.now(),
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set) => ({
+      threads: {},
+      activeId: null,
+      thinking: false,
+      setActiveId: (id) => set({ activeId: id }),
+      setThinking: (thinking) => set({ thinking }),
+      createThread: () => {
+        const id = "chat-" + Date.now();
+        set((state) => ({
+          threads: {
+            ...state.threads,
+            [id]: { id, turns: [], updatedAt: Date.now() },
           },
-        },
-      };
+          activeId: id,
+        }));
+        return id;
+      },
+      addTurn: (threadId, turn) =>
+        set((state) => {
+          const thread = state.threads[threadId];
+          if (!thread) return state;
+          return {
+            threads: {
+              ...state.threads,
+              [threadId]: {
+                ...thread,
+                turns: [...thread.turns, turn],
+                updatedAt: Date.now(),
+              },
+            },
+          };
+        }),
+      updateLastAITurn: (threadId, updates) =>
+        set((state) => {
+          const thread = state.threads[threadId];
+          if (!thread) return state;
+          const turns = [...thread.turns];
+          for (let i = turns.length - 1; i >= 0; i--) {
+            if (turns[i].role === "ai") {
+              turns[i] = { ...turns[i], ...updates };
+              break;
+            }
+          }
+          return {
+            threads: {
+              ...state.threads,
+              [threadId]: { ...thread, turns, updatedAt: Date.now() },
+            },
+          };
+        }),
+      deleteThread: (id) =>
+        set((state) => {
+          const newThreads = { ...state.threads };
+          delete newThreads[id];
+          let newActiveId = state.activeId;
+          if (state.activeId === id) {
+            const next = Object.values(newThreads)
+              .filter((t) => t.turns.length > 0)
+              .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+            newActiveId = next?.id ?? null;
+          }
+          return { threads: newThreads, activeId: newActiveId };
+        }),
     }),
-  deleteThread: (id) =>
-    set((state) => {
-      const newThreads = { ...state.threads };
-      delete newThreads[id];
-      return {
-        threads: newThreads,
-        activeId: state.activeId === id ? null : state.activeId,
-      };
-    }),
-}));
+    {
+      name: "aurora-chat-storage",
+      partialize: (state) => ({
+        activeId: state.activeId,
+        threads: Object.fromEntries(
+          Object.entries(state.threads).map(([id, thread]) => [
+            id,
+            {
+              ...thread,
+              turns: thread.turns.map(({ images: _images, ...turn }) => turn),
+            },
+          ])
+        ),
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setThinking(false);
+        }
+      },
+    }
+  )
+);

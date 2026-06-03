@@ -1,21 +1,34 @@
 import requests
 import datetime
 import time
+import logging
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import GraphSubscription, SharePointDeltaToken, SharePointFile, SyncFailureLog, Policy
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 class GraphClient:
     def __init__(self):
-        self.tenant_id = settings.GRAPH_TENANT_ID
-        self.client_id = settings.GRAPH_CLIENT_ID
-        self.client_secret = settings.GRAPH_CLIENT_SECRET
+        """All Graph calls — webhooks/subscriptions and SharePoint document
+        ingestion alike — use the single GRAPH_CLIENT_ID/SECRET/TENANT_ID app."""
         self.base_url = "https://graph.microsoft.com/v1.0"
-
         self._access_token = None
         self._token_expires_at = datetime.datetime.min
+
+    @property
+    def tenant_id(self):
+        return settings.GRAPH_TENANT_ID
+
+    @property
+    def client_id(self):
+        return settings.GRAPH_CLIENT_ID
+
+    @property
+    def client_secret(self):
+        return settings.GRAPH_CLIENT_SECRET
 
     def _get_token(self):
         if datetime.datetime.utcnow() < self._token_expires_at:
@@ -26,9 +39,11 @@ class GraphClient:
             "client_id": self.client_id,
             "scope": "https://graph.microsoft.com/.default",
             "client_secret": self.client_secret,
-            "grant_type": "client_credentials"
+            "grant_type": "client_credentials",
         }
         response = requests.post(url, data=payload)
+        if response.status_code != 200:
+            print(f"Graph Token Error: {response.status_code} - {response.text}")
         response.raise_for_status()
         data = response.json()
         self._access_token = data["access_token"]
@@ -93,7 +108,73 @@ class GraphClient:
         response.raise_for_status()
         return response.json()
 
-graph_client = GraphClient()
+    def list_folder_contents(self, drive_id: str, folder_path: str = None):
+        if folder_path and folder_path != "/":
+            url = f"{self.base_url}/drives/{drive_id}/root:/{folder_path}:/children"
+        else:
+            url = f"{self.base_url}/drives/{drive_id}/root/children"
+        
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json().get("value", [])
+
+    def download_file(self, drive_id: str, item_id: str):
+        url = f"{self.base_url}/drives/{drive_id}/items/{item_id}/content"
+        response = requests.get(url, headers=self._headers(), stream=True)
+        response.raise_for_status()
+        return response
+
+    def list_files_recursive(self, drive_id: str, folder_path: str) -> list[dict]:
+        """Recursively list all files under folder_path, returning items with an
+        extra 'relative_path' key so callers can preserve folder structure."""
+        results = []
+        self._recurse(drive_id, folder_path, folder_path, results)
+        return results
+
+    def _recurse(self, drive_id: str, root_path: str, current_path: str, results: list):
+        items = self.list_folder_contents(drive_id, current_path)
+        for item in items:
+            if "folder" in item:
+                child_path = current_path.rstrip("/") + "/" + item["name"]
+                self._recurse(drive_id, root_path, child_path, results)
+            elif "file" in item:
+                # relative_path = path within the root folder, e.g. "SubFolder/file.pdf"
+                rel = current_path[len(root_path):].lstrip("/")
+                item["relative_path"] = (rel + "/" + item["name"]) if rel else item["name"]
+                results.append(item)
+
+    def get_site_id(self, site_name: str):
+        print(f"DEBUG: Using Token: {self._get_token()[:20]}...")
+        # If user provides a full URL, clean it up to the format Graph expects:
+        # 'hostname:/sites/sitename'
+        clean_site = site_name.replace("https://", "").replace("http://", "").strip()
+        if "/" in clean_site and ":" not in clean_site:
+            # Convert 'tenant.sharepoint.com/sites/name' to 'tenant.sharepoint.com:/sites/name'
+            parts = clean_site.split("/", 1)
+            clean_site = f"{parts[0]}:/{parts[1]}"
+        
+        url = f"{self.base_url}/sites/{clean_site}"
+        logger.info(f"Resolving SharePoint site ID for: {clean_site}")
+        
+        response = requests.get(url, headers=self._headers())
+        if response.status_code == 401:
+             logger.error(f"Graph API 401 Unauthorized. Check if Client Secret is correct and App has 'Sites.Read.All' permission. Response: {response.text}")
+        response.raise_for_status()
+        return response.json().get("id")
+
+    def get_drive_id(self, site_id: str):
+        url = f"{self.base_url}/sites/{site_id}/drive"
+        response = requests.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json().get("id")
+
+graph_client = GraphClient()    # general Graph calls (webhooks, etc.)
+# SharePoint document ingestion uses the SAME Azure AD app registration as the rest of
+# Graph (GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET / GRAPH_TENANT_ID). That app holds the
+# Sites.Selected permission, so each site it reads must be explicitly granted to it —
+# changing SHAREPOINT_SITE_URL to a new site requires granting this app access to that
+# site (Graph: POST /sites/{id}/permissions, role "read").
+sp_client    = GraphClient()
 
 def process_document(file_metadata: dict, session: Session):
     """

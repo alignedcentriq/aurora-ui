@@ -21,7 +21,9 @@ export function Logo({ className, size = "md" }: LogoProps) {
         className,
       )}
     >
-      <img src="/logo.png" alt="Centriq AI Logo" className="h-full w-full object-cover" />
+      {/* Subtle glow ring */}
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-primary/20 to-accent-cyan/20 blur-sm" />
+      <img src="/logo.png" alt="Centriq AI Logo" className="relative h-full w-full object-cover rounded-xl" />
     </div>
   );
 }

@@ -1,16 +1,17 @@
 """
-Lightweight Langfuse tracing wrapper for Centriq AI.
+Langfuse tracing for Centriq AI — enhanced with per-node generation spans.
 
-This replaces the broken langfuse.callback.CallbackHandler which requires
-an old version of langchain that is incompatible with our stack.
+Provides TracingContext for streaming chat requests:
+  - Creates a parent trace at the START of generate()
+  - Attaches child generation spans for each LLM call (on_chat_model_start / end)
+  - Records tool call spans
+  - Finalises trace with output, domain, and latency
 
-Instead, we use the Langfuse Python SDK directly to create traces
-around each chat invocation.
+Also provides langfuse_event() for one-shot custom events.
 """
 
 import os
 import time
-from contextlib import contextmanager
 from langfuse import Langfuse
 
 # -- Singleton Langfuse Client ------------------------------------------------
@@ -28,7 +29,7 @@ def get_langfuse_client() -> Langfuse | None:
         _client = Langfuse(
             public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-1234567890"),
             secret_key=os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-1234567890"),
-            host=os.environ.get("LANGFUSE_HOST", "http://localhost:3002"),
+            host=os.environ.get("LANGFUSE_HOST", "http://localhost:3003"),
         )
         return _client
     except Exception as e:
@@ -36,41 +37,154 @@ def get_langfuse_client() -> Langfuse | None:
         return None
 
 
-@contextmanager
-def langfuse_trace(name: str, session_id: str = None, metadata: dict = None):
-    """
-    Context manager that creates a Langfuse trace for a chat request.
+# -- TracingContext (per-request lifecycle) ------------------------------------
+
+class TracingContext:
+    """Manages a Langfuse trace + child generation spans for one chat request.
 
     Usage:
-        with langfuse_trace("chat", session_id="abc") as trace:
-            # ... do work ...
-            trace.update(output="response text")
-
-    If Langfuse is unavailable, yields a no-op object.
+        tracing = TracingContext(session_id="abc", user_id="user@co.com",
+                                metadata={"message": "hello"})
+        # ... during streaming ...
+        tracing.start_generation(run_id, node, model)
+        tracing.end_generation(run_id, output_msg, usage_metadata)
+        # ... after streaming ...
+        tracing.finalize(output="response text", domain="hr", latency_ms=1200)
     """
-    client = get_langfuse_client()
 
-    if client is None:
-        yield _NoopTrace()
-        return
+    def __init__(self, session_id: str = None, user_id: str = None,
+                 metadata: dict = None, tags: list = None):
+        self._client = get_langfuse_client()
+        self._trace = None
+        self._generations: dict[str, object] = {}   # run_id → generation span
+        self._gen_starts: dict[str, float] = {}      # run_id → start time
+        self.trace_id: str | None = None
 
-    try:
-        trace = client.trace(
-            name=name,
-            session_id=session_id,
-            metadata=metadata or {},
-        )
-        yield trace
-    except Exception as e:
-        print(f"[Langfuse] Trace error: {e}")
-        # Re-raise the exception so the caller (main.py) can handle it
-        raise
-    finally:
+        if self._client is None:
+            return
+
         try:
-            client.flush()
-        except:
-            pass
+            self._trace = self._client.trace(
+                name="chat",
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata or {},
+                tags=tags or [],
+            )
+            self.trace_id = self._trace.id
+        except Exception as e:
+            print(f"[Langfuse] Trace creation failed: {e}")
+            self._trace = None
 
+    # -- Generation span lifecycle --
+
+    def start_generation(self, run_id: str, node: str, model: str):
+        """Called on on_chat_model_start — opens a generation span."""
+        if self._trace is None:
+            return
+        self._gen_starts[run_id] = time.time()
+        try:
+            gen = self._trace.generation(
+                name=node,
+                model=model,
+                metadata={"run_id": run_id, "node": node},
+            )
+            self._generations[run_id] = gen
+        except Exception as e:
+            print(f"[Langfuse] Generation start error: {e}")
+
+    def end_generation(self, run_id: str, output=None, usage_metadata: dict = None,
+                       tool_calls: list = None):
+        """Called on on_chat_model_end — closes the generation span with usage."""
+        gen = self._generations.pop(run_id, None)
+        start = self._gen_starts.pop(run_id, None)
+        if gen is None:
+            return
+
+        try:
+            usage = None
+            if usage_metadata:
+                usage = {
+                    "input": usage_metadata.get("input_tokens", 0),
+                    "output": usage_metadata.get("output_tokens", 0),
+                    "total": usage_metadata.get("total_tokens", 0),
+                }
+
+            output_text = ""
+            if output is not None:
+                output_text = output.content if hasattr(output, "content") else str(output)
+                # Truncate to avoid oversized payloads
+                if len(output_text) > 1000:
+                    output_text = output_text[:1000] + "..."
+
+            meta = {}
+            if tool_calls:
+                meta["tool_calls"] = [tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, "name", "unknown") for tc in tool_calls]
+
+            gen.end(
+                output=output_text,
+                usage=usage,
+                metadata=meta if meta else None,
+            )
+        except Exception as e:
+            print(f"[Langfuse] Generation end error: {e}")
+
+    # -- Tool spans --
+
+    def add_tool_span(self, name: str, input_data=None, output_data=None):
+        """Record a tool call as a span on the trace."""
+        if self._trace is None:
+            return
+        try:
+            span = self._trace.span(name=f"tool:{name}")
+            span.end(
+                input=str(input_data)[:500] if input_data else None,
+                output=str(output_data)[:500] if output_data else None,
+            )
+        except Exception as e:
+            print(f"[Langfuse] Tool span error: {e}")
+
+    # -- Finalise --
+
+    def finalize(self, output: str = None, domain: str = None, latency_ms: int = None):
+        """Called after streaming completes — updates trace with final output."""
+        if self._trace is None:
+            return
+        try:
+            meta = {}
+            if domain:
+                meta["domain"] = domain
+            if latency_ms is not None:
+                meta["latency_ms"] = latency_ms
+
+            self._trace.update(
+                output=output[:2000] if output else None,
+                metadata=meta,
+            )
+        except Exception as e:
+            print(f"[Langfuse] Finalize error: {e}")
+        finally:
+            self._flush()
+
+    def score(self, name: str, value, comment: str = None):
+        """Attach a score to this trace (e.g. user feedback)."""
+        if self._trace is None:
+            return
+        try:
+            self._trace.score(name=name, value=value, comment=comment)
+            self._flush()
+        except Exception as e:
+            print(f"[Langfuse] Score error: {e}")
+
+    def _flush(self):
+        if self._client:
+            try:
+                self._client.flush()
+            except Exception:
+                pass
+
+
+# -- One-shot event (backwards compat) ----------------------------------------
 
 def langfuse_event(name: str, data: dict = None):
     """Fire a one-shot event to Langfuse (e.g., for custom tracking)."""
@@ -84,24 +198,3 @@ def langfuse_event(name: str, data: dict = None):
         client.flush()
     except Exception as e:
         print(f"[Langfuse] Event error: {e}")
-
-
-class _NoopTrace:
-    """A no-op trace object for when Langfuse is unavailable."""
-    def update(self, **kwargs):
-        pass
-
-    def event(self, **kwargs):
-        pass
-
-    def span(self, **kwargs):
-        return self
-
-    def generation(self, **kwargs):
-        return self
-
-    def end(self, **kwargs):
-        pass
-
-    def score(self, **kwargs):
-        pass

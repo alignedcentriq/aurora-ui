@@ -26,51 +26,6 @@ services:
     volumes:
       - redis_data:/data
 
-  minio:
-    image: minio/minio:latest
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
-    networks:
-      - centriq-network
-    volumes:
-      - minio_data:/data
-
-  createbuckets:
-    image: minio/mc
-    depends_on:
-      - minio
-    networks:
-      - centriq-network
-    entrypoint: >
-      /bin/sh -c " until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo '...waiting...' && sleep 1; done; /usr/bin/mc mb --ignore-existing myminio/aurora-bucket; /usr/bin/mc anonymous set public myminio/aurora-bucket; exit 0; "
-
-  loki:
-    image: grafana/loki:latest
-    ports:
-      - "3002:3100"
-    networks:
-      - centriq-network
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - loki
-    networks:
-      - centriq-network
-    volumes:
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json
-
   langfuse-server:
     image: langfuse/langfuse:2
     depends_on:
@@ -88,18 +43,8 @@ services:
 
       - centriq-network
 
-  adminer:
-    image: adminer:latest
-    ports:
-      - "8081:8080"
-    networks:
-      - centriq-network
-    depends_on:
-      - db
-
 volumes:
   redis_data:
-  minio_data:
 
 networks:
   centriq-network:

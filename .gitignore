@@ -1,3 +1,6 @@
+# Claude Code local settings (keep memory tracked, ignore local secrets)
+.claude/settings.local.json
+
 # Logs
 logs
 *.log
@@ -45,7 +48,9 @@ ENV/
 .env
 .env.*
 !.env.example
+!.env.local
 .dev.vars
+# OneDrive_1_12-5-2026
 
 # Wrangler / Cloudflare
 .wrangler/
@@ -62,3 +67,6 @@ ENV/
 *.sw?
 scratch/
 
+
+# MCP session cookies (SSO portal sessions — never commit)
+backend/mcp_server/sessions/

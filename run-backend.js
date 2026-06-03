@@ -8,20 +8,17 @@ const repoRoot = process.cwd();
 const backendDir = path.join(repoRoot, "backend");
 const platform = os.platform();
 const isWindows = platform === "win32";
-const isMac = platform === "darwin";
-const isLinux = platform === "linux";
 const infraComposeFile = "docker-compose.infra.yml";
+const localInfraHost = "127.0.0.1";
+let wslKeepAliveProcess = null;
 
 const infraPorts = [
   { name: "Postgres", port: 5433, required: true },
   { name: "Redis", port: 6380, required: true },
-  { name: "MinIO API", port: 9000, required: false },
-  { name: "Loki", port: 3002, required: false },
-  { name: "Grafana", port: 3001, required: false },
   { name: "Langfuse", port: 3003, required: false },
 ];
 
-console.log(`Detected OS: ${platform}${isMac ? " (macOS)" : ""}${isLinux ? " (Linux)" : ""}...`);
+console.log(`Detected OS: ${platform}${isWindows ? " (Windows)" : ""}...`);
 
 const isPortOpen = (port, host = "127.0.0.1") => {
   return new Promise((resolve) => {
@@ -142,86 +139,96 @@ const getWslRepoRoot = () => {
 const runDockerCompose = async () => {
   console.log("--- Starting local infrastructure containers ---");
 
-  if (isWindows) {
-    const wslRepoRoot = getWslRepoRoot();
+  const wslRepoRoot = getWslRepoRoot();
 
-    // Ensure Docker service is running in WSL
+  // Ensure Docker service is running in WSL.
+  try {
+    console.log("--- Checking if Docker is responsive in WSL ---");
+    execFileSync("wsl", ["docker", "ps"], { stdio: "ignore", timeout: 5000 });
+    console.log("Docker is already running in WSL.");
+  } catch (err) {
+    console.log("--- Ensuring Docker service is running in WSL ---");
     try {
-      console.log("--- Checking if Docker is responsive in WSL ---");
-      execFileSync("wsl", ["docker", "ps"], { stdio: "ignore", timeout: 5000 });
-      console.log("Docker is already running in WSL.");
-    } catch (err) {
-      console.log("--- Ensuring Docker service is running in WSL ---");
-      try {
-        // Use a shorter timeout and don't await indefinitely if it might prompt for password
-        await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
-      } catch (sudoErr) {
-        console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
-      }
-    }
-
-    const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
-
-    try {
-      await runCommand("wsl", composeArgs, { cwd: repoRoot });
-      return;
-    } catch (composePluginErr) {
-      console.warn("WSL 'docker compose' (V2) failed. Trying legacy 'docker-compose' (V1)...");
-    }
-
-    try {
-      await runCommand(
-        "wsl",
-        ["--cd", wslRepoRoot, "docker-compose", "-f", infraComposeFile, "up", "-d"],
-        { cwd: repoRoot }
-      );
-      return;
-    } catch (legacyComposeErr) {
-      console.warn("--- WSL Infrastructure Startup Warning ---");
-      console.warn("Could not start Docker infrastructure from WSL automatically.");
-      console.warn("Reason:", legacyComposeErr.message);
-      console.warn("\nIf you are running Redis, Postgres, etc. manually in WSL or Kubernetes, the backend will try to use those.");
-      console.warn("To fix the Docker error in WSL, try running: sudo apt-get install docker-compose-v2");
-      console.warn("-------------------------------------------\n");
-      // We don't throw here anymore; we'll let waitForInfrastructure check the ports.
-      return;
+      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+    } catch (sudoErr) {
+      console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
     }
   }
 
-  if (!commandExists("docker")) {
-    throw new Error(
-      "Docker CLI is not available. On macOS, start Docker Desktop before running npm start."
-    );
+  const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
+
+  try {
+    await runCommand("wsl", composeArgs, { cwd: repoRoot });
+    return;
+  } catch (composePluginErr) {
+    console.warn("WSL 'docker compose' (V2) exited non-zero:", composePluginErr.message);
+
+    // Before falling back to V1, check if required ports are already up.
+    // V2 may exit non-zero (e.g. a non-critical service failing its health check)
+    // while the core infrastructure containers are actually running.
+    const requiredAfterV2 = infraPorts.filter(p => p.required);
+    const allUpAfterV2 = await Promise.all(requiredAfterV2.map(p => isPortOpen(p.port, localInfraHost)));
+    if (allUpAfterV2.every(Boolean)) {
+      console.log("--- Required infrastructure ports are open after V2 attempt; skipping V1 fallback ---");
+      return;
+    }
+
+    console.warn("Required ports not yet open — trying legacy 'docker-compose' (V1)...");
   }
 
   try {
-    await runCommand("docker", ["compose", "-f", infraComposeFile, "up", "-d"], { cwd: repoRoot });
+    await runCommand(
+      "wsl",
+      ["--cd", wslRepoRoot, "docker-compose", "-f", infraComposeFile, "up", "-d"],
+      { cwd: repoRoot }
+    );
     return;
-  } catch (composePluginErr) {
-    console.warn("Docker Compose plugin failed; trying legacy docker-compose...");
+  } catch (legacyComposeErr) {
+    console.warn("--- WSL Infrastructure Startup Warning ---");
+    console.warn("Could not start Docker infrastructure from WSL automatically.");
+    console.warn("Reason:", legacyComposeErr.message);
+    console.warn("\nIf you are running Redis, Postgres, etc. manually in WSL, the backend will try to use those.");
+    console.warn("To fix the Docker error in WSL, try running: sudo apt-get install docker-compose-v2");
+    console.warn("-------------------------------------------\n");
+    // Let waitForInfrastructure check the published Windows ports.
+    return;
+  }
+};
+
+const startWslKeepAlive = () => {
+  if (wslKeepAliveProcess) {
+    return;
   }
 
-  if (commandExists("docker-compose")) {
-    try {
-      await runCommand("docker-compose", ["-f", infraComposeFile, "up", "-d"], { cwd: repoRoot });
-      return;
-    } catch (err) {
-      console.warn("Legacy docker-compose failed:", err.message);
-    }
-  }
+  wslKeepAliveProcess = spawn("wsl", ["sh", "-lc", "while true; do sleep 3600; done"], {
+    cwd: repoRoot,
+    stdio: "ignore",
+    shell: false,
+    windowsHide: true,
+  });
 
-  console.warn("Could not start Docker infrastructure automatically. Will check if ports are already open...");
+  wslKeepAliveProcess.on("exit", () => {
+    wslKeepAliveProcess = null;
+  });
+};
+
+const stopWslKeepAlive = () => {
+  if (wslKeepAliveProcess && !wslKeepAliveProcess.killed) {
+    wslKeepAliveProcess.kill();
+  }
 };
 
 const waitForInfrastructure = async () => {
   console.log("--- Waiting for local infrastructure ports ---");
+  const host = localInfraHost;
+  console.log(`Using host ${host} for infrastructure checks.`);
 
   for (const service of infraPorts) {
     try {
-      await waitForPort(service.port, "127.0.0.1", service.required ? 60000 : 30000);
-      console.log(`${service.name} is reachable on 127.0.0.1:${service.port}`);
+      await waitForPort(service.port, host, service.required ? 60000 : 30000);
+      console.log(`${service.name} is reachable on ${host}:${service.port}`);
     } catch (err) {
-      const message = `${service.name} is not reachable on localhost:${service.port}. ${err.message}`;
+      const message = `${service.name} is not reachable on ${host}:${service.port}. ${err.message}`;
       if (service.required) {
         throw new Error(message);
       }
@@ -231,22 +238,22 @@ const waitForInfrastructure = async () => {
 };
 
 const resolvePython = () => {
-  const candidates = isWindows ? ["python"] : ["python3", "python"];
+  const candidates = ["python"];
   for (const candidate of candidates) {
     if (commandExists(candidate, ["--version"])) {
       return candidate;
     }
   }
-  throw new Error(`Python was not found. Install ${isWindows ? "python" : "python3"} and add it to PATH.`);
+  throw new Error("Python was not found. Install Python for Windows and add it to PATH.");
 };
 
 const getVenvPaths = () => {
   const venvDir = path.join(backendDir, "venv");
-  const binDir = path.join(venvDir, isWindows ? "Scripts" : "bin");
+  const binDir = path.join(venvDir, "Scripts");
   return {
     venvDir,
-    python: path.join(binDir, isWindows ? "python.exe" : "python"),
-    uvicorn: path.join(binDir, isWindows ? "uvicorn.exe" : "uvicorn"),
+    python: path.join(binDir, "python.exe"),
+    uvicorn: path.join(binDir, "uvicorn.exe"),
     depsMarker: path.join(venvDir, ".deps-installed"),
   };
 };
@@ -295,19 +302,80 @@ const syncPythonDependencies = async (pythonCmd, venvPaths) => {
   fs.writeFileSync(venvPaths.depsMarker, new Date().toISOString());
 };
 
+let uvicornShuttingDown = false;
+
+const runUvicornWithRestart = async (uvicornPath) => {
+  const args = [
+    "app.main:app",
+    "--host", "0.0.0.0",
+    "--port", "8080",
+  ];
+  const env = { ...process.env, LANGFUSE_OTEL: "false" };
+
+  while (!uvicornShuttingDown) {
+    try {
+      await runCommand(uvicornPath, args, { env });
+      // Clean exit (code 0) — don't restart.
+      break;
+    } catch (err) {
+      if (uvicornShuttingDown) break;
+      console.error("--- Backend process crashed ---");
+      console.error(err.message);
+      console.log("--- Restarting uvicorn in 2s (infra already running) ---");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+};
+
+/**
+ * Start a mock uvicorn server in the background (fire-and-forget with auto-restart).
+ * Used for mock_zoho_server (8090) and mock_manage_engine_server (8091).
+ */
+const startMockServer = (uvicornPath, appModule, port, label) => {
+  const args = [appModule, "--host", "0.0.0.0", "--port", String(port)];
+  const env = { ...process.env, LANGFUSE_OTEL: "false" };
+
+  const launch = () => {
+    if (uvicornShuttingDown) return;
+    console.log(`--- Starting ${label} on port ${port} ---`);
+    const child = spawn(uvicornPath, args, {
+      cwd: backendDir,
+      env,
+      stdio: "inherit",
+      shell: false,
+    });
+    child.on("error", (err) => {
+      if (uvicornShuttingDown) return;
+      console.error(`[${label}] failed to start: ${err.message} — retrying in 5s`);
+      setTimeout(launch, 5000);
+    });
+    child.on("exit", (code) => {
+      if (uvicornShuttingDown) return;
+      if (code !== 0 && code !== null) {
+        console.error(`[${label}] exited with code ${code} — restarting in 5s`);
+        setTimeout(launch, 5000);
+      }
+    });
+  };
+
+  launch();
+};
+
 const startBackend = async () => {
-  if (!isWindows && !isMac && !isLinux) {
-    throw new Error(`Unsupported OS for npm start backend orchestration: ${platform}`);
+  if (!isWindows) {
+    throw new Error(`This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`);
   }
 
   if (process.env.SKIP_DOCKER === "true") {
     console.log("--- SKIP_DOCKER is set; skipping infrastructure startup ---");
   } else {
+    startWslKeepAlive();
+
     // Check if required ports are already open before trying to start Docker
     const requiredPorts = infraPorts.filter(p => p.required);
     let allRequiredOpen = true;
     for (const p of requiredPorts) {
-      if (!(await isPortOpen(p.port))) {
+      if (!(await isPortOpen(p.port, localInfraHost))) {
         allRequiredOpen = false;
         break;
       }
@@ -330,21 +398,31 @@ const startBackend = async () => {
   await runCommand(venvPaths.python, ["create_db.py"]);
   await runCommand(venvPaths.python, ["init_db_script.py"]);
 
+  // Start mock servers in background (non-blocking, auto-restart)
+  startMockServer(venvPaths.uvicorn, "mock_zoho_server:app",          8090, "Mock Zoho");
+  startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
+  startMockServer(venvPaths.uvicorn, "mock_nexus_library_server:app", 8092, "Mock Nexus Library");
+
   console.log("--- Starting backend on http://localhost:8080 ---");
-  await runCommand(
-    venvPaths.uvicorn,
-    ["app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "app"],
-    {
-      env: {
-        ...process.env,
-        LANGFUSE_OTEL: "false",
-      },
-    }
-  );
+  await runUvicornWithRestart(venvPaths.uvicorn);
 };
+
 
 startBackend().catch((err) => {
   console.error("Backend startup failed:");
   console.error(err.message);
+  stopWslKeepAlive();
   process.exit(1);
+});
+
+process.on("SIGINT", () => {
+  uvicornShuttingDown = true;
+  stopWslKeepAlive();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  uvicornShuttingDown = true;
+  stopWslKeepAlive();
+  process.exit(0);
 });
