@@ -660,7 +660,7 @@ async def chat(
         accumulated_text = ""
         routed_domain = "general"
         final_messages = []
-        llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
+        llm_calls: dict[str, dict] = {}   # run_id -> {node, model, start}
         completed_calls: list[dict] = []   # finished LLM calls for DB insert
         error_msg: str | None = None
 
@@ -753,9 +753,8 @@ async def chat(
                     final_messages = output.get("messages") or []
 
         except Exception as exc:
-            error_msg = str(exc)
             print(f"[stream] error: {exc}")
-            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 
         # If nothing streamed (tool-only path, fast-path nodes, etc.), use last message
         if not accumulated_text and final_messages:
