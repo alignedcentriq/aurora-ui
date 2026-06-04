@@ -21,7 +21,23 @@ DOMAIN_REGISTRY = {
         "description": "Human Resources — attendance, HR policies, employee benefits, onboarding, "
                        "offboarding, referral bonuses, appraisals, PIP, performance reviews, "
                        "work from home policy, holidays, comp-off. "
-                       "Do NOT use for leave balance queries or leave applications — both go through Zoho (deeplink).",
+                       "Do NOT use for leave balance queries or leave applications — both go through Zoho (deeplink). "
+                       "Do NOT use for health insurance / mediclaim / Practo — those go to 'health'.",
+        "status": "active",
+    },
+    "health": {
+        "description": "Health Buddy — everything about employee health benefits offered by the company. "
+                       "Group Health Insurance (GHI), mediclaim, medical insurance, sum insured, coverage, "
+                       "what is covered/excluded, network hospitals, cashless hospitalization, "
+                       "reimbursement claims for hospitalization, how to file/apply for an insurance claim, "
+                       "claim submission process and documents, Group Personal Accident (GPA) policy, "
+                       "parents insurance, spouse/children/dependent coverage, adding or removing dependents, "
+                       "e-card / health card, day-care surgeries, maternity cover under insurance, "
+                       "OPD, the insurer apps and portals (IL Take Care / iHealthcare), "
+                       "Practo — registering for and using the Practo teleconsultation/doctor benefit, "
+                       "wellness programs, health checkups, and any other health-related information. "
+                       "This is purely informational — it looks up and explains the company's health documents. "
+                       "Do NOT use for general medical advice or diagnosis.",
         "status": "active",
     },
     "admin": {
@@ -93,7 +109,7 @@ DOMAIN_REGISTRY = {
 
 class RouterOutput(BaseModel):
     """Structured classification output from the intent router."""
-    domain: Literal["hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"]
+    domain: Literal["hr", "health", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"]
     confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence from 0.0 to 1.0")
     reasoning: str = Field(description="One-sentence explanation of the classification")
     sub_intent: str = Field(description="Short snake_case label for the specific action, e.g. software_install")
@@ -156,19 +172,38 @@ EXAMPLES:
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
+- "what is my health insurance coverage" → domain: health, sub_intent: insurance_info, entities: {{"topic": "coverage"}}
+- "how do I claim my mediclaim" → domain: health, sub_intent: claim_process, entities: {{}}
+- "how to apply for an insurance claim" → domain: health, sub_intent: claim_process, entities: {{}}
+- "what is the sum insured under group health insurance" → domain: health, sub_intent: insurance_info, entities: {{"topic": "sum insured"}}
+- "is my spouse covered under the health insurance" → domain: health, sub_intent: dependents, entities: {{"dependent": "spouse"}}
+- "are my parents covered" → domain: health, sub_intent: dependents, entities: {{"dependent": "parents"}}
+- "cashless hospitalization process" → domain: health, sub_intent: claim_process, entities: {{"topic": "cashless"}}
+- "which hospitals are in network" → domain: health, sub_intent: insurance_info, entities: {{"topic": "network hospitals"}}
+- "how do I use Practo" → domain: health, sub_intent: practo, entities: {{}}
+- "what day-care surgeries are covered" → domain: health, sub_intent: insurance_info, entities: {{"topic": "day-care surgeries"}}
+- "tell me about GPA policy" → domain: health, sub_intent: insurance_info, entities: {{"topic": "GPA"}}
+- "Health Buddy" → domain: health, sub_intent: greeting, entities: {{}}
 - "hi" → domain: general, sub_intent: greeting, entities: {{}}
 """
 
 
 # ── Router LLM ───────────────────────────────────────────────────────────────
 
+# NOTE: qwen2.5:14b on the shared LLM host measures ~26–33s for a single
+# classification — right at the old 30s timeout. With the default max_retries=2,
+# a timed-out call retried twice (30s × 3 = 90s) and then failed the WHOLE turn,
+# which is why every question died at ~90s. Give one call a generous window and
+# do NOT retry — retrying a slow model only multiplies the wait before the same
+# failure. The frontend abort and vite proxy both allow 180s, so 90s is safe.
 _router_llm = ChatOpenAI(
     base_url=settings.ROUTER_BASE_URL,
     api_key=settings.ROUTER_API_KEY,
     model=settings.ROUTER_MODEL_NAME,
     temperature=0,
     max_tokens=256,
-    timeout=30,
+    timeout=90,
+    max_retries=0,
 ).with_structured_output(RouterOutput)
 
 
@@ -176,7 +211,7 @@ async def classify_intent_async(user_message: str) -> dict:
     """Async version of classify_intent — uses ainvoke to avoid blocking the event loop."""
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        print(f"[Router] Query expanded: '{user_message}' -> '{expanded_message}'")
 
     system = SystemMessage(content=_build_router_prompt())
     human = HumanMessage(content=expanded_message)
@@ -218,7 +253,7 @@ def classify_intent(user_message: str) -> dict:
     """
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        print(f"[Router] Query expanded: '{user_message}' -> '{expanded_message}'")
 
     system = SystemMessage(content=_build_router_prompt())
     human = HumanMessage(content=expanded_message)
