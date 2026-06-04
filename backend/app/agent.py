@@ -1253,7 +1253,11 @@ def hr_agent(state: AgentState):
             f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) -> "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
-            f"Never answer from training knowledge — use tools only.\n",
+            f"Never answer from training knowledge - use tools only.\n"
+            f"GROUNDING: Answer ONLY with figures, dates, limits, and facts that appear verbatim in the "
+            f"tool results. If the retrieved policy text does not actually contain the specific detail asked "
+            f"for, say 'I couldn't find that detail in the policy documents - please check with HR' and STOP. "
+            f"NEVER invent or estimate numbers, days, amounts, or timelines.\n",
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""

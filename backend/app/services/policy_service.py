@@ -107,6 +107,22 @@ _QUERY_SYNONYMS: dict[str, str] = {
     "referral": "employee referral recruitment bonus",
     "relocation": "relocation transfer allowance",
     "sabbatical": "sabbatical long leave career break",
+    # ── Health insurance / GHI / mediclaim / claims ──────────────────────────
+    "tat": "turnaround time claim settlement processing time",
+    "ghi": "group health insurance mediclaim floater",
+    "gpa": "group personal accident insurance",
+    "sum insured": "sum insured coverage amount floater",
+    "cashless": "cashless hospitalization network hospital pre-authorization",
+    "opd": "outpatient department consultation",
+    "ipd": "inpatient hospitalization",
+    "ped": "pre-existing disease waiting period",
+    "copay": "co-payment cost sharing",
+    "co-pay": "co-payment cost sharing",
+    "day care": "day care procedure surgery",
+    "daycare": "day care procedure surgery",
+    "room rent": "room rent limit hospitalization",
+    "network hospital": "network hospital cashless empanelled",
+    "ncb": "cumulative bonus no claim bonus",
 }
 
 
