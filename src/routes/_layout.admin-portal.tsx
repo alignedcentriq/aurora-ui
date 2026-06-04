@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil } from "lucide-react";
+import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
@@ -10,7 +10,7 @@ export const Route = createFileRoute("/_layout/admin-portal")({
   component: AdminPortal,
 });
 
-type Tab = "reimbursements" | "parking" | "complaints" | "food-complaints" | "bookshelf";
+type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
@@ -24,6 +24,10 @@ const STATUS_BADGE: Record<string, string> = {
   Acknowledged: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
   Resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
   Closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
+  "Auto-Rejected": "bg-rose-500/15 text-rose-400 border border-rose-500/20",
+  Released: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
+  Due: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
+  Paid: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -66,6 +70,8 @@ function AdminPortal() {
         {[
           { id: "reimbursements", label: "Reimbursements", icon: Receipt },
           { id: "parking", label: "Parking Stickers", icon: Car },
+          { id: "parking-dues", label: "Parking Dues", icon: Wallet },
+          { id: "desk-keys", label: "Desk Keys", icon: KeyRound },
           { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
           { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
           { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
@@ -89,6 +95,8 @@ function AdminPortal() {
       <div className="flex-1 overflow-auto px-8 py-6">
         {tab === "reimbursements" && <ReimbursementsTab authHeaders={authHeaders} />}
         {tab === "parking" && <ParkingTab authHeaders={authHeaders} />}
+        {tab === "parking-dues" && <ParkingDuesTab authHeaders={authHeaders} />}
+        {tab === "desk-keys" && <DeskKeysTab authHeaders={authHeaders} />}
         {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} />}
         {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} />}
         {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} />}
@@ -1292,6 +1300,344 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
 
 
 // ── Shared UI helpers ─────────────────────────────────────────────────────────
+
+// ── Desk Keys Tab ──────────────────────────────────────────────────────────────
+
+interface DeskKey {
+  id: number;
+  employee_name: string;
+  employee_email: string;
+  desk_number: string;
+  reason: string;
+  status: string;
+  decided_by: string;
+  decision_reason: string;
+  created_at: string | null;
+}
+
+function DeskKeysTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [items, setItems] = useState<DeskKey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<number | null>(null);
+  const [filter, setFilter] = useState("Pending");
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = filter !== "All" ? `?status=${filter}` : "";
+      const res = await fetch(`/api/portal/admin/desk-keys${qs}`, { headers: authHeaders });
+      setItems(await res.json());
+    } catch { toast.error("Failed to load"); }
+    finally { setLoading(false); }
+  }, [filter]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const act = async (id: number, action: "approve" | "reject" | "release") => {
+    let body: string | undefined;
+    if (action === "reject") {
+      const reason = window.prompt("Reason for rejecting this desk key request:")?.trim();
+      if (!reason) return;
+      body = JSON.stringify({ reason });
+    }
+    setActing(id);
+    try {
+      const res = await fetch(`/api/portal/admin/desk-keys/${id}/${action}`, {
+        method: "PUT", headers: authHeaders, body,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      if (action === "approve") flyBanner("Desk key issued");
+      else toast.success(action === "reject" ? "Request rejected" : "Desk released");
+      fetch_();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  return (
+    <div>
+      <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]} onRefresh={fetch_} />
+      {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="desk key requests" /> : (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-[var(--border)]">
+              {["Employee", "Desk", "Reason", "Status", "Actions"].map((h) => (
+                <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                <td className="py-3.5 pr-4">
+                  <div className="font-medium text-foreground">{d.employee_name}</div>
+                  <div className="text-[11px] text-muted-foreground">{d.employee_email}</div>
+                </td>
+                <td className="py-3.5 pr-4 font-mono text-foreground/90">{d.desk_number}</td>
+                <td className="py-3.5 pr-4 text-foreground/70 max-w-[260px]">{d.reason || d.decision_reason || "—"}</td>
+                <td className="py-3.5 pr-4"><StatusBadge status={d.status} /></td>
+                <td className="py-3.5">
+                  {d.status === "Pending" ? (
+                    <ActionButtons id={d.id} acting={acting} onApprove={() => act(d.id, "approve")} onReject={() => act(d.id, "reject")} />
+                  ) : d.status === "Approved" ? (
+                    <button
+                      onClick={() => act(d.id, "release")}
+                      disabled={acting === d.id}
+                      className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {acting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                      Release
+                    </button>
+                  ) : <span className="text-muted-foreground/40 text-[12px]">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Parking Dues Tab ─────────────────────────────────────────────────────────
+
+interface ParkingDuePayment {
+  id: number;
+  month: string;
+  amount_due: number;
+  amount_paid: number;
+  status: string;
+}
+interface ParkingDueHolder {
+  employee_name: string;
+  employee_email: string;
+  vehicle_type: string;
+  vehicle_number: string;
+  outstanding: number;
+  monthly_cost: number;
+  payments: ParkingDuePayment[];
+}
+interface ParkingDuesSettings {
+  two_wheeler_cost: number;
+  four_wheeler_cost: number;
+  cadence: string;
+  last_run: string;
+}
+
+function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [holders, setHolders] = useState<ParkingDueHolder[]>([]);
+  const [settings, setSettings] = useState<ParkingDuesSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [twoW, setTwoW] = useState("");
+  const [fourW, setFourW] = useState("");
+  const [cadence, setCadence] = useState("monthly");
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues`, { headers: authHeaders });
+      const data = await res.json();
+      setHolders(data.holders ?? []);
+      setSettings(data.settings ?? null);
+      setTwoW(String(data.settings?.two_wheeler_cost ?? ""));
+      setFourW(String(data.settings?.four_wheeler_cost ?? ""));
+      setCadence(data.settings?.cadence ?? "monthly");
+    } catch { toast.error("Failed to load"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/settings`, {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify({
+          two_wheeler_cost: parseFloat(twoW) || 0,
+          four_wheeler_cost: parseFloat(fourW) || 0,
+          cadence,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Settings saved");
+      fetch_();
+    } catch { toast.error("Failed to save settings"); }
+    finally { setSaving(false); }
+  };
+
+  const remind = async (email?: string) => {
+    setActing(email ?? "ALL");
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/remind`, {
+        method: "POST", headers: authHeaders, body: JSON.stringify({ email: email ?? null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed");
+      flyBanner(data.message || "Reminder sent");
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  const markPaid = async (paymentId: number) => {
+    setActing(`p${paymentId}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${paymentId}/paid`, { method: "PUT", headers: authHeaders });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Marked paid");
+      fetch_();
+    } catch { toast.error("Failed"); }
+    finally { setActing(null); }
+  };
+
+  const closeMonth = async (paymentId: number) => {
+    setActing(`c${paymentId}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${paymentId}/close`, { method: "PUT", headers: authHeaders });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Month closed");
+      fetch_();
+    } catch { toast.error("Failed"); }
+    finally { setActing(null); }
+  };
+
+  const payFull = async (email: string) => {
+    setActing(`full${email}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${encodeURIComponent(email)}/pay-full`, { method: "POST", headers: authHeaders });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed");
+      flyBanner(data.message || "Settled");
+      fetch_();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Settings card */}
+      <div className="rounded-2xl border border-[var(--border)] bg-card p-5">
+        <h3 className="text-[14px] font-semibold text-foreground mb-4">Parking Charges & Reminders</h3>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">2-Wheeler / month (INR)</label>
+            <input type="number" value={twoW} onChange={(e) => setTwoW(e.target.value)}
+              className="w-36 rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">4-Wheeler / month (INR)</label>
+            <input type="number" value={fourW} onChange={(e) => setFourW(e.target.value)}
+              className="w-36 rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">Reminder cadence</label>
+            <select value={cadence} onChange={(e) => setCadence(e.target.value)}
+              className="rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+            </select>
+          </div>
+          <button onClick={saveSettings} disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Save
+          </button>
+          <button onClick={() => remind()} disabled={acting === "ALL"}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+            {acting === "ALL" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Send reminders to all
+          </button>
+        </div>
+        {settings?.last_run && (
+          <p className="text-[11px] text-muted-foreground/60 mt-3">Last reminder run: {settings.last_run}</p>
+        )}
+      </div>
+
+      {/* Holders */}
+      {loading ? <TableLoader /> : holders.length === 0 ? <TableEmpty label="parking holders" /> : (
+        <div className="space-y-2">
+          {holders.map((h) => {
+            const open = expanded === h.employee_email;
+            return (
+              <div key={h.employee_email} className="rounded-xl border border-[var(--border)] bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <button onClick={() => setExpanded(open ? null : h.employee_email)} className="flex items-center gap-3 text-left">
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+                    <div>
+                      <div className="font-medium text-foreground">{h.employee_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{h.vehicle_number} · {h.vehicle_type} · INR {h.monthly_cost.toLocaleString()}/mo</div>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-3">
+                    <span className={cn("text-[13px] font-semibold", h.outstanding > 0 ? "text-rose-400" : "text-emerald-400")}>
+                      INR {h.outstanding.toLocaleString()} {h.outstanding > 0 ? "due" : "clear"}
+                    </span>
+                    {h.outstanding > 0 && (
+                      <>
+                        <button onClick={() => remind(h.employee_email)} disabled={acting === h.employee_email}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+                          {acting === h.employee_email ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                          Remind
+                        </button>
+                        <button onClick={() => payFull(h.employee_email)} disabled={acting === `full${h.employee_email}`}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
+                          {acting === `full${h.employee_email}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          Mark full paid
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {open && (
+                  <div className="border-t border-[var(--border)]/60 px-4 py-3">
+                    {h.payments.length === 0 ? (
+                      <p className="text-[12px] text-muted-foreground">No charges accrued yet.</p>
+                    ) : (
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                            <th className="py-1.5 pr-4">Month</th><th className="py-1.5 pr-4">Amount</th><th className="py-1.5 pr-4">Status</th><th className="py-1.5">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {h.payments.map((p) => (
+                            <tr key={p.id} className="border-t border-[var(--border)]/40">
+                              <td className="py-2 pr-4 text-foreground/90">{p.month}</td>
+                              <td className="py-2 pr-4 text-foreground/80">INR {p.amount_due.toLocaleString()}</td>
+                              <td className="py-2 pr-4"><StatusBadge status={p.status} /></td>
+                              <td className="py-2">
+                                {p.status === "Due" ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <button onClick={() => markPaid(p.id)} disabled={acting === `p${p.id}`}
+                                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
+                                      {acting === `p${p.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                      Paid
+                                    </button>
+                                    <button onClick={() => closeMonth(p.id)} disabled={acting === `c${p.id}`}
+                                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 transition-colors disabled:opacity-50">
+                                      Close
+                                    </button>
+                                  </div>
+                                ) : <span className="text-muted-foreground/40">—</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StatusBadge({ status }: { status: string }) {
   return (

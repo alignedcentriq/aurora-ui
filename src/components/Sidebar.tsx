@@ -25,6 +25,7 @@ import {
   BookOpen,
   Library as LibraryIcon,
   FileText,
+  GraduationCap,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -64,6 +65,8 @@ const NAV_COLORS: Record<string, string> = {
   "/hr-portal":     "var(--collaboration)",
   "/admin-portal":  "var(--clarity)",
   "/it-portal":     "var(--connectivity)",
+  "/pmo-portal":    "var(--capacity)",
+  "/manager-portal": "var(--collaboration)",
   "/settings":      "var(--capacity)",
 };
 
@@ -160,6 +163,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
     { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
     { to: "/it-portal", icon: Ticket, label: "IT Portal", show: user.role === "IT" },
+    { to: "/pmo-portal", icon: GraduationCap, label: "PMO Portal", show: user.role === "PMO" },
+    { to: "/manager-portal", icon: UserCog, label: "Manager Portal", show: user.role === "Functional Manager" },
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 

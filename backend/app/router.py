@@ -19,7 +19,10 @@ from app.services.policy_service import _expand_query
 
 DOMAIN_REGISTRY = {
     "hr": {
-        "description": "Human Resources — HR policies, employee benefits, onboarding, offboarding, "
+        "description": "Human Resources — HR policies, employee benefits, "
+                       "insurance, mediclaim, group health insurance, medical insurance, "
+                       "parents insurance, health cover, ESI/ESIC, insurance claim process, claim forms, "
+                       "onboarding, offboarding, "
                        "referral bonuses, PIP, work from home policy, holidays, comp-off, "
                        "grievances, HR document generation (experience certificate, NOC, salary letter), "
                        "employee directory, org chart, announcements. "
@@ -60,8 +63,8 @@ DOMAIN_REGISTRY = {
                        "AI projects, technology projects, initiatives the company is working on, "
                        "project status, completion percentage, project owner, next milestone, "
                        "PDF report generation, project summary, what projects exist, "
-                       "managing Udemy training licenses — assigning seats, checking who has access, "
-                       "revoking expired Udemy licenses",
+                       "Udemy training licenses — an employee requesting a Udemy license / online course access, "
+                       "assigning seats, checking who has access, revoking expired Udemy licenses",
         "status": "active",
     },
     "functional_manager": {
@@ -138,6 +141,9 @@ CLASSIFICATION RULES:
 
 EXAMPLES:
 - "install Node.js" → domain: it_support, sub_intent: software_install, entities: {{"software_name": "Node.js"}}
+- "find Python developers" → domain: hr, sub_intent: employee_search, entities: {{"skill": "Python"}}   (searching for PEOPLE by skill/role — NOT a software install)
+- "who knows React" → domain: hr, sub_intent: employee_search, entities: {{"skill": "React"}}
+- "list our QA engineers" → domain: hr, sub_intent: employee_search, entities: {{"role": "QA engineer"}}
 - "my laptop is overheating" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "overheating"}}
 - "my system is very slow" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "performance"}}
 - "I need a GitHub Copilot license" → domain: it_support, sub_intent: license_request, entities: {{"license_name": "GitHub Copilot"}}
@@ -163,6 +169,8 @@ EXAMPLES:
 - "extend my borrow for 7 more days" → domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
 - "renew Atomic Habits, I need more time" → domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
+- "I need a Udemy license for a Python course" → domain: pmo, sub_intent: udemy_license, entities: {{"course_name": "Python"}}
+- "can I get access to a Udemy course" → domain: pmo, sub_intent: udemy_license, entities: {{}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
 - "is Salween room free tomorrow 2-3pm" → domain: ms365, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
@@ -173,6 +181,9 @@ EXAMPLES:
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
+- "what does my group health insurance cover" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "group health insurance"}}
+- "how do I file a mediclaim insurance claim" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "insurance claim process"}}
+- "is my parents insurance covered" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "parents insurance"}}
 - "hi" → domain: general, sub_intent: greeting, entities: {{}}
 """
 

@@ -282,6 +282,20 @@ def post_admin_announcement(title: str, body: str, category: str = "General", ta
     )
 
 @tool
+def request_desk_key(
+    desk_number: str,
+    reason: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a desk key for a specific desk.
+    REQUIRED: desk_number (e.g. B-07, A-3) — ask the user for it if not stated; never guess.
+    reason: optional note on why the key is needed.
+    The request is automatically declined if that desk is already assigned to someone else.
+    The Admin team is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return AdminService.request_desk_key(email, desk_number, reason)
+
+@tool
 def update_admin_prompt(new_prompt: str):
     """Update the Admin agent system prompt (Admin manager role only)."""
     return PromptService.update_prompt(
@@ -303,6 +317,7 @@ tools = [
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
     list_available_books, borrow_book_by_name, request_book, check_book_requests,
     return_my_book, request_book_extension,
+    request_desk_key,
     post_admin_announcement, update_admin_prompt,
 ]
 
@@ -325,7 +340,7 @@ _TOOL_GROUPS: dict[str, list] = {
     "accommodation":      [request_accommodation, search_admin_policies],
     "visitor_pass":       [request_visitor_pass],
     "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
-    "desk_key_request":   [search_admin_policies],
+    "desk_key_request":   [request_desk_key],
 }
 
 import re as _re

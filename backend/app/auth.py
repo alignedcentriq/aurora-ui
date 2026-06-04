@@ -64,3 +64,18 @@ def require_it(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if user.role not in {"it", "admin"}:
         raise HTTPException(status_code=403, detail="IT access required.")
     return user
+
+
+def require_pmo(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows pmo and admin roles."""
+    if user.role not in {"pmo", "admin"}:
+        raise HTTPException(status_code=403, detail="PMO access required.")
+    return user
+
+
+def require_functional_manager(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows functional managers only. Whole-hierarchy attendance reporting is restricted
+    to this role per product decision (2026-06-04)."""
+    if user.role != "functional manager":
+        raise HTTPException(status_code=403, detail="Functional Manager access required.")
+    return user

@@ -36,6 +36,7 @@ from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
+from app.routes.pmo_portal_routes import router as pmo_portal_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
@@ -46,6 +47,7 @@ from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
 from app.routes.ms365_routes import router as ms365_router
 from app.routes.document_routes import router as document_router, public_router as document_public_router
+from app.routes.manager_routes import router as manager_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -95,6 +97,7 @@ app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
+app.include_router(pmo_portal_router)
 app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
@@ -106,6 +109,7 @@ app.include_router(software_catalog_router)
 app.include_router(ms365_router)
 app.include_router(document_router)
 app.include_router(document_public_router)
+app.include_router(manager_router)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -195,6 +199,20 @@ async def startup_event():
                 print(f"Failed to renew subscriptions: {e}")
 
     asyncio.create_task(periodic_renew())
+
+    # Run any due attendance-report automations every minute (schedules persist in DB).
+    async def attendance_scheduler():
+        from app.services import attendance_schedule_service
+        while True:
+            await asyncio.sleep(60)
+            try:
+                fired = await asyncio.to_thread(attendance_schedule_service.run_due)
+                if fired:
+                    print(f"[attendance_scheduler] ran {fired} due schedule(s)")
+            except Exception as e:
+                print(f"[attendance_scheduler] error: {e}")
+
+    asyncio.create_task(attendance_scheduler())
 
     get_deeplink_agent()
 
@@ -326,6 +344,8 @@ _REJECT_LABELS = {
     "leave": "Reject Leave Request",
     "book_request": "Reject Borrow Request",
     "book_extension": "Reject Extension Request",
+    "udemy_license": "Decline Udemy License",
+    "desk_key": "Reject Desk Key Request",
 }
 
 
@@ -629,6 +649,63 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
             color,
         ))
 
+    if tok.entity_type == "udemy_license":
+        from app.services.udemy_service import UdemyService
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "udemy_license",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+        try:
+            if decision == "Approved":
+                UdemyService.approve(tok.entity_id, decided_by=tok.approver_email)
+            else:
+                UdemyService.reject(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed", f"We couldn't update the Udemy request: {html.escape(str(e))}", "#dc2626",
+            ), status_code=502)
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        verb = "Approved" if decision == "Approved" else "Declined"
+        return HTMLResponse(_approval_html(
+            f"Udemy License {verb}",
+            f"The Udemy license request has been <strong>{verb}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    if tok.entity_type == "desk_key":
+        from app.services.admin_service import AdminService
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "desk_key",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+        try:
+            if decision == "Approved":
+                res = AdminService.approve_desk_key(tok.entity_id, decided_by=tok.approver_email)
+                if not res.get("ok"):
+                    return HTMLResponse(_approval_html(
+                        "Cannot Approve", html.escape(res.get("error", "Desk is already assigned.")), "#dc2626",
+                    ), status_code=409)
+            else:
+                AdminService.reject_desk_key(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed", f"We couldn't update the desk key request: {html.escape(str(e))}", "#dc2626",
+            ), status_code=502)
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Desk Key {decision}",
+            f"The desk key request has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
     db.commit()
     return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
@@ -682,6 +759,20 @@ _NON_CACHEABLE_SUBINTENTS = {
     "send_email", "send_teams_message", "room_availability", "book_room",
     "announcement", "prompt_config",
 }
+
+# Refusal / no-answer responses must NEVER be cached: they're a transient routing or
+# retrieval miss, not a stable fact. Caching one poisons the cache — a later lookup
+# (which runs before routing, across all domains) serves the refusal verbatim and the
+# fixed route never gets a chance to run. Matched against the final answer text.
+_REFUSAL_RE = re.compile(
+    r"(outside my area|outside my domain|contact the relevant team|"
+    r"i (?:can(?:'|no)?t|cannot|am (?:not able|unable)) (?:help|assist|answer)|"
+    r"i (?:don'?t|do not) have (?:access|information|enough)|"
+    r"i (?:couldn'?t|could not|cannot|can'?t|was unable to|am unable to) find|"
+    r"i was unable to find|no (?:relevant )?(?:information|policy|document)s? "
+    r"(?:found|available)|please contact (?:hr|the relevant|your))",
+    re.IGNORECASE,
+)
 
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
@@ -1092,6 +1183,7 @@ async def chat(
                 and not _CACHE_SKIP_RE.search(request.message)
                 and final_message
                 and len(final_message.strip()) >= 40
+                and not _REFUSAL_RE.search(final_message)
             ):
                 from app.services.answer_cache_service import AnswerCacheService
                 await asyncio.to_thread(

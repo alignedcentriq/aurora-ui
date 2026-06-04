@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode, tools_condition, InjectedState
 
 from app.config import settings
 from app.services.prompt_service import PromptService
@@ -188,6 +188,21 @@ def search_people_directory(query: str):
     return PeopleService.search_people_text(query)
 
 
+@tool
+def request_udemy_license(
+    justification: str = "",
+    course_name: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a Udemy license from the PMO team. Use when the user asks for a Udemy license / online course access.
+    course_name: the course or topic they want (ask if not stated).
+    justification: a one-line reason / how it helps their work (ask if not stated).
+    Licenses are provided subject to availability — make this clear. The PMO team is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    from app.services.udemy_service import UdemyService
+    return UdemyService.request_license(email, justification, course_name)
+
+
 pmo_tools = [
     list_projects,
     get_project_status,
@@ -195,6 +210,7 @@ pmo_tools = [
     generate_project_report,
     generate_multi_project_report,
     search_people_directory,
+    request_udemy_license,
 ]
 
 # LLM built on demand from the live IT-tunable params (router tier).

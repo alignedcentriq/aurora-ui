@@ -5,7 +5,7 @@ from app.config import settings
 from app.models import (
     Employee, Reimbursement, ParkingSticker,
     Accommodation, FacilityComplaint, FoodVendorFeedback, FoodComplaint,
-    VisitorPass
+    VisitorPass, DeskKeyRequest, ApprovalToken
 )
 
 
@@ -570,5 +570,189 @@ class AdminService:
                 f"Average rating for {vendor_name}: **{avg_rating:.1f}/5.0** "
                 f"based on {len(feedbacks)} reviews."
             )
+        finally:
+            db.close()
+
+    # ── Desk Keys ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _mint_desk_key_tokens(entity_id: int, approver_email: str, employee_email: str) -> tuple[str, str]:
+        import secrets
+        approve_tok = secrets.token_urlsafe(32)
+        reject_tok = secrets.token_urlsafe(32)
+        expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        db = SessionLocal()
+        try:
+            for tok, action in ((approve_tok, "approve"), (reject_tok, "reject")):
+                db.add(ApprovalToken(
+                    token=tok, entity_type="desk_key", entity_id=entity_id, action=action,
+                    approver_email=approver_email, employee_email=employee_email, expires_at=expires,
+                ))
+            db.commit()
+        finally:
+            db.close()
+        return approve_tok, reject_tok
+
+    @staticmethod
+    def request_desk_key(email: str, desk_number: str, reason: str = "") -> str:
+        """Request a desk key. Auto-rejected if the desk is already assigned to someone else."""
+        desk = (desk_number or "").strip().upper()
+        if not desk:
+            return "Please provide the desk number you need a key for (e.g. B-07)."
+        db = SessionLocal()
+        try:
+            emp = AdminService._get_or_create_employee(db, email)
+
+            # Auto-reject if an active (Approved) assignment for this desk belongs to someone else.
+            existing = db.query(DeskKeyRequest).filter(
+                DeskKeyRequest.desk_number == desk,
+                DeskKeyRequest.status == "Approved",
+                DeskKeyRequest.employee_id != emp.id,
+            ).first()
+            if existing:
+                db.add(DeskKeyRequest(
+                    employee_id=emp.id, desk_number=desk, reason=reason or None,
+                    status="Auto-Rejected",
+                    decision_reason="Desk already assigned to another employee.",
+                ))
+                db.commit()
+                return (
+                    f"Desk {desk} is already assigned to another employee, so your request was "
+                    f"automatically declined. Please request a different desk number."
+                )
+
+            req = DeskKeyRequest(
+                employee_id=emp.id, desk_number=desk, reason=reason or None, status="Pending",
+            )
+            db.add(req)
+            db.commit()
+            db.refresh(req)
+            req_id, emp_name = req.id, emp.name
+        finally:
+            db.close()
+
+        # Notify Admin with approve/reject links.
+        approve_url = reject_url = ""
+        try:
+            if settings.NOTIFY_TO_EMAIL:
+                approve_tok, reject_tok = AdminService._mint_desk_key_tokens(
+                    entity_id=req_id, approver_email=settings.NOTIFY_TO_EMAIL, employee_email=email,
+                )
+                approve_url = f"{settings.APP_BASE_URL}/api/approve/{approve_tok}"
+                reject_url = f"{settings.APP_BASE_URL}/api/approve/{reject_tok}"
+        except Exception:
+            pass
+
+        def _notify():
+            try:
+                from app.services.email_service import send_desk_key_request_email
+                send_desk_key_request_email(
+                    user_email=email, employee_name=emp_name, employee_email=email,
+                    desk_number=desk, reason=reason or "",
+                    approve_url=approve_url, reject_url=reject_url,
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_notify, daemon=True).start()
+        return (
+            f"Your desk key request for Desk {desk} has been submitted (Request #{req_id}). "
+            "The Admin team will confirm the desk is available and notify you by email."
+        )
+
+    @staticmethod
+    def _desk_key_decide(req_id: int, decision: str, decided_by: str, reason: str = "") -> dict:
+        db = SessionLocal()
+        try:
+            req = db.query(DeskKeyRequest).filter(DeskKeyRequest.id == req_id).first()
+            if not req:
+                return {"ok": False, "error": "Request not found"}
+
+            if decision == "Approved":
+                # Re-check the desk isn't assigned to someone else in the meantime.
+                clash = db.query(DeskKeyRequest).filter(
+                    DeskKeyRequest.desk_number == req.desk_number,
+                    DeskKeyRequest.status == "Approved",
+                    DeskKeyRequest.employee_id != req.employee_id,
+                ).first()
+                if clash:
+                    return {"ok": False, "error": f"Desk {req.desk_number} is already assigned to another employee."}
+                req.assigned_at = datetime.datetime.utcnow()
+
+            req.status = decision
+            req.decided_by = decided_by
+            req.decision_reason = reason or None
+            emp = db.query(Employee).filter(Employee.id == req.employee_id).first()
+            db.commit()
+            info = {
+                "ok": True,
+                "employee_email": emp.email if emp else "",
+                "employee_name": emp.name if emp else "",
+                "desk_number": req.desk_number,
+            }
+        finally:
+            db.close()
+
+        try:
+            from app.services.email_service import send_desk_key_decision_email
+            if info.get("employee_email"):
+                send_desk_key_decision_email(
+                    user_email=decided_by or info["employee_email"],
+                    employee_email=info["employee_email"], employee_name=info["employee_name"],
+                    desk_number=info["desk_number"], decision=decision, reason=reason,
+                )
+        except Exception:
+            pass
+        return info
+
+    @staticmethod
+    def approve_desk_key(req_id: int, decided_by: str) -> dict:
+        return AdminService._desk_key_decide(req_id, "Approved", decided_by)
+
+    @staticmethod
+    def reject_desk_key(req_id: int, decided_by: str, reason: str = "") -> dict:
+        return AdminService._desk_key_decide(req_id, "Rejected", decided_by, reason)
+
+    @staticmethod
+    def release_desk_key(req_id: int, decided_by: str) -> dict:
+        """Free a previously-assigned desk so it can be requested again."""
+        db = SessionLocal()
+        try:
+            req = db.query(DeskKeyRequest).filter(DeskKeyRequest.id == req_id).first()
+            if not req:
+                return {"ok": False, "error": "Request not found"}
+            req.status = "Released"
+            req.released_at = datetime.datetime.utcnow()
+            req.decided_by = decided_by
+            db.commit()
+            return {"ok": True, "desk_number": req.desk_number}
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_desk_keys(status: str | None = None) -> list[dict]:
+        db = SessionLocal()
+        try:
+            q = db.query(DeskKeyRequest, Employee).join(
+                Employee, DeskKeyRequest.employee_id == Employee.id
+            ).order_by(DeskKeyRequest.created_at.desc())
+            if status:
+                q = q.filter(DeskKeyRequest.status == status)
+            out = []
+            for req, emp in q.all():
+                out.append({
+                    "id": req.id,
+                    "employee_name": emp.name,
+                    "employee_email": emp.email,
+                    "desk_number": req.desk_number,
+                    "reason": req.reason or "",
+                    "status": req.status,
+                    "decided_by": req.decided_by or "",
+                    "decision_reason": req.decision_reason or "",
+                    "assigned_at": req.assigned_at.isoformat() if req.assigned_at else None,
+                    "released_at": req.released_at.isoformat() if req.released_at else None,
+                    "created_at": req.created_at.isoformat() if req.created_at else None,
+                })
+            return out
         finally:
             db.close()

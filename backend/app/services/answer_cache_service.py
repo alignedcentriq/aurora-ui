@@ -147,6 +147,41 @@ class AnswerCacheService:
             db.close()
 
     @staticmethod
+    def invalidate_by_query(query: str, min_similarity: float = 0.95) -> int:
+        """Delete cached answer(s) whose stored question is near-identical to `query`.
+        Called when a user thumbs-downs an answer so the bad cached response stops being
+        served verbatim on the next ask. Tight similarity so unrelated answers are untouched."""
+        if not settings.ANSWER_CACHE_ENABLED:
+            return 0
+        query = (query or "").strip()
+        if not query:
+            return 0
+        query_emb = PolicyService._get_embedding(query)
+        if not query_emb:
+            return 0
+        max_dist = 1.0 - min_similarity
+        db = SessionLocal()
+        try:
+            dist_expr = CachedAnswer.query_embedding.cosine_distance(query_emb)
+            rows = (
+                db.query(CachedAnswer)
+                .filter(CachedAnswer.query_embedding.isnot(None), dist_expr <= max_dist)
+                .all()
+            )
+            deleted = len(rows)
+            for r in rows:
+                db.delete(r)
+            if deleted:
+                db.commit()
+            return deleted
+        except Exception as e:
+            db.rollback()
+            print(f"[AnswerCache] invalidate_by_query skipped ({type(e).__name__}): {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
     def invalidate_domain(domain: str) -> int:
         """Delete all cached answers for a domain (e.g. when a doc's category changed)."""
         if not domain:

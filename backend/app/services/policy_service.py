@@ -835,6 +835,7 @@ class PolicyService:
                 reranked.sort(key=lambda x: x[0], reverse=True)
 
                 seen_policies: set = set()
+                seen_titles: set = set()
                 results = []
                 all_image_keys: list = []
                 for _, c in reranked:
@@ -844,7 +845,15 @@ class PolicyService:
                         continue
                     policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                     if policy:
+                        # Dedup duplicate-ingested docs that share a title under different
+                        # policy_ids (e.g. "GHI Policy_2025-26" vs "GHI Policy 2025-26"),
+                        # so copies don't crowd out other relevant policies.
+                        norm = PolicyService._norm_title(policy.title)
+                        if norm and norm in seen_titles:
+                            seen_policies.add(c.policy_id)
+                            continue
                         seen_policies.add(c.policy_id)
+                        seen_titles.add(norm)
                         clean_text = PolicyService._strip_metadata_lines(c.text)
                         results.append(
                             f"**{policy.title}** ({policy.category}):\n{clean_text}"
@@ -878,6 +887,7 @@ class PolicyService:
 
                 if scored:
                     seen_policies: set = set()
+                    seen_titles: set = set()
                     results = []
                     all_image_keys: list = []
                     for _, c in scored:
@@ -887,7 +897,12 @@ class PolicyService:
                             continue
                         policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                         if policy:
+                            norm = PolicyService._norm_title(policy.title)
+                            if norm and norm in seen_titles:
+                                seen_policies.add(c.policy_id)
+                                continue
                             seen_policies.add(c.policy_id)
+                            seen_titles.add(norm)
                             clean_text = PolicyService._strip_metadata_lines(c.text)
                             results.append(
                                 f"**{policy.title}** ({policy.category}):\n{clean_text}"
@@ -909,6 +924,13 @@ class PolicyService:
 
         finally:
             db.close()
+
+    @staticmethod
+    def _norm_title(title: str | None) -> str:
+        """Normalize a policy title for dedup: lowercase, strip all non-alphanumerics.
+        Collapses duplicate-ingested docs like 'GHI Policy_2025-26' / 'GHI Policy 2025-26'."""
+        import re as _re
+        return _re.sub(r"[^a-z0-9]+", "", (title or "").lower())
 
     @staticmethod
     def _expand_keywords(query: str) -> list:

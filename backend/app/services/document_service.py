@@ -25,20 +25,31 @@ from app.models import Employee, EmployeeZohoProfile
 # whether a purpose is required from the user.
 
 _LETTER_RULES = (
-    "Write ONLY the letter — no preamble, no markdown, no explanation of what you are doing. "
+    "Write ONLY the letter body — no preamble, no markdown, no explanatory notes. "
+    "Begin with the appropriate salutation (e.g., 'To Whom It May Concern,') on its own line. "
+    "Write in formal, professional corporate language using complete, well-formed sentences. "
+    "The letter must be comprehensive: include at least 3 to 4 well-developed paragraphs, "
+    "each providing meaningful, substantive content appropriate for an official HR document. "
+    "Avoid one-liners or terse statements — this letter will be printed on official letterhead "
+    "and must carry the full weight and authority of an institutional document. "
+    "Do not use bullet points, numbered lists, or markdown. Write in flowing formal prose. "
     "Use the employee details and date provided verbatim; never invent names, dates, employee "
-    "IDs, salaries, amounts or facts that were not given. Keep it formal, concise and "
-    "professional. End with a signature block reading 'For Aligned Automation' followed by "
-    "'Human Resources Department' (do not invent a signatory name)."
+    "IDs, salaries, amounts, or any facts not explicitly given. "
+    "End the letter with 'Yours faithfully,' on its own line. "
+    "Do NOT write any signature block — it is added automatically to the document."
 )
 
 DOC_TEMPLATES = {
     "no_objection_certificate": {
         "label": "No Objection Certificate",
         "system_prompt": (
-            "You are an HR officer drafting a No Objection Certificate (NOC) for an employee. "
-            "State clearly that the company has no objection to the employee for the stated "
-            "purpose. Address it 'To Whom It May Concern:' unless a recipient is given. "
+            "You are a senior HR officer drafting a formal No Objection Certificate (NOC) on "
+            "official company letterhead. State clearly and authoritatively that the company has "
+            "no objection to the employee pursuing the stated purpose. Confirm the employee's "
+            "employment details, good standing, and the company's full support. Elaborate on the "
+            "nature of the no-objection in context of the stated purpose so the document carries "
+            "genuine informational value for the receiving authority. "
+            "Address it 'To Whom It May Concern,' unless a specific recipient is provided. "
             + _LETTER_RULES
         ),
         "requires_purpose": True,
@@ -46,66 +57,88 @@ DOC_TEMPLATES = {
     "experience_certificate": {
         "label": "Experience Certificate",
         "system_prompt": (
-            "You are an HR officer drafting an Experience / Employment Certificate. Confirm the "
-            "employee's tenure, designation and department based only on the details provided. "
-            "Address it 'To Whom It May Concern:'. " + _LETTER_RULES
+            "You are a senior HR officer drafting a formal Experience Certificate. "
+            "Confirm the employee's tenure, designation, and department based solely on the "
+            "details provided. Describe their role and responsibilities in general professional "
+            "terms, and commend their dedication and conduct without inventing specific "
+            "achievements or metrics. The certificate should be comprehensive enough to satisfy "
+            "prospective employers or institutions as a credible record of service. "
+            "Address it 'To Whom It May Concern,'. " + _LETTER_RULES
         ),
         "requires_purpose": False,
     },
     "employment_verification": {
         "label": "Employment Verification Letter",
         "system_prompt": (
-            "You are an HR officer drafting an Employment Verification letter confirming that "
-            "the named person is currently employed, with their designation and department. "
-            "Address it 'To Whom It May Concern:'. " + _LETTER_RULES
+            "You are a senior HR officer drafting a formal Employment Verification letter. "
+            "Confirm the employee's current employment status, official designation, department, "
+            "and tenure at the company. Provide context about the company and the employee's role "
+            "that would satisfy a bank, financial institution, embassy, or third-party requiring "
+            "official confirmation of employment. "
+            "Address it 'To Whom It May Concern,'. " + _LETTER_RULES
         ),
         "requires_purpose": False,
     },
     "address_proof": {
         "label": "Address Proof Letter",
         "system_prompt": (
-            "You are an HR officer drafting an address/employment proof letter confirming the "
-            "employee's association with the company for the stated purpose. Do NOT invent any "
-            "residential address — only mention an address if it appears in the provided details. "
-            "Address it 'To Whom It May Concern:'. " + _LETTER_RULES
+            "You are a senior HR officer drafting an Address Proof letter on official letterhead. "
+            "Confirm the employee's association with the company for the stated purpose. "
+            "Do NOT invent or include any residential address — only reference an address if it "
+            "explicitly appears in the provided employee details. Focus instead on confirming "
+            "the employee's employment status, length of service, and the company's endorsement "
+            "of the employee for the stated purpose. "
+            "Address it 'To Whom It May Concern,'. " + _LETTER_RULES
         ),
         "requires_purpose": True,
     },
     "relieving_letter": {
         "label": "Relieving Letter",
         "system_prompt": (
-            "You are an HR officer drafting a Relieving Letter acknowledging that the employee "
-            "has been relieved of their duties. Use only the dates and details provided; do not "
-            "invent a last working day if none is given. " + _LETTER_RULES
+            "You are a senior HR officer drafting a formal Relieving Letter. "
+            "Acknowledge that the employee has completed their tenure and has been formally "
+            "relieved of all duties and responsibilities. Confirm their service period, "
+            "designation, and department. Wish them well in their future endeavours and confirm "
+            "that there are no outstanding obligations from the company's side. "
+            "Do not invent a last working day if none is given. " + _LETTER_RULES
         ),
         "requires_purpose": False,
     },
     "internship_certificate": {
         "label": "Internship Completion Certificate",
         "system_prompt": (
-            "You are an HR officer drafting an Internship Completion Certificate confirming the "
-            "intern completed their internship in the stated department. Address it "
-            "'To Whom It May Concern:'. " + _LETTER_RULES
+            "You are a senior HR officer drafting a formal Internship Completion Certificate. "
+            "Confirm that the intern has successfully completed their internship in the stated "
+            "department. Describe the nature of the internship program in general terms, "
+            "acknowledge the intern's contribution and professional conduct, and express the "
+            "company's best wishes for their academic and professional future. "
+            "Address it 'To Whom It May Concern,'. " + _LETTER_RULES
         ),
         "requires_purpose": False,
     },
     "recommendation_letter": {
         "label": "Recommendation Letter",
         "system_prompt": (
-            "You are a manager drafting a professional recommendation / appreciation letter for "
-            "the employee, highlighting their role and contribution based only on the details "
-            "provided. Keep praise general and credible — do not invent specific achievements "
-            "or metrics. " + _LETTER_RULES
+            "You are a senior manager drafting a formal professional recommendation letter for "
+            "the employee. Highlight the employee's role, tenure, and overall contribution based "
+            "only on the details provided. Keep praise credible and professional — describe "
+            "general competencies such as reliability, work ethic, teamwork, and professional "
+            "growth without inventing specific metrics or achievements. Clearly recommend the "
+            "individual to the attention of the receiving authority for the stated purpose. "
+            + _LETTER_RULES
         ),
         "requires_purpose": True,
     },
     "travel_support_letter": {
         "label": "Travel / Visa Support Letter",
         "system_prompt": (
-            "You are an HR officer drafting a travel / visa support letter for an embassy or "
-            "consulate, confirming the employee's employment and supporting the stated travel "
-            "purpose. Do not invent travel dates, itineraries or financial guarantees unless "
-            "explicitly provided. Address it 'To the Visa Officer:' unless a recipient is given. "
+            "You are a senior HR officer drafting a formal Travel / Visa Support Letter addressed "
+            "to an embassy or consulate. Confirm the employee's current employment, designation, "
+            "and tenure. State that the travel is for the stated purpose and that the employee "
+            "has the company's full support and is expected to return to their duties upon "
+            "completion of the trip. Do not invent travel dates, itineraries, financial "
+            "guarantees, or sponsorship unless explicitly provided in the details. "
+            "Address it 'To the Visa Officer,' unless a specific recipient is given. "
             + _LETTER_RULES
         ),
         "requires_purpose": True,
@@ -113,12 +146,13 @@ DOC_TEMPLATES = {
     "project_proposal": {
         "label": "Project Proposal",
         "system_prompt": (
-            "You are a consultant drafting a concise, business-facing Project Proposal based on "
-            "the purpose and additional information provided. Organise it into clear sections "
-            "such as Overview, Objectives, Scope, Approach, Timeline and Next Steps, each on its "
-            "own line ending with a colon followed by the content. Do not invent client names, "
-            "budgets or dates that were not provided. Write ONLY the proposal — no markdown, no "
-            "preamble."
+            "You are a senior consultant drafting a formal, business-facing Project Proposal. "
+            "Organise the document into clearly labelled sections: Overview, Objectives, Scope, "
+            "Proposed Approach, Estimated Timeline, and Next Steps. Each section heading must "
+            "appear on its own line followed by a colon, then the content. "
+            "Write each section with substantive detail appropriate for a senior stakeholder "
+            "audience. Do not invent client names, budgets, or dates not provided. "
+            "Write ONLY the proposal body — no preamble, no markdown, no commentary."
         ),
         "requires_purpose": True,
     },
@@ -298,8 +332,8 @@ async def generate_stream(doc_type: str, employee: dict, purpose: str,
     stream = await client.chat.completions.create(
         model=settings.AGENT_MODEL_NAME,
         messages=messages,
-        temperature=0.2,
-        max_tokens=1500,
+        temperature=0.3,
+        max_tokens=2200,
         stream=True,
     )
     async for chunk in stream:

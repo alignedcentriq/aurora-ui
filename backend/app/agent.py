@@ -2,7 +2,7 @@
 Centriq AI — Multi-Agent LangGraph Brain
 
 Architecture:
-  User Message → Intent Router (gpt-oss:latest / 20.9B) → Domain Agent (gpt-oss:latest / 20.9B)
+  User Message -> Intent Router (gpt-oss:latest / 20.9B) -> Domain Agent (gpt-oss:latest / 20.9B)
                                          ↓
                               HR Agent (active, with tools)
                               Admin Agent (placeholder)
@@ -47,6 +47,14 @@ from app.services.feedback_service import FeedbackService
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
+
+# Leading meta-preamble the summarizer model sometimes parrots from its prompt. Matches a
+# single opening sentence like "Here's a summary of the tool results for the employee:".
+_SUMMARY_PREAMBLE_RE = re.compile(
+    r"^\s*(?:here'?s|here is|below is|the following is)\b[^\n.:]*"
+    r"\b(?:summary|overview|result|results|response|information)\b[^\n.:]*[.:]\s*",
+    re.IGNORECASE,
+)
 
 
 # ── Zoho Leave Fast-Path ───────────────────────────────────────────────────────
@@ -270,7 +278,7 @@ async def context_manager_node(state: AgentState) -> dict:
     updated_feedback = (
         f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{summary_text}\n\n{existing_feedback}"
     )
-    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens → summary)")
+    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens -> summary)")
     return {
         "conversation_summary": summary_text,
         "feedback_context": updated_feedback,
@@ -302,7 +310,7 @@ def apply_leave(
 def search_hr_policies(query: str):
     """Search HR policy documents. Call for any policy question. Answer from the result only.
     State policy name once. Never include metadata (author, version, review dates)."""
-    return HRService.search_policies(query, limit=4)
+    return HRService.search_policies(query, limit=6)
 
 
 @tool
@@ -957,12 +965,29 @@ _KW_HR_POLICY = re.compile(
     r'holiday\s+(list|calendar|policy)|appraisal\s+policy|'
     r'referral\s+bonus|onboarding\s+policy|offboarding\s+policy|'
     r'gratuity\s+policy|variable\s+pay\s+policy|'
-    r'sabbatical\s+policy|relocation\s+policy)\b', re.I
+    r'sabbatical\s+policy|relocation\s+policy|'
+    r'insurance|mediclaim|group\s+health|medical\s+insurance|'
+    r'esic?\b|health\s+(insurance|policy|cover(age)?)|'
+    r'insurance\s+claim|claim\s+(form|process))\b', re.I
 )
 
 _KW_HR_DOC = re.compile(
     r'\b(experience\s+certificate|generate\s+.{0,15}(certificate|letter|noc)|'
     r'relieving\s+letter|salary\s+certificate|noc\s+for)\b', re.I
+)
+
+# Medical / treatment / surgery coverage is governed by the health-insurance policy
+# (HR General), NOT admin reimbursement (travel/certification/equipment). A query that
+# combines a medical term with a reimburse/cover/claim term routes to HR's policy search.
+_KW_MEDICAL_TERM = re.compile(
+    r'\b(surger\w*|operation|hospitali[sz]ation|hospital\s+(bill|expense)|'
+    r'cosmetic|plastic\s+surgery|dental|maternity\s+(expense|bill|cost)|'
+    r'treatment|medical\s+(bill|expense|procedure|treatment|emergency)|'
+    r'\bmedical\b|illness|chemotherapy|dialysis|in[- ]?patient|out[- ]?patient|'
+    r'\bopd\b|\bipd\b)\b', re.I
+)
+_KW_REIMB_OR_COVER = re.compile(
+    r'\b(reimburs\w*|cover(ed|age|s)?|claim\w*|paid\s+by|insur\w*)\b', re.I
 )
 
 _KW_HR_GRIEVANCE = re.compile(
@@ -974,6 +999,23 @@ _KW_HR_PEOPLE = re.compile(
     r'\b(employee\s+directory|org\s+chart|department\s+headcount|'
     r'who\s+is\s+\w+\s+\w+|find\s+(employee|person|people)\s+with|'
     r'who\s+has\s+\w+\s+skills?)\b', re.I
+)
+
+# People search by skill or role — "find Python developers", "list our QA
+# engineers", "who knows React", "find a senior architect". The role noun is the
+# disambiguator: an install request ("install Python", "setup Node") carries no
+# role noun, so it never matches here, while these phrasings would otherwise fall
+# through to the LLM router, which over-anchors on the tech word and misroutes to
+# software_install.
+_KW_HR_PEOPLE_ROLE = re.compile(
+    r'\b(?:find|show|list|search|get|any|anyone|looking\s+for|'
+    r'who\s+(?:are|is|knows?))\b'
+    r'[\w\s.+#,/&-]*?\b'
+    r'(?:developers?|engineers?|programmers?|coders?|designers?|testers?|'
+    r'qa|analysts?|architects?|specialists?|experts?|consultants?|'
+    r'scientists?|devops|sres?)\b'
+    # ...or an explicit "who knows X" / "someone who knows X" skill lookup.
+    r'|\b(?:who|someone|somebody|anyone)\s+knows?\s+\w+', re.I
 )
 
 _KW_ADMIN_REIMB = re.compile(
@@ -1100,6 +1142,10 @@ _KW_IT_VPN = re.compile(
 _KW_IT_LICENSE = re.compile(
     r'\b(need|want|request|get)\s+(a\s+)?(claude|copilot|github\s+copilot|'
     r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
+)
+
+_KW_PMO_UDEMY = re.compile(
+    r'\budemy\b|\btraining\s+license\b', re.I
 )
 
 _KW_PMO = re.compile(
@@ -1242,7 +1288,7 @@ def _try_keyword_route(message: str) -> dict | None:
                 "sub_intent": "grievance", "entities": {}}
 
     # HR — people search
-    if _KW_HR_PEOPLE.search(text):
+    if _KW_HR_PEOPLE.search(text) or _KW_HR_PEOPLE_ROLE.search(text):
         return {"domain": "hr", "confidence": 0.9,
                 "reasoning": "Keyword: people/directory search",
                 "sub_intent": "employee_search", "entities": {}}
@@ -1282,6 +1328,14 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.92,
                 "reasoning": "Keyword: alchemy org skills overview",
                 "sub_intent": "alchemy_skills_overview", "entities": {}}
+
+    # HR — medical/treatment/surgery coverage (insurance policy), checked BEFORE the
+    # admin reimbursement keyword so "will my surgery be reimbursed" goes to HR, not admin.
+    if _KW_MEDICAL_TERM.search(text) and _KW_REIMB_OR_COVER.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: medical/treatment coverage (insurance policy)",
+                "sub_intent": "policy_query",
+                "entities": {"policy_topic": "medical insurance coverage"}}
 
     # Admin — reimbursement / expense
     if _KW_ADMIN_REIMB.search(text):
@@ -1449,6 +1503,12 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: project showcase / flash-review deck query",
                 "sub_intent": "project_decks", "entities": {}}
 
+    # PMO — Udemy / training license request (must precede the generic PMO project route)
+    if _KW_PMO_UDEMY.search(text):
+        return {"domain": "pmo", "confidence": 0.95,
+                "reasoning": "Keyword: Udemy / training license request",
+                "sub_intent": "udemy_license", "entities": {}}
+
     # PMO — projects / training licenses
     if _KW_PMO.search(text):
         return {"domain": "pmo", "confidence": 0.95,
@@ -1535,11 +1595,11 @@ async def intent_router(state: AgentState):
         re.IGNORECASE,
     )
     if _LB_RE.search(last_human):
-        print("[Router] Fast-path leave balance → deeplink")
+        print("[Router] Fast-path leave balance -> deeplink")
         return {
             "domain": "deeplink",
             "route_confidence": 1.0,
-            "route_reasoning": "Fast-path: leave balance query → deeplink/Zoho.",
+            "route_reasoning": "Fast-path: leave balance query -> deeplink/Zoho.",
             "sub_intent": "leave_balance",
             "entities": {},
         }
@@ -1604,7 +1664,7 @@ async def intent_router(state: AgentState):
     # (computed above so it can override stickiness; reuse the result here)
     if keyword_result:
         print(
-            f"[Router] Keyword fast-path → {keyword_result['domain']} "
+            f"[Router] Keyword fast-path -> {keyword_result['domain']} "
             f"({keyword_result['sub_intent']})"
         )
         return {
@@ -1736,6 +1796,14 @@ def hr_agent(state: AgentState):
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
+
+    user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    try:
+        context_answer = PromptService.check_context_relevance("hr", user_question)
+        if context_answer:
+            return {"messages": [AIMessage(content=context_answer)]}
+    except Exception:
+        pass  # non-fatal — fall through to normal agent
 
     try:
         response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
@@ -2109,6 +2177,10 @@ _PASSTHROUGH_TOOLS = {
 }
 
 
+# Tool results that are policy/insurance Q&A — answered with the strong model for grounding.
+_POLICY_SEARCH_TOOLS = {"search_hr_policies", "search_project_decks"}
+
+
 def summarizer(state: AgentState):
     """Converts tool results to natural language, preserving download tags.
 
@@ -2122,23 +2194,47 @@ def summarizer(state: AgentState):
     if tool_name in _PASSTHROUGH_TOOLS:
         return {"messages": [AIMessage(content=str(tool_output).strip())]}
 
+    # The summarizer must ANSWER THE QUESTION, not blindly paraphrase the tool output.
+    # Without the question, a weak model paraphrases whatever text it's handed — e.g. turning
+    # policy claim-process language into a fabricated "your claim is approved" letter. Pass the
+    # employee's actual question and pin the answer strictly to the excerpts.
+    user_question = ""
+    for _m in reversed(state["messages"]):
+        if isinstance(_m, HumanMessage) and isinstance(_m.content, str) and _m.content.strip():
+            user_question = _m.content.strip()
+            break
+
     # Use HumanMessage as some models (like llama3.2) return empty for SystemMessage-only prompts
     prompt = [
-        HumanMessage(content=f"""You are an HR Assistant. Summarize this tool result for the employee.
-        
-TOOL RESULT:
+        HumanMessage(content=f"""You are an HR assistant. Answer the employee's question using ONLY the policy excerpts below.
+
+EMPLOYEE QUESTION:
+{user_question or "(answer based on the excerpts below)"}
+
+POLICY EXCERPTS:
 {tool_output}
 
-INSTRUCTIONS:
-1. Provide a concise, friendly summary of the result.
-2. IMPORTANT: If and ONLY IF the tool result contains a tag like [DOWNLOAD_PDF:url:title], include it exactly at the end.
-3. If no such tag is present in the TOOL RESULT above, DO NOT make one up or add any links.
-4. Do not include any JSON, curly braces, or technical metadata in your response.
+RULES:
+1. Answer the question directly and factually. Lead with the actual answer (e.g. yes / no / the figure), then a one-line reason drawn from the excerpts.
+2. GROUNDING: use ONLY facts present in the excerpts. If the excerpts do not answer the question, say you couldn't find it in the policy and suggest contacting HR — never guess or fill gaps.
+2a. EXCLUSIONS OVERRIDE COVERAGE: before answering any "is X covered / will X be reimbursed" question, scan ALL excerpts for an exclusions / general-exclusions / "not covered" list. If the thing asked about (or a clear synonym, e.g. cosmetic = plastic surgery) appears in such a list, the answer is NO — it is NOT covered/reimbursed — even if another excerpt (a claim form or general benefit list) seems to suggest it could be claimed. A generic claim-process or coverage excerpt does NOT override a specific exclusion. Cite the exclusion (e.g. the exclusion code) when present.
+3. NEVER write a letter, email, approval, or confirmation. NEVER claim the employee has submitted documents, that a claim was received/verified/processed/approved, or invent any name, amount, account, or date. You are answering a question, not processing a claim. Do not sign off or use "Dear Employee" / "Best regards".
+4. Start with the answer itself. Do not begin with "Here's a summary", and do not refer to "tool", "result(s)", or "excerpts". No JSON, curly braces, or metadata.
+5. Ignore and do not repeat any bracketed markers like [POLICY_IMG:...]. If and ONLY IF the excerpts contain a [DOWNLOAD_PDF:url:title] tag, include it exactly at the end; otherwise add no links.
 """)
     ]
     try:
-        response = llm_controls.get_llm("summarizer", default_timeout=20).invoke(prompt)
+        # Policy/insurance Q&A is accuracy-critical and grounding-sensitive — answer it with the
+        # strong agent model, not the weak summarizer (which paraphrases and drifts). Other tool
+        # results stay on the cheap summarizer tier to spare the GPU.
+        _tier = "agent" if tool_name in _POLICY_SEARCH_TOOLS else "summarizer"
+        response = llm_controls.get_llm(_tier, default_timeout=30).invoke(prompt)
         content = response.content.strip()
+
+        # Belt-and-braces: strip a leaked meta-preamble the weak summarizer model sometimes
+        # parrots from its instructions (e.g. "Here's a summary of the tool results for the
+        # employee:"). Only removes a leading meta sentence, never real answer content.
+        content = _SUMMARY_PREAMBLE_RE.sub("", content, count=1).strip()
 
         # A download tag in the summary is only legitimate if the underlying tool
         # result actually produced one. Otherwise the model has parroted the
@@ -2246,7 +2342,7 @@ workflow.add_node("summarizer", summarizer)
 
 workflow.set_entry_point("intent_router")
 # context_manager sits between router and feedback_lookup:
-# intent_router → context_manager (compress if >6000 tokens) → feedback_lookup → domain agent
+# intent_router -> context_manager (compress if >6000 tokens) -> feedback_lookup -> domain agent
 workflow.add_edge("intent_router", "context_manager")
 workflow.add_edge("context_manager", "feedback_lookup")
 workflow.add_conditional_edges("feedback_lookup", route_to_agent)

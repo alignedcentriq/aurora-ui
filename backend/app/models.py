@@ -63,6 +63,30 @@ class Attendance(Base):
     
     employee = relationship("Employee", back_populates="attendance")
 
+class AttendanceSchedule(Base):
+    """
+    A manager's automation to receive a whole-hierarchy attendance report by email on a
+    recurring schedule. Persisted so it survives backend restarts; the startup scheduler
+    loop runs any rows whose next_run <= now (see attendance_schedule_service).
+    """
+    __tablename__ = "attendance_schedules"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    manager_email = Column(String, index=True)
+    manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    frequency = Column(String)              # daily | weekly | monthly | custom
+    day_of_week = Column(Integer, nullable=True)   # 0=Mon .. 6=Sun (weekly / custom)
+    day_of_month = Column(Integer, nullable=True)  # 1..28 (monthly / custom)
+    hour = Column(Integer, default=8)       # local hour of day, 0..23
+    recipients = Column(Text)               # comma-separated; empty => manager_email
+    period_mode = Column(String, default="prev_period")  # prev_period | current
+    active = Column(Boolean, default=True)
+    next_run = Column(DateTime, nullable=True)
+    last_run = Column(DateTime, nullable=True)
+    last_status = Column(String, nullable=True)  # sent | failed:<reason>
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Policy(Base):
     __tablename__ = "policies"
     __table_args__ = {"schema": SCHEMA}
@@ -936,5 +960,59 @@ class EmployeeSkill(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     employee = relationship("Employee", back_populates="skills")
+
+
+class UdemyLicenseRequest(Base):
+    """Employee request for a Udemy license, managed by the PMO team (subject to availability)."""
+    __tablename__ = "udemy_license_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    course_name = Column(String, nullable=True)
+    justification = Column(Text, nullable=True)
+    status = Column(String, default="Pending")       # Pending, Approved, Rejected
+    decided_by = Column(String, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+
+class DeskKeyRequest(Base):
+    """Employee request for a desk key. Auto-rejected if the desk is already assigned."""
+    __tablename__ = "desk_key_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    desk_number = Column(String, index=True)
+    status = Column(String, default="Pending")       # Pending, Approved, Rejected, Auto-Rejected, Released
+    reason = Column(Text, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    assigned_at = Column(DateTime, nullable=True)
+    released_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ParkingPayment(Base):
+    """Monthly parking-due ledger: one row per sticker holder per calendar month."""
+    __tablename__ = "parking_payments"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "period_month", name="uq_parking_payment_emp_month"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    parking_sticker_id = Column(Integer, ForeignKey(f"{SCHEMA}.parking_stickers.id"), nullable=True)
+    period_month = Column(Date, index=True)          # first day of the month the charge is for
+    vehicle_type = Column(String)                    # 2-wheeler, 4-wheeler
+    amount_due = Column(Float, default=0.0)
+    amount_paid = Column(Float, default=0.0)
+    status = Column(String, default="Due")           # Due, Paid, Closed
+    paid_at = Column(DateTime, nullable=True)
+    closed_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 

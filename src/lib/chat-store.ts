@@ -34,6 +34,13 @@ export interface SkillsEditorPrefill {
   skill?: string;
 }
 
+export interface AttendanceSchedulePrefill {
+  frequency?: string;
+  day_of_week?: number;
+  day_of_month?: number;
+  hour?: number;
+}
+
 export interface VisitorPassPrefill {
   visitorName?: string;
   visitDate?: string;
@@ -52,8 +59,10 @@ export interface InteractivePayload {
     | "announcement_form"
     | "prompt_config_form"
     | "my_schedule"
-    | "skills_editor";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill;
+    | "skills_editor"
+    | "team_attendance"
+    | "attendance_schedule";
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill;
 }
 
 export interface Turn {

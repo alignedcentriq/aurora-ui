@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -27,6 +27,7 @@ import { MyScheduleWidget } from "./MyScheduleWidget";
 import { SkillsEditorWidget } from "./SkillsEditorWidget";
 import { AnnouncementWidget } from "./AnnouncementWidget";
 import { PromptConfigWidget } from "./PromptConfigWidget";
+import { AttendanceScheduleWidget } from "./AttendanceScheduleWidget";
 import { VoiceOrb } from "./VoiceOrb";
 import { ThinkingBuddy } from "./ThinkingBuddy";
 import { SmartWidgets } from "./SmartWidgets";
@@ -439,6 +440,47 @@ export function AssistantView() {
       // Admin commands — only for domain managers; others fall through to chat.
       const role = (user?.role || "employee").toLowerCase();
       const isManager = ["hr", "it", "pmo", "admin"].includes(role);
+
+      // Intercept team attendance requests — Functional Managers only. Zero-LLM, structural.
+      // "generate/show attendance for everyone under me / my team / my hierarchy" -> report view.
+      // "email me / schedule / automate ... attendance ... every month/week/day" -> schedule setup.
+      const mentionsAttendance = /\battendance\b/i.test(text);
+      const mentionsTeamScope = /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(text);
+      if (role === "functional manager" && mentionsAttendance && mentionsTeamScope) {
+        const isRecurring = /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(text);
+        addTurn(activeId, { role: "user", text });
+        if (isRecurring) {
+          // Parse cadence cues.
+          const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text) ? "daily"
+            : /\b(weekly|every week|each week)\b/i.test(text) ? "weekly"
+            : /\b(monthly|every month|each month)\b/i.test(text) ? "monthly"
+            : "monthly";
+          const dows = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+          const dowIdx = dows.findIndex(d => new RegExp(`\\b${d}\\b`, "i").test(text));
+          const hourM = text.match(/\bat\s+(\d{1,2})\s*(am|pm)?\b/i);
+          let hour: number | undefined;
+          if (hourM) {
+            hour = Number(hourM[1]) % 12;
+            if (/pm/i.test(hourM[2] || "")) hour += 12;
+          }
+          const prefill: Record<string, number | string> = { frequency: dowIdx >= 0 ? "weekly" : freq };
+          if (dowIdx >= 0) prefill.day_of_week = dowIdx;
+          if (hour !== undefined) prefill.hour = hour;
+          addTurn(activeId, {
+            role: "ai",
+            text: "Let's set up an automated attendance email for your team. Confirm the schedule below.",
+            interactive: { type: "attendance_schedule", data: prefill },
+          });
+        } else {
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's the attendance for everyone in your reporting hierarchy.",
+            interactive: { type: "team_attendance" },
+          });
+        }
+        setInput("");
+        return;
+      }
 
       // Intercept "create/add an announcement …"
       if (isManager && /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)) {
@@ -1243,6 +1285,17 @@ export function AssistantView() {
                                 prefill={t.interactive.data as import("@/lib/chat-store").PromptConfigPrefill | undefined}
                                 onSaved={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {(t.interactive?.type === "team_attendance" || t.interactive?.type === "attendance_schedule") && (
+                              <AttendanceScheduleWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                mode={t.interactive.type === "attendance_schedule" ? "schedule" : "report"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").AttendanceSchedulePrefill | undefined}
+                                onDone={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}

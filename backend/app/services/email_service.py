@@ -236,6 +236,7 @@ def _send(
     subject: str,
     html_body: str,
     inline_images: "dict | None" = None,
+    files: "dict | None" = None,
 ) -> bool:
     """
     Send an email via Microsoft Graph API using the logged-in user's delegated token.
@@ -245,6 +246,8 @@ def _send(
               email from the database (manager, employee). Never hardcoded in callers.
     - inline_images : optional { content_id: (filename, base64_str) } embedded inline
               (referenced from the HTML as `cid:<content_id>`).
+    - files : optional { filename: (base64_str, content_type) } regular (non-inline)
+              file attachments, e.g. an .xlsx report.
     - Returns True on success, False on any failure (non-blocking).
     """
     if not to:
@@ -262,8 +265,9 @@ def _send(
         "body": {"contentType": "HTML", "content": html_body},
         "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
     }
+    attachments = []
     if inline_images:
-        message["attachments"] = [
+        attachments += [
             {
                 "@odata.type": "#microsoft.graph.fileAttachment",
                 "name": fname,
@@ -275,6 +279,20 @@ def _send(
             for cid, (fname, b64) in inline_images.items()
             if b64
         ]
+    if files:
+        attachments += [
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": fname,
+                "contentType": ctype or "application/octet-stream",
+                "contentBytes": b64,
+                "isInline": False,
+            }
+            for fname, (b64, ctype) in files.items()
+            if b64
+        ]
+    if attachments:
+        message["attachments"] = attachments
     payload = {"message": message, "saveToSentItems": True}
 
     try:
@@ -295,11 +313,19 @@ def _send(
         return False
 
 
-def _send_html(user_email: str, to: "str | list[str]", subject: str, html_body: str) -> bool:
-    """Send a shell-rendered email with the buddy mascot attached inline (cid:buddy)."""
+def _send_html(
+    user_email: str,
+    to: "str | list[str]",
+    subject: str,
+    html_body: str,
+    files: "dict | None" = None,
+) -> bool:
+    """Send a shell-rendered email with the buddy mascot attached inline (cid:buddy),
+    plus optional file attachments via `files` ({filename: (base64, content_type)})."""
     return _send(
         user_email, to, subject, html_body,
         inline_images={"buddy": ("buddy.png", _BUDDY_B64)},
+        files=files,
     )
 
 
@@ -1023,3 +1049,252 @@ def send_announcement_email(
     html_body = _email_shell("Company Announcement", intro, body_html,
                              preheader=title)
     return _send_html(user_email, recipients, subject, html_body)
+
+
+# ── PMO: Udemy License ────────────────────────────────────────────────────────
+
+def send_udemy_request_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    course_name: str,
+    justification: str,
+    approve_url: str,
+    reject_url: str,
+) -> bool:
+    """Notify the PMO team of a Udemy license request with approve/decline links."""
+    subject = f"[PMO] Udemy License Request — {employee_name}"
+    intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
+             f"<p><strong>{html.escape(employee_name)}</strong> has requested a Udemy license. "
+             "Approve it if a license is available, or decline.</p>")
+    body_html = _detail_rows([
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Course", html.escape(course_name) or "—"),
+        ("Justification", _nl2br(justification) or "—"),
+    ])
+    body_html += _button_row([
+        ("✓ Approve", approve_url, _C_OK),
+        ("✗ Decline", reject_url, _C_NO),
+    ])
+    body_html += _note("These links expire in 24 hours. Decline opens a reason form. Submitted via Centriq AI.")
+    html_body = _email_shell("Udemy License Request", intro, body_html,
+                             preheader=f"{employee_name} · {course_name or 'Udemy license'}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
+def send_udemy_decision_email(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    course_name: str,
+    decision: str,
+    reason: str = "",
+) -> bool:
+    color = _C_OK if decision == "Approved" else _C_NO
+    subject = f"[Udemy License {decision}] {course_name or 'Your request'}"
+    intro = (f'<p>{_status_pill(decision, color)}</p>'
+             f"<p>Hi {html.escape(employee_name)},</p>"
+             f'<p>Your Udemy license request has been '
+             f'<strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
+    rows = [
+        ("Course", html.escape(course_name) or "—"),
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+    ]
+    if reason:
+        label = "Reason" if decision == "Rejected" else "Note"
+        rows.append((label, _nl2br(reason)))
+    body_html = _detail_rows(rows) + _note(
+        "Approved licenses are provided by the PMO team subject to availability. "
+        "This is an automated notification from Centriq AI.")
+    html_body = _email_shell(f"Udemy License {decision}", intro, body_html,
+                             preheader=course_name or "Udemy license")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+# ── Admin: Desk Keys ──────────────────────────────────────────────────────────
+
+def send_desk_key_request_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    desk_number: str,
+    reason: str,
+    approve_url: str,
+    reject_url: str,
+) -> bool:
+    """Notify the Admin team of a desk key request with approve/reject links."""
+    subject = f"[Admin] Desk Key Request — Desk {desk_number}"
+    intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
+             f"<p><strong>{html.escape(employee_name)}</strong> has requested a key for "
+             f"<strong>Desk {html.escape(desk_number)}</strong>.</p>")
+    body_html = _detail_rows([
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Desk Number", html.escape(desk_number)),
+        ("Reason", _nl2br(reason) or "—"),
+    ])
+    body_html += _button_row([
+        ("✓ Approve", approve_url, _C_OK),
+        ("✗ Reject", reject_url, _C_NO),
+    ])
+    body_html += _note("Please confirm the desk is not already assigned before approving. "
+                       "These links expire in 24 hours. Submitted via Centriq AI.")
+    html_body = _email_shell("Desk Key Request", intro, body_html,
+                             preheader=f"{employee_name} · Desk {desk_number}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
+def send_desk_key_decision_email(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    desk_number: str,
+    decision: str,
+    reason: str = "",
+) -> bool:
+    color = _C_OK if decision == "Approved" else _C_NO
+    subject = f"[Desk Key {decision}] Desk {desk_number}"
+    intro = (f'<p>{_status_pill(decision, color)}</p>'
+             f"<p>Hi {html.escape(employee_name)},</p>"
+             f'<p>Your desk key request for <strong>Desk {html.escape(desk_number)}</strong> has been '
+             f'<strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
+    rows = [
+        ("Desk Number", html.escape(desk_number)),
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+    ]
+    if reason:
+        rows.append(("Reason", _nl2br(reason)))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    html_body = _email_shell(f"Desk Key {decision}", intro, body_html,
+                             preheader=f"Desk {desk_number}")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+# ── Admin: Parking Payment Reminder ───────────────────────────────────────────
+
+def send_parking_payment_reminder_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    vehicle_number: str,
+    outstanding_total: float,
+    months: "list[tuple[str, float]]",
+    monthly_cost: float,
+) -> bool:
+    """Remind an employee of outstanding parking dues. `months` is a list of (month_label, amount)."""
+    subject = f"[Parking] Payment Reminder — INR {outstanding_total:,.0f} outstanding"
+    intro = (f'<p>{_status_pill("Payment Due", _C_AMBER)}</p>'
+             f"<p>Hi {html.escape(employee_name)},</p>"
+             f"<p>This is a reminder that your parking dues are pending. Please clear the outstanding "
+             f"amount with the Admin team.</p>")
+    rows = [
+        ("Vehicle", html.escape(vehicle_number) or "—"),
+        ("Monthly Charge", f"INR {monthly_cost:,.0f}"),
+    ]
+    for label, amount in months:
+        rows.append((f"Due · {label}", f"INR {amount:,.0f}"))
+    rows.append(("Total Outstanding", f'<strong style="color:{_C_NO};">INR {outstanding_total:,.0f}</strong>'))
+    body_html = _detail_rows(rows) + _note(
+        "Please contact the Admin team to settle these dues. This is an automated reminder from Centriq AI.")
+    html_body = _email_shell("Parking Payment Reminder", intro, body_html,
+                             preheader=f"INR {outstanding_total:,.0f} outstanding")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+# ── Team Attendance Report (manager hierarchy) ────────────────────────────────
+
+def _attendance_roster_table(members: "list[dict]", totals: dict) -> str:
+    """Inline roster summary table for the team attendance email (top rows shown; full
+    detail is in the attached .xlsx). Members are pre-sorted by the report builder."""
+    head_cells = "".join(
+        f'<th style="padding:9px 10px;background:{_C_PRIMARY};color:#fff;font:700 12px {_FONT};'
+        f'text-align:{"left" if i < 2 else "center"};">{h}</th>'
+        for i, h in enumerate(["Employee", "Dept", "Present", "Absent", "WFH", "Late", "Half"])
+    )
+    body_rows = ""
+    for idx, m in enumerate(members):
+        bg = "#ffffff" if idx % 2 == 0 else "#f5f8fc"
+        cells = (
+            f'<td style="padding:8px 10px;background:{bg};font:400 13px {_FONT};color:#0d1b2e;">'
+            f'{html.escape(str(m.get("employee", "")))}</td>'
+            f'<td style="padding:8px 10px;background:{bg};font:400 12px {_FONT};color:#475569;">'
+            f'{html.escape(str(m.get("department", "")))}</td>'
+        )
+        for key in ("present", "absent", "wfh", "late", "half_day"):
+            cells += (
+                f'<td style="padding:8px 10px;background:{bg};font:400 13px {_FONT};color:#0d1b2e;'
+                f'text-align:center;">{m.get(key, 0)}</td>'
+            )
+        body_rows += f"<tr>{cells}</tr>"
+
+    total_cells = (
+        f'<td style="padding:9px 10px;background:#e2e8f0;font:700 13px {_FONT};color:#0f172a;">TOTAL</td>'
+        f'<td style="padding:9px 10px;background:#e2e8f0;"></td>'
+    )
+    for key in ("present", "absent", "wfh", "late", "half_day"):
+        total_cells += (
+            f'<td style="padding:9px 10px;background:#e2e8f0;font:700 13px {_FONT};color:#0f172a;'
+            f'text-align:center;">{totals.get(key, 0)}</td>'
+        )
+
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;'
+        f'margin:16px 0;border:1px solid #e6edf6;">'
+        f'<tr>{head_cells}</tr>{body_rows}<tr>{total_cells}</tr></table>'
+    )
+
+
+def send_team_attendance_report(
+    user_email: str,
+    recipients: "str | list[str]",
+    report: dict,
+    xlsx: "tuple[str, str] | None" = None,
+    *,
+    automated: bool = False,
+    max_inline_rows: int = 25,
+) -> bool:
+    """
+    Email a manager their whole-hierarchy attendance report: an inline roster summary
+    table + the full per-employee .xlsx attachment.
+
+    - report : a successful attendance_service.team_report(...) payload.
+    - xlsx   : (filename, base64) from attendance_report.build_team_xlsx; attached if given.
+    - automated : True when sent by the scheduler (adds an "automated report" note).
+    """
+    if not report.get("success"):
+        return False
+
+    members = report["members"]
+    inline = members[:max_inline_rows]
+    overflow = len(members) - len(inline)
+
+    trigger = "Your scheduled team attendance report is ready." if automated \
+        else "Here is your team attendance report."
+    intro = (
+        f'<p>{trigger} It covers <strong>{report["headcount"]}</strong> '
+        f'{"person" if report["headcount"] == 1 else "people"} in your reporting hierarchy '
+        f'for <strong>{html.escape(report["period"])}</strong>.</p>'
+    )
+
+    body_html = _attendance_roster_table(inline, report["totals"])
+    if overflow > 0:
+        body_html += _note(f"Showing the first {len(inline)} of {len(members)} people — "
+                           f"the attached spreadsheet has all {len(members)}.")
+    if xlsx:
+        body_html += _note("📎 Full per-employee breakdown attached as an Excel file.")
+    if automated:
+        body_html += _note("This is an automated report from Centriq AI. "
+                           "Manage or pause it from the Manager Portal.")
+
+    html_body = _email_shell(
+        f"Team Attendance — {report['period']}",
+        intro,
+        body_html,
+        preheader=f"{report['headcount']} people · {report['period']}",
+    )
+    subject = f"Team Attendance Report — {report['period']}"
+    files = None
+    if xlsx:
+        fname, b64 = xlsx
+        files = {fname: (b64, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    return _send_html(user_email, recipients, subject, html_body, files=files)

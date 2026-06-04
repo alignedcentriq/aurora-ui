@@ -265,6 +265,18 @@ def init_db():
         except Exception as e:
             print(f"[init_db] Project-deck sync loop notice: {e}")
 
+        # Background thread: accrues parking dues daily and emails reminders on the configured cadence
+        try:
+            from app.config import settings as _s
+            if getattr(_s, "PARKING_REMINDER_SENDER", "") or _s.NOTIFY_TO_EMAIL:
+                from app.services.parking_payment_service import parking_reminder_loop
+                print("[init_db] Starting parking payment reminder loop (daily tick)...")
+                threading.Thread(target=parking_reminder_loop, daemon=True).start()
+            else:
+                print("[init_db] Parking reminder loop skipped — no PARKING_REMINDER_SENDER / NOTIFY_TO_EMAIL.")
+        except Exception as e:
+            print(f"[init_db] Parking reminder loop notice: {e}")
+
     except Exception as e:
         print(f"Error during init_db: {e}")
         db.rollback()

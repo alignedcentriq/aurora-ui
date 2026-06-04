@@ -319,6 +319,7 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
             thread_id=str(doc.id),
             watermark="",
             qr_url=_verify_url(doc.verify_token) if doc.verify_token else "",
+            subject_name=doc.subject_name or "",
         )
         base = doc.doc_type or (doc.title or "document")
         safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_")[:80] or "document"
