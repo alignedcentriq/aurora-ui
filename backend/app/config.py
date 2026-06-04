@@ -111,11 +111,6 @@ class Config:
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-    # ── Fast/Summarizer endpoint — defaults to the agent's endpoint, but can be pointed at a
-    #    lighter/cheaper model server so the summarizer/general roles don't sit on the heavy
-    #    agent GPU (Option B). Falls back to AGENT_BASE_URL when FAST_BASE_URL is unset. ──
-    FAST_BASE_URL = _resolve_llm_base_url("FAST_BASE_URL", "AGENT_BASE_URL")
-
     # ── Embedding + Chunking Models (semantic search / RAG ingestion) ──
     EMBEDDING_BASE_URL = _resolve_llm_base_url("EMBEDDING_BASE_URL", "LLM_BASE_URL")
     EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
