@@ -32,12 +32,7 @@ from app.hr_service import HRService
 from app.config import settings
 from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
 from app.agents.pmo_agent import pmo_agent
-from app.agents.admin_agent import (
-    admin_agent,
-    submit_reimbursement as _admin_submit_reimbursement,
-    check_reimbursement_status as _admin_check_reimbursement_status,
-    search_admin_policies as _admin_search_policies,
-)
+from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.agents.deeplink_agent import get_deeplink_agent
@@ -295,49 +290,6 @@ def search_hr_policies(query: str):
     State policy name once. Never include metadata (author, version, review dates)."""
     return HRService.search_policies(query, limit=4)
 
-@tool
-def search_health_benefits(query: str):
-    """Search the company's HEALTH & insurance documents (Group Health Insurance / mediclaim,
-    Group Personal Accident (GPA), parents & dependent coverage, claim & cashless process,
-    day-care surgeries, maternity/OPD, network hospitals, IL Take Care / iHealthcare apps,
-    Practo teleconsultation, wellness & health checkups).
-    Call this for ANY health-benefit question. Answer strictly from the result.
-    Never give medical advice/diagnosis and never use training knowledge — if nothing relevant
-    is found, say so and suggest contacting the HR team."""
-    return HRService.search_policies(query, limit=4)
-
-
-# ── A2A: HR delegates reimbursement to the Admin agent ──────────────────────────
-# Reimbursement (incl. medical/hospitalization expense claims) is OWNED by the Admin
-# agent. These thin tools hand the request to the Admin agent's own tools, return its
-# result to the HR agent, which then composes the final answer for the user.
-
-@tool
-def file_reimbursement(email: str, type: str, amount: float, reason: str = ""):
-    """Delegate a reimbursement claim to the Admin agent (A2A). Call ONLY when the user states a
-    specific amount. type: Travel, Medical, Certification, Equipment — infer from context, ask if
-    ambiguous. Use this for medical/hospitalization expense reimbursement too. Pass the logged-in
-    user's email. Returns the Admin agent's ticket result; Admin is notified by email."""
-    return _admin_submit_reimbursement.func(
-        type=type, amount=amount, reason=reason, state={"user_email": email}
-    )
-
-
-@tool
-def check_reimbursement_status(email: str):
-    """Delegate to the Admin agent to check the status of all the user's reimbursement tickets (A2A).
-    Pass the logged-in user's email."""
-    return _admin_check_reimbursement_status.func(state={"user_email": email})
-
-
-@tool
-def get_reimbursement_process(query: str):
-    """Delegate to the Admin agent for the reimbursement PROCESS — required documents, approval
-    workflow, submission steps, and processing timelines (A2A). Use this for healthcare/medical
-    reimbursement 'how do I claim / what documents / how long' questions, then combine it with
-    search_health_benefits (coverage/eligibility) into one merged answer."""
-    return _admin_search_policies.func(query=query)
-
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
 
@@ -560,8 +512,7 @@ def submit_hr_query(
 
 
 hr_tools = [
-    get_leave_balance, apply_leave, search_hr_policies, search_health_benefits,
-    file_reimbursement, check_reimbursement_status, get_reimbursement_process,
+    get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
     search_people_directory,
@@ -580,21 +531,18 @@ hr_tool_node = ToolNode(hr_tools)
 # 3. LLM INSTANCES
 # ═══════════════════════════════════════════════════════════════════════════════
 # Agent LLM — used for reasoning and tool calling (HR, PMO, Admin, IT, Manager)
-# max_retries=1 (not 2): a timed-out call retried N times multiplies latency before
-# the same failure (45s × 3 = 135s). One retry covers a transient blip without the
-# turn blowing past the 180s frontend/proxy abort.
 agent_llm = ChatOpenAI(
     base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
     model=settings.AGENT_MODEL_NAME,
     temperature=settings.AGENT_TEMPERATURE,
-    max_retries=1,
-    timeout=60,
+    max_retries=2,
+    timeout=45,
 )
 
 # General LLM — lighter qwen2.5:14b for greetings/small talk/announcements
 general_llm_base = ChatOpenAI(
-    base_url=settings.FAST_BASE_URL,
+    base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
     model=settings.FAST_MODEL_NAME,
     temperature=0.7,
@@ -608,17 +556,13 @@ hr_llm = agent_llm.bind_tools(hr_tools)
 
 
 summary_llm = ChatOpenAI(
-    base_url=settings.FAST_BASE_URL,
+    base_url=settings.AGENT_BASE_URL,
     api_key=settings.AGENT_API_KEY,
     model=settings.FAST_MODEL_NAME,
     temperature=0.3,
-    max_retries=1,
-    timeout=45,
+    max_retries=2,
+    timeout=20,
 )
-
-# Max characters of tool output fed to the summarizer. The local model times out on very
-# large RAG dumps (multiple long policy chunks), so we keep only the most-relevant head.
-_SUMMARY_INPUT_CAP = 3500
 
 
 
@@ -1037,7 +981,7 @@ def _try_keyword_route(message: str) -> dict | None:
 # 4. GRAPH NODES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_STICKY_DOMAINS = {"hr", "health", "admin", "it_support", "pmo", "functional_manager", "ms365"}
+_STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager", "ms365"}
 
 
 def _last_ai_message(messages: list) -> str:
@@ -1227,22 +1171,7 @@ def hr_agent(state: AgentState):
             f"Tool routing — act immediately:\n"
             f"- Leave balance -> get_leave_balance(email='{user_email}')\n"
             f"- Apply leave -> apply_leave with inferred leave_type (default Casual)\n"
-            f"- HR policy question (leave, attendance, WFH, holidays, promotion, performance, payroll) "
-            f"-> search_hr_policies. Do NOT use search_health_benefits for these.\n"
-            f"- ANY health / insurance / medical / wellness topic -> ALWAYS use search_health_benefits "
-            f"(prefer it over search_hr_policies). This covers: insurance coverage/limits/inclusions/"
-            f"exclusions, family/dependent/maternity/dental/vision/critical-illness cover, doctor & "
-            f"specialist consultations, health checkups, telemedicine, wellness & mental-health programs, "
-            f"Practo & appointment booking, network hospitals, cashless hospitalization, and medical-claim "
-            f"eligibility/coverage. Answer strictly from the result. Never give medical advice.\n"
-            f"- Healthcare REIMBURSEMENT questions (how to claim/submit, required documents, timelines, "
-            f"rejected claim - for medical/hospitalization/surgery/maternity) -> in the SAME step call BOTH "
-            f"search_health_benefits (coverage & eligibility) AND get_reimbursement_process (documents, "
-            f"approval workflow, submission steps, timelines). You may emit multiple tool calls at once. "
-            f"The two results are then merged into one comprehensive answer.\n"
-            f"- Submit a reimbursement WITH a specific amount -> file_reimbursement(email='{user_email}', "
-            f"type, amount, reason) (Admin A2A). Reimbursement status -> "
-            f"check_reimbursement_status(email='{user_email}').\n"
+            f"- Policy question -> search_hr_policies, answer from result\n"
             f"- Employee search -> search_employee_directory\n"
             f"- Org chart / team -> get_org_chart or get_team_roster\n"
             f"- Team absence -> get_team_absence_for(manager_email='{user_email}')\n"
@@ -1253,11 +1182,7 @@ def hr_agent(state: AgentState):
             f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) -> "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
-            f"Never answer from training knowledge - use tools only.\n"
-            f"GROUNDING: Answer ONLY with figures, dates, limits, and facts that appear verbatim in the "
-            f"tool results. If the retrieved policy text does not actually contain the specific detail asked "
-            f"for, say 'I couldn't find that detail in the policy documents - please check with HR' and STOP. "
-            f"NEVER invent or estimate numbers, days, amounts, or timelines.\n",
+            f"Never answer from training knowledge — use tools only.\n",
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
@@ -1615,90 +1540,35 @@ def placeholder_agent(state: AgentState):
 
 
 def summarizer(state: AgentState):
-    """Converts tool results to natural language, preserving download tags.
-
-    Aggregates ALL trailing ToolMessages (since the last tool-calling AIMessage), so a
-    multi-tool answer — e.g. healthcare reimbursement that merges search_health_benefits
-    (coverage) + get_reimbursement_process (process) — keeps every result, not just the last.
-    """
-    trailing_tools = []
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, ToolMessage):
-            trailing_tools.append(msg)
-        elif isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            break
-    trailing_tools.reverse()
-    if trailing_tools:
-        # Cap EACH result so the combined prompt stays small enough for the local model
-        # to summarize within the timeout (a single uncapped policy dump is ~7.5k chars).
-        per_tool_cap = max(800, _SUMMARY_INPUT_CAP // max(1, len(trailing_tools)))
-        parts = []
-        for m in trailing_tools:
-            c = m.content if hasattr(m, "content") else str(m)
-            parts.append(c[:per_tool_cap])
-        tool_output = "\n\n---\n\n".join(parts)
-    else:
-        tool_message = state["messages"][-1]
-        c = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
-        tool_output = c[:_SUMMARY_INPUT_CAP]
-
-    merge_note = (
-        "5. Multiple results are shown (separated by ---). Merge them into ONE coherent answer."
-        if len(trailing_tools) > 1 else ""
-    )
+    """Converts tool results to natural language, preserving download tags."""
+    tool_message = state["messages"][-1]
+    tool_output = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
+    
     # Use HumanMessage as some models (like llama3.2) return empty for SystemMessage-only prompts
-    def _summarize(text: str) -> str:
-        p = [HumanMessage(content=(
-            "You are an HR Assistant. Summarize this tool result for the employee.\n\n"
-            f"TOOL RESULT:\n{text}\n\n"
-            "INSTRUCTIONS:\n"
-            "1. Provide a concise, friendly summary of the result.\n"
-            "2. IMPORTANT: If and ONLY IF the tool result contains a tag like [DOWNLOAD_PDF:url:title], include it exactly at the end.\n"
-            "3. If no such tag is present in the TOOL RESULT above, DO NOT make one up or add any links.\n"
-            "4. Do not include any JSON, curly braces, or technical metadata in your response.\n"
-            f"{merge_note}\n"
-        ))]
-        return summary_llm.invoke(p).content.strip()
+    prompt = [
+        HumanMessage(content=f"""You are an HR Assistant. Summarize this tool result for the employee.
+        
+TOOL RESULT:
+{tool_output}
 
-    # A [DOWNLOAD_PDF:...] tag is legitimate ONLY if it appeared verbatim in the tool
-    # output (a tool actually generated a PDF). Strip anything the summarizer invents —
-    # e.g. echoing the "[DOWNLOAD_PDF:url:title]" example — so plain policy answers don't
-    # sprout a bogus "Download Report" button.
-    _legit_tags = set(DOWNLOAD_TAG_PATTERN.findall(tool_output))
-
-    def _clean(text: str) -> str:
-        return DOWNLOAD_TAG_PATTERN.sub(
-            lambda m: m.group(0) if m.group(0) in _legit_tags else "", text
-        ).strip()
-
-    # If the search genuinely found nothing relevant, say so cleanly — never dump raw
-    # text or fabricate an answer.
-    _NOT_AVAILABLE = (
-        "I couldn't find this information in the company's policy documents. "
-        "Please contact the HR team for help."
-    )
-    if any(mk in tool_output for mk in (
-        "No policies found", "No specific policy found",
-        "No health document found", "no document was found",
-    )):
-        return {"messages": [AIMessage(content=_NOT_AVAILABLE)]}
-
+INSTRUCTIONS:
+1. Provide a concise, friendly summary of the result.
+2. IMPORTANT: If and ONLY IF the tool result contains a tag like [DOWNLOAD_PDF:url:title], include it exactly at the end.
+3. If no such tag is present in the TOOL RESULT above, DO NOT make one up or add any links.
+4. Do not include any JSON, curly braces, or technical metadata in your response.
+""")
+    ]
     try:
-        content = _clean(_summarize(tool_output))
-        if not content:
-            content = _clean(tool_output)  # have data; summarizer returned empty
-        return {"messages": [AIMessage(content=content or _NOT_AVAILABLE)]}
-    except Exception:
-        # Most common cause is a timeout on a large RAG dump — retry once on a much
-        # smaller slice, which the local model can handle quickly.
-        try:
-            content = _clean(_summarize(tool_output[:1200]))
-            if content:
-                return {"messages": [AIMessage(content=content)]}
-        except Exception:
-            pass
-        # Final fallback: present the most-relevant slice cleanly (tags stripped).
-        return {"messages": [AIMessage(content=_clean(tool_output[:1500]) or _NOT_AVAILABLE)]}
+        response = summary_llm.invoke(prompt)
+        content = response.content.strip()
+        
+        # Fallback if content is empty or model hallucinated the example tag
+        if not content or "[DOWNLOAD_PDF:url:title]" in content:
+            content = f"I've retrieved the information for you: {tool_output}"
+            
+        return {"messages": [AIMessage(content=content)]}
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"The operation was successful, but I had trouble summarizing the result: {tool_output}")]}
 
 
 
@@ -1715,9 +1585,6 @@ def route_to_agent(state: AgentState):
     if domain == "it_support": return "it_agent"
     if domain == "functional_manager": return "manager_agent"
     if domain == "ms365": return "ms365_agent"
-    # Health questions are handled by the HR agent's search_health_benefits tool
-    # (the Health Tool lives inside the HR domain — no separate health agent).
-    if domain == "health": return "hr_agent"
     if domain == "dummy_test": return "dummy_test_agent"
     if status == "placeholder": return "placeholder_agent"
     if domain == "hr": return "hr_agent"
