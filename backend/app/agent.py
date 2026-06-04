@@ -2,7 +2,7 @@
 Centriq AI — Multi-Agent LangGraph Brain
 
 Architecture:
-  User Message → Intent Router (gpt-oss:latest / 20.9B) → Domain Agent (gpt-oss:latest / 20.9B)
+  User Message -> Intent Router (gpt-oss:latest / 20.9B) -> Domain Agent (gpt-oss:latest / 20.9B)
                                          ↓
                               HR Agent (active, with tools)
                               Admin Agent (placeholder)
@@ -1090,7 +1090,7 @@ async def intent_router(state: AgentState):
         return {
             "domain": "deeplink",
             "route_confidence": 1.0,
-            "route_reasoning": "Fast-path: leave balance query → deeplink/Zoho.",
+            "route_reasoning": "Fast-path: leave balance query -> deeplink/Zoho.",
             "sub_intent": "leave_balance",
             "entities": {},
         }
@@ -1142,7 +1142,7 @@ async def intent_router(state: AgentState):
     keyword_result = _try_keyword_route(last_human)
     if keyword_result:
         print(
-            f"[Router] Keyword fast-path → {keyword_result['domain']} "
+            f"[Router] Keyword fast-path -> {keyword_result['domain']} "
             f"({keyword_result['sub_intent']})"
         )
         return {
@@ -1225,32 +1225,32 @@ def hr_agent(state: AgentState):
             f"Always respond in English regardless of the language of the user's message.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
-            f"- Leave balance → get_leave_balance(email='{user_email}')\n"
-            f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
+            f"- Leave balance -> get_leave_balance(email='{user_email}')\n"
+            f"- Apply leave -> apply_leave with inferred leave_type (default Casual)\n"
             f"- HR policy question (leave, attendance, WFH, holidays, promotion, performance, payroll) "
-            f"→ search_hr_policies. Do NOT use search_health_benefits for these.\n"
-            f"- ANY health / insurance / medical / wellness topic → ALWAYS use search_health_benefits "
+            f"-> search_hr_policies. Do NOT use search_health_benefits for these.\n"
+            f"- ANY health / insurance / medical / wellness topic -> ALWAYS use search_health_benefits "
             f"(prefer it over search_hr_policies). This covers: insurance coverage/limits/inclusions/"
             f"exclusions, family/dependent/maternity/dental/vision/critical-illness cover, doctor & "
             f"specialist consultations, health checkups, telemedicine, wellness & mental-health programs, "
             f"Practo & appointment booking, network hospitals, cashless hospitalization, and medical-claim "
             f"eligibility/coverage. Answer strictly from the result. Never give medical advice.\n"
             f"- Healthcare REIMBURSEMENT questions (how to claim/submit, required documents, timelines, "
-            f"rejected claim — for medical/hospitalization/surgery/maternity) → in the SAME step call BOTH "
+            f"rejected claim - for medical/hospitalization/surgery/maternity) -> in the SAME step call BOTH "
             f"search_health_benefits (coverage & eligibility) AND get_reimbursement_process (documents, "
             f"approval workflow, submission steps, timelines). You may emit multiple tool calls at once. "
             f"The two results are then merged into one comprehensive answer.\n"
-            f"- Submit a reimbursement WITH a specific amount → file_reimbursement(email='{user_email}', "
-            f"type, amount, reason) (Admin A2A). Reimbursement status → "
+            f"- Submit a reimbursement WITH a specific amount -> file_reimbursement(email='{user_email}', "
+            f"type, amount, reason) (Admin A2A). Reimbursement status -> "
             f"check_reimbursement_status(email='{user_email}').\n"
-            f"- Employee search → search_employee_directory\n"
-            f"- Org chart / team → get_org_chart or get_team_roster\n"
-            f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
-            f"- Document → generate_hr_document(target_email='{user_email}')\n"
-            f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
-            f"- Onboarding → trigger_onboarding_checklist\n"
-            f"- Offboarding → trigger_offboarding_checklist\n"
-            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
+            f"- Employee search -> search_employee_directory\n"
+            f"- Org chart / team -> get_org_chart or get_team_roster\n"
+            f"- Team absence -> get_team_absence_for(manager_email='{user_email}')\n"
+            f"- Document -> generate_hr_document(target_email='{user_email}')\n"
+            f"- Grievance -> collect category + description + ask if anonymous, THEN submit_grievance_for\n"
+            f"- Onboarding -> trigger_onboarding_checklist\n"
+            f"- Offboarding -> trigger_offboarding_checklist\n"
+            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) -> "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
             f"Never answer from training knowledge — use tools only.\n",
@@ -1258,6 +1258,14 @@ def hr_agent(state: AgentState):
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
+
+    user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+    try:
+        context_answer = PromptService.check_context_relevance("hr", user_question)
+        if context_answer:
+            return {"messages": [AIMessage(content=context_answer)]}
+    except Exception:
+        pass  # non-fatal — fall through to normal agent
 
     try:
         response = hr_llm.invoke(messages)
@@ -1735,7 +1743,7 @@ workflow.add_node("summarizer", summarizer)
 
 workflow.set_entry_point("intent_router")
 # context_manager sits between router and feedback_lookup:
-# intent_router → context_manager (compress if >6000 tokens) → feedback_lookup → domain agent
+# intent_router -> context_manager (compress if >6000 tokens) -> feedback_lookup -> domain agent
 workflow.add_edge("intent_router", "context_manager")
 workflow.add_edge("context_manager", "feedback_lookup")
 workflow.add_conditional_edges("feedback_lookup", route_to_agent)

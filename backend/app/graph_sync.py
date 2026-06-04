@@ -11,29 +11,24 @@ logger = logging.getLogger(__name__)
 
 
 class GraphClient:
-    def __init__(self, use_sharepoint_creds: bool = False):
-        """
-        use_sharepoint_creds=True  → use SHAREPOINT_CLIENT_ID/SECRET/TENANT_ID
-                                     (Sites.Selected app for document ingestion)
-        use_sharepoint_creds=False → use GRAPH_CLIENT_ID/SECRET/TENANT_ID
-                                     (general Graph app for subscriptions, etc.)
-        """
-        self._use_sp = use_sharepoint_creds
+    def __init__(self):
+        """All Graph calls — webhooks/subscriptions and SharePoint document
+        ingestion alike — use the single GRAPH_CLIENT_ID/SECRET/TENANT_ID app."""
         self.base_url = "https://graph.microsoft.com/v1.0"
         self._access_token = None
         self._token_expires_at = datetime.datetime.min
 
     @property
     def tenant_id(self):
-        return settings.SHAREPOINT_TENANT_ID if self._use_sp else settings.GRAPH_TENANT_ID
+        return settings.GRAPH_TENANT_ID
 
     @property
     def client_id(self):
-        return settings.SHAREPOINT_CLIENT_ID if self._use_sp else settings.GRAPH_CLIENT_ID
+        return settings.GRAPH_CLIENT_ID
 
     @property
     def client_secret(self):
-        return settings.SHAREPOINT_CLIENT_SECRET if self._use_sp else settings.GRAPH_CLIENT_SECRET
+        return settings.GRAPH_CLIENT_SECRET
 
     def _get_token(self):
         if datetime.datetime.utcnow() < self._token_expires_at:
@@ -173,8 +168,13 @@ class GraphClient:
         response.raise_for_status()
         return response.json().get("id")
 
-graph_client = GraphClient()                        # general Graph calls (webhooks, etc.)
-sp_client    = GraphClient(use_sharepoint_creds=True)  # SharePoint document ingestion
+graph_client = GraphClient()    # general Graph calls (webhooks, etc.)
+# SharePoint document ingestion uses the SAME Azure AD app registration as the rest of
+# Graph (GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET / GRAPH_TENANT_ID). That app holds the
+# Sites.Selected permission, so each site it reads must be explicitly granted to it —
+# changing SHAREPOINT_SITE_URL to a new site requires granting this app access to that
+# site (Graph: POST /sites/{id}/permissions, role "read").
+sp_client    = GraphClient()
 
 def process_document(file_metadata: dict, session: Session):
     """
