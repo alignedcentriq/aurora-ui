@@ -399,10 +399,14 @@ class PolicyService:
         if key in cls._embedding_cache:
             return cls._embedding_cache[key]
         try:
+            import time as _t  # TEMP[phase2-instrumentation]: measure embedding latency
+            _t0 = _t.time()      # TEMP[phase2-instrumentation]
             resp = cls._get_embedding_client().embeddings.create(
                 input=key,
                 model=settings.EMBEDDING_MODEL_NAME,
             )
+            # TEMP[phase2-instrumentation]: embedding calls bypass astream_events, so log here.
+            print(f"[EMBED] model={settings.EMBEDDING_MODEL_NAME} time={_t.time() - _t0:.2f}s chars={len(key)}")
             result = resp.data[0].embedding
             if len(cls._embedding_cache) >= cls._embedding_cache_max:
                 # evict oldest half when full
