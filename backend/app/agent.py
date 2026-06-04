@@ -594,7 +594,7 @@ agent_llm = ChatOpenAI(
 
 # General LLM — lighter qwen2.5:14b for greetings/small talk/announcements
 general_llm_base = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
+    base_url=settings.FAST_BASE_URL,
     api_key=settings.AGENT_API_KEY,
     model=settings.FAST_MODEL_NAME,
     temperature=0.7,
@@ -608,7 +608,7 @@ hr_llm = agent_llm.bind_tools(hr_tools)
 
 
 summary_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
+    base_url=settings.FAST_BASE_URL,
     api_key=settings.AGENT_API_KEY,
     model=settings.FAST_MODEL_NAME,
     temperature=0.3,
@@ -1660,22 +1660,45 @@ def summarizer(state: AgentState):
         ))]
         return summary_llm.invoke(p).content.strip()
 
+    # A [DOWNLOAD_PDF:...] tag is legitimate ONLY if it appeared verbatim in the tool
+    # output (a tool actually generated a PDF). Strip anything the summarizer invents —
+    # e.g. echoing the "[DOWNLOAD_PDF:url:title]" example — so plain policy answers don't
+    # sprout a bogus "Download Report" button.
+    _legit_tags = set(DOWNLOAD_TAG_PATTERN.findall(tool_output))
+
+    def _clean(text: str) -> str:
+        return DOWNLOAD_TAG_PATTERN.sub(
+            lambda m: m.group(0) if m.group(0) in _legit_tags else "", text
+        ).strip()
+
+    # If the search genuinely found nothing relevant, say so cleanly — never dump raw
+    # text or fabricate an answer.
+    _NOT_AVAILABLE = (
+        "I couldn't find this information in the company's policy documents. "
+        "Please contact the HR team for help."
+    )
+    if any(mk in tool_output for mk in (
+        "No policies found", "No specific policy found",
+        "No health document found", "no document was found",
+    )):
+        return {"messages": [AIMessage(content=_NOT_AVAILABLE)]}
+
     try:
-        content = _summarize(tool_output)
-        if not content or "[DOWNLOAD_PDF:url:title]" in content:
-            content = f"I've retrieved the information for you:\n\n{tool_output}"
-        return {"messages": [AIMessage(content=content)]}
+        content = _clean(_summarize(tool_output))
+        if not content:
+            content = _clean(tool_output)  # have data; summarizer returned empty
+        return {"messages": [AIMessage(content=content or _NOT_AVAILABLE)]}
     except Exception:
         # Most common cause is a timeout on a large RAG dump — retry once on a much
         # smaller slice, which the local model can handle quickly.
         try:
-            content = _summarize(tool_output[:1200])
-            if content and "[DOWNLOAD_PDF:url:title]" not in content:
+            content = _clean(_summarize(tool_output[:1200]))
+            if content:
                 return {"messages": [AIMessage(content=content)]}
         except Exception:
             pass
-        # Final fallback: present the most-relevant slice cleanly, no alarming prefix.
-        return {"messages": [AIMessage(content=tool_output[:1500].strip())]}
+        # Final fallback: present the most-relevant slice cleanly (tags stripped).
+        return {"messages": [AIMessage(content=_clean(tool_output[:1500]) or _NOT_AVAILABLE)]}
 
 
 

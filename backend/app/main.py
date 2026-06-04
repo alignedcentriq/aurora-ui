@@ -576,15 +576,23 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         except Exception:
             pass
 
-    # Extract download tag
+    # Extract download tag — but ONLY honor it if it points to a REAL generated PDF in
+    # the document store. A model that hallucinates/echoes the "[DOWNLOAD_PDF:url:title]"
+    # example (e.g. weaker local models) would otherwise produce a bogus "Download title"
+    # button. Any tag whose file_id doesn't resolve is stripped silently.
     dl_match = _download_tag_re.search(final_message)
     if dl_match:
         path = dl_match.group(1)
         title = dl_match.group(2)
-        base_url = f"http://localhost:{settings.PORT}"
-        download_url = f"{base_url}{path}"
-        markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
-        final_message = _download_tag_re.sub(markdown_link, final_message)
+        file_id = path.rstrip("/").split("/")[-1]
+        is_real = path.startswith("/api/documents/download/") and get_pdf(file_id) is not None
+        if is_real:
+            base_url = f"http://localhost:{settings.PORT}"
+            download_url = f"{base_url}{path}"
+            markdown_link = f"\n\n### 📄 **[Download {title}]({download_url})**"
+            final_message = _download_tag_re.sub(markdown_link, final_message)
+        else:
+            final_message = _download_tag_re.sub("", final_message).strip()
 
     # Strip HTML tags
     html_stripped = re.sub(r'<[^>]+>', '', final_message).strip()

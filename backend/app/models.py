@@ -89,6 +89,19 @@ class PolicyChunk(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class PolicySynonym(Base):
+    """Acronyms/terms auto-learned from each policy doc at ingestion (e.g. tat -> turn around
+    time). Merged into query expansion so new docs' vocabulary is searchable with no manual edit."""
+    __tablename__ = "policy_synonyms"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    policy_id = Column(Integer, ForeignKey(f"{SCHEMA}.policies.id", ondelete="CASCADE"), index=True, nullable=False)
+    term = Column(String, index=True)   # acronym, lowercased  (e.g. "tat")
+    expansion = Column(Text)            # full phrase, lowercased (e.g. "turn around time")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class PolicyImage(Base):
     """Stores images extracted from policy PDFs/DOCXs directly in PostgreSQL."""
     __tablename__ = "policy_images"
