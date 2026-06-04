@@ -13,6 +13,7 @@ All policy data lives in the DB — no runtime dependency on the PDF folder.
 
 import os
 import re
+import time
 import datetime
 from difflib import get_close_matches
 from pathlib import Path
@@ -107,7 +108,67 @@ _QUERY_SYNONYMS: dict[str, str] = {
     "referral": "employee referral recruitment bonus",
     "relocation": "relocation transfer allowance",
     "sabbatical": "sabbatical long leave career break",
+    # ── Health insurance / GHI / mediclaim / claims ──────────────────────────
+    "tat": "turnaround time claim settlement processing time",
+    "ghi": "group health insurance mediclaim floater",
+    "gpa": "group personal accident insurance",
+    "sum insured": "sum insured coverage amount floater",
+    "cashless": "cashless hospitalization network hospital pre-authorization",
+    "opd": "outpatient department consultation",
+    "ipd": "inpatient hospitalization",
+    "ped": "pre-existing disease waiting period",
+    "copay": "co-payment cost sharing",
+    "co-pay": "co-payment cost sharing",
+    "day care": "day care procedure surgery",
+    "daycare": "day care procedure surgery",
+    "room rent": "room rent limit hospitalization",
+    "network hospital": "network hospital cashless empanelled",
+    "ncb": "cumulative bonus no claim bonus",
 }
+
+
+# ── Auto-learned acronyms (mined from each doc at ingestion time) ─────────────
+_ACRONYM_RE = re.compile(r'([A-Za-z][A-Za-z0-9&/.\- ]{2,40}?)\s*\(([A-Z][A-Z0-9]{1,5})\)')
+_LEARNED_SYN_CACHE = {"data": {}, "ts": 0.0}
+_LEARNED_TTL = 300  # seconds; reset to 0 on ingestion so new terms apply immediately
+
+
+def _extract_acronyms(text: str) -> dict:
+    """Mine 'Full Phrase (ACRONYM)' patterns from doc text -> {acronym_lower: phrase_lower}.
+    Policy docs define acronyms inline (e.g. 'Turn Around Time (TAT)'), so each ingested doc
+    teaches the system its own vocabulary — no manual synonym edits needed.
+
+    A pair is kept ONLY when the acronym is the initialism of the phrase's trailing words.
+    This filters false matches ('(TAT)' after unrelated text) and trims the phrase to exactly
+    the defining words — e.g. 'turn around time', not '...and reduced errors. time'."""
+    found = {}
+    for phrase, acro in _ACRONYM_RE.findall(text or ""):
+        acro = acro.strip().lower()
+        words = [w for w in re.split(r'[\s.&/\-]+', phrase.strip().lower()) if w]
+        if len(acro) < 2 or len(words) < len(acro):
+            continue
+        tail = words[-len(acro):]
+        if "".join(w[0] for w in tail) == acro:
+            found[acro] = " ".join(tail)
+    return found
+
+
+def _get_learned_synonyms() -> dict:
+    """Acronym->expansion pairs auto-learned from ingested docs (cached ~5 min; no per-query DB hit)."""
+    now = time.time()
+    if now - _LEARNED_SYN_CACHE["ts"] > _LEARNED_TTL:
+        from app.models import PolicySynonym
+        db = SessionLocal()
+        try:
+            _LEARNED_SYN_CACHE["data"] = {
+                t: e for t, e in db.query(PolicySynonym.term, PolicySynonym.expansion).all()
+            }
+            _LEARNED_SYN_CACHE["ts"] = now
+        except Exception:
+            pass
+        finally:
+            db.close()
+    return _LEARNED_SYN_CACHE["data"]
 
 
 def _expand_query(query: str) -> tuple[str, str | None]:
@@ -122,9 +183,14 @@ def _expand_query(query: str) -> tuple[str, str | None]:
     extras: list[str] = []
     suggestion: str | None = None
 
-    # 1. Exact matches
+    # 1. Exact matches (static dictionary)
     for term, expansion in _QUERY_SYNONYMS.items():
         if re.search(r'\b' + re.escape(term) + r'\b', lower):
+            extras.append(expansion)
+
+    # 1b. Learned acronyms auto-extracted from ingested docs (e.g. tat -> turn around time)
+    for term, expansion in _get_learned_synonyms().items():
+        if expansion not in extras and re.search(r'\b' + re.escape(term) + r'\b', lower):
             extras.append(expansion)
 
     # 2. Fuzzy correction — only when no exact synonym matched
@@ -524,6 +590,15 @@ class PolicyService:
                 embedding=emb,
                 image_urls=img_keys if img_keys else None,
             ))
+
+        # Auto-learn this doc's acronyms (e.g. "Turn Around Time (TAT)") for query expansion.
+        # Runs on every ingest/re-ingest, so policy changes re-harvest vocabulary automatically.
+        from app.models import PolicySynonym
+        db.query(PolicySynonym).filter(PolicySynonym.policy_id == policy.id).delete()
+        for _term, _exp in _extract_acronyms(policy.content or "").items():
+            db.add(PolicySynonym(policy_id=policy.id, term=_term, expansion=_exp))
+        _LEARNED_SYN_CACHE["ts"] = 0.0  # invalidate cache so new terms apply on next query
+
         return len(chunks)
 
     @staticmethod
