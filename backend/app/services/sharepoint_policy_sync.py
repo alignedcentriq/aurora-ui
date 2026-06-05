@@ -35,6 +35,13 @@ _FOLDER_CATEGORY = {
 }
 
 
+# Max characters of extracted text to store/chunk per policy. Large policy PDFs
+# (e.g. the GHI insurance policy, ~126K chars) carry critical claims/TAT/grievance
+# content well past the first 50K, so the cap must be generous enough to chunk it
+# all — matches the manual GHI ingestion pipeline. Short docs are unaffected.
+_MAX_POLICY_CHARS = 200000
+
+
 def _category_for_folder(folder: str) -> str:
     return _FOLDER_CATEGORY.get(folder.lower(), "General")
 
@@ -180,7 +187,7 @@ def sync_folder(folder: str) -> dict:
             policy = Policy(
                 title=title,
                 category=category,
-                content=content[:50000],
+                content=content[:_MAX_POLICY_CHARS],
                 source_key=sp_k,
                 source_etag=ctag,
                 updated_at=datetime.datetime.utcnow(),
@@ -193,7 +200,7 @@ def sync_folder(folder: str) -> dict:
             chunk_images: dict = {}
             if raw_images:
                 img_ids = _upload_policy_images(policy.id, title, raw_images, db, is_docx=(ext == "docx"))
-                chunks_preview = _chunk_text_sentences(content[:50000])
+                chunks_preview = _chunk_text_sentences(content[:_MAX_POLICY_CHARS])
                 assignment = _assign_images_to_chunks(
                     raw_images, len(chunks_preview), is_docx=(ext == "docx")
                 )

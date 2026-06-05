@@ -137,8 +137,15 @@ class Config:
     GRAPH_CLIENT_SECRET = os.getenv("GRAPH_CLIENT_SECRET")
     GRAPH_CLIENT_STATE = os.getenv("GRAPH_CLIENT_STATE", "secretClientState")
 
-    # SharePoint document ingestion reuses the single GRAPH_* Azure AD app
-    # (see graph_sync.GraphClient); no separate SharePoint credentials.
+    # SharePoint document ingestion uses a DEDICATED Azure AD app that holds the
+    # Sites.Selected (drive read) grant for the policy site. The GRAPH_* app above
+    # is used for webhooks/subscriptions and is NOT granted document-library access
+    # (GET /drives/{id} returns 403), so sp_client must authenticate with these.
+    # Falls back to the GRAPH_* app when the dedicated creds are unset.
+    SHAREPOINT_TENANT_ID = os.getenv("SHAREPOINT_TENANT_ID", GRAPH_TENANT_ID)
+    SHAREPOINT_CLIENT_ID = os.getenv("SHAREPOINT_CLIENT_ID", GRAPH_CLIENT_ID)
+    SHAREPOINT_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET", GRAPH_CLIENT_SECRET)
+
     # Base folder path inside the document library.
     # Graph API drive root IS "Shared Documents", so strip that prefix automatically.
     # e.g. SHAREPOINT_FOLDER_PATH=/Shared Documents/IQ/ → SHAREPOINT_BASE_FOLDER = "IQ"

@@ -11,24 +11,28 @@ logger = logging.getLogger(__name__)
 
 
 class GraphClient:
-    def __init__(self):
-        """All Graph calls — webhooks/subscriptions and SharePoint document
-        ingestion alike — use the single GRAPH_CLIENT_ID/SECRET/TENANT_ID app."""
+    def __init__(self, tenant_id: str = None, client_id: str = None, client_secret: str = None):
+        """Webhooks/subscriptions use the GRAPH_* app (the default). SharePoint
+        document ingestion uses a dedicated app passed in explicitly, because the
+        GRAPH_* app is not granted document-library (drive) access."""
         self.base_url = "https://graph.microsoft.com/v1.0"
         self._access_token = None
         self._token_expires_at = datetime.datetime.min
+        self._tenant_id = tenant_id
+        self._client_id = client_id
+        self._client_secret = client_secret
 
     @property
     def tenant_id(self):
-        return settings.GRAPH_TENANT_ID
+        return (self._tenant_id or settings.GRAPH_TENANT_ID or "").strip()
 
     @property
     def client_id(self):
-        return settings.GRAPH_CLIENT_ID
+        return (self._client_id or settings.GRAPH_CLIENT_ID or "").strip()
 
     @property
     def client_secret(self):
-        return settings.GRAPH_CLIENT_SECRET
+        return (self._client_secret or settings.GRAPH_CLIENT_SECRET or "").strip()
 
     def _get_token(self):
         if datetime.datetime.utcnow() < self._token_expires_at:
@@ -168,13 +172,19 @@ class GraphClient:
         response.raise_for_status()
         return response.json().get("id")
 
-graph_client = GraphClient()    # general Graph calls (webhooks, etc.)
-# SharePoint document ingestion uses the SAME Azure AD app registration as the rest of
-# Graph (GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET / GRAPH_TENANT_ID). That app holds the
-# Sites.Selected permission, so each site it reads must be explicitly granted to it —
-# changing SHAREPOINT_SITE_URL to a new site requires granting this app access to that
-# site (Graph: POST /sites/{id}/permissions, role "read").
-sp_client    = GraphClient()
+graph_client = GraphClient()    # general Graph calls (webhooks, etc.) — GRAPH_* app
+# SharePoint document ingestion uses a DEDICATED Azure AD app (SHAREPOINT_CLIENT_ID /
+# SHAREPOINT_CLIENT_SECRET / SHAREPOINT_TENANT_ID) that holds the Sites.Selected grant
+# for the policy site. The GRAPH_* app above is NOT granted document-library access
+# (GET /drives/{id} -> 403), so document sync must use this client. Changing
+# SHAREPOINT_SITE_URL to a new site requires granting THIS app access to that site
+# (Graph: POST /sites/{id}/permissions, role "read"). Falls back to the GRAPH_* app
+# when the dedicated creds are unset (see config.Config).
+sp_client = GraphClient(
+    tenant_id=settings.SHAREPOINT_TENANT_ID,
+    client_id=settings.SHAREPOINT_CLIENT_ID,
+    client_secret=settings.SHAREPOINT_CLIENT_SECRET,
+)
 
 def process_document(file_metadata: dict, session: Session):
     """
