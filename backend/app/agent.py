@@ -32,6 +32,7 @@ from app.hr_service import HRService
 from app.config import settings
 from app.services import llm_controls_service as llm_controls
 from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
+from app.services.semantic_router_service import SemanticRouterService
 from app.agents.pmo_agent import pmo_agent
 from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
@@ -314,13 +315,13 @@ def search_hr_policies(query: str):
 
 
 @tool
-def search_project_decks(query: str):
-    """Search internal project-showcase / weekly flash-review decks for project details:
-    what was built, tech/tools used, outcomes, owners, the project shown in a given week.
-    Call for any question about company projects, flash reviews, or the Aixchange decks.
-    Answer from the result only; cite the project/deck name once. Never invent project facts."""
+def search_company_projects(query: str):
+    """Search the company's project knowledge base — project summaries, demo
+    transcripts, and project details synced from SharePoint. Call for any question
+    about what projects the company has worked on, a specific project's summary or
+    status, or what was demoed. Answer only from the result."""
     from app.services.policy_service import PolicyService
-    return PolicyService.search_project_decks(query, limit=4)
+    return PolicyService.search_projects(query, limit=6)
 
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
@@ -1154,15 +1155,6 @@ _KW_PMO = re.compile(
     r'udemy\s+(license|seat|access)|training\s+license)\b', re.I
 )
 
-# Weekly flash-review / project-showcase decks (Aixchange). Distinct from the
-# structured PMO project-status queries above — these are knowledge questions
-# answered from the ingested decks via the general agent's search_project_decks.
-_KW_PROJECT_DECK = re.compile(
-    r'\b(flash\s+review|aix\s*change|project\s+(deck|presentation|showcase|demo)|'
-    r'(last|this|previous)\s+week\'?s?\s+project|project\s+of\s+the\s+week|'
-    r'weekly\s+(review|showcase)\s+project|project\s+shown\s+(in|at|during))\b', re.I
-)
-
 _KW_MANAGER = re.compile(
     r'\b(my\s+team|who\s+reports\s+to\s+me|direct\s+reports|'
     r'my\s+reportees|team\s+members)\b', re.I
@@ -1225,6 +1217,21 @@ _KW_COMPANY_INFO = re.compile(
     r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
     r'company\s+(info|details|overview|profile)|'
     r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company))\b', re.I
+)
+
+# Company-project knowledge base (summaries / demo transcripts / details from the
+# SharePoint Projects tree). Deliberately DISTINCT from _KW_PMO (which owns project
+# status/tracking) — this targets demos, transcripts, and "what did we deliver/build":
+# overlapping phrasings like "project summary"/"company projects" stay with PMO.
+_KW_COMPANY_PROJECTS = re.compile(
+    r'\b((demo|demonstration|walkthrough)\s+(of|for)\b|'
+    r'what\s+was\s+dem(o|onstrat)|'
+    r'(demo|project)\s+transcript|transcript\s+(of|for)\s+\w+\s+project|'
+    r'project\s+(details|recap|deck|writeup|write-up)|'
+    r'(details|recap)\s+(of|for|on)\s+the\s+\w+\s+project|'
+    r'summar(y|ise|ize)\s+(of\s+)?the\s+\w+\s+project|'
+    r'what\s+(did|have)\s+we\s+(build|built|deliver|delivered)\s+for\b|'
+    r'(client|customer)\s+projects?\b)', re.I
 )
 
 # Zoho People — delegated per-user data
@@ -1496,13 +1503,6 @@ def _try_keyword_route(message: str) -> dict | None:
                     "sub_intent": "software_install",
                     "entities": {"software_name": sw}}
 
-    # Project-showcase / flash-review decks — route to general (search_project_decks).
-    # Checked BEFORE PMO so deck questions don't fall into structured project status.
-    if _KW_PROJECT_DECK.search(text):
-        return {"domain": "general", "confidence": 0.9,
-                "reasoning": "Keyword: project showcase / flash-review deck query",
-                "sub_intent": "project_decks", "entities": {}}
-
     # PMO — Udemy / training license request (must precede the generic PMO project route)
     if _KW_PMO_UDEMY.search(text):
         return {"domain": "pmo", "confidence": 0.95,
@@ -1539,7 +1539,47 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: company info query",
                 "sub_intent": "company_info", "entities": {}}
 
+    # Company projects (summaries / demo transcripts / details) — general agent
+    if _KW_COMPANY_PROJECTS.search(text):
+        return {"domain": "general", "confidence": 0.9,
+                "reasoning": "Keyword: company project query",
+                "sub_intent": "company_projects", "entities": {}}
+
     return None  # Ambiguous — fall through to LLM router
+
+
+def _extract_entities(message: str, domain: str, sub_intent: str) -> dict:
+    """Extract entities for the few sub_intents that carry them, reusing the existing keyword
+    regexes. The semantic router supplies domain + sub_intent; only install / leave / community
+    search / desk-key need structured entities, and each already has a deterministic extractor.
+    Every other intent returns {} — the domain agent re-parses from the raw message, exactly as
+    the keyword router's many `entities: {}` branches always did. Fail-soft: never raises."""
+    text = (message or "").strip()
+    try:
+        if sub_intent == "software_install":
+            m = _KW_IT_INSTALL.search(text) or _KW_IT_INSTALL_NEED.search(text)
+            if m:
+                sw = m.group(1).strip()
+                if sw and 1 < len(sw) < 35:
+                    return {"software_name": sw}
+            return {}
+        if sub_intent in ("submit_leave", "zoho_leave_fastpath"):
+            return _try_extract_leave_params(text) or {}
+        if sub_intent == "community_search":
+            cs = _KW_MS365_COMMUNITY_SEARCH.search(text)
+            if cs:
+                topic = cs.group(1).strip().rstrip("?.! ")
+                if topic:
+                    return {"query": topic}
+            return {}
+        if sub_intent == "desk_key_request":
+            d = re.search(r'\b([A-Za-z]{1,3}[- ]?\d{1,3})\b', text)
+            if d:
+                return {"desk_number": d.group(1)}
+            return {}
+    except Exception:  # noqa: BLE001 — entity extraction is best-effort
+        return {}
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1660,8 +1700,45 @@ async def intent_router(state: AgentState):
             "entities": leave_params,
         }
 
-    # Keyword fast-path: classify via regex — 0 LLM calls, <1ms
-    # (computed above so it can override stickiness; reuse the result here)
+    # Fast Intent Dictionary (layer 4.5): O(1) exact normalised match against the curated/learned
+    # phrasing map. Microseconds, zero ml01 load, 100% precise — handles the high-frequency head
+    # and every seeded exact phrasing before we spend an embedding call. Lookup cost is flat no
+    # matter how many intents exist, so this scales cleanly as the intent set grows.
+    exact = SemanticRouterService.exact_match(last_human)
+    if exact is not None:
+        entities = _extract_entities(last_human, exact.domain, exact.sub_intent)
+        print(f"[Router] Exact dictionary -> {exact.domain} ({exact.sub_intent})")
+        return {
+            "domain": exact.domain,
+            "route_confidence": 1.0,
+            "route_reasoning": exact.reasoning,
+            "sub_intent": exact.sub_intent,
+            "entities": entities,
+        }
+
+    # Semantic intent router (layer 5): embed the message and match it against the closed set of
+    # labeled seed utterances (pgvector cosine k-NN). A strong, top-k-agreeing match routes
+    # directly with 0 LLM calls and — because the output space is the stored labels — cannot
+    # hallucinate a domain the way the generative LLM router can. Generalises to novel paraphrases
+    # the exact dictionary misses. Permanent replacement for the brittle keyword-regex bulk.
+    decision = SemanticRouterService.classify(last_human)
+    if decision.tier == "high":
+        entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
+        print(
+            f"[Router] Semantic fast-path -> {decision.domain} "
+            f"({decision.sub_intent}) sim={decision.similarity}"
+        )
+        return {
+            "domain": decision.domain,
+            "route_confidence": decision.similarity,
+            "route_reasoning": decision.reasoning,
+            "sub_intent": decision.sub_intent,
+            "entities": entities,
+        }
+
+    # Keyword fast-path: regex safety net beneath the semantic high tier. 0 LLM calls.
+    # (Computed up-front so it could override stickiness; reused here. Phased out once the
+    # semantic router's accuracy is confirmed against the eval set on live traffic.)
     if keyword_result:
         print(
             f"[Router] Keyword fast-path -> {keyword_result['domain']} "
@@ -1675,11 +1752,16 @@ async def intent_router(state: AgentState):
             "entities": keyword_result.get("entities", {}),
         }
 
+    # Ambiguous semantic match → hand the LLM router the semantic shortlist as a soft hint,
+    # constraining the 8-way choice to 2-3 and sharply cutting hallucination. Low/unavailable
+    # → plain LLM router (the original behaviour).
+    candidate_domains = decision.candidate_domains if decision.tier == "ambiguous" else None
     try:
-        result = await classify_intent_async(last_human)
+        result = await classify_intent_async(last_human, candidate_domains=candidate_domains)
         print(
             f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} "
             f"| Sub-intent: {result.get('sub_intent', '?')} | Entities: {result.get('entities', {})}"
+            f" | semantic_tier={decision.tier}"
         )
     except APIConnectionError:
         return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
@@ -2093,7 +2175,7 @@ async def ms365_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
-general_tools = [get_announcements, search_hr_policies, search_project_decks]
+general_tools = [get_announcements, search_hr_policies, search_company_projects]
 general_tool_node = ToolNode(general_tools)
 
 
@@ -2123,10 +2205,9 @@ def general_agent(state: AgentState):
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
-        "You handle company announcements, general policy questions, and questions about "
-        "company projects shown in the weekly flash-review sessions. "
+        "You handle company announcements, general policy questions, and company-project questions. "
         "Tools: get_announcements (news/updates), search_hr_policies (policy lookups), "
-        "search_project_decks (project/flash-review deck lookups — what was built, tech used, outcomes). "
+        "search_company_projects (what projects the company has done, a project's summary/details, demos). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
         "Do not offer further assistance unless asked.",
     )
@@ -2178,7 +2259,7 @@ _PASSTHROUGH_TOOLS = {
 
 
 # Tool results that are policy/insurance Q&A — answered with the strong model for grounding.
-_POLICY_SEARCH_TOOLS = {"search_hr_policies", "search_project_decks"}
+_POLICY_SEARCH_TOOLS = {"search_hr_policies"}
 
 
 def summarizer(state: AgentState):

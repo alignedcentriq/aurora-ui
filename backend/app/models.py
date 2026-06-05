@@ -635,6 +635,38 @@ class CachedAnswer(Base):
     last_used_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class RouterExample(Base):
+    """Labeled seed utterance for the embedding-based semantic intent router.
+
+    Each row is one example phrasing mapped to a (domain, sub_intent). At route time the
+    incoming message is embedded and matched against these by pgvector cosine similarity —
+    the nearest neighbours decide the domain. Because the output space is the closed set of
+    stored labels, the router structurally cannot hallucinate a domain the way the generative
+    LLM router can. New phrasings are added as rows (data), not regexes (code), and a confirmed
+    misroute can be corrected by inserting the corrected example — reusing ChatFeedback's
+    already-stored message embedding for zero re-embed.
+
+    NOTE: this stores example *phrasings* only, never *answers*. It changes which agent runs,
+    not how that agent answers — live Zoho/API calls, announcements, and prompt configs are
+    all downstream of routing and unaffected.
+    """
+    __tablename__ = "router_examples"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    utterance = Column(Text, nullable=False)
+    # Normalised (lowercased/whitespace-collapsed) form — idempotency key for upserts.
+    utterance_norm = Column(String, unique=True, index=True, nullable=False)
+    embedding = Column(Vector(768), nullable=True)
+    domain = Column(String, nullable=False, index=True)      # hr, admin, it_support, pmo, functional_manager, ms365, deeplink, general
+    sub_intent = Column(String, nullable=False)
+    entities = Column(JSON, nullable=True)                    # template entities for this intent (usually empty)
+    source = Column(String, default="seed")                  # seed | kw | prompt | feedback | manual
+    is_active = Column(Boolean, default=True, index=True)     # soft-disable a bad seed without deleting
+    weight = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class LeaveBalanceCache(Base):
     """Stores the most recent leave balance scraped from Zoho People for each user.
     Refreshed in the background every LEAVE_BALANCE_SYNC_INTERVAL_SECONDS (default 30 min).
@@ -893,8 +925,37 @@ class GeneratedDocument(Base):
     verified_at = Column(DateTime, nullable=True)
     purpose = Column(Text, nullable=True)
     additional_info = Column(Text, nullable=True)
-    content = Column(Text, nullable=True)              # full finalised letter text
+    content = Column(Text, nullable=True)              # merged rendered HTML (source for /verify + PDF)
+    field_values = Column(JSON, nullable=True)         # filled placeholder values {field: value} for audit/re-render
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class DocumentTemplate(Base):
+    """A document template synced from a SharePoint folder of plain PDF/DOCX files.
+
+    Each source file becomes one generatable document type. The file is converted to
+    HTML once at sync time and an LLM tags the fill-in spots as ``{{field}}`` tokens
+    (HR reviews/edits the detected fields). At generation time the app does a
+    deterministic placeholder merge — no LLM — auto-filling employee-known fields and
+    prompting the user for the rest. HR controls the catalogue (enable/disable, label,
+    whether the type needs approval) via the fields below; these survive re-sync."""
+    __tablename__ = "document_templates"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_type = Column(String, index=True)              # slug derived from the filename stem
+    label = Column(String)                             # HR-editable display label
+    source_key = Column(String, unique=True, index=True)   # sp:<TemplatesFolder>/<relative_path>
+    source_etag = Column(String, nullable=True)        # Graph cTag for change detection
+    filename = Column(String)
+    source_format = Column(String, nullable=True)      # pdf | docx
+    html_template = Column(Text, nullable=True)        # converted HTML carrying {{field}} tokens
+    fields = Column(JSON, nullable=True)               # [{name,label,type,required,source,options?}]
+    enabled = Column(Boolean, default=False, index=True)   # HR must opt a new template into the dropdown
+    requires_approval = Column(Boolean, default=True)  # approval-gated vs auto-release
+    setup_status = Column(String, default="needs_review")  # needs_review | ready
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 class ContentRevealAudit(Base):

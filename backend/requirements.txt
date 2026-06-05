@@ -21,6 +21,8 @@ pdfplumber
 pymupdf
 python-docx
 python-pptx
+markitdown
+markdown
 pandas
 openpyxl
 pgvector

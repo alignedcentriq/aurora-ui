@@ -1,37 +1,40 @@
 """
-Document Generation routes.
+Document Generation routes (template-driven).
 
-- GET  /api/documents/catalogue        → available document types
-- GET  /api/documents/lookup?name=...  → employee autofill (HR: search any; others: self only)
-- POST /api/documents/generate         → SSE stream of the generated letter text (always a draft)
-- GET  /api/documents/list             → role-scoped list (HR: pending/all; others: own)
-- POST /api/documents/{id}/approve     → HR/Admin approve & release (draft → verified)
-- GET  /api/documents/{id}/download    → branded PDF — ONLY allowed once verified
-- GET  /verify/{token}                 → PUBLIC verification page (served by backend, no login)
+- GET  /api/documents/catalogue            → HR-enabled document types + their user fields
+- GET  /api/documents/lookup?name=...       → employee autofill (HR: search any; others: self)
+- POST /api/documents/generate              → deterministic placeholder merge (no LLM); returns
+                                              the document id + an HTML preview
+- GET  /api/documents/list                  → role-scoped list (HR: pending/all; others: own)
+- POST /api/documents/{id}/approve          → HR/Admin approve & release (draft → verified)
+- GET  /api/documents/{id}/download         → rendered PDF (envelope-id header + signature) —
+                                              ONLY once verified
+- GET  /api/documents/admin/templates       → HR: manage the catalogue (all templates)
+- PUT  /api/documents/admin/templates/{id}  → HR: enable/disable, approval toggle, label, fields
+- POST /api/documents/admin/templates/sync  → HR: re-pull templates from SharePoint
+- GET  /verify/{token}                       → PUBLIC verification page (no login)
 
-Trust model: every generated document starts as a *draft* and is preview-only. Nobody can
-download it until an HR/Admin user explicitly approves & releases it. The released PDF is
-clean and carries a QR code that points at the public /verify page, which is the source of
-truth for authenticity — so a screenshot/photo of the watermarked draft preview is never a
-valid document. HR/Admin can generate for anyone; everyone else only for themselves.
+Trust model: a generated document carries a small "envelope id" header on every page (the
+unguessable verify token), which also backs the public /verify page. Approval-gated types stay
+drafts (preview-only, no signature) until HR releases them, at which point the HR signature
+block is added; auto-release types are released at generation. HR/Admin can generate for anyone;
+everyone else only for themselves.
 """
 
 import datetime
-import html
-import json
 import re
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
-from app.auth import CurrentUser, get_current_user
-from app.config import settings
+from app.auth import CurrentUser, get_current_user, require_hr
 from app.database import SessionLocal
-from app.document_generation.generator import DOC_TYPE_LABELS, generate_pdf
-from app.models import AiLlmCallLog, AiRequestLog, GeneratedDocument
+from app.document_generation import template_engine as engine
+from app.document_generation.generator import generate_pdf
+from app.models import AiRequestLog, GeneratedDocument
 from app.services import document_service
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -59,12 +62,19 @@ def _fallback_employee(email: str) -> dict:
 
 
 def _verify_url(token: str) -> str:
+    from app.config import settings
     return f"{settings.APP_BASE_URL.rstrip('/')}/verify/{token}"
 
 
+# ── Catalogue + lookup ────────────────────────────────────────────────────────
+
 @router.get("/catalogue")
 def catalogue(user: CurrentUser = Depends(get_current_user)):
-    return {"documents": document_service.doc_catalogue()}
+    db = SessionLocal()
+    try:
+        return {"documents": document_service.doc_catalogue(db)}
+    finally:
+        db.close()
 
 
 @router.get("/lookup")
@@ -84,16 +94,17 @@ def lookup(
         db.close()
 
 
-def _doc_summary(doc: GeneratedDocument) -> dict:
+def _doc_summary(db, doc: GeneratedDocument) -> dict:
     return {
         "id": doc.id,
         "doc_type": doc.doc_type,
-        "label": DOC_TYPE_LABELS.get(doc.doc_type, "Document"),
+        "label": document_service.label_for(db, doc.doc_type),
         "title": doc.title,
         "subject_name": doc.subject_name,
         "subject_email": doc.subject_email,
         "generated_by_email": doc.generated_by_email,
         "status": doc.status or "draft",
+        "envelope_id": doc.verify_token,
         "verified_by_email": doc.verified_by_email,
         "verified_at": doc.verified_at.isoformat() if doc.verified_at else None,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
@@ -117,14 +128,58 @@ def list_documents(
             email = user.email.strip().lower()
             q = q.filter(GeneratedDocument.subject_email == email)
         rows = q.order_by(GeneratedDocument.created_at.desc()).limit(limit).all()
-        return {"results": [_doc_summary(d) for d in rows]}
+        return {"results": [_doc_summary(db, d) for d in rows]}
     finally:
         db.close()
 
 
+# ── HR template management (declared before /{document_id} catch-all) ─────────
+
+@router.get("/admin/templates")
+def admin_list_templates(user: CurrentUser = Depends(require_hr)):
+    db = SessionLocal()
+    try:
+        return {"templates": document_service.list_all_templates(db)}
+    finally:
+        db.close()
+
+
+@router.put("/admin/templates/{template_id}")
+def admin_update_template(
+    template_id: int,
+    patch: dict = Body(...),
+    user: CurrentUser = Depends(require_hr),
+):
+    db = SessionLocal()
+    try:
+        view = document_service.update_template_config(db, template_id, patch)
+        if view is None:
+            raise HTTPException(status_code=404, detail="Template not found.")
+        return view
+    finally:
+        db.close()
+
+
+@router.post("/admin/templates/sync")
+def admin_sync_templates(
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_hr),
+):
+    from app.config import settings
+    if not (settings.SHAREPOINT_SITE_URL and settings.SHAREPOINT_TEMPLATES_FOLDER):
+        raise HTTPException(
+            status_code=400,
+            detail="SHAREPOINT_SITE_URL / SHAREPOINT_TEMPLATES_FOLDER not configured.",
+        )
+    from app.services.sharepoint_template_sync import sync_templates
+    background_tasks.add_task(sync_templates)
+    return {"message": "Template sync started in background.",
+            "folder": settings.SHAREPOINT_TEMPLATES_FOLDER}
+
+
 @router.get("/{document_id}")
 def get_document(document_id: int, user: CurrentUser = Depends(get_current_user)):
-    """Full document incl. content. HR/Admin: any; others: only their own (for review/preview)."""
+    """Full document incl. rendered HTML. HR/Admin: any; others: only their own."""
     db = SessionLocal()
     try:
         doc = db.query(GeneratedDocument).filter(GeneratedDocument.id == document_id).first()
@@ -134,144 +189,131 @@ def get_document(document_id: int, user: CurrentUser = Depends(get_current_user)
             email = user.email.strip().lower()
             if email not in {(doc.subject_email or "").lower(), (doc.generated_by_email or "").lower()}:
                 raise HTTPException(status_code=403, detail="Not authorized to view this document.")
-        data = _doc_summary(doc)
-        data["content"] = doc.content or ""
+        data = _doc_summary(db, doc)
+        content = doc.content or ""
+        if (doc.status or "draft") == "verified":
+            content += engine.signature_html()
+        data["preview_html"] = content
         return data
     finally:
         db.close()
 
 
+# ── Generate (deterministic merge — no LLM, no SSE) ───────────────────────────
+
 class GenerateRequest(BaseModel):
     doc_type: str
     employee_email: str = ""
-    purpose: str = ""
-    additional_info: str = ""
+    field_values: dict = {}
     session_id: str = ""
 
 
 @router.post("/generate")
-async def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)):
-    if req.doc_type not in document_service.DOC_TEMPLATES:
-        raise HTTPException(status_code=400, detail="Unknown document type.")
-
-    is_hr = _is_hr(user)
-
-    # Resolve the target employee. Non-HR can only generate for themselves.
-    if is_hr:
-        target_email = (req.employee_email or user.email).strip().lower()
-    else:
-        target_email = user.email.strip().lower()
-        if req.employee_email and req.employee_email.strip().lower() != target_email:
-            raise HTTPException(status_code=403, detail="You can only generate documents for yourself.")
-
+def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)):
     db = SessionLocal()
     try:
+        tpl = document_service.get_template(db, req.doc_type)
+        if tpl is None:
+            raise HTTPException(status_code=400, detail="Unknown or disabled document type.")
+
+        is_hr = _is_hr(user)
+
+        # Resolve the target employee. Non-HR can only generate for themselves.
+        if is_hr:
+            target_email = (req.employee_email or user.email).strip().lower()
+        else:
+            target_email = user.email.strip().lower()
+            if req.employee_email and req.employee_email.strip().lower() != target_email:
+                raise HTTPException(status_code=403, detail="You can only generate documents for yourself.")
+
         employee = document_service.resolve_employee(db, target_email) or _fallback_employee(target_email)
-    finally:
-        db.close()
 
-    label = DOC_TYPE_LABELS.get(req.doc_type, "Document")
-    title = f"{label} — {employee['name']}".strip(" —")
+        today_label = datetime.date.today().strftime("%B %d, %Y")
+        values = engine.resolve_auto_fields(employee, today_label)
 
-    async def stream():
-        start = time.time()
-        accumulated = ""
-        error_msg = None
-        document_id = None
+        # Merge user-supplied fields; enforce required ones.
+        user_fields, _auto = engine.classify_fields(tpl.fields)
+        supplied = req.field_values or {}
+        missing = []
+        for f in user_fields:
+            name = f.get("name")
+            val = supplied.get(name)
+            if val not in (None, ""):
+                values[name] = val
+            elif f.get("required"):
+                missing.append(f.get("label") or name)
+        if missing:
+            raise HTTPException(status_code=400,
+                                detail=f"Please fill the required field(s): {', '.join(missing)}.")
+
+        merged_html = engine.merge_html(tpl.html_template or "", values)
+
+        requires_approval = bool(tpl.requires_approval)
+        status = "draft" if requires_approval else "verified"
+        title = f"{tpl.label or req.doc_type} — {employee['name']}".strip(" —")
+        token = uuid.uuid4().hex
+
+        doc = GeneratedDocument(
+            doc_type=req.doc_type,
+            title=title,
+            subject_email=employee["email"],
+            subject_name=employee["name"],
+            generated_by_email=user.email,
+            is_official=(not requires_approval),
+            status=status,
+            verify_token=token,
+            field_values=values,
+            content=merged_html,
+            verified_by_email=("system" if not requires_approval else None),
+            verified_at=(datetime.datetime.utcnow() if not requires_approval else None),
+        )
+        db.add(doc)
+        db.flush()
+        document_id = doc.id
+
+        # Audit row (zero LLM calls — this is a deterministic merge).
         try:
-            # `is_hr` only flavours the prose (self-service note); storage is always a draft.
-            async for chunk in document_service.generate_stream(
-                req.doc_type, employee, req.purpose, req.additional_info, is_hr
-            ):
-                accumulated += chunk
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-        except Exception as e:  # noqa: BLE001
-            error_msg = str(e)
-            yield f"data: {json.dumps({'type': 'error', 'content': 'Generation failed. Please try again.'})}\n\n"
-
-        db2 = SessionLocal()
-        try:
-            if accumulated and not error_msg:
-                doc = GeneratedDocument(
-                    doc_type=req.doc_type,
-                    title=title,
-                    subject_email=employee["email"],
-                    subject_name=employee["name"],
-                    generated_by_email=user.email,
-                    is_official=False,
-                    status="draft",
-                    verify_token=uuid.uuid4().hex,
-                    purpose=req.purpose or None,
-                    additional_info=req.additional_info or None,
-                    content=accumulated,
-                )
-                db2.add(doc)
-                db2.flush()
-                document_id = doc.id
-
-            latency_ms = int((time.time() - start) * 1000)
-            est_completion = max(1, len(accumulated) // 4)
-            req_log = AiRequestLog(
+            start = time.time()
+            db.add(AiRequestLog(
                 session_id=req.session_id or f"doc-{int(start)}",
                 user_email=user.email,
-                user_message=f"[document:{req.doc_type}] subject={employee['email']} purpose={req.purpose[:200]}",
+                user_message=f"[document:{req.doc_type}] subject={employee['email']}",
                 domain="document",
                 sub_intent=req.doc_type,
-                route_method="document_generation",
-                response_text=accumulated[:2000] if accumulated else None,
-                response_length=len(accumulated),
-                total_latency_ms=latency_ms,
-                llm_call_count=1,
-                total_completion_tokens=est_completion,
-                total_tokens=est_completion,
-                model_name=settings.AGENT_MODEL_NAME,
-                error=error_msg,
-            )
-            db2.add(req_log)
-            db2.flush()
-            db2.add(AiLlmCallLog(
-                request_id=req_log.id,
-                node="document_generation",
-                model=settings.AGENT_MODEL_NAME,
-                duration_ms=latency_ms,
-                completion_tokens=est_completion,
-                total_tokens=est_completion,
-                error=error_msg,
+                route_method="document_template_merge",
+                response_text=None,
+                response_length=len(merged_html),
+                total_latency_ms=0,
+                llm_call_count=0,
+                total_completion_tokens=0,
+                total_tokens=0,
+                model_name=None,
             ))
-            db2.commit()
         except Exception as log_err:  # noqa: BLE001
-            db2.rollback()
-            print(f"[documents] persist/log error: {log_err}")
-        finally:
-            db2.close()
+            print(f"[documents] audit log error: {log_err}")
 
-        if not error_msg:
-            yield (
-                "data: "
-                + json.dumps({
-                    "type": "done",
-                    "document_id": document_id,
-                    "status": "draft",
-                    "can_approve": is_hr,
-                    "title": title,
-                })
-                + "\n\n"
-            )
+        db.commit()
 
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
+        preview_html = merged_html
+        if status == "verified":
+            preview_html += engine.signature_html()
+
+        return {
+            "document_id": document_id,
+            "status": status,
+            "can_approve": is_hr and status == "draft",
+            "envelope_id": token,
+            "title": title,
+            "preview_html": preview_html,
+        }
+    finally:
+        db.close()
 
 
 @router.post("/{document_id}/approve")
 def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
-    """HR/Admin only: approve & release a draft. This is what makes it downloadable."""
+    """HR/Admin only: approve & release a draft. This is what makes it downloadable and adds
+    the signature on render."""
     if not _is_hr(user):
         raise HTTPException(status_code=403, detail="Only HR or Admin can approve and release documents.")
     db = SessionLocal()
@@ -285,7 +327,7 @@ def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
         doc.verified_at = datetime.datetime.utcnow()
         db.commit()
         db.refresh(doc)
-        return _doc_summary(doc)
+        return _doc_summary(db, doc)
     finally:
         db.close()
 
@@ -298,7 +340,7 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found.")
 
-        # Approval gate: nothing is downloadable until HR/Admin has released it.
+        # Approval gate: nothing is downloadable until it has been released.
         if (doc.status or "draft") != "verified":
             raise HTTPException(
                 status_code=403,
@@ -311,16 +353,30 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
             if email not in {(doc.subject_email or "").lower(), (doc.generated_by_email or "").lower()}:
                 raise HTTPException(status_code=403, detail="Not authorized to download this document.")
 
-        pdf_bytes = generate_pdf(
-            doc_type=doc.doc_type,
-            title=doc.title or "Document",
-            content=doc.content or "",
-            generated_by="Aligned Automation HR",
-            thread_id=str(doc.id),
-            watermark="",
-            qr_url=_verify_url(doc.verify_token) if doc.verify_token else "",
-            subject_name=doc.subject_name or "",
-        )
+        tpl = document_service.get_template_any(db, doc.doc_type)
+        if tpl is not None and (doc.content or "").lstrip().startswith("<"):
+            # Template-driven document: render the merged HTML with envelope-id header + signature.
+            try:
+                pdf_bytes = engine.render_pdf(
+                    doc.content or "",
+                    envelope_id=doc.verify_token or "",
+                    include_signature=True,
+                )
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=f"Failed to render document: {e}")
+        else:
+            # Legacy prose document → original branded reportlab PDF.
+            pdf_bytes = generate_pdf(
+                doc_type=doc.doc_type,
+                title=doc.title or "Document",
+                content=doc.content or "",
+                generated_by="Aligned Automation HR",
+                thread_id=str(doc.id),
+                watermark="",
+                qr_url=_verify_url(doc.verify_token) if doc.verify_token else "",
+                subject_name=doc.subject_name or "",
+            )
+
         base = doc.doc_type or (doc.title or "document")
         safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_")[:80] or "document"
         filename = f"{safe_name}_{datetime.date.today().isoformat()}.pdf"
@@ -335,7 +391,9 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
 
 # ── Public verification page ──────────────────────────────────────────────────
 
-def _verify_html(doc: GeneratedDocument | None) -> str:
+def _verify_html(doc: GeneratedDocument | None, label: str) -> str:
+    import html
+
     if doc is None or (doc.status or "draft") != "verified":
         body = """
           <div class="badge bad">Not a valid document</div>
@@ -346,12 +404,14 @@ def _verify_html(doc: GeneratedDocument | None) -> str:
         return _verify_shell("Verification failed", body, ok=False)
 
     verified_on = doc.verified_at.strftime("%B %d, %Y") if doc.verified_at else "—"
-    content = html.escape(doc.content or "").replace("\n", "<br>")
+    # doc.content is server-generated merged HTML (user values were escaped at merge time).
+    content = doc.content or ""
     body = f"""
       <div class="badge ok">✓ Verified &amp; released by HR</div>
       <table class="meta">
-        <tr><td>Document</td><td>{html.escape(DOC_TYPE_LABELS.get(doc.doc_type, 'Document'))}</td></tr>
+        <tr><td>Document</td><td>{html.escape(label)}</td></tr>
         <tr><td>Issued to</td><td>{html.escape(doc.subject_name or '—')}</td></tr>
+        <tr><td>Document ID</td><td>{html.escape(doc.verify_token or '—')}</td></tr>
         <tr><td>Verified on</td><td>{verified_on}</td></tr>
         <tr><td>Verified by</td><td>{html.escape(doc.verified_by_email or '—')}</td></tr>
       </table>
@@ -362,6 +422,7 @@ def _verify_html(doc: GeneratedDocument | None) -> str:
 
 
 def _verify_shell(heading: str, body: str, ok: bool) -> str:
+    import html
     accent = "#00D4AA" if ok else "#DC2626"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -395,6 +456,7 @@ def verify(token: str):
     db = SessionLocal()
     try:
         doc = db.query(GeneratedDocument).filter(GeneratedDocument.verify_token == token).first()
-        return HTMLResponse(content=_verify_html(doc), status_code=200 if doc else 404)
+        label = document_service.label_for(db, doc.doc_type) if doc else "Document"
+        return HTMLResponse(content=_verify_html(doc, label), status_code=200 if doc else 404)
     finally:
         db.close()

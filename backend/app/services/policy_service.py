@@ -26,10 +26,11 @@ POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-20
 CHUNK_SIZE = settings.POLICY_CHUNK_SIZE
 CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP
 
-# Category tag for weekly flash-review / project-showcase decks (Aixchange folder).
-# Kept in the Policy table but isolated from policy search by category filtering,
-# so project content never bleeds into HR/Admin/IT policy answers.
-PROJECT_DECK_CATEGORY = "Project Showcase"
+# Company project content (summaries, demo transcripts, details) is stored in the
+# same Policy/PolicyChunk tables but tagged with this category, so it stays isolated
+# from HR/IT/Admin policy answers: search_policies excludes it, search_projects
+# includes only it. See sharepoint_project_sync.py.
+PROJECT_CATEGORY = "Project Showcase"
 
 # ── Category mapping from filename ───────────────────────────────────────────
 CATEGORY_MAP = {
@@ -386,7 +387,7 @@ def _extract_text_from_pptx_bytes(data: bytes) -> str:
                         cells = [c.text.strip() for c in row.cells if c.text.strip()]
                         if cells:
                             slide_lines.append(" | ".join(cells))
-            # Speaker notes often carry the real narrative of a flash-review deck
+            # Speaker notes often carry the real narrative of a slide deck
             if slide.has_notes_slide:
                 notes = (slide.notes_slide.notes_text_frame.text or "").strip()
                 if notes:
@@ -714,18 +715,14 @@ class PolicyService:
 
     @staticmethod
     def search_policies(query: str, limit: int = 4) -> str:
-        """Hybrid search over policy documents only. Project-showcase decks are
-        excluded so project content never pollutes a policy answer."""
-        return PolicyService._hybrid_search(
-            query, limit, category_not_in=[PROJECT_DECK_CATEGORY]
-        )
+        """Hybrid search over policy documents (excludes company-project content)."""
+        return PolicyService._hybrid_search(query, limit, category_not_in=[PROJECT_CATEGORY])
 
     @staticmethod
-    def search_project_decks(query: str, limit: int = 4) -> str:
-        """Hybrid search restricted to weekly flash-review / project-showcase decks."""
-        return PolicyService._hybrid_search(
-            query, limit, category_in=[PROJECT_DECK_CATEGORY]
-        )
+    def search_projects(query: str, limit: int = 6) -> str:
+        """Hybrid search scoped to company-project content (summaries, demo
+        transcripts, project details) — never touches HR/IT/Admin policies."""
+        return PolicyService._hybrid_search(query, limit, category_in=[PROJECT_CATEGORY])
 
     @staticmethod
     def _hybrid_search(

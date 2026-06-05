@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, Response, BackgroundTasks, HTTPException, Depends
 from sqlalchemy.orm import Session
+from app.auth import require_hr
 from app.database import SessionLocal
 from app.graph_sync import process_sharepoint_changes
 from app.config import settings
@@ -71,22 +72,44 @@ async def sync_sharepoint_policies(background_tasks: BackgroundTasks):
     }
 
 
+@router.post("/sharepoint/sync-templates")
+async def sync_sharepoint_templates(
+    background_tasks: BackgroundTasks,
+    user=Depends(require_hr),
+):
+    """Sync the document-template folder from SharePoint: convert each PDF/DOCX to HTML
+    and LLM-tag fill-in fields for the Documents generator. HR/Admin only; runs in
+    background."""
+    from app.config import settings
+    if not settings.SHAREPOINT_SITE_URL:
+        raise HTTPException(status_code=400, detail="SHAREPOINT_SITE_URL is not configured.")
+    if not getattr(settings, "SHAREPOINT_TEMPLATES_FOLDER", ""):
+        raise HTTPException(status_code=400, detail="SHAREPOINT_TEMPLATES_FOLDER is not configured.")
+
+    from app.services.sharepoint_template_sync import sync_templates
+    background_tasks.add_task(sync_templates)
+    return {
+        "message": "SharePoint document-template sync started in background.",
+        "folder": settings.SHAREPOINT_TEMPLATES_FOLDER,
+    }
+
+
 @router.post("/sharepoint/sync-projects")
 async def sync_sharepoint_projects(background_tasks: BackgroundTasks):
     """
-    Sync the Aixchange project-showcase folder (weekly flash-review decks) from
-    SharePoint into the DB under the Project Showcase category. PPTX/PDF/DOCX →
-    extract → chunk → embed. Runs in background — returns immediately.
+    Sync the SharePoint "Projects" tree (per-project summaries, demo transcripts,
+    project details) into the Project Showcase category. Recursively walks each
+    project sub-folder under SHAREPOINT_PROJECTS_ROOT. Runs in background.
     """
     from app.config import settings
     if not settings.SHAREPOINT_SITE_URL:
         raise HTTPException(status_code=400, detail="SHAREPOINT_SITE_URL is not configured.")
-    if not settings.SHAREPOINT_PROJECT_FOLDER_PATH:
-        raise HTTPException(status_code=400, detail="SHAREPOINT_PROJECT_FOLDER_PATH is not configured.")
+    if not getattr(settings, "SHAREPOINT_PROJECTS_ROOT", ""):
+        raise HTTPException(status_code=400, detail="SHAREPOINT_PROJECTS_ROOT is not configured.")
 
-    from app.services.project_deck_sync import sync_project_decks
-    background_tasks.add_task(sync_project_decks)
+    from app.services.sharepoint_project_sync import sync_projects
+    background_tasks.add_task(sync_projects)
     return {
-        "message": "SharePoint project-deck sync started in background.",
-        "folder": settings.SHAREPOINT_PROJECT_FOLDER_PATH,
+        "message": "SharePoint project sync started in background.",
+        "root": settings.SHAREPOINT_PROJECTS_ROOT,
     }

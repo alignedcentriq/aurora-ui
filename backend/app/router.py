@@ -199,13 +199,29 @@ def _get_router_llm():
     ).with_structured_output(RouterOutput)
 
 
-async def classify_intent_async(user_message: str) -> dict:
-    """Async version of classify_intent — uses ainvoke to avoid blocking the event loop."""
+def _hint_suffix(candidate_domains: list[str] | None) -> str:
+    """Optional disambiguation hint appended to the system prompt. When the semantic router
+    is uncertain it passes its top candidate domains; constraining the 8-way choice to 2-3
+    sharply cuts hallucination in the ambiguous band."""
+    if not candidate_domains:
+        return ""
+    doms = ", ".join(candidate_domains[:3])
+    return (
+        f"\n\nHINT: A semantic pre-classifier found the most likely domains to be: {doms}. "
+        f"Strongly prefer one of these unless the message is clearly about a different domain."
+    )
+
+
+async def classify_intent_async(user_message: str, candidate_domains: list[str] | None = None) -> dict:
+    """Async version of classify_intent — uses ainvoke to avoid blocking the event loop.
+
+    ``candidate_domains`` (optional) is the semantic router's shortlist for ambiguous queries;
+    it is woven into the prompt as a soft hint, never a hard filter."""
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
         print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
 
-    system = SystemMessage(content=_build_router_prompt())
+    system = SystemMessage(content=_build_router_prompt() + _hint_suffix(candidate_domains))
     human = HumanMessage(content=expanded_message)
 
     try:

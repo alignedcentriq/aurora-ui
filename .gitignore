@@ -70,4 +70,3 @@ scratch/
 
 # MCP session cookies (SSO portal sessions — never commit)
 backend/mcp_server/sessions/
-.claude

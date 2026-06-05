@@ -17,7 +17,8 @@ from sqlalchemy import or_
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models import Employee, EmployeeZohoProfile
+from app.document_generation import template_engine as engine
+from app.models import DocumentTemplate, Employee, EmployeeZohoProfile
 
 
 # ── Document catalogue ────────────────────────────────────────────────────────
@@ -159,8 +160,151 @@ DOC_TEMPLATES = {
 }
 
 
-def doc_catalogue() -> list:
-    """Public list of available document types for the frontend picker."""
+# ── Template-driven catalogue (SharePoint-synced DocumentTemplate rows) ───────
+# The legacy DOC_TEMPLATES / build_messages / generate_stream below are retained for
+# reference/rollback but are NOT used by the live generate path, which now does a
+# deterministic placeholder merge over HR-managed templates.
+
+def _public_field(f: dict) -> dict:
+    out = {
+        "name": f.get("name"),
+        "label": f.get("label") or (f.get("name") or "").replace("_", " ").title(),
+        "type": f.get("type") or "text",
+        "required": bool(f.get("required", True)),
+        "source": f.get("source") or "user",
+    }
+    if isinstance(f.get("options"), list) and f["options"]:
+        out["options"] = f["options"]
+    return out
+
+
+def doc_catalogue(db) -> list:
+    """Public picker list — only HR-enabled templates, with their user-supplied fields.
+    Auto-filled fields are omitted (the server fills them at generation time)."""
+    rows = (
+        db.query(DocumentTemplate)
+        .filter(DocumentTemplate.enabled == True)  # noqa: E712
+        .order_by(DocumentTemplate.label)
+        .all()
+    )
+    seen: set[str] = set()
+    out = []
+    for r in rows:
+        if r.doc_type in seen:
+            continue
+        seen.add(r.doc_type)
+        user_fields, _ = engine.classify_fields(r.fields)
+        out.append({
+            "doc_type": r.doc_type,
+            "label": r.label or r.doc_type,
+            "requires_approval": bool(r.requires_approval),
+            "fields": [_public_field(f) for f in user_fields],
+        })
+    return out
+
+
+def get_template(db, doc_type: str) -> Optional[DocumentTemplate]:
+    """First enabled template for a doc_type (used by the generate path)."""
+    return (
+        db.query(DocumentTemplate)
+        .filter(DocumentTemplate.doc_type == doc_type, DocumentTemplate.enabled == True)  # noqa: E712
+        .order_by(DocumentTemplate.id)
+        .first()
+    )
+
+
+def get_template_any(db, doc_type: str) -> Optional[DocumentTemplate]:
+    """Any template for a doc_type regardless of enabled state — used on download/render of
+    an already-generated document whose template may since have been disabled."""
+    return (
+        db.query(DocumentTemplate)
+        .filter(DocumentTemplate.doc_type == doc_type)
+        .order_by(DocumentTemplate.id)
+        .first()
+    )
+
+
+def label_for(db, doc_type: str) -> str:
+    """Display label for any doc_type — DB template first, then the legacy label map."""
+    from app.document_generation.generator import DOC_TYPE_LABELS
+    row = (
+        db.query(DocumentTemplate.label)
+        .filter(DocumentTemplate.doc_type == doc_type)
+        .first()
+    )
+    if row and row.label:
+        return row.label
+    return DOC_TYPE_LABELS.get(doc_type, "Document")
+
+
+def _template_admin_view(r: DocumentTemplate) -> dict:
+    return {
+        "id": r.id,
+        "doc_type": r.doc_type,
+        "label": r.label or r.doc_type,
+        "filename": r.filename,
+        "source_format": r.source_format,
+        "source_key": r.source_key,
+        "enabled": bool(r.enabled),
+        "requires_approval": bool(r.requires_approval),
+        "setup_status": r.setup_status or "needs_review",
+        "fields": [_public_field(f) for f in (r.fields or [])],
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+    }
+
+
+def list_all_templates(db) -> list:
+    """All templates (incl. disabled) for the HR management panel."""
+    rows = db.query(DocumentTemplate).order_by(DocumentTemplate.label).all()
+    return [_template_admin_view(r) for r in rows]
+
+
+def update_template_config(db, template_id: int, patch: dict) -> Optional[dict]:
+    """Apply HR edits: enabled / requires_approval / label, plus per-field label/type/
+    required/source/options overrides (field NAMES are immutable — they map to the
+    {{token}} in the HTML). Sets setup_status='ready'. Returns the admin view or None."""
+    r = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
+    if not r:
+        return None
+
+    if "enabled" in patch:
+        r.enabled = bool(patch["enabled"])
+    if "requires_approval" in patch:
+        r.requires_approval = bool(patch["requires_approval"])
+    if patch.get("label"):
+        r.label = str(patch["label"]).strip()[:200]
+
+    incoming = patch.get("fields")
+    if isinstance(incoming, list):
+        edits = {f.get("name"): f for f in incoming if isinstance(f, dict) and f.get("name")}
+        merged = []
+        for f in (r.fields or []):
+            e = edits.get(f.get("name"))
+            if e:
+                nf = dict(f)
+                if e.get("label"):
+                    nf["label"] = str(e["label"]).strip()[:200]
+                if e.get("type") in ("text", "textarea", "date", "select"):
+                    nf["type"] = e["type"]
+                if "required" in e:
+                    nf["required"] = bool(e["required"])
+                if e.get("source") in ("auto", "user"):
+                    nf["source"] = e["source"]
+                if isinstance(e.get("options"), list):
+                    nf["options"] = [str(o) for o in e["options"]]
+                merged.append(nf)
+            else:
+                merged.append(f)
+        r.fields = merged
+
+    r.setup_status = "ready"
+    db.commit()
+    db.refresh(r)
+    return _template_admin_view(r)
+
+
+def _legacy_doc_catalogue() -> list:
+    """Old hardcoded picker list (kept for reference; not used by the live path)."""
     return [
         {
             "doc_type": key,

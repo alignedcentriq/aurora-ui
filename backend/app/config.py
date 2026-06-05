@@ -129,6 +129,27 @@ class Config:
     # Safety net: never serve a cached answer older than this, even if not explicitly invalidated.
     ANSWER_CACHE_MAX_AGE_DAYS = int(os.getenv("ANSWER_CACHE_MAX_AGE_DAYS", "7"))
 
+    # ── Semantic Intent Router (embedding nearest-neighbour domain classification) ──
+    # Closed-set routing: the message is matched against labeled seed utterances by cosine
+    # similarity instead of being classified by the generative LLM router (which hallucinates).
+    SEMANTIC_ROUTER_ENABLED = os.getenv("SEMANTIC_ROUTER_ENABLED", "true").lower() == "true"
+    # >= this similarity AND top-k agreement → route directly, zero LLM. Conservative 0.85: the
+    # Fast Intent Dictionary already handles exact/seeded phrasings, so this only gates NOVEL
+    # paraphrases. Eval shows precision stays 100% down to ~0.72, so this is safely tunable
+    # lower at runtime (llm_controls.semantic_router_cfg) to trade more LLM calls for coverage.
+    SEMANTIC_ROUTER_HIGH_THRESHOLD = float(os.getenv("SEMANTIC_ROUTER_HIGH_THRESHOLD", "0.85"))
+    # A near-exact match to a curated seed (>= this) is the highest-confidence signal there is,
+    # so it routes directly even if lower-ranked neighbours from other domains break agreement
+    # (e.g. "find python developers" matches its seed at 1.00 though "python" also pulls install
+    # neighbours into the top-k). Bypasses the agreement check only.
+    SEMANTIC_ROUTER_STRONG_THRESHOLD = float(os.getenv("SEMANTIC_ROUTER_STRONG_THRESHOLD", "0.90"))
+    # Below this → too weak to trust the neighbours; fall through to the LLM router.
+    SEMANTIC_ROUTER_AMBIG_LOW = float(os.getenv("SEMANTIC_ROUTER_AMBIG_LOW", "0.55"))
+    # Fraction of the top-k neighbours that must share the winning domain for a HIGH route.
+    SEMANTIC_ROUTER_AGREE_FRAC = float(os.getenv("SEMANTIC_ROUTER_AGREE_FRAC", "0.6"))
+    # Neighbours fetched per lookup.
+    SEMANTIC_ROUTER_K = int(os.getenv("SEMANTIC_ROUTER_K", "5"))
+
     # Database
     DATABASE_URL = _resolve_db_url()
 
@@ -262,22 +283,29 @@ class Config:
     # Comma-separated folder names in the document library to sync as policies
     # These are top-level folder names, e.g. "ADMIN,IT PMO,HR"
     SHAREPOINT_POLICY_FOLDERS = os.getenv("SHAREPOINT_POLICY_FOLDERS", "ADMIN,IT PMO")
-    # Comma-separated folder paths inside the SAME site's document library that hold
-    # weekly flash-review / project content. Synced into the Project Showcase category
-    # (DOCX/PDF/PPTX). Empty → project-deck sync disabled.
-    SHAREPOINT_PROJECT_FOLDER_PATH = os.getenv(
-        "SHAREPOINT_PROJECT_FOLDER_PATH",
-        "General/AIXChange/Transcripts & Summary,General/AIXChange/Flash Review Transcripts",
-    )
-    # Path segments (comma-separated, case-insensitive) to skip during project sync —
-    # e.g. raw masked meeting "Transcript" subfolders (summaries only).
-    SHAREPOINT_PROJECT_EXCLUDE_SEGMENTS = os.getenv("SHAREPOINT_PROJECT_EXCLUDE_SEGMENTS", "transcript")
-    # Folder of AI-governance PDFs that live under AIXChange but are real policies —
-    # routed into the POLICY pipeline (normal category, found by search_hr_policies),
-    # NOT tagged as project decks. Empty → skipped.
-    SHAREPOINT_AI_POLICY_FOLDER_PATH = os.getenv("SHAREPOINT_AI_POLICY_FOLDER_PATH", "General/AIXChange/Policy")
     # How often (seconds) to poll SharePoint for new/changed files (default 10 min)
     SHAREPOINT_SYNC_INTERVAL = int(os.getenv("SHAREPOINT_SYNC_INTERVAL_SECONDS", "600"))
+
+    # ── SharePoint Document-Template Sync ──────────────────────────────────────
+    # FULL path (from the document-library root) to the folder holding the HR document
+    # templates — plain PDF/DOCX, no markup. This is a SIBLING of the policies folder, NOT
+    # under SHAREPOINT_BASE_FOLDER; set it like SHAREPOINT_PROJECTS_ROOT, e.g.
+    # "General/Templates". Each file becomes a generatable document type. Blank = disabled.
+    SHAREPOINT_TEMPLATES_FOLDER = os.getenv("SHAREPOINT_TEMPLATES_FOLDER", "")
+    # File extensions to ingest as templates (comma-separated, no dots).
+    SHAREPOINT_TEMPLATES_EXTS = os.getenv("SHAREPOINT_TEMPLATES_EXTS", "pdf,docx")
+    # Company name used for the {{company_name}} auto-field in generated documents.
+    DOC_COMPANY_NAME = os.getenv("DOC_COMPANY_NAME", "Aligned Automation")
+
+    # ── SharePoint Company-Project Sync ────────────────────────────────────────
+    # Root folder holding one sub-folder per company/project (summaries, demo
+    # transcripts, project details). Inner structure may change; the top-level
+    # sub-folder name is used as the project key. Leave blank to disable.
+    SHAREPOINT_PROJECTS_ROOT = os.getenv("SHAREPOINT_PROJECTS_ROOT", "General/Projects")
+    # File extensions to ingest from project folders (comma-separated, no dots).
+    SHAREPOINT_PROJECT_EXTS = os.getenv(
+        "SHAREPOINT_PROJECT_EXTS", "pdf,docx,pptx,vtt,srt,txt,md,xlsx,csv,html,htm"
+    )
 
     # ── Observability content-reveal access (Azure AD groups, validated JWT) ───
     # When enabled, the /observability reveal endpoints validate the Azure access

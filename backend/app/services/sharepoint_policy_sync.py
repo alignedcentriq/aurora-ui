@@ -60,6 +60,50 @@ def _sp_key(relative_path: str, folder: str) -> str:
 
 # ── Reuse text extraction from PolicyService ─────────────────────────────────
 
+def _extract_vtt(file_bytes: bytes) -> str:
+    """Clean a WebVTT/SRT transcript into plain spoken text.
+
+    Drops the `WEBVTT` header, NOTE/STYLE blocks, numeric cue indices, and
+    `00:00:00.000 --> 00:00:02.000` timestamp lines, then collapses consecutive
+    duplicate caption lines (Teams transcripts repeat the rolling caption)."""
+    try:
+        text = file_bytes.decode("utf-8-sig", errors="replace")
+    except Exception:
+        return ""
+    lines, prev = [], None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low == "webvtt" or low.startswith("webvtt ") or low.startswith(("note", "style", "region")):
+            continue
+        if "-->" in line:  # timestamp cue line
+            continue
+        if line.isdigit():  # SRT/cue index
+            continue
+        # Strip inline <v Speaker> / <00:00:00.000> tags VTT may carry.
+        line = re.sub(r"<[^>]+>", "", line).strip()
+        if not line or line == prev:
+            continue
+        lines.append(line)
+        prev = line
+    return "\n".join(lines)
+
+
+def _extract_via_markitdown(file_bytes: bytes, ext: str) -> str:
+    """Convert text-bearing formats (txt/md/xlsx/csv/html/json/...) to plain text
+    via MarkItDown. Fail-soft: returns '' on any error, matching the other extractors."""
+    try:
+        import io
+        from markitdown import MarkItDown
+        result = MarkItDown().convert_stream(io.BytesIO(file_bytes), file_extension=f".{ext}")
+        return (result.text_content or "").strip()
+    except Exception as e:
+        logger.warning(f"[extract] MarkItDown failed for .{ext}: {e}")
+        return ""
+
+
 def _extract_text(file_bytes: bytes, ext: str) -> str:
     if ext == "pdf":
         from app.services.policy_service import _extract_text_from_pdf_bytes
@@ -70,7 +114,10 @@ def _extract_text(file_bytes: bytes, ext: str) -> str:
     elif ext == "pptx":
         from app.services.policy_service import _extract_text_from_pptx_bytes
         return _extract_text_from_pptx_bytes(file_bytes)
-    return ""
+    elif ext in ("vtt", "srt"):
+        return _extract_vtt(file_bytes)
+    # txt / md / xlsx / csv / html / htm / json / … → unified MarkItDown conversion
+    return _extract_via_markitdown(file_bytes, ext)
 
 
 def _extract_images(file_bytes: bytes, ext: str) -> list:
@@ -134,10 +181,10 @@ def _sync_files_into_policies(
     exts: tuple,
     cache_domains: list,
     exclude_segments: tuple = (),
+    title_builder=None,
 ) -> dict:
     """
-    Generic SharePoint-folder → Policy-table sync, shared by policy and
-    project-deck ingestion.
+    Generic SharePoint-folder → Policy-table sync.
 
     1. Resolve site → drive via sp_client
     2. Recursively list all files matching `exts`
@@ -146,8 +193,8 @@ def _sync_files_into_policies(
     5. Delete policies whose source file no longer exists in SharePoint
     6. Invalidate the given answer-cache domains if anything changed
 
-    `key_prefix` namespaces this source's rows in Policy.source_key (e.g. "sp:HR/"
-    or "sp:PROJECT/") so different folders never collide. `categorizer(filename)`
+    `key_prefix` namespaces this source's rows in Policy.source_key (e.g. "sp:HR/")
+    so different folders never collide. `categorizer(filename)`
     returns the Policy.category for each file.
 
     Returns: {"new": int, "updated": int, "skipped": int, "deleted": int, "errors": list}
@@ -242,7 +289,11 @@ def _sync_files_into_policies(
                 continue
 
             # ── Create Policy record ──────────────────────────────────────
-            title    = filename.rsplit(".", 1)[0].strip()
+            title = (
+                title_builder(filename, rel_path).strip()
+                if title_builder
+                else filename.rsplit(".", 1)[0].strip()
+            )
             category = categorizer(filename)
             ratio_imgs = ext in _RATIO_IMAGE_EXTS
 

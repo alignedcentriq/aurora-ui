@@ -149,6 +149,8 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verify_token VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_by_email VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP',
+                # Template-driven generation: filled placeholder values for audit/re-render
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS field_values JSONB',
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_generated_documents_verify_token ON "{SCHEMA}".generated_documents(verify_token)',
                 # MS365 directory: richer profile fields + manager hierarchy (require User.Read.All)
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_id VARCHAR',
@@ -214,6 +216,9 @@ def init_db():
                 # HNSW index for the semantic answer cache (instant repeat-question lookups)
                 f'CREATE INDEX IF NOT EXISTS idx_cached_answers_embedding_hnsw ON "{SCHEMA}".cached_answers '
                 f'USING hnsw (query_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the semantic intent router (nearest labeled seed utterance)
+                f'CREATE INDEX IF NOT EXISTS idx_router_examples_embedding_hnsw ON "{SCHEMA}".router_examples '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))
@@ -239,6 +244,15 @@ def init_db():
         except Exception as e:
             print(f"[init_db] Embedding thread notice: {e}")
 
+        # Background thread: idempotently seed/back-fill the semantic intent router examples.
+        # Non-blocking and self-healing — rows that failed to embed (ml01 down) back-fill next boot.
+        try:
+            from app.services.semantic_router_service import SemanticRouterService
+            print("[init_db] Starting semantic router seeding pass...")
+            threading.Thread(target=SemanticRouterService.seed_from_catalog, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Semantic router seed thread notice: {e}")
+
         # Background thread: polls SharePoint for new/changed policy documents
         try:
             from app.config import settings as _s
@@ -252,18 +266,37 @@ def init_db():
         except Exception as e:
             print(f"[init_db] SharePoint sync loop notice: {e}")
 
-        # Background thread: polls the Aixchange folder for new/changed project decks
+        # Background thread: polls the SharePoint "Projects" tree (summaries,
+        # demo transcripts, project details) into the Project Showcase category
         try:
             from app.config import settings as _s
-            if _s.SHAREPOINT_SITE_URL and _s.SHAREPOINT_PROJECT_FOLDER_PATH:
-                from app.services.project_deck_sync import project_deck_sync_loop
-                print(f"[init_db] Starting SharePoint project-deck sync loop "
-                      f"(folder='{_s.SHAREPOINT_PROJECT_FOLDER_PATH}', interval={_s.SHAREPOINT_SYNC_INTERVAL}s)...")
-                threading.Thread(target=project_deck_sync_loop, daemon=True).start()
+            if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_PROJECTS_ROOT", ""):
+                from app.services.sharepoint_project_sync import project_sync_loop
+                print(
+                    f"[init_db] Starting SharePoint project sync loop "
+                    f"(root={_s.SHAREPOINT_PROJECTS_ROOT}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
+                )
+                threading.Thread(target=project_sync_loop, daemon=True).start()
             else:
-                print("[init_db] Project-deck sync skipped — SHAREPOINT_PROJECT_FOLDER_PATH not configured.")
+                print("[init_db] SharePoint project sync skipped — SHAREPOINT_PROJECTS_ROOT not configured.")
         except Exception as e:
-            print(f"[init_db] Project-deck sync loop notice: {e}")
+            print(f"[init_db] SharePoint project sync loop notice: {e}")
+
+        # Background thread: polls the SharePoint document-template folder, converts each
+        # PDF/DOCX to HTML + LLM-tags fill-in fields for the Documents generator.
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_TEMPLATES_FOLDER", ""):
+                from app.services.sharepoint_template_sync import template_sync_loop
+                print(
+                    f"[init_db] Starting SharePoint document-template sync loop "
+                    f"(folder={_s.SHAREPOINT_TEMPLATES_FOLDER}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
+                )
+                threading.Thread(target=template_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] SharePoint template sync skipped — SHAREPOINT_TEMPLATES_FOLDER not configured.")
+        except Exception as e:
+            print(f"[init_db] SharePoint template sync loop notice: {e}")
 
         # Background thread: accrues parking dues daily and emails reminders on the configured cadence
         try:

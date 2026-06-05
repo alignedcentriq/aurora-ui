@@ -60,7 +60,14 @@ BOUNDS = {
     "timeout": (5, 300),           # or null (= use the call-site default)
     "max_concurrency": (1, 64),
     "max_queue": (0, 500),
+    "sr_high_thresh": (0.0, 1.0),
+    "sr_strong_thresh": (0.0, 1.0),
+    "sr_ambig_low": (0.0, 1.0),
+    "sr_agree_frac": (0.0, 1.0),
+    "sr_k": (1, 25),
 }
+
+SR_MODES = ("live", "off")
 
 
 def known_models() -> list[str]:
@@ -131,6 +138,17 @@ def _defaults() -> dict[str, Any]:
             "router":     {"model": settings.ROUTER_MODEL_NAME, "temperature": 0.0, "max_tokens": None, "timeout": None},
             "general":    {"model": settings.FAST_MODEL_NAME,   "temperature": 0.7, "max_tokens": None, "timeout": None},
             "summarizer": {"model": settings.FAST_MODEL_NAME,   "temperature": 0.3, "max_tokens": None, "timeout": None},
+        },
+        # Embedding-based intent router. mode="off" is the instant kill-switch back to the
+        # pure LLM router (the go-live safety net). Thresholds are IT-tunable at runtime.
+        "semantic_router": {
+            "enabled": settings.SEMANTIC_ROUTER_ENABLED,
+            "mode": "live",                                 # live | off
+            "high_thresh": settings.SEMANTIC_ROUTER_HIGH_THRESHOLD,
+            "strong_thresh": settings.SEMANTIC_ROUTER_STRONG_THRESHOLD,
+            "ambig_low": settings.SEMANTIC_ROUTER_AMBIG_LOW,
+            "agree_frac": settings.SEMANTIC_ROUTER_AGREE_FRAC,
+            "k": settings.SEMANTIC_ROUTER_K,
         },
     }
 
@@ -213,6 +231,14 @@ def tier_params(tier: str) -> dict[str, Any]:
     return get_config()["tiers"][tier]
 
 
+def semantic_router_cfg() -> dict[str, Any]:
+    """Effective semantic-router config (enabled/mode/thresholds). Falls back to the
+    env defaults if an older stored blob has no semantic_router section."""
+    cfg = get_config().get("semantic_router") or {}
+    d = _defaults()["semantic_router"]
+    return {**d, **cfg}
+
+
 # ── LLM factory ────────────────────────────────────────────────────────────────
 _LLM_CACHE: dict[tuple, ChatOpenAI] = {}
 
@@ -279,6 +305,31 @@ def _validate_patch(patch: dict) -> dict:
             v = int(patch[fld])
             _check_range(fld, v)
             clean[fld] = v
+
+    if "semantic_router" in patch:
+        sr = patch["semantic_router"]
+        if not isinstance(sr, dict):
+            raise ValueError("semantic_router must be an object")
+        csr: dict[str, Any] = {}
+        if "enabled" in sr:
+            csr["enabled"] = bool(sr["enabled"])
+        if "mode" in sr:
+            mode = (sr["mode"] or "").strip().lower()
+            if mode not in SR_MODES:
+                raise ValueError(f"semantic_router.mode must be one of {SR_MODES}")
+            csr["mode"] = mode
+        for fld, key in (("high_thresh", "sr_high_thresh"), ("strong_thresh", "sr_strong_thresh"),
+                         ("ambig_low", "sr_ambig_low"), ("agree_frac", "sr_agree_frac")):
+            if fld in sr:
+                v = float(sr[fld])
+                _check_range(key, v)
+                csr[fld] = v
+        if "k" in sr:
+            k = int(sr["k"])
+            _check_range("sr_k", k)
+            csr["k"] = k
+        if csr:
+            clean["semantic_router"] = csr
 
     if "tiers" in patch:
         tiers = patch["tiers"]
