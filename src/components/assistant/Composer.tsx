@@ -1,4 +1,4 @@
-import { Send, Plus, Mic, MicOff, FileText, X, Loader2 } from "lucide-react";
+import { Send, Plus, FileText, X, Loader2, AudioLines, Square } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -6,12 +6,7 @@ import { toast } from "sonner";
 import { SuggestionChips } from "./SuggestionChips";
 import { motion, AnimatePresence } from "framer-motion";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const SpeechRecognitionAPI: (new () => SpeechRecognition) | undefined =
-  typeof window !== "undefined"
-    ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
-    : undefined;
+import { useVoiceStore } from "@/lib/voice-store";
 
 type Props = {
   value: string;
@@ -21,6 +16,10 @@ type Props = {
   onQuickAction?: (prompt: string) => void;
   onGenerateDoc?: () => void;
   disabled?: boolean;
+  /** A response is currently being generated for the active chat. */
+  busy?: boolean;
+  /** Stop the in-flight response for the active chat. */
+  onStop?: () => void;
   suggestions?: string[];
   onSuggestionSelect?: (text: string) => void;
 };
@@ -46,18 +45,19 @@ export function Composer({
   onQuickAction,
   onGenerateDoc,
   disabled,
+  busy,
+  onStop,
   suggestions,
   onSuggestionSelect,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const baseTextRef = useRef("");
-  const finalTranscriptRef = useRef("");
+
   const [uploading, setUploading] = useState(false);
   const [attached, setAttached] = useState<AttachedFile | null>(null);
-  const [isListening, setIsListening] = useState(false);
+
   const [isFocused, setIsFocused] = useState(false);
+  const { voiceMode, toggleVoiceMode } = useVoiceStore();
 
   // @mention state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -67,6 +67,15 @@ export function Composer({
   const [loadingMentions, setLoadingMentions] = useState(false);
   const mentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const RECENT_KEY = "centriq-recent-mentions";
+  const getRecentMentions = (): MentionUser[] => {
+    try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { return []; }
+  };
+  const saveRecentMention = (user: MentionUser) => {
+    const prev = getRecentMentions().filter((u) => u.id !== user.id);
+    localStorage.setItem(RECENT_KEY, JSON.stringify([user, ...prev].slice(0, 5)));
+  };
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -75,10 +84,28 @@ export function Composer({
   }, [value]);
 
   useEffect(() => {
-    return () => { recognitionRef.current?.stop(); };
+    const handler = () => { ref.current?.focus(); };
+    window.addEventListener("centriq:focus-composer", handler);
+    return () => window.removeEventListener("centriq:focus-composer", handler);
   }, []);
 
+
+
+  useEffect(() => {
+    if (disabled) {
+      setIsFocused(false);
+    }
+  }, [disabled]);
+
   const fetchMentions = useCallback(async (q: string) => {
+    if (q === "") {
+      const recents = getRecentMentions();
+      if (recents.length > 0) {
+        setMentionResults(recents);
+        setMentionIndex(0);
+      }
+      return;
+    }
     setLoadingMentions(true);
     try {
       const res = await fetch(`/api/employees/autocomplete?q=${encodeURIComponent(q)}&limit=6`);
@@ -111,6 +138,7 @@ export function Composer({
   }, [fetchMentions]);
 
   const selectMention = useCallback((user: MentionUser) => {
+    saveRecentMention(user);
     const cursor = ref.current?.selectionStart ?? value.length;
     const before = value.slice(0, mentionStart);
     const after = value.slice(cursor);
@@ -126,64 +154,7 @@ export function Composer({
     });
   }, [value, mentionStart, onChange]);
 
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
 
-    if (!SpeechRecognitionAPI) {
-      toast.error("Voice input is not supported in this browser. Try Chrome or Edge.");
-      return;
-    }
-
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    baseTextRef.current = value;
-    finalTranscriptRef.current = "";
-
-    recognition.onstart = () => setIsListening(true);
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const text = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscriptRef.current += text + " ";
-        } else {
-          interim = text;
-        }
-      }
-      const base = baseTextRef.current;
-      const separator = base && !base.endsWith(" ") ? " " : "";
-      onChange(base + separator + finalTranscriptRef.current + interim);
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        toast.error("Microphone access denied. Allow microphone permissions and try again.");
-      } else if (event.error === "network") {
-        toast.error("Network error during voice input. Check your connection.");
-      } else if (event.error !== "no-speech" && event.error !== "aborted") {
-        toast.error("Voice input error. Please try again.");
-      }
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      const base = baseTextRef.current;
-      const separator = base && !base.endsWith(" ") && finalTranscriptRef.current ? " " : "";
-      onChange((base + separator + finalTranscriptRef.current).trimEnd());
-      recognitionRef.current = null;
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -276,25 +247,12 @@ export function Composer({
         onChange={handleFileChange}
       />
 
-      {/* Composer with animated gradient border on focus */}
+      {/* Composer with elegant focused styling */}
       <div className="relative">
-        {/* Gradient glow layer */}
-        <div
-          className={cn(
-            "absolute -inset-[1px] rounded-[25px] transition-opacity duration-500",
-            isFocused ? "opacity-100" : "opacity-0",
-          )}
-          style={{
-            background: "linear-gradient(135deg, var(--primary), var(--accent-cyan), var(--accent-indigo), var(--primary))",
-            backgroundSize: "300% 300%",
-            animation: isFocused ? "gradient-shift 4s ease infinite" : "none",
-          }}
-        />
-
         <div
           className={cn(
             "relative flex flex-col rounded-[24px] border bg-card/60 backdrop-blur-xl shadow-lg transition-all p-2",
-            isFocused ? "border-transparent shadow-xl" : "border-border",
+            isFocused && !disabled ? "border-primary/50 ring-2 ring-primary/10 shadow-xl" : "border-border",
           )}
           onFocus={() => setIsFocused(true)}
           onBlur={(e) => {
@@ -307,6 +265,11 @@ export function Composer({
           {/* @mention dropdown */}
           {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
             <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+              {mentionQuery === "" && mentionResults.length > 0 && (
+                <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                  Recent
+                </div>
+              )}
               {loadingMentions && mentionResults.length === 0 ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -377,30 +340,44 @@ export function Composer({
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* Voice input */}
+              {/* Hands-free voice mode toggle */}
               <motion.button
                 whileTap={{ scale: 0.85 }}
                 type="button"
-                onClick={toggleListening}
-                disabled={disabled}
+                onClick={toggleVoiceMode}
                 className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed",
-                  isListening
-                    ? "bg-red-500/10 text-red-500 hover:bg-red-500/20 ring-2 ring-red-500/30"
+                  "flex h-9 w-9 items-center justify-center rounded-full transition-all",
+                  voiceMode
+                    ? "bg-primary/15 text-primary ring-2 ring-primary/30"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                 )}
-                title={isListening ? "Stop recording" : "Voice input"}
+                title={voiceMode ? "Exit voice mode" : "Hands-free voice mode"}
               >
-                {isListening
-                  ? <MicOff className="h-4 w-4 animate-pulse" strokeWidth={1.5} />
-                  : <Mic className="h-4 w-4" strokeWidth={1.5} />
-                }
+                <AudioLines className={cn("h-4 w-4", voiceMode && "animate-pulse")} strokeWidth={1.5} />
               </motion.button>
 
-              {/* Send button */}
-              <AnimatePresence>
-                {hasContent && (
+
+
+              {/* Stop button while a response is generating, else Send button */}
+              <AnimatePresence mode="wait" initial={false}>
+                {busy ? (
                   <motion.button
+                    key="stop"
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                    whileTap={{ scale: 0.9 }}
+                    type="button"
+                    onClick={onStop}
+                    title="Stop generating"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-foreground ring-1 ring-border shadow-sm transition-all hover:bg-secondary/70"
+                  >
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </motion.button>
+                ) : hasContent ? (
+                  <motion.button
+                    key="send"
                     initial={{ scale: 0, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0, opacity: 0 }}
@@ -413,14 +390,15 @@ export function Composer({
                   >
                     <Send className="h-4 w-4" />
                   </motion.button>
-                )}
+                ) : null}
               </AnimatePresence>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-3 text-center text-[11px] font-medium text-muted-foreground/40 tracking-wide px-4">
+      <div className="mt-3 text-center text-[11px] font-medium text-muted-foreground/50 tracking-wide px-4">
+        <div className="mx-auto w-12 h-px bg-gradient-to-r from-transparent via-border to-transparent mb-2.5" />
         <span className="uppercase tracking-widest whitespace-nowrap"><BrandName withAI plain /></span>
         <span className="normal-case"> can make mistakes. Consider checking important information.</span>
       </div>

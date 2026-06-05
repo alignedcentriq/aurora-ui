@@ -20,11 +20,15 @@ reportlab
 pdfplumber
 pymupdf
 python-docx
+python-pptx
+markitdown
+markdown
 pandas
 openpyxl
 pgvector
 httpx
 cryptography
+pyjwt
 
 mcp
 langchain-mcp-adapters

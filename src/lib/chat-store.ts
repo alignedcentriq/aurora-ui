@@ -7,9 +7,62 @@ export interface EmailDraftData {
   body: string;
 }
 
+export interface RoomBookingPrefill {
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  roomHint?: string;
+  title?: string;
+  attendees?: string;
+}
+
+export interface AnnouncementPrefill {
+  title?: string;
+  body?: string;
+  category?: string;
+  domain?: string;
+  expiresDays?: string;
+}
+
+export interface PromptConfigPrefill {
+  domain?: string;
+  promptKey?: string;
+  value?: string;
+}
+
+export interface SkillsEditorPrefill {
+  skill?: string;
+}
+
+export interface AttendanceSchedulePrefill {
+  frequency?: string;
+  day_of_week?: number;
+  day_of_month?: number;
+  hour?: number;
+}
+
+export interface VisitorPassPrefill {
+  visitorName?: string;
+  visitDate?: string;
+  visitTime?: string;
+  purpose?: string;
+  visitorCompany?: string;
+}
+
 export interface InteractivePayload {
-  type: "email_draft" | "parking_form";
-  data?: EmailDraftData;
+  type:
+    | "email_draft"
+    | "parking_form"
+    | "visitor_pass_form"
+    | "room_booking_form"
+    | "cancel_booking_form"
+    | "announcement_form"
+    | "prompt_config_form"
+    | "my_schedule"
+    | "skills_editor"
+    | "team_attendance"
+    | "attendance_schedule";
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill;
 }
 
 export interface Turn {
@@ -33,9 +86,10 @@ export interface Thread {
 interface ChatState {
   threads: Record<string, Thread>;
   activeId: string | null;
-  thinking: boolean;
+  /** Per-thread "generating a response" flag, keyed by thread id. */
+  thinkingThreads: Record<string, boolean>;
   setActiveId: (id: string | null) => void;
-  setThinking: (thinking: boolean) => void;
+  setThinking: (threadId: string, thinking: boolean) => void;
   createThread: () => string;
   addTurn: (threadId: string, turn: Turn) => void;
   updateLastAITurn: (threadId: string, updates: Partial<Turn>) => void;
@@ -47,9 +101,15 @@ export const useChatStore = create<ChatState>()(
     (set) => ({
       threads: {},
       activeId: null,
-      thinking: false,
+      thinkingThreads: {},
       setActiveId: (id) => set({ activeId: id }),
-      setThinking: (thinking) => set({ thinking }),
+      setThinking: (threadId, thinking) =>
+        set((state) => {
+          const next = { ...state.thinkingThreads };
+          if (thinking) next[threadId] = true;
+          else delete next[threadId];
+          return { thinkingThreads: next };
+        }),
       createThread: () => {
         const id = "chat-" + Date.now();
         set((state) => ({
@@ -123,8 +183,9 @@ export const useChatStore = create<ChatState>()(
         ),
       }),
       onRehydrateStorage: () => (state) => {
+        // thinkingThreads is never persisted — reset any stale generating flags on load.
         if (state) {
-          state.setThinking(false);
+          state.thinkingThreads = {};
         }
       },
     }

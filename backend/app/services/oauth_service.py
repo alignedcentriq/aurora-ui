@@ -147,6 +147,13 @@ async def microsoft_exchange_code(code: str, state: str) -> dict:
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(token_url, data=payload)
+        if not resp.is_success:
+            log.error(
+                "[oauth] Microsoft token exchange %s — redirect_uri=%s — body=%s",
+                resp.status_code,
+                payload["redirect_uri"],
+                resp.text,
+            )
         resp.raise_for_status()
         data = resp.json()
 
@@ -220,12 +227,21 @@ async def _microsoft_profile(access_token: str) -> dict:
 
 ZOHO_SCOPES = os.getenv(
     "ZOHO_OAUTH_SCOPES",
-    "ZOHOPEOPLE.forms.ALL,ZOHOPEOPLE.leave.ALL,ZOHOPEOPLE.attendance.ALL",
+    # Zoho uses ONE unified OAuth (accounts.zoho.com) across all products, so a single
+    # connection can carry People + Expense + Recruit scopes. Exact scope names depend on
+    # the org's Zoho edition; these are the read-only defaults. After changing this, the
+    # user must RECONNECT Zoho so the new scopes are consented (existing tokens won't have
+    # them — they return OAUTH_SCOPE_MISMATCH / code 57).
+    "ZohoPeople.forms.ALL,ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,ZohoPeople.timetracker.ALL,ZohoPeople.performance.ALL,ZohoPeople.employee.ALL,"
+    "ZohoExpense.expensereport.READ,ZohoExpense.reports.READ,ZohoExpense.organizations.READ,"
+    "ZohoRecruit.modules.READ,ZohoRecruit.settings.READ",
 )
 
 
 def zoho_auth_url(user_email: str) -> str:
     """Build the Zoho OAuth2 authorization URL."""
+    if not settings.ZOHO_CLIENT_ID or not settings.ZOHO_CLIENT_SECRET:
+        raise ValueError("ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET must be set in .env to connect Zoho")
     state = _create_signed_state(user_email)
     params = {
         "client_id": settings.ZOHO_CLIENT_ID,
@@ -396,6 +412,53 @@ async def get_valid_token(user_email: str, provider: str) -> str | None:
         elif provider == "zoho":
             return await zoho_refresh(acc)
         return None
+    finally:
+        db.close()
+
+
+async def get_alchemy_token(user_email: str) -> str | None:
+    """Exchange stored Microsoft refresh token for an Alchemy-scoped access token.
+
+    Alchemy is secured with Azure AD (App ID: 4a7dad8b-1372-499d-ade0-a91fe84ae4d6).
+    The token is fetched on-demand and not persisted separately.
+    """
+    db = SessionLocal()
+    try:
+        acc = (
+            db.query(ConnectedAccount)
+            .filter(
+                ConnectedAccount.user_email == user_email,
+                ConnectedAccount.provider == "microsoft",
+                ConnectedAccount.status == "active",
+            )
+            .first()
+        )
+        if not acc or not acc.refresh_token_enc:
+            return None
+
+        tenant = settings.MICROSOFT_OAUTH_TENANT_ID or "common"
+        token_url = f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/token"
+
+        payload = {
+            "client_id": settings.MICROSOFT_OAUTH_CLIENT_ID,
+            "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET,
+            "refresh_token": decrypt_token(acc.refresh_token_enc),
+            "grant_type": "refresh_token",
+            "scope": "api://4a7dad8b-1372-499d-ade0-a91fe84ae4d6/access_as_user",
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(token_url, data=payload)
+            if resp.status_code != 200:
+                log.warning("[oauth] Alchemy token exchange failed: %s", resp.text)
+                return None
+            data = resp.json()
+
+        if "error" in data:
+            log.warning("[oauth] Alchemy token error: %s", data)
+            return None
+
+        return data.get("access_token")
     finally:
         db.close()
 

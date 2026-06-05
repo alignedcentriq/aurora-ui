@@ -1,6 +1,7 @@
 import io
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -9,8 +10,9 @@ import socket
 import time
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -18,9 +20,11 @@ from typing import List, Optional
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
 from app.agents.deeplink_agent import get_deeplink_agent
+from app.concurrency import chat_gate
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings, ALIGNED_LLM_HOST
+from app.services import llm_controls_service as llm_controls
 from app.database import init_db, SessionLocal
 from app.models import Leave, ApprovalToken
 from app.document_store import get_pdf
@@ -32,13 +36,18 @@ from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
+from app.routes.pmo_portal_routes import router as pmo_portal_router
+from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.llm_controls_routes import router as llm_controls_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
-from app.routes.bluff_routes import router as bluff_router
+from app.routes.ms365_routes import router as ms365_router
+from app.routes.document_routes import router as document_router, public_router as document_public_router
+from app.routes.manager_routes import router as manager_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -52,32 +61,9 @@ if not logger.handlers:
 
 from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as StarletteRequest
-from starlette.responses import JSONResponse as StarletteJSONResponse
 
 app = FastAPI(title="Centriq AI Backend")
 
-
-class BluffModeMiddleware(BaseHTTPMiddleware):
-    """
-    When the frontend sends X-Bluff-Mode: 1, intercept all non-bluff, non-policy
-    API routes and return a generic empty response so no real data leaks.
-    The /api/bluff/* routes and any path containing 'policy' are exempt.
-    """
-
-    _BLUFF_EXEMPT = re.compile(r"(/api/bluff/|policy)", re.IGNORECASE)
-
-    async def dispatch(self, request: StarletteRequest, call_next):
-        if (
-            request.headers.get("X-Bluff-Mode") == "1"
-            and not self._BLUFF_EXEMPT.search(request.url.path)
-        ):
-            return StarletteJSONResponse(
-                {"data": [], "items": [], "message": "No data available"},
-                status_code=200,
-            )
-        return await call_next(request)
 
 # ── LLM Reachability (VPN check) ─────────────────────────────────────────────
 
@@ -111,15 +97,21 @@ app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
+app.include_router(pmo_portal_router)
+app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(observability_router)
+app.include_router(llm_controls_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
-app.include_router(bluff_router)
+app.include_router(ms365_router)
+app.include_router(document_router)
+app.include_router(document_public_router)
+app.include_router(manager_router)
 
-app.add_middleware(BluffModeMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -169,6 +161,14 @@ class ParkingSubmitRequest(BaseModel):
     vehicle_make: Optional[str] = ""
     vehicle_model: Optional[str] = ""
 
+class VisitorPassSubmitRequest(BaseModel):
+    email: str
+    visitor_name: str
+    visit_date: str   # YYYY-MM-DD
+    purpose: str
+    visit_time: Optional[str] = ""
+    visitor_company: Optional[str] = ""
+
 class SendEmailDraftRequest(BaseModel):
     to: str
     subject: str
@@ -200,6 +200,20 @@ async def startup_event():
 
     asyncio.create_task(periodic_renew())
 
+    # Run any due attendance-report automations every minute (schedules persist in DB).
+    async def attendance_scheduler():
+        from app.services import attendance_schedule_service
+        while True:
+            await asyncio.sleep(60)
+            try:
+                fired = await asyncio.to_thread(attendance_schedule_service.run_due)
+                if fired:
+                    print(f"[attendance_scheduler] ran {fired} due schedule(s)")
+            except Exception as e:
+                print(f"[attendance_scheduler] error: {e}")
+
+    asyncio.create_task(attendance_scheduler())
+
     get_deeplink_agent()
 
 
@@ -223,6 +237,12 @@ async def llm_health():
             "message": "The AI service is unreachable. If you're outside the office, please connect to the VPN.",
         },
     )
+
+@app.get("/api/chat/load")
+async def chat_load():
+    """Live concurrency-gate stats — handy while load testing."""
+    return await chat_gate.stats()
+
 
 @app.post("/api/feedback")
 async def feedback(req: FeedbackRequest):
@@ -255,12 +275,12 @@ async def upload_file(file: UploadFile = File(...)):
 
     extracted = ""
     if filename.lower().endswith(".pdf"):
-        try:
+        def _extract_pdf(data: bytes) -> str:
             import pdfplumber
-            with pdfplumber.open(io.BytesIO(content_bytes)) as pdf:
-                extracted = "\n".join(
-                    page.extract_text() or "" for page in pdf.pages
-                ).strip()
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                return "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+        try:
+            extracted = await asyncio.to_thread(_extract_pdf, content_bytes)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"PDF extraction failed: {e}")
     else:
@@ -287,115 +307,407 @@ async def download_document(file_id: str):
     )
 
 
-def _approval_html(title: str, message: str, color: str = "#16a34a") -> str:
-    return f"""
-    <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><title>{title}</title>
-    <style>body{{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc;}}
-    .card{{background:#fff;border-radius:12px;padding:40px 48px;max-width:480px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.08);}}
-    h1{{color:{color};font-size:24px;margin-bottom:12px;}} p{{color:#64748b;font-size:15px;line-height:1.6;}}</style>
-    </head><body><div class="card"><h1>{title}</h1><p>{message}</p>
-    <p style="margin-top:24px;font-size:13px;color:#94a3b8;">Centriq AI &mdash; Aligned Automation</p>
+def _approval_html(title: str, message: str, color: str = "#16A34A") -> str:
+    """Branded Gradient Hero confirmation page shown after a manager clicks an
+    Approve/Reject link — matches the email so the hand-off feels like one product."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:64px;height:64px;display:block;margin:0 auto 12px;">'
+        if _BUDDY_B64 else ""
+    )
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:26px 24px 22px;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:30px 40px 34px;}}
+    h1{{color:{color};font-size:23px;margin:0 0 12px;}}
+    p{{color:#64748b;font-size:15px;line-height:1.6;margin:0;}}
+    .foot{{margin-top:22px;font-size:13px;color:#94a3b8;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body"><h1>{title}</h1><p>{message}</p>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p></div>
     </div></body></html>
     """
 
 
+_REJECT_LABELS = {
+    "leave": "Reject Leave Request",
+    "book_request": "Reject Borrow Request",
+    "book_extension": "Reject Extension Request",
+    "udemy_license": "Decline Udemy License",
+    "desk_key": "Reject Desk Key Request",
+}
+
+
+def _entity_label(tok) -> str:
+    return _REJECT_LABELS.get(tok.entity_type, "Reject Request")
+
+
+def _reject_reason_form(token: str, subtitle: str, error: str = "") -> str:
+    """Branded page asking the approver to enter a mandatory rejection reason."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:60px;height:60px;display:block;margin:0 auto 10px;">'
+        if _BUDDY_B64 else ""
+    )
+    err_html = (
+        f'<div style="background:#fee2e2;color:#b91c1c;font-size:13px;padding:10px 14px;'
+        f'border-radius:8px;margin-bottom:14px;">{html.escape(error)}</div>'
+        if error else ""
+    )
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(subtitle)}</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:480px;width:100%;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:24px;text-align:center;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:28px 32px 30px;}}
+    h1{{color:#0d1b2e;font-size:20px;margin:0 0 6px;}}
+    p.sub{{color:#64748b;font-size:14px;margin:0 0 18px;line-height:1.5;}}
+    label{{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;}}
+    textarea{{width:100%;min-height:120px;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font:400 14px 'Segoe UI',Arial,sans-serif;color:#0d1b2e;resize:vertical;}}
+    textarea:focus{{outline:none;border-color:#1B6FC8;box-shadow:0 0 0 3px rgba(27,111,200,.15);}}
+    button{{margin-top:16px;width:100%;background:#dc2626;color:#fff;border:0;border-radius:25px;padding:14px;font:700 15px 'Segoe UI',Arial,sans-serif;cursor:pointer;}}
+    button:hover{{background:#b91c1c;}}
+    .foot{{margin-top:16px;font-size:12px;color:#94a3b8;text-align:center;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body">
+    <h1>{html.escape(subtitle)}</h1>
+    <p class="sub">A reason is required before this request can be rejected. The employee will see this note.</p>
+    {err_html}
+    <form method="post" action="/api/approve/{token}/reject">
+      <label for="reason">Reason for rejection</label>
+      <textarea id="reason" name="reason" required placeholder="e.g. Insufficient leave balance — please discuss with your manager before re-applying."></textarea>
+      <button type="submit">Confirm Rejection</button>
+    </form>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p>
+    </div></div></body></html>
+    """
+
+
+def _validate_token(db, token: str):
+    """Return (tok, error_response). error_response is None when the token is usable."""
+    tok = db.query(ApprovalToken).filter(ApprovalToken.token == token).first()
+    if not tok:
+        return None, HTMLResponse(_approval_html("Invalid Link", "This approval link is invalid or does not exist.", "#dc2626"), status_code=404)
+    if tok.used:
+        return None, HTMLResponse(_approval_html("Already Actioned", "This approval link has already been used.", "#f59e0b"))
+    if tok.expires_at < datetime.datetime.utcnow():
+        return None, HTMLResponse(_approval_html("Link Expired", "This approval link has expired. Please ask the employee to resubmit.", "#f59e0b"))
+    return tok, None
+
+
 @app.get("/api/approve/{token}", response_class=HTMLResponse)
 async def process_approval(token: str):
-    """Manager clicks this link from the leave approval email."""
+    """Approve link → finalize immediately. Reject link → show the reason form first
+    (a rejection cannot be finalized without a reason)."""
     db = SessionLocal()
     try:
-        tok = db.query(ApprovalToken).filter(ApprovalToken.token == token).first()
-        if not tok:
-            return HTMLResponse(_approval_html("Invalid Link", "This approval link is invalid or does not exist.", "#dc2626"), status_code=404)
-        if tok.used:
-            return HTMLResponse(_approval_html("Already Actioned", "This approval link has already been used.", "#f59e0b"))
-        if tok.expires_at < datetime.datetime.utcnow():
-            return HTMLResponse(_approval_html("Link Expired", "This approval link has expired. Please ask the employee to resubmit.", "#f59e0b"))
+        tok, err = _validate_token(db, token)
+        if err:
+            return err
+        if tok.action == "reject":
+            # Do NOT mark the token used or change any state — just collect the reason.
+            return HTMLResponse(_reject_reason_form(token, _entity_label(tok)))
+        return _finalize_decision(db, tok, "Approved", "")
+    finally:
+        db.close()
 
-        tok.used = True
-        decision = "Approved" if tok.action == "approve" else "Rejected"
 
-        if tok.entity_type == "leave":
-            leave = db.query(Leave).filter(Leave.id == tok.entity_id).first()
-            if leave:
-                leave.status = decision
-                # Invalidate the sibling token (the other action)
-                db.query(ApprovalToken).filter(
-                    ApprovalToken.entity_type == "leave",
-                    ApprovalToken.entity_id == tok.entity_id,
-                    ApprovalToken.token != token,
-                    ApprovalToken.used == False,
-                ).update({"used": True})
+@app.post("/api/approve/{token}/reject", response_class=HTMLResponse)
+async def submit_rejection(token: str, reason: str = Form("")):
+    """Finalize a rejection. Proceeds only when a non-empty reason is supplied."""
+    db = SessionLocal()
+    try:
+        tok, err = _validate_token(db, token)
+        if err:
+            return err
+        if tok.action != "reject":
+            return HTMLResponse(_approval_html("Invalid Link", "This link cannot be used to reject a request.", "#dc2626"), status_code=400)
+        reason = (reason or "").strip()
+        if not reason:
+            return HTMLResponse(
+                _reject_reason_form(token, _entity_label(tok), error="A reason is required to reject this request."),
+                status_code=400,
+            )
+        return _finalize_decision(db, tok, "Rejected", reason)
+    finally:
+        db.close()
 
-                # Deduct leave balance on approval
-                if decision == "Approved":
-                    try:
-                        from app.hr_service import HRService
-                        days = (leave.end_date - leave.start_date).days + 1
-                        HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
-                    except Exception as e:
-                        print(f"[Approval] Balance deduction error (non-fatal): {e}")
 
-                db.commit()
-                # Notify employee
+def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse:
+    """Apply an approve/reject decision for the token's entity, notify the employee,
+    and return the branded confirmation page. `reason` is required for rejections and
+    is surfaced to the employee."""
+    tok.used = True
+    reject_note = reason if decision == "Rejected" else ""
+    reason_block = (
+        f"<br><br><strong>Reason:</strong> {html.escape(reject_note)}" if reject_note else ""
+    )
+
+    if tok.entity_type == "leave":
+        leave = db.query(Leave).filter(Leave.id == tok.entity_id).first()
+        if leave:
+            leave.status = decision
+            # Invalidate the sibling token (the other action)
+            db.query(ApprovalToken).filter(
+                ApprovalToken.entity_type == "leave",
+                ApprovalToken.entity_id == tok.entity_id,
+                ApprovalToken.token != tok.token,
+                ApprovalToken.used == False,
+            ).update({"used": True})
+
+            # Deduct leave balance on approval
+            if decision == "Approved":
                 try:
-                    from app.services.email_service import send_leave_decision_notification
-                    from app.models import Employee
-                    emp = db.query(Employee).filter(Employee.id == leave.employee_id).first()
-                    if emp:
-                        send_leave_decision_notification(
-                            employee_email=emp.email,
-                            employee_name=emp.name,
-                            leave_type=leave.leave_type,
-                            start_date=str(leave.start_date),
-                            end_date=str(leave.end_date),
-                            decision=decision,
-                            decided_by=tok.approver_email,
-                        )
+                    from app.hr_service import HRService
+                    days = (leave.end_date - leave.start_date).days + 1
+                    HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
                 except Exception as e:
-                    print(f"[Approval] Notification email error: {e}")
+                    print(f"[Approval] Balance deduction error (non-fatal): {e}")
 
-                if decision == "Approved":
-                    try:
-                        from app.services.admin_service import AdminService
-                        AdminService._fire_webhook(settings.PA_WEBHOOK_LEAVE_APPROVED, {
-                            "event": "leave_approved",
+            db.commit()
+            # Notify employee
+            try:
+                from app.services.email_service import send_leave_decision_notification
+                from app.models import Employee
+                emp = db.query(Employee).filter(Employee.id == leave.employee_id).first()
+                if emp:
+                    send_leave_decision_notification(
+                        user_email=tok.approver_email,
+                        employee_email=emp.email,
+                        employee_name=emp.name,
+                        leave_type=leave.leave_type,
+                        start_date=str(leave.start_date),
+                        end_date=str(leave.end_date),
+                        decision=decision,
+                        decided_by=tok.approver_email,
+                        reason=reject_note,
+                    )
+            except Exception as e:
+                print(f"[Approval] Notification email error: {e}")
+
+            if decision == "Approved":
+                try:
+                    from app.services.admin_service import AdminService
+                    AdminService._fire_webhook(settings.PA_WEBHOOK_LEAVE_APPROVED, {
+                        "event": "leave_approved",
+                        "employee_email": tok.employee_email,
+                        "leave_type": leave.leave_type,
+                        "start_date": str(leave.start_date),
+                        "end_date": str(leave.end_date),
+                        "approved_by": tok.approver_email,
+                    })
+                except Exception:
+                    pass
+                try:
+                    from app.services.email_service import send_notification_event
+                    send_notification_event(
+                        user_email=tok.approver_email,
+                        event_type="leave_approved",
+                        subject_suffix=f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
+                        data={
                             "employee_email": tok.employee_email,
                             "leave_type": leave.leave_type,
                             "start_date": str(leave.start_date),
                             "end_date": str(leave.end_date),
                             "approved_by": tok.approver_email,
-                        })
-                    except Exception:
-                        pass
-                    try:
-                        from app.services.email_service import send_notification_event
-                        send_notification_event(
-                            "leave_approved",
-                            f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
-                            {
-                                "employee_email": tok.employee_email,
-                                "leave_type": leave.leave_type,
-                                "start_date": str(leave.start_date),
-                                "end_date": str(leave.end_date),
-                                "approved_by": tok.approver_email,
-                            }
-                        )
-                    except Exception:
-                        pass
+                        },
+                    )
+                except Exception:
+                    pass
 
-                color = "#16a34a" if tok.action == "approve" else "#dc2626"
-                return HTMLResponse(_approval_html(
-                    f"Leave {decision}",
-                    f"The leave request has been <strong>{decision}</strong>. The employee has been notified by email.",
-                    color,
-                ))
+            color = "#16A34A" if decision == "Approved" else "#dc2626"
+            return HTMLResponse(_approval_html(
+                f"Leave {decision}",
+                f"The leave request has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+                color,
+            ))
 
+    if tok.entity_type == "book_request":
+        from app.services.bookshelf_service import BookshelfService
+        from app.services.email_service import send_book_decision_email
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "book_request",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
         db.commit()
-        return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
-    finally:
-        db.close()
+
+        book_title = "your book"
+        due_date = ""
+        try:
+            if decision == "Approved":
+                result = BookshelfService.approve_request(tok.entity_id, admin_remarks="Approved via email")
+                due_date = (result or {}).get("due_date", "")
+            else:
+                BookshelfService.reject_request(tok.entity_id, admin_remarks=reject_note)
+            # Look up book title for the employee notification.
+            for req in BookshelfService.list_requests() or []:
+                if req.get("id") == tok.entity_id:
+                    book_title = req.get("book_title") or book_title
+                    ticket_id = req.get("ticket_id") or f"#{tok.entity_id}"
+                    employee_name = req.get("employee_name") or ""
+                    if not due_date:
+                        due_date = req.get("due_date") or ""
+                    break
+            else:
+                ticket_id = f"#{tok.entity_id}"
+                employee_name = ""
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed",
+                f"We couldn't update the borrow request: {html.escape(str(e))}",
+                "#dc2626",
+            ), status_code=502)
+
+        try:
+            send_book_decision_email(
+                user_email=tok.approver_email,
+                employee_email=tok.employee_email,
+                employee_name=employee_name,
+                book_title=book_title,
+                ticket_id=ticket_id,
+                decision=decision,
+                due_date=due_date,
+                admin_remarks=reject_note,
+            )
+        except Exception as e:
+            print(f"[Approval] Book decision email error: {e}")
+
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Borrow Request {decision}",
+            f"The borrow request for <strong>{html.escape(book_title)}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    if tok.entity_type == "book_extension":
+        from app.services.bookshelf_service import BookshelfService
+        from app.services.email_service import send_extension_decision_email
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "book_extension",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+
+        ext_record = BookshelfService.get_extension(tok.entity_id) or {}
+        new_due_date = ""
+        try:
+            if decision == "Approved":
+                result = BookshelfService.approve_extension(tok.entity_id, admin_remarks="Approved via email")
+                new_due_date = (result or {}).get("new_due_date", "")
+            else:
+                BookshelfService.reject_extension(tok.entity_id, admin_remarks=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed",
+                f"We couldn't update the extension: {html.escape(str(e))}",
+                "#dc2626",
+            ), status_code=502)
+
+        try:
+            send_extension_decision_email(
+                user_email=tok.approver_email,
+                employee_email=tok.employee_email,
+                employee_name=ext_record.get("employee_name") or "",
+                book_title=ext_record.get("book_title") or "your book",
+                ticket_id=ext_record.get("ticket_id") or f"#{tok.entity_id}",
+                decision=decision,
+                new_due_date=new_due_date,
+                admin_remarks=reject_note,
+            )
+        except Exception as e:
+            print(f"[Approval] Extension decision email error: {e}")
+
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Extension {decision}",
+            f"The extension request for <strong>{html.escape(ext_record.get('book_title') or 'the book')}</strong> has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    if tok.entity_type == "udemy_license":
+        from app.services.udemy_service import UdemyService
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "udemy_license",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+        try:
+            if decision == "Approved":
+                UdemyService.approve(tok.entity_id, decided_by=tok.approver_email)
+            else:
+                UdemyService.reject(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed", f"We couldn't update the Udemy request: {html.escape(str(e))}", "#dc2626",
+            ), status_code=502)
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        verb = "Approved" if decision == "Approved" else "Declined"
+        return HTMLResponse(_approval_html(
+            f"Udemy License {verb}",
+            f"The Udemy license request has been <strong>{verb}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    if tok.entity_type == "desk_key":
+        from app.services.admin_service import AdminService
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "desk_key",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        db.commit()
+        try:
+            if decision == "Approved":
+                res = AdminService.approve_desk_key(tok.entity_id, decided_by=tok.approver_email)
+                if not res.get("ok"):
+                    return HTMLResponse(_approval_html(
+                        "Cannot Approve", html.escape(res.get("error", "Desk is already assigned.")), "#dc2626",
+                    ), status_code=409)
+            else:
+                AdminService.reject_desk_key(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
+        except Exception as e:
+            return HTMLResponse(_approval_html(
+                "Action Failed", f"We couldn't update the desk key request: {html.escape(str(e))}", "#dc2626",
+            ), status_code=502)
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        return HTMLResponse(_approval_html(
+            f"Desk Key {decision}",
+            f"The desk key request has been <strong>{decision}</strong>. The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
+    db.commit()
+    return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
 
 @app.get("/api/policy-images/{image_id}")
@@ -420,6 +732,47 @@ async def serve_policy_image(image_id: int):
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
 _SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup"}
+
+# Domains whose answers are safe & stable enough to serve from the semantic answer cache.
+# Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
+_CACHEABLE_DOMAINS = {"hr", "admin", "general"}
+
+# Cheap guard: skip the cache for obvious action / side-effecting phrasings so they always
+# run live. (The frontend already intercepts most actions before /api/chat; this is belt-and-braces.)
+_CACHE_SKIP_RE = re.compile(
+    r"\b(book|reserve|cancel|delete|remove|apply|submit|raise|create|install|"
+    r"request|register|approve|reject|send|update|change|set|add|draft|schedule)\b",
+    re.IGNORECASE,
+)
+
+# Action / dynamic sub-intents must NEVER be cached — even if the phrasing slips
+# past _CACHE_SKIP_RE — because their responses contain one-time IDs or create
+# records (e.g. a visitor pass with a fresh Pass ID). Only informational answers
+# (policy_query, company_info, greeting) are safe to serve verbatim later.
+_NON_CACHEABLE_SUBINTENTS = {
+    "visitor_pass", "parking_sticker", "desk_key_request", "accommodation",
+    "facility_complaint", "food_complaint", "food_feedback",
+    "document_request", "grievance", "submit_leave", "leave_balance",
+    "zoho_leave_fastpath", "powerapps_complaint", "setup_session",
+    "software_install", "software_install_confirm", "license_request",
+    "asset_request", "create_ticket", "hardware_issue", "my_tickets", "my_assets",
+    "send_email", "send_teams_message", "room_availability", "book_room",
+    "announcement", "prompt_config",
+}
+
+# Refusal / no-answer responses must NEVER be cached: they're a transient routing or
+# retrieval miss, not a stable fact. Caching one poisons the cache — a later lookup
+# (which runs before routing, across all domains) serves the refusal verbatim and the
+# fixed route never gets a chance to run. Matched against the final answer text.
+_REFUSAL_RE = re.compile(
+    r"(outside my area|outside my domain|contact the relevant team|"
+    r"i (?:can(?:'|no)?t|cannot|am (?:not able|unable)) (?:help|assist|answer)|"
+    r"i (?:don'?t|do not) have (?:access|information|enough)|"
+    r"i (?:couldn'?t|could not|cannot|can'?t|was unable to|am unable to) find|"
+    r"i was unable to find|no (?:relevant )?(?:information|policy|document)s? "
+    r"(?:found|available)|please contact (?:hr|the relevant|your))",
+    re.IGNORECASE,
+)
 
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
@@ -481,9 +834,19 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
 
     # Remove stray JSON blobs — only standalone blobs that start with {"
     # (tool output leaks), not curly braces inside natural prose
-    cleaned = re.sub(r'(?:^|\n)\s*\{\"[^}]{20,}\}', '', final_message, flags=re.DOTALL).strip()
+    _JSON_BLOB_RE = re.compile(r'(?:^|\n)\s*\{\"[^}]{20,}\}', re.DOTALL)
+    cleaned = _JSON_BLOB_RE.sub('', final_message).strip()
     if cleaned:
         final_message = cleaned
+    else:
+        # The entire response was a JSON blob (LLM echoed tool result verbatim).
+        # Try to extract a human-readable "message" field from it rather than
+        # showing a generic error.
+        import json as _json
+        _msg_match = re.search(r'"message"\s*:\s*"([^"]+)"', final_message)
+        if _msg_match:
+            final_message = _msg_match.group(1)
+        # else: keep final_message as-is (non-empty raw JSON) to avoid false "error"
 
     # Collapse excessive blank lines
     final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()
@@ -533,6 +896,20 @@ async def chat(
         except Exception:
             pass
 
+    # Detect user's office location from their M365 profile (officeLocation → city → country)
+    user_location: str | None = None
+    if effective_graph_token:
+        try:
+            from app.services.ms365_service import fetch_my_profile
+            _profile = await fetch_my_profile(effective_graph_token)
+            user_location = (
+                _profile.get("officeLocation")
+                or _profile.get("city")
+                or _profile.get("country")
+            ) or None
+        except Exception:
+            pass
+
     config = {"configurable": {"thread_id": request.session_id}}
     input_data = {
         "messages": [HumanMessage(content=request.message)],
@@ -540,13 +917,69 @@ async def chat(
         "user_role": user_role,
         "graph_token": effective_graph_token,
         "session_id": request.session_id,
+        "user_location": user_location,
     }
 
     async def generate():
         from app.models import AiRequestLog, AiLlmCallLog
 
+        # ── Global kill switch (IT) ─────────────────────────────────────
+        # When IT pauses AI chat, short-circuit every request — including the
+        # cache path — with a friendly notice and zero LLM calls.
+        if not llm_controls.is_chat_enabled():
+            paused_msg = (
+                "🛠️ AI assistance is temporarily paused by IT, likely for maintenance "
+                "or to manage system load. Please try again shortly."
+            )
+            yield f"data: {json.dumps({'type': 'token', 'content': paused_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'domain': 'general'})}\n\n"
+            return
+
+        # ── Semantic answer cache (instant path, zero LLM) ──────────────
+        # If a near-identical informational question was answered recently, stream the saved
+        # answer immediately and skip the concurrency gate + graph entirely. Guarded against
+        # action phrasings so side-effecting requests never short-circuit.
+        if settings.ANSWER_CACHE_ENABLED and not _CACHE_SKIP_RE.search(request.message):
+            try:
+                from app.services.answer_cache_service import AnswerCacheService
+                hit = await asyncio.to_thread(AnswerCacheService.lookup, request.message)
+            except Exception as _ce:
+                print(f"[AnswerCache] lookup error: {_ce}")
+                hit = None
+            if hit and hit.get("answer"):
+                cached_answer = hit["answer"]
+                cached_domain = hit.get("domain") or "general"
+                yield f"data: {json.dumps({'type': 'token', 'content': cached_answer})}\n\n"
+                # Observability: record a 0-LLM cache hit so hit-rate is measurable.
+                try:
+                    _db = SessionLocal()
+                    _db.add(AiRequestLog(
+                        session_id=request.session_id,
+                        user_email=user_email,
+                        user_message=request.message,
+                        domain=cached_domain,
+                        sub_intent=hit.get("sub_intent"),
+                        route_method="cache_hit",
+                        response_text=cached_answer[:2000],
+                        response_length=len(cached_answer),
+                        total_latency_ms=int((time.time() - start_time) * 1000),
+                        llm_call_count=0,
+                    ))
+                    _db.commit()
+                except Exception as _le:
+                    print(f"[observability] cache-hit log error: {_le}")
+                finally:
+                    try:
+                        _db.close()
+                    except Exception:
+                        pass
+                print(f"[AnswerCache] HIT sim={hit.get('similarity')} domain={cached_domain} session={request.session_id}")
+                yield f"data: {json.dumps({'type': 'done', 'domain': cached_domain})}\n\n"
+                return
+
         accumulated_text = ""
         routed_domain = "general"
+        routed_sub_intent: str | None = None
         final_messages = []
         llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
         completed_calls: list[dict] = []   # finished LLM calls for DB insert
@@ -559,6 +992,30 @@ async def chat(
             metadata={"message": request.message},
             tags=["chat"],
         )
+
+        # ── Concurrency gate: cap simultaneous LLM generations ──────────
+        # Cross-process (Redis-backed) cap with a bounded wait queue. We drive
+        # the wait here so we can stream a "queued" notice and periodic SSE
+        # keepalives to the client while it waits; once we hold a slot, a
+        # heartbeat keeps its lease alive so it can't leak if this worker dies.
+        slot = None
+        async for kind, payload in chat_gate.acquire():
+            if kind == "queued":
+                yield f"data: {json.dumps({'type': 'queued', 'message': 'High demand right now — holding your place in line…'})}\n\n"
+            elif kind == "keepalive":
+                yield ": keepalive\n\n"
+            elif kind in ("busy", "timeout"):
+                busy_msg = (
+                    "Centriq is handling a lot of requests right now. "
+                    "Please try again in a moment."
+                )
+                yield f"data: {json.dumps({'type': 'busy', 'message': busy_msg})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': 'general'})}\n\n"
+                return
+            elif kind == "acquired":
+                slot = payload
+
+        heartbeat_task = asyncio.ensure_future(chat_gate.slot_heartbeat(slot))
 
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
@@ -638,12 +1095,21 @@ async def chat(
                 elif event_type == "on_chain_end" and event.get("name") == "LangGraph":
                     output = event["data"].get("output") or {}
                     routed_domain = output.get("domain") or routed_domain
+                    routed_sub_intent = output.get("sub_intent") or routed_sub_intent
                     final_messages = output.get("messages") or []
 
         except Exception as exc:
             error_msg = str(exc)
             print(f"[stream] error: {exc}")
             yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+        finally:
+            # Stop renewing and free the slot the moment generation ends.
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            await chat_gate.release(slot)
 
         # If nothing streamed (tool-only path, fast-path nodes, etc.), use last message
         if not accumulated_text and final_messages:
@@ -676,6 +1142,7 @@ async def chat(
                 user_email=user_email,
                 user_message=request.message,
                 domain=routed_domain,
+                sub_intent=routed_sub_intent,
                 response_text=final_message[:2000] if final_message else None,
                 response_length=len(final_message) if final_message else 0,
                 total_latency_ms=latency_ms,
@@ -699,6 +1166,36 @@ async def chat(
                 db.close()
             except Exception:
                 pass
+
+        # ── Store informational answers in the semantic cache (store-side safety gate) ──
+        # Only plain, stable, text-only answers are cached. Anything with a widget, download,
+        # image, error, or from an action/dynamic domain is never stored — which is exactly
+        # what makes future cache lookups safe to serve verbatim.
+        try:
+            if (
+                settings.ANSWER_CACHE_ENABLED
+                and not error_msg
+                and routed_domain in _CACHEABLE_DOMAINS
+                and (routed_sub_intent or "") not in _NON_CACHEABLE_SUBINTENTS
+                and not post["interactive"]
+                and not post["download_url"]
+                and not post["images"]
+                and not _CACHE_SKIP_RE.search(request.message)
+                and final_message
+                and len(final_message.strip()) >= 40
+                and not _REFUSAL_RE.search(final_message)
+            ):
+                from app.services.answer_cache_service import AnswerCacheService
+                await asyncio.to_thread(
+                    AnswerCacheService.store,
+                    request.message,
+                    final_message,
+                    routed_domain,
+                    routed_sub_intent,
+                    None,   # source_keys: domain-level invalidation handles freshness
+                )
+        except Exception as _se:
+            print(f"[AnswerCache] store error: {_se}")
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
 
@@ -744,6 +1241,9 @@ async def get_suggestions(request: SuggestionsRequest):
         raw = completion.choices[0].message.content or "[]"
         # Strip markdown code fences if present
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+        # Extract just the JSON array — LLM may append extra explanation text
+        arr_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+        raw = arr_match.group(0) if arr_match else "[]"
         suggestions = json.loads(raw)
         if isinstance(suggestions, list):
             suggestions = [str(s) for s in suggestions[:3] if s]
@@ -899,119 +1399,123 @@ async def get_admin_analytics(_: CurrentUser = Depends(require_admin)):
     """Comprehensive analytics endpoint — all charts powered by real DB data."""
     from app.models import (
         Employee, ITTicket, FacilityComplaint, Reimbursement, Leave,
-        ChatFeedback, FoodComplaint, Project, FoodVendorFeedback,
+        ChatFeedback, Project, FoodVendorFeedback,
     )
     from sqlalchemy import func as sqlfunc
-    db = SessionLocal()
-    try:
-        dept_rows = (
-            db.query(Employee.department, sqlfunc.count(Employee.id))
-            .group_by(Employee.department)
-            .order_by(sqlfunc.count(Employee.id).desc())
-            .all()
-        )
-        ticket_cat_rows = (
-            db.query(ITTicket.category, sqlfunc.count(ITTicket.id))
-            .group_by(ITTicket.category)
-            .order_by(sqlfunc.count(ITTicket.id).desc())
-            .all()
-        )
-        ticket_status_rows = (
-            db.query(ITTicket.status, sqlfunc.count(ITTicket.id))
-            .group_by(ITTicket.status)
-            .all()
-        )
-        leave_rows = (
-            db.query(Leave.leave_type, Leave.status, sqlfunc.count(Leave.id))
-            .group_by(Leave.leave_type, Leave.status)
-            .all()
-        )
-        reimb_rows = (
-            db.query(
-                Reimbursement.type, Reimbursement.status,
-                sqlfunc.count(Reimbursement.id),
-                sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0),
+
+    def _fetch() -> dict:
+        db = SessionLocal()
+        try:
+            dept_rows = (
+                db.query(Employee.department, sqlfunc.count(Employee.id))
+                .group_by(Employee.department)
+                .order_by(sqlfunc.count(Employee.id).desc())
+                .all()
             )
-            .group_by(Reimbursement.type, Reimbursement.status)
-            .all()
-        )
-        facility_cat_rows = (
-            db.query(FacilityComplaint.category, sqlfunc.count(FacilityComplaint.id))
-            .group_by(FacilityComplaint.category)
-            .order_by(sqlfunc.count(FacilityComplaint.id).desc())
-            .all()
-        )
-        feedback_rows = (
-            db.query(ChatFeedback.domain, ChatFeedback.rating, sqlfunc.count(ChatFeedback.id))
-            .group_by(ChatFeedback.domain, ChatFeedback.rating)
-            .all()
-        )
-        total_feedback = db.query(ChatFeedback).count()
-        helpful = db.query(ChatFeedback).filter(ChatFeedback.rating == 1).count()
-        unhelpful = db.query(ChatFeedback).filter(ChatFeedback.rating == -1).count()
-        project_status_rows = (
-            db.query(Project.status, sqlfunc.count(Project.id))
-            .group_by(Project.status)
-            .all()
-        )
-        avg_completion = db.query(sqlfunc.avg(Project.completion_pct)).scalar() or 0.0
-        vendor_rows = (
-            db.query(
-                FoodVendorFeedback.vendor_name,
-                sqlfunc.avg(FoodVendorFeedback.rating),
-                sqlfunc.count(FoodVendorFeedback.id),
+            ticket_cat_rows = (
+                db.query(ITTicket.category, sqlfunc.count(ITTicket.id))
+                .group_by(ITTicket.category)
+                .order_by(sqlfunc.count(ITTicket.id).desc())
+                .all()
             )
-            .group_by(FoodVendorFeedback.vendor_name)
-            .order_by(sqlfunc.avg(FoodVendorFeedback.rating).desc())
-            .limit(5)
-            .all()
-        )
-        return {
-            "employees": {
-                "total": db.query(Employee).count(),
-                "by_department": [{"dept": r[0] or "Unknown", "count": r[1]} for r in dept_rows],
-            },
-            "it_tickets": {
-                "total": db.query(ITTicket).count(),
-                "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
-                "by_category": [{"category": r[0] or "Other", "count": r[1]} for r in ticket_cat_rows],
-                "by_status": [{"status": r[0], "count": r[1]} for r in ticket_status_rows],
-            },
-            "leaves": {
-                "total": db.query(Leave).count(),
-                "by_type_status": [{"type": r[0], "status": r[1], "count": r[2]} for r in leave_rows],
-            },
-            "reimbursements": {
-                "total": db.query(Reimbursement).count(),
-                "total_amount": float(db.query(sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0)).scalar()),
-                "by_type_status": [
-                    {"type": r[0], "status": r[1], "count": r[2], "amount": float(r[3])}
-                    for r in reimb_rows
+            ticket_status_rows = (
+                db.query(ITTicket.status, sqlfunc.count(ITTicket.id))
+                .group_by(ITTicket.status)
+                .all()
+            )
+            leave_rows = (
+                db.query(Leave.leave_type, Leave.status, sqlfunc.count(Leave.id))
+                .group_by(Leave.leave_type, Leave.status)
+                .all()
+            )
+            reimb_rows = (
+                db.query(
+                    Reimbursement.type, Reimbursement.status,
+                    sqlfunc.count(Reimbursement.id),
+                    sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0),
+                )
+                .group_by(Reimbursement.type, Reimbursement.status)
+                .all()
+            )
+            facility_cat_rows = (
+                db.query(FacilityComplaint.category, sqlfunc.count(FacilityComplaint.id))
+                .group_by(FacilityComplaint.category)
+                .order_by(sqlfunc.count(FacilityComplaint.id).desc())
+                .all()
+            )
+            feedback_rows = (
+                db.query(ChatFeedback.domain, ChatFeedback.rating, sqlfunc.count(ChatFeedback.id))
+                .group_by(ChatFeedback.domain, ChatFeedback.rating)
+                .all()
+            )
+            total_feedback = db.query(ChatFeedback).count()
+            helpful = db.query(ChatFeedback).filter(ChatFeedback.rating == 1).count()
+            unhelpful = db.query(ChatFeedback).filter(ChatFeedback.rating == -1).count()
+            project_status_rows = (
+                db.query(Project.status, sqlfunc.count(Project.id))
+                .group_by(Project.status)
+                .all()
+            )
+            avg_completion = db.query(sqlfunc.avg(Project.completion_pct)).scalar() or 0.0
+            vendor_rows = (
+                db.query(
+                    FoodVendorFeedback.vendor_name,
+                    sqlfunc.avg(FoodVendorFeedback.rating),
+                    sqlfunc.count(FoodVendorFeedback.id),
+                )
+                .group_by(FoodVendorFeedback.vendor_name)
+                .order_by(sqlfunc.avg(FoodVendorFeedback.rating).desc())
+                .limit(5)
+                .all()
+            )
+            return {
+                "employees": {
+                    "total": db.query(Employee).count(),
+                    "by_department": [{"dept": r[0] or "Unknown", "count": r[1]} for r in dept_rows],
+                },
+                "it_tickets": {
+                    "total": db.query(ITTicket).count(),
+                    "open": db.query(ITTicket).filter(ITTicket.status == "Open").count(),
+                    "by_category": [{"category": r[0] or "Other", "count": r[1]} for r in ticket_cat_rows],
+                    "by_status": [{"status": r[0], "count": r[1]} for r in ticket_status_rows],
+                },
+                "leaves": {
+                    "total": db.query(Leave).count(),
+                    "by_type_status": [{"type": r[0], "status": r[1], "count": r[2]} for r in leave_rows],
+                },
+                "reimbursements": {
+                    "total": db.query(Reimbursement).count(),
+                    "total_amount": float(db.query(sqlfunc.coalesce(sqlfunc.sum(Reimbursement.amount), 0)).scalar()),
+                    "by_type_status": [
+                        {"type": r[0], "status": r[1], "count": r[2], "amount": float(r[3])}
+                        for r in reimb_rows
+                    ],
+                },
+                "facility_complaints": {
+                    "total": db.query(FacilityComplaint).count(),
+                    "by_category": [{"category": r[0], "count": r[1]} for r in facility_cat_rows],
+                },
+                "feedback": {
+                    "total": total_feedback,
+                    "helpful": helpful,
+                    "unhelpful": unhelpful,
+                    "score_pct": round(helpful / total_feedback * 100) if total_feedback else 0,
+                    "by_domain": [{"domain": r[0], "rating": r[1], "count": r[2]} for r in feedback_rows],
+                },
+                "projects": {
+                    "total": db.query(Project).count(),
+                    "avg_completion": round(float(avg_completion), 1),
+                    "by_status": [{"status": r[0], "count": r[1]} for r in project_status_rows],
+                },
+                "food_vendors": [
+                    {"vendor": r[0], "avg_rating": round(float(r[1]), 1), "reviews": r[2]}
+                    for r in vendor_rows
                 ],
-            },
-            "facility_complaints": {
-                "total": db.query(FacilityComplaint).count(),
-                "by_category": [{"category": r[0], "count": r[1]} for r in facility_cat_rows],
-            },
-            "feedback": {
-                "total": total_feedback,
-                "helpful": helpful,
-                "unhelpful": unhelpful,
-                "score_pct": round(helpful / total_feedback * 100) if total_feedback else 0,
-                "by_domain": [{"domain": r[0], "rating": r[1], "count": r[2]} for r in feedback_rows],
-            },
-            "projects": {
-                "total": db.query(Project).count(),
-                "avg_completion": round(float(avg_completion), 1),
-                "by_status": [{"status": r[0], "count": r[1]} for r in project_status_rows],
-            },
-            "food_vendors": [
-                {"vendor": r[0], "avg_rating": round(float(r[1]), 1), "reviews": r[2]}
-                for r in vendor_rows
-            ],
-        }
-    finally:
-        db.close()
+            }
+        finally:
+            db.close()
+
+    return await asyncio.to_thread(_fetch)
 
 
 @app.get("/api/hr/dashboard")
@@ -1058,6 +1562,24 @@ async def submit_parking(req: ParkingSubmitRequest):
         req.vehicle_number,
         req.vehicle_make or "",
         req.vehicle_model or "",
+    )
+    return {"message": result}
+
+
+@app.post("/api/visitor-pass/submit")
+async def submit_visitor_pass(req: VisitorPassSubmitRequest):
+    # Deterministic form submit — no LLM, no router, no cache. The service guards
+    # against placeholder names / past dates as a backstop; the form enforces the
+    # rest. Run off the event loop since it writes to the DB and sends email.
+    from app.services.admin_service import AdminService
+    result = await asyncio.to_thread(
+        AdminService.request_visitor_pass,
+        req.email,
+        req.visitor_name,
+        req.visit_date,
+        req.purpose,
+        req.visit_time or "",
+        req.visitor_company or "",
     )
     return {"message": result}
 

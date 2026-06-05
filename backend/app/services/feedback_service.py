@@ -56,9 +56,21 @@ class FeedbackService:
             )
             db.add(entry)
             db.commit()
-            return "Feedback recorded. Thank you!"
         finally:
             db.close()
+
+        # A thumbs-down means the served answer was wrong. If it came from the semantic
+        # answer cache, purge it so the bad answer stops being served verbatim next time.
+        if rating == -1 and user_message:
+            try:
+                from app.services.answer_cache_service import AnswerCacheService
+                removed = AnswerCacheService.invalidate_by_query(user_message)
+                if removed:
+                    print(f"[Feedback] thumbs-down purged {removed} cached answer(s) for: {user_message[:60]!r}")
+            except Exception as e:
+                print(f"[Feedback] cache purge skipped ({type(e).__name__}): {e}")
+
+        return "Feedback recorded. Thank you!"
 
     @staticmethod
     def get_top_responses(domain: str, limit: int = 5) -> list[dict]:

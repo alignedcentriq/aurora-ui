@@ -6,10 +6,24 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_admin
 from app.database import get_db
-from app.models import Reimbursement, ParkingSticker, FacilityComplaint, FoodComplaint, Employee
+from app.models import Reimbursement, ParkingSticker, FacilityComplaint, FoodComplaint, Employee, Book, BookRequest
 from app.services.email_service import send_facility_complaint_status_email, send_food_complaint_status_email
 
 router = APIRouter(prefix="/api/portal/admin", tags=["Admin Portal"])
+
+
+class RejectBody(BaseModel):
+    reason: str = ""
+
+
+class ParkingSettingsBody(BaseModel):
+    two_wheeler_cost: Optional[float] = None
+    four_wheeler_cost: Optional[float] = None
+    cadence: Optional[str] = None
+
+
+class RemindBody(BaseModel):
+    email: Optional[str] = None
 
 
 # ── Reimbursements ────────────────────────────────────────────────────────────
@@ -378,3 +392,356 @@ def update_food_complaint_status(
         closure_comment=body.closure_comment if body.status == "Closed" else None,
     )
     return {"message": f"Food complaint {ticket_id} updated to {body.status}."}
+
+
+# ── Bookshelf Buddy (proxies to Nexus Library mock server) ───────────────────
+
+from app.services.bookshelf_service import BookshelfService
+
+
+class BookBody(BaseModel):
+    title: str
+    author: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    total_copies: int = 1
+
+
+class AddCopiesBody(BaseModel):
+    count: int = 1
+
+
+class BookRequestActionBody(BaseModel):
+    admin_remarks: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+def _nexus_error(e: Exception):
+    raise HTTPException(status_code=502, detail=f"Nexus Library error: {e}")
+
+
+@router.get("/library/dashboard")
+def library_dashboard(_: CurrentUser = Depends(require_admin)):
+    data = BookshelfService.get_dashboard()
+    if data is None:
+        raise HTTPException(502, "Could not reach Nexus Library server")
+    return data
+
+
+@router.get("/books")
+def list_books(_: CurrentUser = Depends(require_admin)):
+    return BookshelfService.list_all_books()
+
+
+@router.get("/books/{book_id}")
+def get_book(book_id: int, _: CurrentUser = Depends(require_admin)):
+    data = BookshelfService.get_book(book_id)
+    if not data:
+        raise HTTPException(404, "Book not found")
+    return data
+
+
+@router.post("/books", status_code=201)
+def add_book(body: BookBody, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.add_book(
+            body.title, body.author or "", body.category or "",
+            body.description or "", body.total_copies,
+        )
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.put("/books/{book_id}")
+def update_book(book_id: int, body: BookBody, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.update_book(book_id, body.title, body.author, body.category, body.description)
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.post("/books/{book_id}/copies")
+def add_copies(book_id: int, body: AddCopiesBody, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.add_copies(book_id, body.count)
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.put("/library/copies/{copy_id}/lost")
+def mark_copy_lost(copy_id: int, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.mark_copy_lost(copy_id)
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.put("/library/copies/{copy_id}/damaged")
+def mark_copy_damaged(copy_id: int, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.mark_copy_damaged(copy_id)
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.put("/library/copies/{copy_id}/restore")
+def restore_copy(copy_id: int, _: CurrentUser = Depends(require_admin)):
+    try:
+        return BookshelfService.restore_copy(copy_id)
+    except Exception as e:
+        _nexus_error(e)
+
+
+@router.get("/book-requests")
+def list_book_requests(status: Optional[str] = None, _: CurrentUser = Depends(require_admin)):
+    return BookshelfService.list_requests(status)
+
+
+def _find_request(id: int) -> Optional[dict]:
+    for r in BookshelfService.list_requests() or []:
+        if r.get("id") == id:
+            return r
+    return None
+
+
+@router.put("/book-requests/{id}/approve")
+def approve_book_request(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
+    try:
+        result = BookshelfService.approve_request(id, body.admin_remarks or "", body.due_date or "")
+    except Exception as e:
+        _nexus_error(e)
+    req = _find_request(id) or {}
+    try:
+        from app.services.email_service import send_book_decision_email
+        send_book_decision_email(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+            decision="Approved",
+            due_date=(result or {}).get("due_date") or req.get("due_date") or "",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Book approval email error: {e}")
+    return result
+
+
+@router.put("/book-requests/{id}/reject")
+def reject_book_request(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
+    req = _find_request(id) or {}
+    try:
+        result = BookshelfService.reject_request(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_book_decision_email
+        send_book_decision_email(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+            decision="Rejected",
+            due_date="",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Book rejection email error: {e}")
+    return result
+
+
+@router.put("/book-requests/{id}/return")
+def return_book(id: int, body: BookRequestActionBody, user: CurrentUser = Depends(require_admin)):
+    req = _find_request(id) or {}
+    try:
+        result = BookshelfService.return_book(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_book_return_confirmation
+        send_book_return_confirmation(
+            user_email=user.email,
+            employee_email=req.get("employee_email") or "",
+            employee_name=req.get("employee_name") or "",
+            book_title=req.get("book_title") or "",
+            ticket_id=req.get("ticket_id") or f"#{id}",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Return confirmation email error: {e}")
+    return result
+
+
+# ── Extensions ────────────────────────────────────────────────────────────────
+
+class ExtensionActionBody(BaseModel):
+    admin_remarks: Optional[str] = None
+
+
+@router.get("/book-extensions")
+def list_book_extensions(status: Optional[str] = None, _: CurrentUser = Depends(require_admin)):
+    return BookshelfService.list_extensions(status)
+
+
+@router.put("/book-extensions/{id}/approve")
+def approve_book_extension(
+    id: int,
+    body: ExtensionActionBody,
+    user: CurrentUser = Depends(require_admin),
+):
+    ext = BookshelfService.get_extension(id)
+    if not ext:
+        raise HTTPException(404, "Extension request not found")
+    try:
+        result = BookshelfService.approve_extension(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_extension_decision_email
+        send_extension_decision_email(
+            user_email=user.email,
+            employee_email=ext.get("employee_email") or "",
+            employee_name=ext.get("employee_name") or "",
+            book_title=ext.get("book_title") or "",
+            ticket_id=ext.get("ticket_id") or f"#{id}",
+            decision="Approved",
+            new_due_date=(result or {}).get("new_due_date") or "",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Extension approval email error: {e}")
+    return result
+
+
+@router.put("/book-extensions/{id}/reject")
+def reject_book_extension(
+    id: int,
+    body: ExtensionActionBody,
+    user: CurrentUser = Depends(require_admin),
+):
+    ext = BookshelfService.get_extension(id)
+    if not ext:
+        raise HTTPException(404, "Extension request not found")
+    try:
+        result = BookshelfService.reject_extension(id, body.admin_remarks or "")
+    except Exception as e:
+        _nexus_error(e)
+    try:
+        from app.services.email_service import send_extension_decision_email
+        send_extension_decision_email(
+            user_email=user.email,
+            employee_email=ext.get("employee_email") or "",
+            employee_name=ext.get("employee_name") or "",
+            book_title=ext.get("book_title") or "",
+            ticket_id=ext.get("ticket_id") or f"#{id}",
+            decision="Rejected",
+            new_due_date="",
+            admin_remarks=body.admin_remarks or "",
+        )
+    except Exception as e:
+        print(f"[admin-portal] Extension rejection email error: {e}")
+    return result
+
+
+# ── Desk Keys ─────────────────────────────────────────────────────────────────
+
+@router.get("/desk-keys")
+def list_desk_keys(
+    status: Optional[str] = None,
+    _: CurrentUser = Depends(require_admin),
+):
+    from app.services.admin_service import AdminService
+    return AdminService.list_desk_keys(status)
+
+
+@router.put("/desk-keys/{req_id}/approve")
+def approve_desk_key(req_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    res = AdminService.approve_desk_key(req_id, decided_by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=409, detail=res.get("error", "Could not approve."))
+    return {"message": "Desk key request approved."}
+
+
+@router.put("/desk-keys/{req_id}/reject")
+def reject_desk_key(req_id: int, body: RejectBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required to reject this request.")
+    res = AdminService.reject_desk_key(req_id, decided_by=user.email, reason=reason)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
+    return {"message": "Desk key request rejected."}
+
+
+@router.put("/desk-keys/{req_id}/release")
+def release_desk_key(req_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    res = AdminService.release_desk_key(req_id, decided_by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
+    return {"message": "Desk released."}
+
+
+# ── Parking Dues ──────────────────────────────────────────────────────────────
+
+@router.get("/parking-dues")
+def list_parking_dues(_: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    ParkingPaymentService.accrue_dues()
+    return {
+        "settings": ParkingPaymentService.get_settings(),
+        "holders": ParkingPaymentService.list_holders_with_dues(),
+    }
+
+
+@router.put("/parking-dues/settings")
+def update_parking_dues_settings(body: ParkingSettingsBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    if body.two_wheeler_cost is not None and body.four_wheeler_cost is not None:
+        ParkingPaymentService.set_costs(body.two_wheeler_cost, body.four_wheeler_cost, by=user.email)
+    if body.cadence:
+        ParkingPaymentService.set_cadence(body.cadence, by=user.email)
+    return {"message": "Parking settings updated.", "settings": ParkingPaymentService.get_settings()}
+
+
+@router.post("/parking-dues/remind")
+def send_parking_reminders(body: RemindBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    # Send FROM the logged-in admin's mailbox so a connected Graph token is available.
+    if body.email:
+        res = ParkingPaymentService.send_reminder_now(body.email, sender=user.email)
+        if not res.get("ok"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Could not send reminder."))
+        return {"message": "Reminder sent."}
+    sent = ParkingPaymentService.send_all_reminders(sender=user.email)
+    return {"message": f"Reminders sent to {sent} employee(s)."}
+
+
+@router.put("/parking-dues/{payment_id}/paid")
+def mark_parking_paid(payment_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.mark_month_paid(payment_id, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Payment not found."))
+    return {"message": "Month marked paid."}
+
+
+@router.put("/parking-dues/{payment_id}/close")
+def close_parking_payment(payment_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.close_payment(payment_id, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Payment not found."))
+    return {"message": "Month closed."}
+
+
+@router.post("/parking-dues/{email}/pay-full")
+def pay_parking_full(email: str, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.pay_full(email, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Employee not found."))
+    return {"message": f"Settled {res.get('count', 0)} month(s)."}

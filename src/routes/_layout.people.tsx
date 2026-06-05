@@ -8,6 +8,8 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   Shield,
   X,
@@ -313,6 +315,8 @@ function PersonCard({ person }: { person: Person }) {
 function PeoplePage() {
   const { user } = useAuth();
 
+  const PAGE_SIZE = 10;
+
   const [query, setQuery] = useState("");
   const [skill, setSkill] = useState("");
   const [designation, setDesignation] = useState("");
@@ -321,6 +325,8 @@ function PeoplePage() {
   const [minExp, setMinExp] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [results, setResults] = useState<Person[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
@@ -329,9 +335,10 @@ function PeoplePage() {
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
   };
 
-  const handleSearch = useCallback(async () => {
+  const handleSearch = useCallback(async (pageIndex = 0) => {
     setLoading(true);
     setSearched(true);
+    setPage(pageIndex);
     try {
       const params = new URLSearchParams();
       if (query) params.set("q", query);
@@ -340,10 +347,16 @@ function PeoplePage() {
       if (func) params.set("function", func);
       if (manager) params.set("reporting_manager", manager);
       if (minExp) params.set("min_exp", minExp);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(pageIndex * PAGE_SIZE));
 
       const res = await fetch(`/api/people/search?${params}`, { headers: authHeaders });
       if (!res.ok) throw new Error("Search failed");
-      setResults(await res.json());
+      const data = await res.json();
+      // Tolerate both shapes: new paginated {total,results} and legacy bare array.
+      const list: Person[] = Array.isArray(data) ? data : (data.results ?? []);
+      setResults(list);
+      setTotal(Array.isArray(data) ? list.length : (data.total ?? list.length));
     } catch {
       toast.error("Search failed");
     } finally {
@@ -351,10 +364,10 @@ function PeoplePage() {
     }
   }, [query, skill, designation, func, manager, minExp, user]);
 
-  // Auto-load all people on first render
+  // Auto-load first page on first render
   useEffect(() => {
     if (user && SEARCH_ROLES.has(user.role)) {
-      handleSearch();
+      handleSearch(0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
@@ -416,7 +429,7 @@ function PeoplePage() {
             )}
           </button>
           <button
-            onClick={handleSearch}
+            onClick={() => handleSearch(0)}
             disabled={loading}
             className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[13px] font-semibold text-white hover:bg-primary/90 disabled:opacity-50 transition-all"
           >
@@ -483,11 +496,51 @@ function PeoplePage() {
         )}
 
         {results && results.length > 0 && (
-          <div className="space-y-4 max-w-4xl">
-            <p className="text-[13px] text-muted-foreground">{results.length} result{results.length !== 1 ? "s" : ""} found</p>
-            {results.map((person, i) => (
-              <PersonCard key={person.email || i} person={person} />
-            ))}
+          <div className="space-y-4 w-full">
+            {(() => {
+              const start = page * PAGE_SIZE + 1;
+              const end = page * PAGE_SIZE + results.length;
+              const hasPrev = page > 0;
+              const hasNext = (page + 1) * PAGE_SIZE < total;
+              const Pager = () => (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[13px] text-muted-foreground">
+                    Showing <span className="font-medium text-foreground">{start}–{end}</span> of{" "}
+                    <span className="font-medium text-foreground">{total}</span>
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSearch(page - 1)}
+                      disabled={!hasPrev || loading}
+                      className="flex items-center gap-1 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-foreground hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                    </button>
+                    <span className="text-[12px] text-muted-foreground tabular-nums">
+                      Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+                    </span>
+                    <button
+                      onClick={() => handleSearch(page + 1)}
+                      disabled={!hasNext || loading}
+                      className="flex items-center gap-1 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-foreground hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    >
+                      Next <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+              return (
+                <>
+                  <Pager />
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    {results.map((person, i) => (
+                      <PersonCard key={person.email || i} person={person} />
+                    ))}
+                  </div>
+                  <Pager />
+                </>
+              );
+            })()}
           </div>
         )}
       </div>

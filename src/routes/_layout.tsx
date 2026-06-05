@@ -16,12 +16,16 @@ function LayoutComponent() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
 
-  // Cmd/Ctrl+K shortcut
+  // Cmd/Ctrl+K → command palette; Cmd/Ctrl+L → focus composer
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setCommandOpen((v) => !v);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "l") {
+        e.preventDefault();
+        window.dispatchEvent(new Event("centriq:focus-composer"));
       }
     };
     window.addEventListener("keydown", handler);

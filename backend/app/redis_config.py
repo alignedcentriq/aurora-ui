@@ -1,20 +1,17 @@
-import os
 import redis
-from dotenv import load_dotenv
+from app.config import settings
 
-load_dotenv()
+_redis_instance = None
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
-def get_redis_connection():
-    """Returns a Redis connection object."""
+def get_redis_client():
+    """Return a singleton sync Redis client with string decoding. Returns None if unavailable."""
+    global _redis_instance
+    if _redis_instance is not None:
+        return _redis_instance
     try:
-        r = redis.from_url(REDIS_URL, decode_responses=True)
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
         r.ping()
+        _redis_instance = r
         return r
-    except redis.ConnectionError as e:
-        print(f"Failed to connect to Redis: {e}")
+    except Exception:
         return None
-
-# Singleton connection for general use
-redis_client = get_redis_connection()

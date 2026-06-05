@@ -10,6 +10,7 @@ from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
+from app.services import llm_controls_service as llm_controls
 from app.services.policy_service import _expand_query
 
 # ── Domain Registry ──────────────────────────────────────────────────────────
@@ -18,9 +19,18 @@ from app.services.policy_service import _expand_query
 
 DOMAIN_REGISTRY = {
     "hr": {
-        "description": "Human Resources — attendance, HR policies, employee benefits, onboarding, "
-                       "offboarding, referral bonuses, appraisals, PIP, performance reviews, "
-                       "work from home policy, holidays, comp-off. "
+        "description": "Human Resources — HR policies, employee benefits, "
+                       "insurance, mediclaim, group health insurance, medical insurance, "
+                       "parents insurance, health cover, ESI/ESIC, insurance claim process, claim forms, "
+                       "onboarding, offboarding, "
+                       "referral bonuses, PIP, work from home policy, holidays, comp-off, "
+                       "grievances, HR document generation (experience certificate, NOC, salary letter), "
+                       "employee directory, org chart, announcements. "
+                       "Also handles personal Zoho People data: my timesheet, work hours logged, "
+                       "my attendance summary (present/absent/WFH/late), my appraisal status and cycle, "
+                       "my training records (completed or upcoming courses/programs). "
+                       "Also handles Alchemy Skills Portal: my skills, my skill set, skills in alchemy, "
+                       "org skills overview, top skills by interest, trending skills across the company. "
                        "Do NOT use for leave balance queries or leave applications — both go through Zoho (deeplink).",
         "status": "active",
     },
@@ -28,7 +38,11 @@ DOMAIN_REGISTRY = {
         "description": "Office Administration — reimbursement (travel, medical, certification, equipment), "
                        "parking sticker (2-wheeler, 4-wheeler), accommodation booking (guest house, hotel), "
                        "facility complaints (housekeeping, electrical, AC), food vendor feedback, cafeteria, "
-                       "courier services, ID cards, access management, desk key requests, desk assignments",
+                       "courier services, ID cards, access management, desk key requests, desk assignments, "
+                       "visitor / guest passes (registering a visitor coming to the office to meet an employee), "
+                       "Bookshelf Buddy — company library, browsing/discovering books, borrowing/issuing a book, "
+                       "looking for reading or learning material, book recommendations, returning a borrowed book, "
+                       "extending or renewing a borrow (more time on a book), checking book request status",
         "status": "active",
     },
     "it_support": {
@@ -49,23 +63,28 @@ DOMAIN_REGISTRY = {
                        "AI projects, technology projects, initiatives the company is working on, "
                        "project status, completion percentage, project owner, next milestone, "
                        "PDF report generation, project summary, what projects exist, "
-                       "managing Udemy training licenses — assigning seats, checking who has access, "
-                       "revoking expired Udemy licenses",
+                       "Udemy training licenses — an employee requesting a Udemy license / online course access, "
+                       "assigning seats, checking who has access, revoking expired Udemy licenses",
         "status": "active",
     },
     "functional_manager": {
         "description": "Functional Manager & Team Lead — who is on my team, who reports to me, "
-                       "my direct reports, team members, reportees, org structure, "
-                       "checking if a meeting room is available, booking a conference room",
+                       "my direct reports, team members, reportees, org structure. "
+                       "Do NOT use for meeting rooms or conference room booking — those go to ms365.",
         "status": "active",
     },
     "ms365": {
         "description": "Microsoft 365 & Viva Engage — reading emails from Outlook inbox, sending emails via Outlook, "
                        "checking calendar events, finding meetings by date or keyword, "
-                       "reading Teams chat messages, "
-                       "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities. "
+                       "meeting rooms and conference rooms (list rooms, check availability, book a room), "
+                       "reading Teams chat messages, reading Teams channel messages, posting to Teams channels, "
+                       "reading Yammer/Viva Engage feed, listing communities, reading community posts, posting to communities, "
+                       "searching communities for answers to ANY question whose answer is likely something "
+                       "colleagues have discussed or shared in communities (internal know-how, tools, events, "
+                       "recommendations, announcements, etc.) rather than in official policy docs. "
                        "Use for: 'show my emails', 'send an email to X', 'what meetings do I have today', "
                        "'check my calendar for next week', 'read my Teams messages', 'any emails from John', "
+                       "'which rooms are free at 3pm', 'book conference room', 'is room X available tomorrow', "
                        "'show my Yammer feed', 'my communities', 'posts in X community', 'post to X community'. "
                        "Do NOT use for email access issues (password reset, can't login) — those go to it_support.",
         "status": "active",
@@ -122,6 +141,9 @@ CLASSIFICATION RULES:
 
 EXAMPLES:
 - "install Node.js" → domain: it_support, sub_intent: software_install, entities: {{"software_name": "Node.js"}}
+- "find Python developers" → domain: hr, sub_intent: employee_search, entities: {{"skill": "Python"}}   (searching for PEOPLE by skill/role — NOT a software install)
+- "who knows React" → domain: hr, sub_intent: employee_search, entities: {{"skill": "React"}}
+- "list our QA engineers" → domain: hr, sub_intent: employee_search, entities: {{"role": "QA engineer"}}
 - "my laptop is overheating" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "overheating"}}
 - "my system is very slow" → domain: it_support, sub_intent: hardware_issue, entities: {{"issue_type": "performance"}}
 - "I need a GitHub Copilot license" → domain: it_support, sub_intent: license_request, entities: {{"license_name": "GitHub Copilot"}}
@@ -132,40 +154,78 @@ EXAMPLES:
 - "certification reimbursement policy" → domain: admin, sub_intent: policy_query, entities: {{"policy_topic": "certification reimbursement"}}
 - "I need a parking sticker for my car" → domain: admin, sub_intent: parking_sticker, entities: {{"vehicle_type": "4-wheeler"}}
 - "key for desk B-07" → domain: admin, sub_intent: desk_key_request, entities: {{"desk_number": "B-07"}}
+- "I want to borrow Atomic Habits" → domain: admin, sub_intent: bookshelf.borrow, entities: {{"book_name": "Atomic Habits"}}
+- "what books are available in the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need a book" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "looking for some reading material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I need learning material" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "recommend a book on machine learning" → domain: admin, sub_intent: bookshelf.discover, entities: {{"topic": "machine learning"}}
+- "browse the library" → domain: admin, sub_intent: bookshelf.discover, entities: {{}}
+- "I want to borrow a pen" → domain: admin, sub_intent: general_admin, entities: {{"item": "pen"}}
+- "check my book request status" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "show my borrowed books" → domain: admin, sub_intent: bookshelf.status, entities: {{}}
+- "return my book BK-12345" → domain: admin, sub_intent: bookshelf.return, entities: {{"ticket_id": "BK-12345"}}
+- "I finished reading Clean Code" → domain: admin, sub_intent: bookshelf.return, entities: {{"book_name": "Clean Code"}}
+- "extend my borrow for 7 more days" → domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
+- "renew Atomic Habits, I need more time" → domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
+- "I need a Udemy license for a Python course" → domain: pmo, sub_intent: udemy_license, entities: {{"course_name": "Python"}}
+- "can I get access to a Udemy course" → domain: pmo, sub_intent: udemy_license, entities: {{}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
-- "is Salween room free tomorrow 2-3pm" → domain: functional_manager, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "is Salween room free tomorrow 2-3pm" → domain: ms365, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}
+- "search the community for X" → domain: ms365, sub_intent: community_search, entities: {{"query": "X"}}   (X can be ANY topic)
+- "has anyone in the communities posted about the new cafeteria menu" → domain: ms365, sub_intent: community_search, entities: {{"query": "new cafeteria menu"}}
+- "what's been shared on Viva Engage about the hackathon" → domain: ms365, sub_intent: community_search, entities: {{"query": "hackathon"}}
+- "does anyone know if the company hosts its own LLM models" → domain: ms365, sub_intent: community_search, entities: {{"query": "company hosted LLM models"}}
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
+- "what does my group health insurance cover" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "group health insurance"}}
+- "how do I file a mediclaim insurance claim" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "insurance claim process"}}
+- "is my parents insurance covered" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "parents insurance"}}
 - "hi" → domain: general, sub_intent: greeting, entities: {{}}
 """
 
 
 # ── Router LLM ───────────────────────────────────────────────────────────────
 
-_router_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=0,
-    max_tokens=256,
-    timeout=30,
-).with_structured_output(RouterOutput)
+def _get_router_llm():
+    """Router LLM with structured output, built from the live IT-tunable params
+    (model / temperature / max_tokens / timeout). Cached by the factory; rebuilt
+    only when IT changes a value."""
+    return llm_controls.get_llm(
+        "router", default_timeout=30, default_max_tokens=256
+    ).with_structured_output(RouterOutput)
 
 
-async def classify_intent_async(user_message: str) -> dict:
-    """Async version of classify_intent — uses ainvoke to avoid blocking the event loop."""
+def _hint_suffix(candidate_domains: list[str] | None) -> str:
+    """Optional disambiguation hint appended to the system prompt. When the semantic router
+    is uncertain it passes its top candidate domains; constraining the 8-way choice to 2-3
+    sharply cuts hallucination in the ambiguous band."""
+    if not candidate_domains:
+        return ""
+    doms = ", ".join(candidate_domains[:3])
+    return (
+        f"\n\nHINT: A semantic pre-classifier found the most likely domains to be: {doms}. "
+        f"Strongly prefer one of these unless the message is clearly about a different domain."
+    )
+
+
+async def classify_intent_async(user_message: str, candidate_domains: list[str] | None = None) -> dict:
+    """Async version of classify_intent — uses ainvoke to avoid blocking the event loop.
+
+    ``candidate_domains`` (optional) is the semantic router's shortlist for ambiguous queries;
+    it is woven into the prompt as a soft hint, never a hard filter."""
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
         print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
 
-    system = SystemMessage(content=_build_router_prompt())
+    system = SystemMessage(content=_build_router_prompt() + _hint_suffix(candidate_domains))
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = await _router_llm.ainvoke([system, human])
+        result: RouterOutput = await _get_router_llm().ainvoke([system, human])
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY:
@@ -207,7 +267,7 @@ def classify_intent(user_message: str) -> dict:
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = _router_llm.invoke([system, human])
+        result: RouterOutput = _get_router_llm().invoke([system, human])
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY:

@@ -30,8 +30,11 @@ interface AuthContextType {
   setRole: (role: Role) => void;
 }
 
+const apiScope = import.meta.env.VITE_MSAL_API_SCOPE as string | undefined;
 const loginRequest = {
-  scopes: ["User.Read", "openid", "profile"],
+  // Include the backend API scope (when configured) so group-gated content reveal can
+  // acquire a validated access token without a second consent prompt.
+  scopes: ["User.Read", "openid", "profile", ...(apiScope ? [apiScope] : [])],
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

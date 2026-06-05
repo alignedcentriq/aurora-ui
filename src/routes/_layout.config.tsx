@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,8 @@ import {
   AlertCircle,
   Loader2,
   FlaskConical,
+  Pencil,
+  Plus,
   Send,
   ThumbsUp,
   ThumbsDown,
@@ -30,6 +32,7 @@ import {
   FolderSync,
 } from "lucide-react";
 import { toast } from "sonner";
+import { flyBanner } from "@/lib/fly-banner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_layout/config")({
@@ -133,6 +136,11 @@ function ConfigPage() {
   const [testQuery, setTestQuery] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState<string | null>(null);
+
+  // Prompt table modal state
+  const [editingPromptKey, setEditingPromptKey] = useState<string | null>(null);
+  const [testModalKey, setTestModalKey] = useState<string | null>(null);
+  const addModalBodyRef = useRef<HTMLDivElement>(null);
 
   // Company context state
   const [companyContext, setCompanyContext] = useState("");
@@ -243,10 +251,10 @@ function ConfigPage() {
     setNewValue("");
   }, [activeDomain]);
 
-  const handleSave = async (domain: string, promptKey: string) => {
+  const handleSave = async (domain: string, promptKey: string): Promise<boolean> => {
     const compositeKey = `${domain}::${promptKey}`;
     const value = edits[compositeKey];
-    if (!value?.trim()) { toast.error("Prompt cannot be empty"); return; }
+    if (!value?.trim()) { toast.error("Prompt cannot be empty"); return false; }
 
     setSaving(compositeKey);
     try {
@@ -259,15 +267,17 @@ function ConfigPage() {
       if (!res.ok) throw new Error(data.detail || "Update failed");
 
       if (data.mode === "draft") {
-        toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
+        flyBanner("Submitted for peer approval");
         fetchDrafts();
         fetchMyDrafts();
       } else {
         toast.success("Saved successfully");
         await fetchPrompts(domain);
       }
+      return true;
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
+      return false;
     } finally {
       setSaving(null);
     }
@@ -286,7 +296,7 @@ function ConfigPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Save failed");
       if (data.mode === "draft") {
-        toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
+        flyBanner("Submitted for peer approval");
         fetchDrafts();
         fetchMyDrafts();
       } else {
@@ -351,7 +361,7 @@ function ConfigPage() {
       const res = await fetch(`/api/prompts/drafts/${draftId}/approve`, { method: "POST", headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Approval failed");
-      toast.success(data.message);
+      flyBanner(data.message);
       fetchDrafts();
       fetchPrompts(activeDomain);
     } catch (err: unknown) {
@@ -367,7 +377,7 @@ function ConfigPage() {
       const res = await fetch(`/api/prompts/drafts/${draftId}/force-approve`, { method: "POST", headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Force approval failed");
-      toast.success(data.message, { description: "Applied via test override." });
+      flyBanner(data.message);
       fetchMyDrafts();
       fetchDrafts();
       fetchPrompts(activeDomain);
@@ -619,11 +629,11 @@ function ConfigPage() {
                 <h2 className="text-[15px] font-semibold text-foreground">{activeDomainMeta?.label} Prompts</h2>
                 <div className="ml-auto flex items-center gap-2">
                   <button
-                    onClick={() => { setShowAddForm((v) => !v); setNewKey(""); setNewValue(""); }}
+                    onClick={() => { setNewKey(""); setNewValue(""); setShowAddForm(true); }}
                     className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary hover:bg-primary/20 transition-all"
                   >
-                    <Save className="h-3.5 w-3.5" />
-                    {showAddForm ? "Cancel" : "Add Prompt"}
+                    <Plus className="h-3.5 w-3.5" />
+                    Add Prompt
                   </button>
                   <button
                     onClick={() => fetchPrompts(activeDomain)}
@@ -636,161 +646,112 @@ function ConfigPage() {
                 </div>
               </div>
 
-              {/* Add new prompt form */}
-              {showAddForm && (
-                <div className="rounded-2xl border border-primary/30 bg-primary/[0.03] p-5 space-y-3">
-                  <p className="text-[13px] font-semibold text-foreground">New Prompt</p>
-                  <div className="flex gap-2">
-                    <input
-                      value={newKey}
-                      onChange={(e) => setNewKey(e.target.value)}
-                      placeholder="Prompt key (e.g. onboarding_prompt)"
-                      className="w-56 rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[12px] font-mono text-foreground outline-none focus:border-primary/50"
-                    />
-                    <span className="text-[11px] text-muted-foreground self-center">Spaces will be converted to underscores</span>
-                  </div>
-                  <textarea
-                    value={newValue}
-                    onChange={(e) => setNewValue(e.target.value)}
-                    placeholder="Enter prompt instructions..."
-                    className="w-full min-h-[140px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[12px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
-                  />
-                  <div className="flex justify-end">
-                    <button
-                      onClick={handleSaveNew}
-                      disabled={savingNew || !newKey.trim() || !newValue.trim()}
-                      className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[12px] font-medium text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {savingNew ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                      {savingNew ? "Saving..." : isAdmin ? "Save" : "Submit for Approval"}
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {loading ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : (
-                (() => {
-                  const fetchedKeys = Object.keys(prompts)
-                    .filter((k) => k.startsWith(`${activeDomain}::`))
-                    .map((k) => k.slice(`${activeDomain}::`.length));
-                  const allKeys = [...new Set(["system_prompt", "guardrail", ...fetchedKeys])];
-                  return allKeys.map((key) => {
-                  const compositeKey = `${activeDomain}::${key}`;
-                  const label = promptLabel(key);
-                  const description = promptDescription(key);
-                  const row = prompts[compositeKey];
-                  const currentEdit = edits[compositeKey] ?? "";
-                  const isDirty = row ? currentEdit !== row.value : currentEdit.trim() !== "";
-                  const isSaving = saving === compositeKey;
-                  const isTesting = testing === compositeKey;
-                  const isTestOpen = testOpen === compositeKey;
-
-                  return (
-                    <div key={key} className="rounded-2xl border border-[var(--border)] bg-card p-5 space-y-3">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-[13px] font-semibold text-foreground">{label}</p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {row && <span className="text-[10px] text-muted-foreground/60">v{row.version}</span>}
-                          {isDirty ? (
-                            <AlertCircle className="h-4 w-4 text-amber-500" />
-                          ) : row ? (
-                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <textarea
-                        value={currentEdit}
-                        onChange={(e) => setEdits((prev) => ({ ...prev, [compositeKey]: e.target.value }))}
-                        placeholder={`Enter ${label.toLowerCase()} instructions...`}
-                        className="w-full min-h-[180px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[12px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
-                      />
-
-                      {/* Test area — only useful when there's content */}
-                      {currentEdit.trim() && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setTestOpen(isTestOpen ? null : compositeKey)}
-                            className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-primary transition-colors"
-                          >
-                            <FlaskConical className="h-3.5 w-3.5" />
-                            {isTestOpen ? "Hide test" : "Test this prompt"}
-                          </button>
-                        </div>
-                      )}
-
-                      {isTestOpen && (
-                        <div className="rounded-xl border border-dashed border-primary/30 bg-primary/[0.03] p-4 space-y-3">
-                          <p className="text-[11px] font-semibold text-primary/70 uppercase tracking-widest">Test sandbox — not saved</p>
-                          <div className="flex gap-2">
-                            <input
-                              value={testQuery[compositeKey] ?? ""}
-                              onChange={(e) => setTestQuery((prev) => ({ ...prev, [compositeKey]: e.target.value }))}
-                              onKeyDown={(e) => { if (e.key === "Enter") handleTest(activeDomain, key); }}
-                              placeholder="Type a test query and press Enter..."
-                              className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/40"
-                            />
-                            <button
-                              onClick={() => handleTest(activeDomain, key)}
-                              disabled={isTesting}
-                              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"
-                            >
-                              {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                              Run
-                            </button>
-                          </div>
-                          {testResult[compositeKey] && (
-                            <div className="rounded-lg bg-background border border-[var(--border)] px-4 py-3 text-[12px] text-foreground/80 leading-relaxed whitespace-pre-wrap">
-                              {testResult[compositeKey]}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {row && (
-                            <p className="text-[10px] text-muted-foreground/60">
-                              v{row.version} · Updated {new Date(row.updated_at).toLocaleDateString()}
-                            </p>
-                          )}
-                          {row && (
-                            <button
-                              onClick={() => handleDelete(activeDomain, key)}
-                              disabled={deleting === compositeKey}
-                              className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-rose-500 transition-colors disabled:opacity-50"
-                              title="Remove prompt"
-                            >
-                              {deleting === compositeKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => handleSave(activeDomain, key)}
-                          disabled={!isDirty || isSaving || !currentEdit.trim()}
-                          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[12px] font-medium text-white transition-all hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          {isSaving ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Save className="h-3.5 w-3.5" />
-                          )}
-                          {isSaving ? "Saving..." : isAdmin ? "Save" : "Submit for Approval"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                  });
-                })()
-              )}
+              ) : (() => {
+                const fetchedKeys = Object.keys(prompts)
+                  .filter((k) => k.startsWith(`${activeDomain}::`))
+                  .map((k) => k.slice(`${activeDomain}::`.length));
+                const allKeys = ["guardrail", ...fetchedKeys.filter((k) => k !== "guardrail")];
+                return (
+                  <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="border-b border-[var(--border)] bg-muted/30">
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-40">Key</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prompt</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-20">Version</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28 hidden sm:table-cell">Updated</th>
+                          <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-24">Status</th>
+                          <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border)]">
+                        {allKeys.map((key) => {
+                          const compositeKey = `${activeDomain}::${key}`;
+                          const label = promptLabel(key);
+                          const row = prompts[compositeKey];
+                          const currentEdit = edits[compositeKey] ?? "";
+                          const isDirty = row ? currentEdit !== row.value : currentEdit.trim() !== "";
+                          const isDeleting = deleting === compositeKey;
+                          return (
+                            <tr key={key} className="hover:bg-muted/20 transition-colors">
+                              <td className="px-4 py-3.5">
+                                <p className="font-semibold text-foreground">{label}</p>
+                                <p className="text-[11px] text-muted-foreground/55 font-mono mt-0.5">{key}</p>
+                              </td>
+                              <td className="px-4 py-3.5 max-w-0 w-full">
+                                <p className="text-[12px] text-muted-foreground/80 truncate">
+                                  {currentEdit.trim() || "—"}
+                                </p>
+                              </td>
+                              <td className="px-4 py-3.5">
+                                {row ? (
+                                  <span className="text-[11px] text-muted-foreground/70 font-mono">v{row.version}</span>
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground/40 italic">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3.5 hidden sm:table-cell">
+                                <span className="text-[12px] text-muted-foreground/70">
+                                  {row ? new Date(row.updated_at).toLocaleDateString() : "—"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3.5">
+                                {isDirty ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                                    <AlertCircle className="h-3.5 w-3.5" />
+                                    Unsaved
+                                  </span>
+                                ) : row ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-500">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Saved
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-muted-foreground/40 italic">Empty</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3.5">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => setEditingPromptKey(compositeKey)}
+                                    className="rounded-lg p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                    title="Edit"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setTestModalKey(compositeKey)}
+                                    disabled={!currentEdit.trim()}
+                                    className="rounded-lg p-1.5 text-muted-foreground hover:text-violet-500 hover:bg-violet-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                    title="Test"
+                                  >
+                                    <FlaskConical className="h-3.5 w-3.5" />
+                                  </button>
+                                  {row && (
+                                    <button
+                                      onClick={() => handleDelete(activeDomain, key)}
+                                      disabled={isDeleting}
+                                      className="rounded-lg p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+                                      title="Delete"
+                                    >
+                                      {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
 
               {/* My submitted drafts — test override section */}
               {myDrafts.filter((d) => allowed.includes(d.domain)).length > 0 && (
@@ -960,6 +921,286 @@ function ConfigPage() {
                   })}
                 </div>
               )}
+              {/* ── Add Prompt Modal ─────────────────────────────────── */}
+              <Dialog open={showAddForm} onOpenChange={(open) => { if (!open) { setShowAddForm(false); setTestOpen((p) => p === "new::add" ? null : p); setTestQuery((p) => { const n = { ...p }; delete n["new::add"]; return n; }); setTestResult((p) => { const n = { ...p }; delete n["new::add"]; return n; }); } }}>
+                <DialogContent className="max-w-xl flex flex-col max-h-[90vh]">
+                  <DialogHeader className="shrink-0">
+                    <DialogTitle className="text-[15px] flex items-center gap-2">
+                      <Plus className="h-4 w-4 text-primary" />
+                      Add Prompt — {activeDomainMeta?.label}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div ref={addModalBodyRef} className="space-y-4 py-1 overflow-y-auto flex-1 pr-1">
+                    <div>
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">Prompt Key</label>
+                      <input
+                        value={newKey}
+                        onChange={(e) => setNewKey(e.target.value)}
+                        placeholder="e.g. onboarding_prompt"
+                        className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[12px] font-mono text-foreground outline-none focus:border-primary/50"
+                      />
+                      <p className="text-[11px] text-muted-foreground/60 mt-1">Spaces will be converted to underscores</p>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">Content</label>
+                      <textarea
+                        value={newValue}
+                        onChange={(e) => setNewValue(e.target.value)}
+                        placeholder="Enter prompt instructions..."
+                        className="w-full min-h-[160px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[12px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
+                      />
+                    </div>
+
+                    {newValue.trim() && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setTestOpen(testOpen === "new::add" ? null : "new::add")}
+                          className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          <FlaskConical className="h-3.5 w-3.5" />
+                          {testOpen === "new::add" ? "Hide test" : "Test this prompt"}
+                        </button>
+                      </div>
+                    )}
+
+                    {testOpen === "new::add" && (() => {
+                      const runNewTest = () => {
+                        const q = testQuery["new::add"] ?? "";
+                        if (!q.trim()) return;
+                        setTesting("new::add");
+                        fetch("/api/prompts/test", {
+                          method: "POST",
+                          headers,
+                          body: JSON.stringify({ domain: activeDomain, draft_value: newValue, test_query: q }),
+                        })
+                          .then((r) => r.json())
+                          .then((d) => {
+                            setTestResult((p) => ({ ...p, "new::add": d.response }));
+                            setTimeout(() => {
+                              if (addModalBodyRef.current) {
+                                addModalBodyRef.current.scrollTop = addModalBodyRef.current.scrollHeight;
+                              }
+                            }, 50);
+                          })
+                          .catch(() => toast.error("Test failed"))
+                          .finally(() => setTesting(null));
+                      };
+                      return (
+                        <div className="rounded-xl border border-dashed border-primary/30 bg-primary/[0.03] p-4 space-y-3">
+                          <p className="text-[11px] font-semibold text-primary/70 uppercase tracking-widest">Test sandbox — not saved</p>
+                          <div className="flex gap-2">
+                            <input
+                              value={testQuery["new::add"] ?? ""}
+                              onChange={(e) => setTestQuery((prev) => ({ ...prev, "new::add": e.target.value }))}
+                              onKeyDown={(e) => { if (e.key === "Enter") runNewTest(); }}
+                              placeholder="Type a test query and press Enter..."
+                              className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/40"
+                            />
+                            <button
+                              onClick={runNewTest}
+                              disabled={testing === "new::add" || !(testQuery["new::add"] ?? "").trim()}
+                              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"
+                            >
+                              {testing === "new::add" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                              Run
+                            </button>
+                          </div>
+                          {testResult["new::add"] && (
+                            <div className="rounded-lg bg-background border border-[var(--border)] px-4 py-3 text-[12px] text-foreground/80 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                              {testResult["new::add"]}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <DialogFooter className="gap-2 shrink-0">
+                    <Button variant="outline" onClick={() => setShowAddForm(false)}>Cancel</Button>
+                    <Button
+                      onClick={handleSaveNew}
+                      disabled={savingNew || !newKey.trim() || !newValue.trim()}
+                    >
+                      {savingNew ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                      {savingNew ? "Saving..." : isAdmin ? "Save" : "Submit for Approval"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              {/* ── Edit Prompt Modal ─────────────────────────────────── */}
+              {editingPromptKey && (() => {
+                const compositeKey = editingPromptKey;
+                const key = compositeKey.includes("::") ? compositeKey.slice(compositeKey.indexOf("::") + 2) : compositeKey;
+                const label = promptLabel(key);
+                const description = promptDescription(key);
+                const row = prompts[compositeKey];
+                const currentEdit = edits[compositeKey] ?? "";
+                const isDirty = row ? currentEdit !== row.value : currentEdit.trim() !== "";
+                const isSaving = saving === compositeKey;
+                const isTesting = testing === compositeKey;
+                const isTestOpen = testOpen === compositeKey;
+                return (
+                  <Dialog open onOpenChange={(open) => { if (!open) { setEditingPromptKey(null); setTestOpen(null); } }}>
+                    <DialogContent className="max-w-2xl p-0 gap-0 overflow-hidden">
+                      <DialogHeader className="sr-only">
+                        <DialogTitle>{label}</DialogTitle>
+                      </DialogHeader>
+
+                      {/* Header — matches old card top row */}
+                      <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4 pr-12">
+                        <div>
+                          <p className="text-[13px] font-semibold text-foreground">{label}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {row && <span className="text-[10px] text-muted-foreground/60">v{row.version}</span>}
+                          {isDirty ? (
+                            <AlertCircle className="h-4 w-4 text-amber-500" />
+                          ) : row ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* Body */}
+                      <div className="px-5 space-y-3 pb-4">
+                        <textarea
+                          value={currentEdit}
+                          onChange={(e) => setEdits((prev) => ({ ...prev, [compositeKey]: e.target.value }))}
+                          placeholder={`Enter ${label.toLowerCase()} instructions...`}
+                          className="w-full min-h-[200px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[12px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
+                        />
+
+                        {key === "system_prompt" && (
+                          <p className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 leading-relaxed">
+                            <strong>Append mode:</strong> Your text is added after the agent's built-in instructions inside a{" "}
+                            <code className="font-mono text-[10px]">[DOMAIN CONTEXT]</code> block.
+                            To replace everything, start with <code className="font-mono text-[10px]">[FULL REPLACE]</code>.
+                          </p>
+                        )}
+
+                        {currentEdit.trim() && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setTestOpen(isTestOpen ? null : compositeKey)}
+                              className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-primary transition-colors"
+                            >
+                              <FlaskConical className="h-3.5 w-3.5" />
+                              {isTestOpen ? "Hide test" : "Test this prompt"}
+                            </button>
+                          </div>
+                        )}
+
+                        {isTestOpen && (
+                          <div className="rounded-xl border border-dashed border-primary/30 bg-primary/[0.03] p-4 space-y-3">
+                            <p className="text-[11px] font-semibold text-primary/70 uppercase tracking-widest">Test sandbox — not saved</p>
+                            <div className="flex gap-2">
+                              <input
+                                value={testQuery[compositeKey] ?? ""}
+                                onChange={(e) => setTestQuery((prev) => ({ ...prev, [compositeKey]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === "Enter") handleTest(activeDomain, key); }}
+                                placeholder="Type a test query and press Enter..."
+                                className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/40"
+                              />
+                              <button
+                                onClick={() => handleTest(activeDomain, key)}
+                                disabled={isTesting}
+                                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-medium text-white disabled:opacity-50"
+                              >
+                                {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                Run
+                              </button>
+                            </div>
+                            {testResult[compositeKey] && (
+                              <div className="rounded-lg bg-background border border-[var(--border)] px-4 py-3 text-[12px] text-foreground/80 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                                {testResult[compositeKey]}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Footer — matches old card bottom row */}
+                      <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-4">
+                        <div className="flex items-center gap-3">
+                          {row && (
+                            <p className="text-[10px] text-muted-foreground/60">
+                              v{row.version} · Updated {new Date(row.updated_at).toLocaleDateString()}
+                            </p>
+                          )}
+                          {row && (
+                            <button
+                              onClick={() => { handleDelete(activeDomain, key); setEditingPromptKey(null); }}
+                              disabled={deleting === compositeKey}
+                              className="flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-rose-500 transition-colors disabled:opacity-50"
+                            >
+                              {deleting === compositeKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const ok = await handleSave(activeDomain, key);
+                            if (ok) setEditingPromptKey(null);
+                          }}
+                          disabled={!isDirty || isSaving || !currentEdit.trim()}
+                          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-[12px] font-medium text-white transition-all hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                          {isSaving ? "Saving..." : isAdmin ? "Save" : "Submit for Approval"}
+                        </button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                );
+              })()}
+
+              {/* ── Test Prompt Modal ─────────────────────────────────── */}
+              {testModalKey && (() => {
+                const compositeKey = testModalKey;
+                const key = compositeKey.includes("::") ? compositeKey.slice(compositeKey.indexOf("::") + 2) : compositeKey;
+                const label = promptLabel(key);
+                const isTesting = testing === compositeKey;
+                return (
+                  <Dialog open onOpenChange={(open) => { if (!open) setTestModalKey(null); }}>
+                    <DialogContent className="max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle className="text-[15px] flex items-center gap-2">
+                          <FlaskConical className="h-4 w-4 text-primary" />
+                          Test — {label}
+                        </DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-3 py-1">
+                        <p className="text-[12px] text-muted-foreground">
+                          Run a query against this prompt. Results reflect real chat behavior including the guardrail.
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            value={testQuery[compositeKey] ?? ""}
+                            onChange={(e) => setTestQuery((prev) => ({ ...prev, [compositeKey]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleTest(activeDomain, key); }}
+                            placeholder="Type a test query and press Enter..."
+                            className="flex-1 rounded-xl border border-[var(--border)] bg-background px-3 py-2.5 text-[13px] text-foreground outline-none focus:border-primary/40"
+                          />
+                          <Button
+                            onClick={() => handleTest(activeDomain, key)}
+                            disabled={isTesting || !(testQuery[compositeKey] ?? "").trim()}
+                          >
+                            {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                            Run
+                          </Button>
+                        </div>
+                        {testResult[compositeKey] && (
+                          <div className="rounded-xl bg-muted/30 border border-[var(--border)] px-4 py-3 text-[12px] text-foreground/80 leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+                            {testResult[compositeKey]}
+                          </div>
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                );
+              })()}
             </div>
           ) : tab === "sharepoint" ? (
             /* ── SharePoint Sync Tab ─────────────────────────────────── */

@@ -1,15 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown } from "lucide-react";
+import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { flyBanner } from "@/lib/fly-banner";
 
 export const Route = createFileRoute("/_layout/admin-portal")({
   component: AdminPortal,
 });
 
-type Tab = "reimbursements" | "parking" | "complaints" | "food-complaints";
+type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
@@ -23,6 +24,10 @@ const STATUS_BADGE: Record<string, string> = {
   Acknowledged: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
   Resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
   Closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
+  "Auto-Rejected": "bg-rose-500/15 text-rose-400 border border-rose-500/20",
+  Released: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
+  Due: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
+  Paid: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -56,7 +61,7 @@ function AdminPortal() {
       <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">Admin Portal</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">Manage reimbursements, parking stickers, facility complaints, and food complaints</p>
+          <p className="text-[13px] text-muted-foreground mt-0.5">Manage reimbursements, parking stickers, facility complaints, food complaints, and the company library</p>
         </div>
       </div>
 
@@ -65,8 +70,11 @@ function AdminPortal() {
         {[
           { id: "reimbursements", label: "Reimbursements", icon: Receipt },
           { id: "parking", label: "Parking Stickers", icon: Car },
+          { id: "parking-dues", label: "Parking Dues", icon: Wallet },
+          { id: "desk-keys", label: "Desk Keys", icon: KeyRound },
           { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
           { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
+          { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -87,8 +95,11 @@ function AdminPortal() {
       <div className="flex-1 overflow-auto px-8 py-6">
         {tab === "reimbursements" && <ReimbursementsTab authHeaders={authHeaders} />}
         {tab === "parking" && <ParkingTab authHeaders={authHeaders} />}
+        {tab === "parking-dues" && <ParkingDuesTab authHeaders={authHeaders} />}
+        {tab === "desk-keys" && <DeskKeysTab authHeaders={authHeaders} />}
         {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} />}
         {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} />}
+        {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} />}
       </div>
     </div>
   );
@@ -131,7 +142,8 @@ function ReimbursementsTab({ authHeaders }: { authHeaders: Record<string, string
     try {
       const res = await fetch(`/api/portal/admin/reimbursements/${id}/${type}`, { method: "PUT", headers: authHeaders });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success(`Reimbursement ${type}d`);
+      if (type === "approve") flyBanner("Reimbursement approved");
+      else toast.success("Reimbursement rejected");
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -226,7 +238,7 @@ function ParkingTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         body: JSON.stringify({ sticker_number: sticker }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      toast.success("Parking sticker approved and issued");
+      flyBanner("Parking sticker approved & issued");
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -649,7 +661,983 @@ function FoodComplaintsTab({ authHeaders }: { authHeaders: Record<string, string
   );
 }
 
+// ── Bookshelf Buddy Tab ────────────────────────────────────────────────────────
+
+interface Book {
+  id: number;
+  title: string;
+  author: string;
+  category: string;
+  description: string;
+  total_copies: number;
+  available_copies: number;
+  issued_copies: number;
+  reserved_copies: number;
+  lost_copies: number;
+  damaged_copies: number;
+  availability_status: string;
+  created_at: string;
+  copies?: BookCopy[];
+}
+
+interface BookCopy {
+  id: number;
+  book_id: number;
+  copy_number: number;
+  status: string;
+  current_employee_email: string | null;
+  current_employee_name: string | null;
+  issued_at: string | null;
+  due_date: string | null;
+}
+
+interface BookRequest {
+  id: number;
+  ticket_id: string;
+  employee_name: string;
+  employee_email: string;
+  book_id: number;
+  book_title: string;
+  book_author: string;
+  request_type: string;
+  status: string;
+  notes: string;
+  admin_remarks: string;
+  due_date: string | null;
+  requested_at: string;
+}
+
+interface DashboardMetrics {
+  total_books: number;
+  total_copies: number;
+  available_copies: number;
+  issued_copies: number;
+  reserved_copies: number;
+  overdue_books: number;
+  due_soon: number;
+  pending_requests: number;
+  pending_extensions: number;
+  active_borrowers: number;
+  lost_books: number;
+  damaged_books: number;
+}
+
+interface AssignmentRow {
+  ticket_id: string;
+  book_title: string;
+  book_author: string;
+  employee_name: string;
+  employee_email: string;
+  copy_number: number;
+  issued_at: string | null;
+  due_date: string;
+  status: string;
+}
+
+interface DashboardListRow {
+  title: string;
+  employee_name: string;
+  employee_email: string;
+  due_date: string;
+  copy_number: number;
+}
+
+interface Dashboard {
+  metrics: DashboardMetrics;
+  popular_books: { title: string; author: string; request_count: number }[];
+  most_issued: { title: string; author: string; issued_copies: number }[];
+  overdue_list: DashboardListRow[];
+  due_soon_list: DashboardListRow[];
+  assignment_list: AssignmentRow[];
+}
+
+interface BookExtension {
+  id: number;
+  request_id: number;
+  ticket_id: string;
+  employee_name: string;
+  employee_email: string;
+  book_title: string;
+  book_author: string;
+  additional_days: number;
+  reason: string;
+  status: string;
+  admin_remarks: string;
+  previous_due: string | null;
+  new_due_date: string | null;
+  current_due_date: string | null;
+  requested_at: string;
+  actioned_at: string | null;
+}
+
+const COPY_STATUS_COLORS: Record<string, string> = {
+  Available: "text-emerald-400",
+  Issued: "text-blue-400",
+  Reserved: "text-amber-400",
+  Lost: "text-rose-400",
+  Damaged: "text-orange-400",
+  "Under Maintenance": "text-zinc-400",
+  Returned: "text-emerald-400",
+};
+
+function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [view, setView] = useState<"dashboard" | "requests" | "extensions" | "assignments" | "books">("dashboard");
+  const [requests, setRequests] = useState<BookRequest[]>([]);
+  const [books, setBooks] = useState<Book[]>([]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [extensions, setExtensions] = useState<BookExtension[]>([]);
+  const [loadingReq, setLoadingReq] = useState(true);
+  const [loadingBooks, setLoadingBooks] = useState(true);
+  const [loadingDash, setLoadingDash] = useState(true);
+  const [loadingExt, setLoadingExt] = useState(true);
+  const [acting, setActing] = useState<number | null>(null);
+  const [actingExt, setActingExt] = useState<number | null>(null);
+  const [expandedBook, setExpandedBook] = useState<number | null>(null);
+  const [reqFilter, setReqFilter] = useState("Pending");
+  const [extFilter, setExtFilter] = useState("Pending");
+  const [showBookForm, setShowBookForm] = useState(false);
+  const [bookForm, setBookForm] = useState({ title: "", author: "", category: "", description: "", total_copies: 1 });
+  const [savingBook, setSavingBook] = useState(false);
+
+  const fetchDashboard = useCallback(async () => {
+    setLoadingDash(true);
+    try {
+      const res = await fetch(`/api/portal/admin/library/dashboard`, { headers: authHeaders });
+      setDashboard(await res.json());
+    } catch { toast.error("Failed to load dashboard"); }
+    finally { setLoadingDash(false); }
+  }, []);
+
+  const fetchRequests = useCallback(async () => {
+    setLoadingReq(true);
+    try {
+      const qs = reqFilter !== "All" ? `?status=${reqFilter}` : "";
+      const res = await fetch(`/api/portal/admin/book-requests${qs}`, { headers: authHeaders });
+      setRequests(await res.json());
+    } catch { toast.error("Failed to load book requests"); }
+    finally { setLoadingReq(false); }
+  }, [reqFilter]);
+
+  const fetchBooks = useCallback(async () => {
+    setLoadingBooks(true);
+    try {
+      const res = await fetch(`/api/portal/admin/books`, { headers: authHeaders });
+      setBooks(await res.json());
+    } catch { toast.error("Failed to load books"); }
+    finally { setLoadingBooks(false); }
+  }, []);
+
+  const fetchBookCopies = useCallback(async (bookId: number) => {
+    try {
+      const res = await fetch(`/api/portal/admin/books/${bookId}`, { headers: authHeaders });
+      const data = await res.json();
+      setBooks((prev) => prev.map((b) => b.id === bookId ? { ...b, copies: data.copies } : b));
+    } catch { toast.error("Failed to load copies"); }
+  }, [authHeaders]);
+
+  const fetchExtensions = useCallback(async () => {
+    setLoadingExt(true);
+    try {
+      const qs = extFilter !== "All" ? `?status=${extFilter}` : "";
+      const res = await fetch(`/api/portal/admin/book-extensions${qs}`, { headers: authHeaders });
+      setExtensions(await res.json());
+    } catch { toast.error("Failed to load extension requests"); }
+    finally { setLoadingExt(false); }
+  }, [extFilter]);
+
+  const actOnExtension = async (id: number, action: "approve" | "reject") => {
+    setActingExt(id);
+    try {
+      const res = await fetch(`/api/portal/admin/book-extensions/${id}/${action}`, {
+        method: "PUT", headers: authHeaders, body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(action === "approve" ? "Extension approved" : "Extension rejected");
+      fetchExtensions();
+      if (view === "dashboard") fetchDashboard();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActingExt(null); }
+  };
+
+  useEffect(() => { if (view === "dashboard") fetchDashboard(); }, [view, fetchDashboard]);
+  useEffect(() => { if (view === "requests") fetchRequests(); }, [view, fetchRequests]);
+  useEffect(() => { if (view === "extensions") fetchExtensions(); }, [view, fetchExtensions]);
+  useEffect(() => { if (view === "books") fetchBooks(); }, [view, fetchBooks]);
+
+  const actOnRequest = async (id: number, action: "approve" | "reject" | "return") => {
+    setActing(id);
+    try {
+      const res = await fetch(`/api/portal/admin/book-requests/${id}/${action}`, { method: "PUT", headers: authHeaders, body: JSON.stringify({}) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(action === "approve" ? "Request approved" : action === "reject" ? "Request rejected" : "Book marked returned");
+      fetchRequests();
+      if (view === "dashboard") fetchDashboard();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  const actOnCopy = async (copyId: number, action: "lost" | "damaged" | "restore", bookId: number) => {
+    try {
+      const res = await fetch(`/api/portal/admin/library/copies/${copyId}/${action}`, { method: "PUT", headers: authHeaders, body: JSON.stringify({}) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success(`Copy marked as ${action}`);
+      fetchBookCopies(bookId);
+      fetchBooks();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+  };
+
+  const saveBook = async () => {
+    if (!bookForm.title.trim()) { toast.error("Title is required"); return; }
+    setSavingBook(true);
+    try {
+      const res = await fetch(`/api/portal/admin/books`, { method: "POST", headers: authHeaders, body: JSON.stringify(bookForm) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success("Book added to Nexus library");
+      setShowBookForm(false);
+      setBookForm({ title: "", author: "", category: "", description: "", total_copies: 1 });
+      fetchBooks();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setSavingBook(false); }
+  };
+
+  return (
+    <div>
+      {/* Sub-navigation */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex gap-1 flex-wrap">
+          {(["dashboard", "requests", "extensions", "assignments", "books"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={cn("rounded-lg px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors",
+                view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground")}>
+              {v === "requests" ? "Borrow Requests"
+                : v === "extensions" ? "Extensions"
+                : v === "assignments" ? "Assignments"
+                : v === "books" ? "Manage Books"
+                : "Dashboard"}
+            </button>
+          ))}
+        </div>
+        {view === "books" && (
+          <button onClick={() => setShowBookForm(true)}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
+            <Plus className="h-3.5 w-3.5" /> Add Book
+          </button>
+        )}
+        {view === "dashboard" && (
+          <button onClick={fetchDashboard} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+        )}
+      </div>
+
+      {/* ── Dashboard ── */}
+      {view === "dashboard" && (
+        loadingDash ? <TableLoader /> : !dashboard ? <TableEmpty label="dashboard data" /> : (
+          <div className="space-y-6">
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                { label: "Total Books", value: dashboard.metrics.total_books, color: "text-foreground" },
+                { label: "Available", value: dashboard.metrics.available_copies, color: "text-emerald-400" },
+                { label: "Issued", value: dashboard.metrics.issued_copies, color: "text-blue-400" },
+                { label: "Active Borrowers", value: dashboard.metrics.active_borrowers ?? 0, color: "text-cyan-400" },
+                { label: "Pending Requests", value: dashboard.metrics.pending_requests ?? 0, color: "text-amber-400" },
+                { label: "Pending Extensions", value: dashboard.metrics.pending_extensions ?? 0, color: "text-violet-400" },
+                { label: "Due Soon (≤7d)", value: dashboard.metrics.due_soon ?? 0, color: "text-amber-300" },
+                { label: "Overdue", value: dashboard.metrics.overdue_books, color: "text-rose-400" },
+                { label: "Total Copies", value: dashboard.metrics.total_copies, color: "text-foreground" },
+                { label: "Reserved", value: dashboard.metrics.reserved_copies, color: "text-amber-400" },
+                { label: "Lost", value: dashboard.metrics.lost_books, color: "text-rose-500" },
+                { label: "Damaged", value: dashboard.metrics.damaged_books, color: "text-orange-400" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="rounded-xl border border-[var(--border)] bg-card p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</p>
+                  <p className={cn("text-[28px] font-bold leading-none", color)}>{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Popular Books */}
+              <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+                <h3 className="text-[13px] font-semibold text-foreground mb-3">Most Requested Books</h3>
+                {dashboard.popular_books.length === 0 ? <p className="text-[13px] text-muted-foreground">No data yet</p> : (
+                  <div className="space-y-2">
+                    {dashboard.popular_books.map((b, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <div>
+                          <p className="text-[13px] font-medium text-foreground">{b.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{b.author}</p>
+                        </div>
+                        <span className="text-[12px] font-semibold text-primary">{b.request_count} requests</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Overdue List */}
+              <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+                <h3 className="text-[13px] font-semibold text-foreground mb-3">Overdue Books</h3>
+                {dashboard.overdue_list.length === 0 ? <p className="text-[13px] text-muted-foreground">No overdue books</p> : (
+                  <div className="space-y-2">
+                    {dashboard.overdue_list.map((o, i) => (
+                      <div key={i} className="flex items-start justify-between">
+                        <div>
+                          <p className="text-[13px] font-medium text-foreground">{o.title} <span className="text-muted-foreground font-normal">#{o.copy_number}</span></p>
+                          <p className="text-[11px] text-muted-foreground">{o.employee_name}</p>
+                        </div>
+                        <span className="text-[12px] font-semibold text-rose-400">Due {o.due_date}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Due Soon List */}
+            <div className="rounded-xl border border-[var(--border)] bg-card p-4">
+              <h3 className="text-[13px] font-semibold text-foreground mb-3">Due Within 7 Days</h3>
+              {(dashboard.due_soon_list || []).length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">Nothing due in the next 7 days.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(dashboard.due_soon_list || []).map((o, i) => (
+                    <div key={i} className="flex items-start justify-between">
+                      <div>
+                        <p className="text-[13px] font-medium text-foreground">{o.title} <span className="text-muted-foreground font-normal">#{o.copy_number}</span></p>
+                        <p className="text-[11px] text-muted-foreground">{o.employee_name}</p>
+                      </div>
+                      <span className="text-[12px] font-semibold text-amber-300">Due {o.due_date}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      )}
+
+      {/* ── Extensions ── */}
+      {view === "extensions" && (
+        <>
+          <FilterBar filter={extFilter} setFilter={setExtFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetchExtensions} />
+          {loadingExt ? <TableLoader /> : extensions.length === 0 ? <TableEmpty label="extension requests" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[960px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Ticket", "Employee", "Book", "+Days", "Reason", "Current Due", "New Due", "Status", "Actions"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {extensions.map((e) => (
+                    <tr key={e.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{e.ticket_id}</td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{e.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{e.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{e.book_title}</div>
+                        {e.book_author && <div className="text-[11px] text-muted-foreground">{e.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 font-semibold">+{e.additional_days}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
+                        <p className="line-clamp-2 leading-snug" title={e.reason}>{e.reason || "—"}</p>
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{e.current_due_date || "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{e.new_due_date || "—"}</td>
+                      <td className="py-3.5 pr-4"><StatusBadge status={e.status} /></td>
+                      <td className="py-3.5">
+                        {actingExt === e.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        ) : e.status === "Pending" ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => actOnExtension(e.id, "approve")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">
+                              <Check className="h-3.5 w-3.5" /> Approve
+                            </button>
+                            <button onClick={() => actOnExtension(e.id, "reject")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">
+                              <X className="h-3.5 w-3.5" /> Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Assignments — flat Book | Employee | Issue Date | Due Date | Status view ── */}
+      {view === "assignments" && (
+        loadingDash ? <TableLoader /> : !dashboard ? <TableEmpty label="assignments" /> : (
+          (dashboard.assignment_list || []).length === 0 ? <TableEmpty label="active assignments" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[900px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Book", "Employee", "Ticket", "Copy", "Issue Date", "Due Date", "Status"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(dashboard.assignment_list || []).map((a) => (
+                    <tr key={a.ticket_id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{a.book_title}</div>
+                        {a.book_author && <div className="text-[11px] text-muted-foreground">{a.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{a.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{a.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{a.ticket_id}</td>
+                      <td className="py-3.5 pr-4 text-foreground/70">#{a.copy_number}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{a.issued_at ? a.issued_at.slice(0, 10) : "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{a.due_date}</td>
+                      <td className="py-3.5 pr-4"><StatusBadge status={a.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )
+      )}
+
+      {/* ── Borrow Requests ── */}
+      {view === "requests" && (
+        <>
+          <FilterBar filter={reqFilter} setFilter={setReqFilter} options={["Pending", "Approved", "Rejected", "Returned", "All"]} onRefresh={fetchRequests} />
+          {loadingReq ? <TableLoader /> : requests.length === 0 ? <TableEmpty label="book requests" /> : (
+            <div className="overflow-x-auto rounded-lg">
+              <table className="w-full min-w-[960px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    {["Ticket", "Employee", "Book", "Notes", "Status", "Due Date", "Requested", "Actions"].map((h) => (
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {requests.map((r) => (
+                    <tr key={r.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{r.ticket_id}</td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{r.employee_name}</div>
+                        <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <div className="font-medium text-foreground">{r.book_title}</div>
+                        {r.book_author && <div className="text-[11px] text-muted-foreground">{r.book_author}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[160px]">
+                        <p className="line-clamp-2 leading-snug" title={r.notes}>{r.notes || "—"}</p>
+                      </td>
+                      <td className="py-3.5 pr-4">
+                        <StatusBadge status={r.status} />
+                        {r.admin_remarks && <div className="text-[11px] text-muted-foreground mt-0.5">{r.admin_remarks}</div>}
+                      </td>
+                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">{r.due_date || "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">{r.requested_at.slice(0, 10)}</td>
+                      <td className="py-3.5">
+                        {acting === r.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        ) : r.status === "Pending" ? (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => actOnRequest(r.id, "approve")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">
+                              <Check className="h-3 w-3" /> Approve
+                            </button>
+                            <button onClick={() => actOnRequest(r.id, "reject")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">
+                              <X className="h-3 w-3" /> Reject
+                            </button>
+                          </div>
+                        ) : r.status === "Approved" ? (
+                          <button onClick={() => actOnRequest(r.id, "return")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-colors">
+                            <BookOpen className="h-3 w-3" /> Mark Returned
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground/40 text-[12px]">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Manage Books ── */}
+      {view === "books" && (
+        <>
+          {/* Add Book Form */}
+          {showBookForm && (
+            <div className="mb-5 rounded-xl border border-[var(--border)] bg-card p-5">
+              <h3 className="text-[14px] font-semibold text-foreground mb-4">Add New Book to Nexus Library</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Title *", key: "title", placeholder: "e.g. Clean Code" },
+                  { label: "Author", key: "author", placeholder: "e.g. Robert C. Martin" },
+                  { label: "Category", key: "category", placeholder: "Technology, Management…" },
+                ].map(({ label, key, placeholder }) => (
+                  <div key={key}>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</label>
+                    <input type="text" placeholder={placeholder}
+                      value={(bookForm as Record<string, string | number>)[key] as string}
+                      onChange={(e) => setBookForm((p) => ({ ...p, [key]: e.target.value }))}
+                      className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50" />
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Total Copies</label>
+                  <input type="number" min={1} value={bookForm.total_copies}
+                    onChange={(e) => setBookForm((p) => ({ ...p, total_copies: parseInt(e.target.value) || 1 }))}
+                    className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">Description</label>
+                  <textarea placeholder="Brief description…" value={bookForm.description}
+                    onChange={(e) => setBookForm((p) => ({ ...p, description: e.target.value }))} rows={2}
+                    className="w-full rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary/50 resize-none" />
+                </div>
+              </div>
+              <div className="flex gap-2 mt-4">
+                <button onClick={saveBook} disabled={savingBook}
+                  className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
+                  {savingBook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Add Book
+                </button>
+                <button onClick={() => setShowBookForm(false)} className="rounded-lg px-4 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary transition-colors">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {loadingBooks ? <TableLoader /> : books.length === 0 ? <TableEmpty label="books" /> : (
+            <div className="space-y-2">
+              {books.map((b) => (
+                <div key={b.id} className="rounded-xl border border-[var(--border)] bg-card overflow-hidden">
+                  {/* Book row */}
+                  <div
+                    className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                    onClick={() => {
+                      if (expandedBook === b.id) { setExpandedBook(null); }
+                      else { setExpandedBook(b.id); fetchBookCopies(b.id); }
+                    }}
+                  >
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground shrink-0 transition-transform", expandedBook === b.id && "rotate-180")} />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-foreground text-[13px]">{b.title}</span>
+                      {b.author && <span className="text-muted-foreground text-[12px] ml-2">by {b.author}</span>}
+                      {b.category && <span className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">{b.category}</span>}
+                    </div>
+                    <div className="flex items-center gap-4 text-[12px] shrink-0">
+                      <span className="text-emerald-400 font-medium">{b.available_copies} avail</span>
+                      <span className="text-blue-400">{b.issued_copies} issued</span>
+                      {b.reserved_copies > 0 && <span className="text-amber-400">{b.reserved_copies} reserved</span>}
+                      {b.lost_copies > 0 && <span className="text-rose-400">{b.lost_copies} lost</span>}
+                      {b.damaged_copies > 0 && <span className="text-orange-400">{b.damaged_copies} damaged</span>}
+                      <span className="text-muted-foreground/50">/ {b.total_copies} total</span>
+                    </div>
+                  </div>
+
+                  {/* Copies detail */}
+                  {expandedBook === b.id && (
+                    <div className="border-t border-[var(--border)] px-4 py-3 bg-secondary/20">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">Individual Copies</p>
+                      {!b.copies ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {b.copies.map((c) => (
+                            <div key={c.id} className="rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[12px] min-w-[160px]">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-semibold text-foreground">Copy #{c.copy_number}</span>
+                                <span className={cn("font-medium", COPY_STATUS_COLORS[c.status] ?? "text-zinc-400")}>{c.status}</span>
+                              </div>
+                              {c.current_employee_name && (
+                                <div className="text-muted-foreground text-[11px]">{c.current_employee_name}</div>
+                              )}
+                              {c.due_date && (
+                                <div className="text-muted-foreground text-[11px]">Due: {c.due_date}</div>
+                              )}
+                              {c.status === "Available" && (
+                                <div className="flex gap-1 mt-1.5">
+                                  <button onClick={() => actOnCopy(c.id, "lost", b.id)}
+                                    className="rounded px-1.5 py-0.5 text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors">Lost</button>
+                                  <button onClick={() => actOnCopy(c.id, "damaged", b.id)}
+                                    className="rounded px-1.5 py-0.5 text-[11px] bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 transition-colors">Damaged</button>
+                                </div>
+                              )}
+                              {(c.status === "Lost" || c.status === "Damaged") && (
+                                <button onClick={() => actOnCopy(c.id, "restore", b.id)}
+                                  className="mt-1.5 rounded px-1.5 py-0.5 text-[11px] bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">Restore</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
 // ── Shared UI helpers ─────────────────────────────────────────────────────────
+
+// ── Desk Keys Tab ──────────────────────────────────────────────────────────────
+
+interface DeskKey {
+  id: number;
+  employee_name: string;
+  employee_email: string;
+  desk_number: string;
+  reason: string;
+  status: string;
+  decided_by: string;
+  decision_reason: string;
+  created_at: string | null;
+}
+
+function DeskKeysTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [items, setItems] = useState<DeskKey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<number | null>(null);
+  const [filter, setFilter] = useState("Pending");
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = filter !== "All" ? `?status=${filter}` : "";
+      const res = await fetch(`/api/portal/admin/desk-keys${qs}`, { headers: authHeaders });
+      setItems(await res.json());
+    } catch { toast.error("Failed to load"); }
+    finally { setLoading(false); }
+  }, [filter]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const act = async (id: number, action: "approve" | "reject" | "release") => {
+    let body: string | undefined;
+    if (action === "reject") {
+      const reason = window.prompt("Reason for rejecting this desk key request:")?.trim();
+      if (!reason) return;
+      body = JSON.stringify({ reason });
+    }
+    setActing(id);
+    try {
+      const res = await fetch(`/api/portal/admin/desk-keys/${id}/${action}`, {
+        method: "PUT", headers: authHeaders, body,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      if (action === "approve") flyBanner("Desk key issued");
+      else toast.success(action === "reject" ? "Request rejected" : "Desk released");
+      fetch_();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  return (
+    <div>
+      <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]} onRefresh={fetch_} />
+      {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="desk key requests" /> : (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-[var(--border)]">
+              {["Employee", "Desk", "Reason", "Status", "Actions"].map((h) => (
+                <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((d) => (
+              <tr key={d.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
+                <td className="py-3.5 pr-4">
+                  <div className="font-medium text-foreground">{d.employee_name}</div>
+                  <div className="text-[11px] text-muted-foreground">{d.employee_email}</div>
+                </td>
+                <td className="py-3.5 pr-4 font-mono text-foreground/90">{d.desk_number}</td>
+                <td className="py-3.5 pr-4 text-foreground/70 max-w-[260px]">{d.reason || d.decision_reason || "—"}</td>
+                <td className="py-3.5 pr-4"><StatusBadge status={d.status} /></td>
+                <td className="py-3.5">
+                  {d.status === "Pending" ? (
+                    <ActionButtons id={d.id} acting={acting} onApprove={() => act(d.id, "approve")} onReject={() => act(d.id, "reject")} />
+                  ) : d.status === "Approved" ? (
+                    <button
+                      onClick={() => act(d.id, "release")}
+                      disabled={acting === d.id}
+                      className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {acting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                      Release
+                    </button>
+                  ) : <span className="text-muted-foreground/40 text-[12px]">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Parking Dues Tab ─────────────────────────────────────────────────────────
+
+interface ParkingDuePayment {
+  id: number;
+  month: string;
+  amount_due: number;
+  amount_paid: number;
+  status: string;
+}
+interface ParkingDueHolder {
+  employee_name: string;
+  employee_email: string;
+  vehicle_type: string;
+  vehicle_number: string;
+  outstanding: number;
+  monthly_cost: number;
+  payments: ParkingDuePayment[];
+}
+interface ParkingDuesSettings {
+  two_wheeler_cost: number;
+  four_wheeler_cost: number;
+  cadence: string;
+  last_run: string;
+}
+
+function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [holders, setHolders] = useState<ParkingDueHolder[]>([]);
+  const [settings, setSettings] = useState<ParkingDuesSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [twoW, setTwoW] = useState("");
+  const [fourW, setFourW] = useState("");
+  const [cadence, setCadence] = useState("monthly");
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues`, { headers: authHeaders });
+      const data = await res.json();
+      setHolders(data.holders ?? []);
+      setSettings(data.settings ?? null);
+      setTwoW(String(data.settings?.two_wheeler_cost ?? ""));
+      setFourW(String(data.settings?.four_wheeler_cost ?? ""));
+      setCadence(data.settings?.cadence ?? "monthly");
+    } catch { toast.error("Failed to load"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/settings`, {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify({
+          two_wheeler_cost: parseFloat(twoW) || 0,
+          four_wheeler_cost: parseFloat(fourW) || 0,
+          cadence,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Settings saved");
+      fetch_();
+    } catch { toast.error("Failed to save settings"); }
+    finally { setSaving(false); }
+  };
+
+  const remind = async (email?: string) => {
+    setActing(email ?? "ALL");
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/remind`, {
+        method: "POST", headers: authHeaders, body: JSON.stringify({ email: email ?? null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed");
+      flyBanner(data.message || "Reminder sent");
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  const markPaid = async (paymentId: number) => {
+    setActing(`p${paymentId}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${paymentId}/paid`, { method: "PUT", headers: authHeaders });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Marked paid");
+      fetch_();
+    } catch { toast.error("Failed"); }
+    finally { setActing(null); }
+  };
+
+  const closeMonth = async (paymentId: number) => {
+    setActing(`c${paymentId}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${paymentId}/close`, { method: "PUT", headers: authHeaders });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Month closed");
+      fetch_();
+    } catch { toast.error("Failed"); }
+    finally { setActing(null); }
+  };
+
+  const payFull = async (email: string) => {
+    setActing(`full${email}`);
+    try {
+      const res = await fetch(`/api/portal/admin/parking-dues/${encodeURIComponent(email)}/pay-full`, { method: "POST", headers: authHeaders });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed");
+      flyBanner(data.message || "Settled");
+      fetch_();
+    } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setActing(null); }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Settings card */}
+      <div className="rounded-2xl border border-[var(--border)] bg-card p-5">
+        <h3 className="text-[14px] font-semibold text-foreground mb-4">Parking Charges & Reminders</h3>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">2-Wheeler / month (INR)</label>
+            <input type="number" value={twoW} onChange={(e) => setTwoW(e.target.value)}
+              className="w-36 rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">4-Wheeler / month (INR)</label>
+            <input type="number" value={fourW} onChange={(e) => setFourW(e.target.value)}
+              className="w-36 rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">Reminder cadence</label>
+            <select value={cadence} onChange={(e) => setCadence(e.target.value)}
+              className="rounded-lg border border-[var(--border)] bg-secondary/50 px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50">
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+            </select>
+          </div>
+          <button onClick={saveSettings} disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Save
+          </button>
+          <button onClick={() => remind()} disabled={acting === "ALL"}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+            {acting === "ALL" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            Send reminders to all
+          </button>
+        </div>
+        {settings?.last_run && (
+          <p className="text-[11px] text-muted-foreground/60 mt-3">Last reminder run: {settings.last_run}</p>
+        )}
+      </div>
+
+      {/* Holders */}
+      {loading ? <TableLoader /> : holders.length === 0 ? <TableEmpty label="parking holders" /> : (
+        <div className="space-y-2">
+          {holders.map((h) => {
+            const open = expanded === h.employee_email;
+            return (
+              <div key={h.employee_email} className="rounded-xl border border-[var(--border)] bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <button onClick={() => setExpanded(open ? null : h.employee_email)} className="flex items-center gap-3 text-left">
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")} />
+                    <div>
+                      <div className="font-medium text-foreground">{h.employee_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{h.vehicle_number} · {h.vehicle_type} · INR {h.monthly_cost.toLocaleString()}/mo</div>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-3">
+                    <span className={cn("text-[13px] font-semibold", h.outstanding > 0 ? "text-rose-400" : "text-emerald-400")}>
+                      INR {h.outstanding.toLocaleString()} {h.outstanding > 0 ? "due" : "clear"}
+                    </span>
+                    {h.outstanding > 0 && (
+                      <>
+                        <button onClick={() => remind(h.employee_email)} disabled={acting === h.employee_email}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+                          {acting === h.employee_email ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                          Remind
+                        </button>
+                        <button onClick={() => payFull(h.employee_email)} disabled={acting === `full${h.employee_email}`}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
+                          {acting === `full${h.employee_email}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          Mark full paid
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {open && (
+                  <div className="border-t border-[var(--border)]/60 px-4 py-3">
+                    {h.payments.length === 0 ? (
+                      <p className="text-[12px] text-muted-foreground">No charges accrued yet.</p>
+                    ) : (
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                            <th className="py-1.5 pr-4">Month</th><th className="py-1.5 pr-4">Amount</th><th className="py-1.5 pr-4">Status</th><th className="py-1.5">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {h.payments.map((p) => (
+                            <tr key={p.id} className="border-t border-[var(--border)]/40">
+                              <td className="py-2 pr-4 text-foreground/90">{p.month}</td>
+                              <td className="py-2 pr-4 text-foreground/80">INR {p.amount_due.toLocaleString()}</td>
+                              <td className="py-2 pr-4"><StatusBadge status={p.status} /></td>
+                              <td className="py-2">
+                                {p.status === "Due" ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <button onClick={() => markPaid(p.id)} disabled={acting === `p${p.id}`}
+                                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
+                                      {acting === `p${p.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                      Paid
+                                    </button>
+                                    <button onClick={() => closeMonth(p.id)} disabled={acting === `c${p.id}`}
+                                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 transition-colors disabled:opacity-50">
+                                      Close
+                                    </button>
+                                  </div>
+                                ) : <span className="text-muted-foreground/40">—</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StatusBadge({ status }: { status: string }) {
   return (

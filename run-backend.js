@@ -127,7 +127,7 @@ const getWslRepoRoot = () => {
   } catch (err) {
     throw new Error(
       [
-        "WSL is required for Windows local infrastructure startup when native Docker is not available.",
+        "WSL is required for Windows local infrastructure startup.",
         "Install/enable WSL, then ensure Docker and Docker Compose are available inside your WSL distro.",
         `Expected WSL repo path: ${wslRepoRoot}`,
         `Original error: ${err.message}`,
@@ -136,83 +136,63 @@ const getWslRepoRoot = () => {
   }
 };
 
-const commandExistsInWsl = (command, args = ["--version"]) => {
-  try {
-    const wslRepoRoot = getWslRepoRoot();
-    execFileSync("wsl", ["--cd", wslRepoRoot, command, ...args], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const tryDirectDockerCompose = async () => {
-  if (commandExists("docker", ["--version"])) {
-    try {
-      await runCommand("docker", ["compose", "-f", infraComposeFile, "up", "-d"]);
-      return true;
-    } catch (err) {
-      console.warn("Native Docker compose failed:", err.message);
-    }
-  }
-
-  if (commandExists("docker-compose", ["--version"])) {
-    try {
-      await runCommand("docker-compose", ["-f", infraComposeFile, "up", "-d"]);
-      return true;
-    } catch (err) {
-      console.warn("Legacy docker-compose failed:", err.message);
-    }
-  }
-
-  return false;
-};
-
-const tryWslDockerCompose = async () => {
-  if (!commandExists("wsl", ["--version"])) {
-    return false;
-  }
-
-  const wslRepoRoot = getWslRepoRoot();
-  startWslKeepAlive();
-
-  try {
-    await runCommand("wsl", ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"], { cwd: repoRoot });
-    return true;
-  } catch (err) {
-    console.warn("WSL Docker compose failed:", err.message);
-    if (commandExistsInWsl("docker-compose", ["--version"])) {
-      await runCommand("wsl", ["--cd", wslRepoRoot, "docker-compose", "-f", infraComposeFile, "up", "-d"], { cwd: repoRoot });
-      return true;
-    }
-    throw err;
-  }
-};
-
 const runDockerCompose = async () => {
   console.log("--- Starting local infrastructure containers ---");
 
-  if (!isWindows) {
-    if (!(await tryDirectDockerCompose())) {
-      throw new Error("Docker is not available on this machine or docker-compose startup failed.");
+  const wslRepoRoot = getWslRepoRoot();
+
+  // Ensure Docker service is running in WSL.
+  try {
+    console.log("--- Checking if Docker is responsive in WSL ---");
+    execFileSync("wsl", ["docker", "ps"], { stdio: "ignore", timeout: 5000 });
+    console.log("Docker is already running in WSL.");
+  } catch (err) {
+    console.log("--- Ensuring Docker service is running in WSL ---");
+    try {
+      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+    } catch (sudoErr) {
+      console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
     }
-    return;
   }
 
-  if (await tryDirectDockerCompose()) {
+  const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
+
+  try {
+    await runCommand("wsl", composeArgs, { cwd: repoRoot });
     return;
+  } catch (composePluginErr) {
+    console.warn("WSL 'docker compose' (V2) exited non-zero:", composePluginErr.message);
+
+    // Before falling back to V1, check if required ports are already up.
+    // V2 may exit non-zero (e.g. a non-critical service failing its health check)
+    // while the core infrastructure containers are actually running.
+    const requiredAfterV2 = infraPorts.filter(p => p.required);
+    const allUpAfterV2 = await Promise.all(requiredAfterV2.map(p => isPortOpen(p.port, localInfraHost)));
+    if (allUpAfterV2.every(Boolean)) {
+      console.log("--- Required infrastructure ports are open after V2 attempt; skipping V1 fallback ---");
+      return;
+    }
+
+    console.warn("Required ports not yet open — trying legacy 'docker-compose' (V1)...");
   }
 
-  console.warn("Native Docker is not available or failed. Falling back to WSL Docker if available...");
-
-  const wslStarted = await tryWslDockerCompose();
-  if (wslStarted) {
+  try {
+    await runCommand(
+      "wsl",
+      ["--cd", wslRepoRoot, "docker-compose", "-f", infraComposeFile, "up", "-d"],
+      { cwd: repoRoot }
+    );
+    return;
+  } catch (legacyComposeErr) {
+    console.warn("--- WSL Infrastructure Startup Warning ---");
+    console.warn("Could not start Docker infrastructure from WSL automatically.");
+    console.warn("Reason:", legacyComposeErr.message);
+    console.warn("\nIf you are running Redis, Postgres, etc. manually in WSL, the backend will try to use those.");
+    console.warn("To fix the Docker error in WSL, try running: sudo apt-get install docker-compose-v2");
+    console.warn("-------------------------------------------\n");
+    // Let waitForInfrastructure check the published Windows ports.
     return;
   }
-
-  throw new Error(
-    "Could not start Docker infrastructure. Install Docker Desktop or WSL Docker, and ensure either `docker compose` or `docker-compose` is available."
-  );
 };
 
 const startWslKeepAlive = () => {
@@ -382,9 +362,15 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
 };
 
 const startBackend = async () => {
+  if (!isWindows) {
+    throw new Error(`This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`);
+  }
+
   if (process.env.SKIP_DOCKER === "true") {
     console.log("--- SKIP_DOCKER is set; skipping infrastructure startup ---");
   } else {
+    startWslKeepAlive();
+
     // Check if required ports are already open before trying to start Docker
     const requiredPorts = infraPorts.filter(p => p.required);
     let allRequiredOpen = true;
@@ -415,6 +401,7 @@ const startBackend = async () => {
   // Start mock servers in background (non-blocking, auto-restart)
   startMockServer(venvPaths.uvicorn, "mock_zoho_server:app",          8090, "Mock Zoho");
   startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
+  startMockServer(venvPaths.uvicorn, "mock_nexus_library_server:app", 8092, "Mock Nexus Library");
 
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runUvicornWithRestart(venvPaths.uvicorn);

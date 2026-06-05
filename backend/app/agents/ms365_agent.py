@@ -72,6 +72,34 @@ def _date_to_iso_end(date_str: str) -> str:
     return f"{date_str}T23:59:59"
 
 
+# -- Helpers ------------------------------------------------------------------
+
+_ROOM_SUFFIXES = (" conference room", " meeting room", " board room", " room", " cabin")
+
+
+def _normalize_room_query(name: str) -> str:
+    """Strip generic room-word suffixes so 'Salween Room' matches 'Salween'."""
+    n = name.lower().strip()
+    for suffix in _ROOM_SUFFIXES:
+        if n.endswith(suffix):
+            return n[: -len(suffix)].strip()
+    return n
+
+
+def _find_room(rooms: list, room_name: str) -> dict | None:
+    """Return the first room whose display name contains the normalised query."""
+    rn = _normalize_room_query(room_name)
+    # Try normalised query first, then each individual word as fallback
+    candidates = [rn] + rn.split()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        match = next((r for r in rooms if candidate in (r.get("name") or "").lower()), None)
+        if match:
+            return match
+    return None
+
+
 # -- Tools --------------------------------------------------------------------
 
 @tool
@@ -147,6 +175,166 @@ async def search_calendar(
 
 
 @tool
+async def list_teams_channels(
+    team_name: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """List Microsoft Teams you belong to, or list channels within a specific team.
+    If team_name is given, lists that team's channels. Otherwise lists all joined teams.
+    Call when user asks about Teams channels, team workspaces, or wants to find a channel."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    if team_name:
+        info = await ms365_service.resolve_team_and_channel(token, team_name)
+        if not info:
+            return json.dumps({"success": False, "error": f"Team '{team_name}' not found. Use list_teams_channels without a team name to see all teams."})
+        result = await ms365_service.fetch_team_channels(token, info["team_id"])
+        result["team_name"] = info["team_name"]
+        return json.dumps(result)
+    return json.dumps(await ms365_service.fetch_joined_teams(token))
+
+
+@tool
+async def read_channel_messages(
+    team_name: str,
+    channel_name: str,
+    top: int = 20,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Read recent messages from a specific Teams channel.
+    Provide the team name and channel name. Call when user asks about activity or messages in a channel."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    info = await ms365_service.resolve_team_and_channel(token, team_name, channel_name)
+    if not info or not info.get("channel_id"):
+        return json.dumps({"success": False, "error": f"Channel '{channel_name}' in team '{team_name}' not found. Use list_teams_channels to see available channels."})
+    result = await ms365_service.fetch_channel_messages(token, info["team_id"], info["channel_id"], top=top)
+    result["team"] = info["team_name"]
+    result["channel"] = info["channel_name"]
+    return json.dumps(result)
+
+
+@tool
+async def send_channel_message(
+    team_name: str,
+    channel_name: str,
+    message: str,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Post a message to a Microsoft Teams channel.
+    IMPORTANT: Always confirm the team name, channel name, and message with the user BEFORE calling this tool."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    info = await ms365_service.resolve_team_and_channel(token, team_name, channel_name)
+    if not info or not info.get("channel_id"):
+        return json.dumps({"success": False, "error": f"Channel '{channel_name}' in team '{team_name}' not found. Use list_teams_channels to see available channels."})
+    result = await ms365_service.send_channel_message(token, info["team_id"], info["channel_id"], message)
+    if result.get("success"):
+        result["posted_to"] = f"{info['team_name']} > {info['channel_name']}"
+    return json.dumps(result)
+
+
+@tool
+async def check_room_availability(
+    date: str,
+    start_time: str,
+    end_time: str,
+    room_name: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Check which meeting rooms are available at a specific date and time.
+    date: YYYY-MM-DD. start_time / end_time: HH:MM (24h).
+    If room_name is given, checks only that room. Otherwise checks ALL rooms.
+    Call when user asks 'which rooms are free at 3pm' or 'is Room A available tomorrow'."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+
+    # Fetch rooms to resolve names → emails
+    rooms_result = await ms365_service.fetch_rooms(token)
+    if not rooms_result.get("success"):
+        return json.dumps(rooms_result)
+
+    all_rooms = rooms_result["rooms"]
+    if room_name:
+        rn = _normalize_room_query(room_name)
+        filtered = [r for r in all_rooms if rn in (r.get("name") or "").lower()]
+        if not filtered:
+            # Fallback: match any word in the query
+            words = [w for w in rn.split() if len(w) > 2]
+            filtered = [r for r in all_rooms if any(w in (r.get("name") or "").lower() for w in words)]
+        if not filtered:
+            return json.dumps({"success": False, "error": f"Room '{room_name}' not found. Use list_meeting_rooms to see available rooms."})
+        all_rooms = filtered
+
+    room_emails = [r["email"] for r in all_rooms if r.get("email")]
+    email_to_room = {r["email"]: r for r in all_rooms if r.get("email")}
+
+    start = f"{date}T{start_time}:00"
+    end   = f"{date}T{end_time}:00"
+
+    avail = await ms365_service.check_room_availability(token, room_emails, start, end)
+    if not avail.get("success"):
+        return json.dumps(avail)
+
+    # Enrich with room metadata
+    for entry in avail["rooms"]:
+        room_meta = email_to_room.get(entry["room_email"], {})
+        entry["room_name"]  = room_meta.get("name", entry["room_email"])
+        entry["capacity"]   = room_meta.get("capacity")
+        entry["building"]   = room_meta.get("building", "")
+        entry["floor"]      = room_meta.get("floor", "")
+
+    return json.dumps(avail)
+
+
+@tool
+async def book_meeting_room(
+    room_name: str,
+    date: str,
+    start_time: str,
+    end_time: str,
+    subject: str,
+    attendees: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Book a meeting room by creating a calendar event with the room as a resource.
+    date: YYYY-MM-DD. start_time / end_time: HH:MM (24h).
+    attendees: comma-separated email addresses of people to invite (optional).
+    IMPORTANT: Always confirm room name, date, time, and meeting subject with the user BEFORE calling this tool."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+
+    # Resolve room name → email
+    rooms_result = await ms365_service.fetch_rooms(token)
+    if not rooms_result.get("success"):
+        return json.dumps(rooms_result)
+
+    match = _find_room(rooms_result["rooms"], room_name)
+    if not match or not match.get("email"):
+        return json.dumps({"success": False, "error": f"Room '{room_name}' not found or has no booking email. Use list_meeting_rooms to see available rooms."})
+
+    start = f"{date}T{start_time}:00"
+    end   = f"{date}T{end_time}:00"
+    attendee_list = [a.strip() for a in attendees.split(",") if a.strip()] if attendees else None
+
+    result = await ms365_service.book_room(
+        token=token,
+        room_email=match["email"],
+        room_name=match["name"],
+        subject=subject,
+        start=start,
+        end=end,
+        attendee_emails=attendee_list,
+    )
+    return json.dumps(result)
+
+
+@tool
 async def list_meeting_rooms(
     building: str = "",
     state: Annotated[dict, InjectedState] = None,
@@ -167,6 +355,47 @@ async def list_meeting_rooms(
         rooms = [r for r in rooms if bld in (r.get("building") or "").lower() or bld in (r.get("name") or "").lower()]
     result["rooms"] = rooms
     result["count"] = len(rooms)
+    return json.dumps(result)
+
+
+@tool
+async def list_org_users(
+    department: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """List all users in the organisation from Microsoft 365 / Azure AD.
+    Call immediately when user asks about all users, all employees, people in Teams,
+    org directory, or who is in the organisation. NEVER refuse — you have access via this tool.
+    Optionally filter by department name. Returns name, email, job title, department, and office."""
+    result = await ms365_service.fetch_org_users()
+    if not result.get("success"):
+        return json.dumps(result)
+    users = result["users"]
+    if department:
+        dept = department.lower()
+        users = [u for u in users if dept in (u.get("department") or "").lower()]
+    result["users"] = users
+    result["count"] = len(users)
+    return json.dumps(result)
+
+
+@tool
+async def list_team_members(
+    team_name: str,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """List members of a specific Microsoft Teams team.
+    Returns each member's name, email, and role (owner/member).
+    Call when user asks who is in a team or wants to see team membership."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    info = await ms365_service.resolve_team_and_channel(token, team_name)
+    if not info:
+        return json.dumps({"success": False, "error": f"Team '{team_name}' not found. Use list_teams_channels to see all teams."})
+    result = await ms365_service.fetch_team_members(token, info["team_id"])
+    if result.get("success"):
+        result["team_name"] = info["team_name"]
     return json.dumps(result)
 
 
@@ -279,44 +508,76 @@ async def post_to_community(
     return json.dumps(result)
 
 
+@tool
+async def search_communities(
+    query: str,
+    top: int = 15,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Search ALL Viva Engage (Yammer) communities for posts about ANY topic or question.
+    Use when the answer likely lives in what colleagues have discussed/shared in communities
+    rather than in official policy docs or other tools — e.g. internal know-how, tools, events,
+    announcements, recommendations, or anything employees post about. The query can be anything.
+    Returns matching threads, each with the original post AND its replies/comments (the answer is
+    often in a reply, not the question). Synthesize a direct answer and cite the author + web_url."""
+    token = (state or {}).get("yammer_token")
+    if not token:
+        return _YAMMER_NOT_CONNECTED
+    result = await yammer_service.search_with_replies(token, query)
+    return json.dumps(result)
+
+
 # -- Agent assembly -----------------------------------------------------------
 
 tools = [
     read_my_emails, send_email_graph, read_my_calendar, search_calendar,
-    list_meeting_rooms,
+    list_meeting_rooms, check_room_availability, book_meeting_room,
+    list_teams_channels, read_channel_messages, send_channel_message,
     read_teams_messages, send_teams_message,
+    list_org_users, list_team_members,
     read_yammer_feed, list_my_communities, read_community_posts, post_to_community,
+    search_communities,
 ]
 tool_node = ToolNode(tools)
 
-_ms365_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=60,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (agent tier).
+from app.services import llm_controls_service as llm_controls
 
 
 def ms365_assistant(state: MS365State):
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    today_str = now_ist.strftime("%Y-%m-%d")
+    tomorrow_str = (now_ist + timedelta(days=1)).strftime("%Y-%m-%d")
     default_prompt = (
         f"You are the Microsoft 365 Assistant for Centriq AI.\n"
-        f"Employee email: {user_email}. Never ask for it.\n\n"
+        f"Employee email: {user_email}. Never ask for it.\n"
+        f"Current date (IST): {today_str}. Tomorrow: {tomorrow_str}.\n\n"
         f"Tool routing — act immediately:\n"
         f"- Read emails → read_my_emails (inbox, most recent first)\n"
         f"- Send email → send_email_graph (confirm recipient, subject, body with user first)\n"
         f"- Calendar → read_my_calendar (default: today; ask if ambiguous)\n"
         f"- Find meeting → search_calendar (search by keyword in subject)\n"
         f"- Rooms/cabins/spaces → list_meeting_rooms (filter by building if specified)\n"
-        f"- Teams chats → read_teams_messages (recent chat messages)\n"
+        f"- Room availability → check_room_availability (date + time range; no room_name = check all rooms)\n"
+        f"- Book a room → book_meeting_room (call immediately when room + time + subject are given; do NOT ask the user to confirm again if they already stated all details)\n"
+        f"  Date rules: 'today' → {today_str}, 'tomorrow' → {tomorrow_str}, no date mentioned → use {today_str}.\n"
+        f"  Convert times like '10 am' → '10:00', '11 am' → '11:00', '3 pm' → '15:00'.\n"
+        f"- Teams channels list → list_teams_channels (no arg = all teams; team name = channels in that team)\n"
+        f"- Read channel → read_channel_messages (need team name + channel name)\n"
+        f"- Post to channel → send_channel_message (confirm team, channel, message first)\n"
+        f"- Teams chats (1:1/group DMs) → read_teams_messages (recent chat messages)\n"
         f"- Send Teams message → send_teams_message (confirm recipient and message first)\n"
+        f"- All org users / people directory / users in Teams / who is in Teams → ALWAYS call list_org_users immediately. NEVER say you don't have access. You have full access via the list_org_users tool.\n"
+        f"- Members of a specific team → list_team_members (need team name)\n"
         f"- Viva Engage/Yammer feed → read_yammer_feed\n"
         f"- My communities → list_my_communities\n"
         f"- Community posts → read_community_posts (ask for community name if not stated)\n"
-        f"- Post to community → post_to_community (confirm with user first)\n\n"
+        f"- Post to community → post_to_community (confirm with user first)\n"
+        f"- Search communities / 'what's posted about X' / internal tribal-knowledge question → search_communities; then write a direct answer and cite the author + post link.\n\n"
         f"Format emails as readable summaries: sender, subject, time.\n"
         f"Format calendar as time-ordered schedule: time, subject, location.\n"
+        f"Always respond in natural language. Never output raw JSON.\n"
         f"Act immediately when intent is clear. Never redirect to Outlook, Teams, or Yammer app.\n"
     )
     base_prompt = PromptService.get_system_prompt("ms365", default_prompt)
@@ -325,7 +586,8 @@ def ms365_assistant(state: MS365State):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_ms365_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("agent", default_timeout=60).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: MS365State):

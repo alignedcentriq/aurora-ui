@@ -20,15 +20,20 @@ _client = None
 
 
 def get_langfuse_client() -> Langfuse | None:
-    """Return a singleton Langfuse client, or None if unavailable."""
+    """Return a singleton Langfuse client, or None if Langfuse is not configured."""
     global _client
     if _client is not None:
         return _client
 
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    if not public_key or not secret_key:
+        return None
+
     try:
         _client = Langfuse(
-            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", "pk-lf-1234567890"),
-            secret_key=os.environ.get("LANGFUSE_SECRET_KEY", "sk-lf-1234567890"),
+            public_key=public_key,
+            secret_key=secret_key,
             host=os.environ.get("LANGFUSE_HOST", "http://localhost:3003"),
         )
         return _client

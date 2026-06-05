@@ -4,14 +4,18 @@ All endpoints require IT or Admin role.
 """
 
 import datetime
+import hashlib
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, case, desc
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.auth import CurrentUser, get_current_user
+from app.azure_auth import RevealUser, get_reveal_user
 from app.database import get_db
-from app.models import AiRequestLog, AiLlmCallLog, ChatFeedback
+from app.models import AiRequestLog, AiLlmCallLog, ChatFeedback, ContentRevealAudit
 
 router = APIRouter(prefix="/api/observability", tags=["Observability"])
 
@@ -20,6 +24,43 @@ def _require_it_or_admin(user: CurrentUser = Depends(get_current_user)) -> Curre
     if user.role not in ("it", "admin"):
         raise HTTPException(status_code=403, detail="IT or Admin access required.")
     return user
+
+
+def _pseudonym(email: Optional[str]) -> str:
+    """Stable, non-reversible display label for a user — same email always maps to the
+    same 'Employee #NNNN' so sessions can be correlated without exposing identity."""
+    if not email:
+        return "Employee #0000"
+    n = int(hashlib.sha256(email.strip().lower().encode()).hexdigest()[:4], 16)
+    return f"Employee #{n:04d}"
+
+
+# PII / financial-identifier patterns scrubbed from revealed conversation content — even
+# authorized reviewers see masked tokens, never raw IDs or money values. Best-effort:
+# order matters (more specific patterns run before broad digit-run catch-alls). Tuned for
+# the Indian context (Aadhaar / PAN / IFSC / ₹) plus generic email, phone, and card/account.
+_PII_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "[email]"),
+    (re.compile(r"\b\d{2}[A-Z]{5}\d{4}[A-Z]\dZ[A-Z\d]\b"), "[GSTIN]"),      # before PAN (contains a PAN)
+    (re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b"), "[PAN]"),                       # PAN: ABCDE1234F
+    (re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b"), "[IFSC]"),                    # IFSC: SBIN0001234
+    (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "[card/acct]"),                 # card / long acct (before aadhaar)
+    (re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b"), "[aadhaar]"),                # 12-digit, often 4-4-4
+    (re.compile(r"(?<!\d)(?:\+?91[-\s]?)?[6-9]\d{9}(?!\d)"), "[phone]"),    # Indian mobile (10-digit)
+    (re.compile(r"(?:₹|Rs\.?|INR|\$|USD)\s?[\d,]+(?:\.\d+)?", re.I), "[amount]"),
+    (re.compile(r"\b\d{9,18}\b"), "[acct/id]"),                             # bare account / id run
+]
+
+
+def _redact_pii(text: Optional[str]) -> Optional[str]:
+    """Mask emails, phone numbers, government IDs, card/account numbers, and money amounts
+    in free text. Applied to revealed conversation content for compliance — best-effort,
+    not a guarantee; reveal access is still domain-scoped and audited as the primary control."""
+    if not text:
+        return text
+    for pattern, repl in _PII_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
 
 
 def _period_cutoff(period: str) -> datetime.datetime:
@@ -39,7 +80,6 @@ def _period_cutoff(period: str) -> datetime.datetime:
 def get_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
-    search: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
     status: Optional[str] = Query(None),       # "success" or "error"
     from_date: Optional[str] = Query(None),     # ISO date string
@@ -47,11 +87,11 @@ def get_logs(
     _: CurrentUser = Depends(_require_it_or_admin),
     db: Session = Depends(get_db),
 ):
-    """Paginated activity log list for CloudTrail viewer."""
+    """Paginated activity log list — operational metadata only. User identity is
+    pseudonymized and message/response content is never returned here; reading actual
+    content requires the audited, domain-scoped /logs/{id}/reveal endpoint."""
     q = db.query(AiRequestLog)
 
-    if search:
-        q = q.filter(AiRequestLog.user_message.ilike(f"%{search}%"))
     if domain and domain != "All":
         q = q.filter(AiRequestLog.domain == domain)
     if status == "error":
@@ -78,9 +118,8 @@ def get_logs(
                 "id": r.id,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "session_id": r.session_id,
-                "user_email": r.user_email,
+                "user_label": _pseudonym(r.user_email),
                 "domain": r.domain,
-                "user_message": (r.user_message or "")[:80],
                 "total_latency_ms": r.total_latency_ms,
                 "total_tokens": r.total_tokens,
                 "llm_call_count": r.llm_call_count,
@@ -100,7 +139,8 @@ def get_log_detail(
     _: CurrentUser = Depends(_require_it_or_admin),
     db: Session = Depends(get_db),
 ):
-    """Full log detail with LLM call breakdown (for expanded row)."""
+    """Full log detail with LLM call breakdown (for expanded row). Operational only —
+    content reveal is gated separately via /reveal-scope + /reveal."""
     req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
     if not req:
         raise HTTPException(404, "Log entry not found")
@@ -116,12 +156,10 @@ def get_log_detail(
         "id": req.id,
         "created_at": req.created_at.isoformat() if req.created_at else None,
         "session_id": req.session_id,
-        "user_email": req.user_email,
-        "user_message": req.user_message,
+        "user_label": _pseudonym(req.user_email),
         "domain": req.domain,
         "sub_intent": req.sub_intent,
         "route_method": req.route_method,
-        "response_text": req.response_text,
         "response_length": req.response_length,
         "total_latency_ms": req.total_latency_ms,
         "total_prompt_tokens": req.total_prompt_tokens,
@@ -145,6 +183,94 @@ def get_log_detail(
             }
             for c in calls
         ],
+    }
+
+
+# ── Content Reveal — Azure AD group-gated, validated server-side, audited ──────
+
+class RevealRequest(BaseModel):
+    reason: str
+
+
+@router.get("/reveal-scope")
+def get_reveal_scope(user: RevealUser = Depends(get_reveal_user)):
+    """Domains the caller is permitted to reveal, derived from their (validated) Azure AD
+    group membership. Lets the UI show the reveal affordance only on permitted rows."""
+    return {"domains": sorted(user.allowed_domains)}
+
+
+@router.post("/logs/{log_id}/reveal")
+def reveal_log_content(
+    log_id: int,
+    body: RevealRequest,
+    user: RevealUser = Depends(get_reveal_user),
+    db: Session = Depends(get_db),
+):
+    """Reveal a single conversation's content. Gated by Azure AD group membership (a group
+    maps to a domain); requires a reason; writes a ContentRevealAudit row. Content PII is
+    masked even for the authorized viewer."""
+    req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
+    if not req:
+        raise HTTPException(404, "Log entry not found")
+
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(422, "A reason is required to reveal conversation content.")
+
+    if req.domain not in user.allowed_domains:
+        raise HTTPException(
+            403,
+            f"Your group membership does not permit revealing '{req.domain}' conversation content.",
+        )
+
+    db.add(ContentRevealAudit(
+        request_log_id=req.id,
+        viewer_email=user.email,
+        viewer_oid=user.oid,
+        domain=req.domain,
+        reason=reason,
+    ))
+    db.commit()
+
+    return {
+        "id": req.id,
+        "user_email": req.user_email,
+        "user_message": _redact_pii(req.user_message),
+        "response_text": _redact_pii(req.response_text),
+        "pii_redacted": True,
+    }
+
+
+@router.get("/audit")
+def list_reveal_audit(
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Full reveal audit trail (who viewed whose conversation, for which domain, why). Admin only."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    q = db.query(ContentRevealAudit).order_by(desc(ContentRevealAudit.created_at))
+    total = q.count()
+    rows = q.offset((page - 1) * limit).limit(limit).all()
+    return {
+        "data": [
+            {
+                "id": a.id,
+                "request_log_id": a.request_log_id,
+                "viewer_email": a.viewer_email,
+                "viewer_oid": a.viewer_oid,
+                "domain": a.domain,
+                "reason": a.reason,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in rows
+        ],
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit if limit else 1,
     }
 
 

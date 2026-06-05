@@ -4,6 +4,7 @@ import time
 import threading
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.orm import sessionmaker
 from app.models import (
     Base,
@@ -28,6 +29,7 @@ from app.models import (
     Announcement,
     FoodComplaint,
     ChatFeedback,
+    CachedAnswer,
     ApprovalToken,
     Grievance,
     CompanySettings,
@@ -37,9 +39,12 @@ from app.models import (
     ToolSession,
     AiRequestLog,
     AiLlmCallLog,
+    GeneratedDocument,
     LeaveType,
     LeaveBalance,
     HRQuery,
+    MS365User,
+    EmployeeSkill,
     SCHEMA,
 )
 from app.config import settings
@@ -49,7 +54,17 @@ import datetime
 DATABASE_URL = settings.DATABASE_URL
 
 
-_base_engine = create_engine(DATABASE_URL)
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+_base_engine = create_engine(
+    DATABASE_URL,
+    poolclass=NullPool if _is_sqlite else QueuePool,
+    **({} if _is_sqlite else {
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+    }),
+)
 if _base_engine.dialect.name == "sqlite":
     engine = _base_engine.execution_options(schema_translate_map={SCHEMA: None})
 else:
@@ -95,6 +110,7 @@ def init_db():
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
             for stmt in [
+                f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS location VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
@@ -109,19 +125,52 @@ def init_db():
                 f')',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_key VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".policies ADD COLUMN IF NOT EXISTS minio_etag VARCHAR',
-                # Rename minio_key/minio_etag to source_key/source_etag
-                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key',
-                f'ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag',
+                # Safe rename: only renames if the old column still exists
+                f'DO $$ BEGIN '
+                f'IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = \'{SCHEMA}\' AND table_name = \'policies\' AND column_name = \'minio_key\') '
+                f'THEN ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_key TO source_key; END IF; END $$',
+                f'DO $$ BEGIN '
+                f'IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = \'{SCHEMA}\' AND table_name = \'policies\' AND column_name = \'minio_etag\') '
+                f'THEN ALTER TABLE "{SCHEMA}".policies RENAME COLUMN minio_etag TO source_etag; END IF; END $$',
                 # BM25 full-text search on policy chunks (Phase 2 RAG upgrade)
                 f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector '
                 f"GENERATED ALWAYS AS (to_tsvector('english', COALESCE(text, ''))) STORED",
                 # User memory HNSW index (created after table exists via Base.metadata.create_all)
                 f'CREATE INDEX IF NOT EXISTS idx_user_memories_email ON "{SCHEMA}".user_memories(user_email)',
+                # Self-serve skills editor: per-skill metadata + uploaded certification file
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS years_experience DOUBLE PRECISION',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS last_used DATE',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_data BYTEA',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_name VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_content_type VARCHAR',
+                # Document generation: approval-gated verification fields
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT \'draft\'',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verify_token VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_by_email VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP',
+                # Template-driven generation: filled placeholder values for audit/re-render
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS field_values JSONB',
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_generated_documents_verify_token ON "{SCHEMA}".generated_documents(verify_token)',
+                # MS365 directory: richer profile fields + manager hierarchy (require User.Read.All)
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_id VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_type VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS company_name VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS mobile_phone VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS business_phone VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS city VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS state VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS country VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS account_enabled BOOLEAN',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS hire_date TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_email VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_name VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))
                     conn.commit()
                 except Exception as e:
+                    conn.rollback()  # clear error state so the next migration can still run
                     print(f"Migration notice: {e}")
 
     # pgvector column migrations: convert TEXT embeddings to vector(768)
@@ -164,6 +213,12 @@ def init_db():
                 # HNSW index for user memory semantic search
                 f'CREATE INDEX IF NOT EXISTS idx_user_memories_embedding_hnsw ON "{SCHEMA}".user_memories '
                 f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the semantic answer cache (instant repeat-question lookups)
+                f'CREATE INDEX IF NOT EXISTS idx_cached_answers_embedding_hnsw ON "{SCHEMA}".cached_answers '
+                f'USING hnsw (query_embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the semantic intent router (nearest labeled seed utterance)
+                f'CREATE INDEX IF NOT EXISTS idx_router_examples_embedding_hnsw ON "{SCHEMA}".router_examples '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))
@@ -189,6 +244,15 @@ def init_db():
         except Exception as e:
             print(f"[init_db] Embedding thread notice: {e}")
 
+        # Background thread: idempotently seed/back-fill the semantic intent router examples.
+        # Non-blocking and self-healing — rows that failed to embed (ml01 down) back-fill next boot.
+        try:
+            from app.services.semantic_router_service import SemanticRouterService
+            print("[init_db] Starting semantic router seeding pass...")
+            threading.Thread(target=SemanticRouterService.seed_from_catalog, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Semantic router seed thread notice: {e}")
+
         # Background thread: polls SharePoint for new/changed policy documents
         try:
             from app.config import settings as _s
@@ -201,6 +265,50 @@ def init_db():
                 print("[init_db] SharePoint sync skipped — SHAREPOINT_SITE_URL not configured.")
         except Exception as e:
             print(f"[init_db] SharePoint sync loop notice: {e}")
+
+        # Background thread: polls the SharePoint "Projects" tree (summaries,
+        # demo transcripts, project details) into the Project Showcase category
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_PROJECTS_ROOT", ""):
+                from app.services.sharepoint_project_sync import project_sync_loop
+                print(
+                    f"[init_db] Starting SharePoint project sync loop "
+                    f"(root={_s.SHAREPOINT_PROJECTS_ROOT}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
+                )
+                threading.Thread(target=project_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] SharePoint project sync skipped — SHAREPOINT_PROJECTS_ROOT not configured.")
+        except Exception as e:
+            print(f"[init_db] SharePoint project sync loop notice: {e}")
+
+        # Background thread: polls the SharePoint document-template folder, converts each
+        # PDF/DOCX to HTML + LLM-tags fill-in fields for the Documents generator.
+        try:
+            from app.config import settings as _s
+            if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_TEMPLATES_FOLDER", ""):
+                from app.services.sharepoint_template_sync import template_sync_loop
+                print(
+                    f"[init_db] Starting SharePoint document-template sync loop "
+                    f"(folder={_s.SHAREPOINT_TEMPLATES_FOLDER}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
+                )
+                threading.Thread(target=template_sync_loop, daemon=True).start()
+            else:
+                print("[init_db] SharePoint template sync skipped — SHAREPOINT_TEMPLATES_FOLDER not configured.")
+        except Exception as e:
+            print(f"[init_db] SharePoint template sync loop notice: {e}")
+
+        # Background thread: accrues parking dues daily and emails reminders on the configured cadence
+        try:
+            from app.config import settings as _s
+            if getattr(_s, "PARKING_REMINDER_SENDER", "") or _s.NOTIFY_TO_EMAIL:
+                from app.services.parking_payment_service import parking_reminder_loop
+                print("[init_db] Starting parking payment reminder loop (daily tick)...")
+                threading.Thread(target=parking_reminder_loop, daemon=True).start()
+            else:
+                print("[init_db] Parking reminder loop skipped — no PARKING_REMINDER_SENDER / NOTIFY_TO_EMAIL.")
+        except Exception as e:
+            print(f"[init_db] Parking reminder loop notice: {e}")
 
     except Exception as e:
         print(f"Error during init_db: {e}")

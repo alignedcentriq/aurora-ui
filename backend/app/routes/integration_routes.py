@@ -54,12 +54,15 @@ async def connect_provider(
 
     user_email = (email or user.email).lower().strip()
 
-    if provider == "microsoft":
-        url = microsoft_auth_url(user_email)
-    elif provider == "zoho":
-        url = zoho_auth_url(user_email)
-    else:
-        raise HTTPException(400, f"Provider {provider} not implemented")
+    try:
+        if provider == "microsoft":
+            url = microsoft_auth_url(user_email)
+        elif provider == "zoho":
+            url = zoho_auth_url(user_email)
+        else:
+            raise HTTPException(400, f"Provider {provider} not implemented")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
     return RedirectResponse(url, status_code=302)
 
