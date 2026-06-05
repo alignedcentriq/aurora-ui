@@ -517,16 +517,11 @@ class PromptService:
     @staticmethod
     def test_prompt(domain: str, draft_value: str, test_query: str) -> str:
         """Run a draft prompt against a test query without saving — returns raw LLM response."""
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage, SystemMessage
-        from app.config import settings
+        from app.services import llm_controls_service as llm_controls
 
-        llm = ChatOpenAI(
-            base_url=settings.AGENT_BASE_URL,
-            api_key=settings.AGENT_API_KEY,
-            model=settings.AGENT_MODEL_NAME,
-            temperature=0,
-        )
+        # Use the live agent-tier params so a test reflects production behavior.
+        llm = llm_controls.get_llm("agent")
         result = llm.invoke([SystemMessage(content=draft_value), HumanMessage(content=test_query)])
         return result.content
 

@@ -18,7 +18,7 @@ import re
 from typing import TypedDict, Annotated, List, Optional
 
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import ToolNode, InjectedState
 from langgraph.checkpoint.memory import MemorySaver
 
 from langchain_openai import ChatOpenAI
@@ -30,14 +30,11 @@ from langchain_core.tools import tool
 
 from app.hr_service import HRService
 from app.config import settings
+from app.services import llm_controls_service as llm_controls
 from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
+from app.services.semantic_router_service import SemanticRouterService
 from app.agents.pmo_agent import pmo_agent
-from app.agents.admin_agent import (
-    admin_agent,
-    submit_reimbursement as _admin_submit_reimbursement,
-    check_reimbursement_status as _admin_check_reimbursement_status,
-    search_admin_policies as _admin_search_policies,
-)
+from app.agents.admin_agent import admin_agent
 from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.agents.deeplink_agent import get_deeplink_agent
@@ -51,6 +48,14 @@ from app.services.feedback_service import FeedbackService
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
+
+# Leading meta-preamble the summarizer model sometimes parrots from its prompt. Matches a
+# single opening sentence like "Here's a summary of the tool results for the employee:".
+_SUMMARY_PREAMBLE_RE = re.compile(
+    r"^\s*(?:here'?s|here is|below is|the following is)\b[^\n.:]*"
+    r"\b(?:summary|overview|result|results|response|information)\b[^\n.:]*[.:]\s*",
+    re.IGNORECASE,
+)
 
 
 # ── Zoho Leave Fast-Path ───────────────────────────────────────────────────────
@@ -151,6 +156,7 @@ class AgentState(TypedDict):
     conversation_summary: Optional[str]  # rolling summary of older turns (context manager)
     user_role: Optional[str]           # "employee" | "hr" | "admin" | "manager" | "it" | "pmo"
     graph_token: Optional[str]         # user's delegated Microsoft Graph token (from frontend)
+    user_location: Optional[str]       # detected from M365 profile (officeLocation / city)
 
 
 PENDING_IT_EMAIL_DRAFTS: dict[str, dict] = {}
@@ -170,6 +176,14 @@ def _is_confirmation(text: str) -> bool:
 def _is_cancellation(text: str) -> bool:
     normalized = text.strip().lower()
     return normalized in {"no", "cancel", "stop", "discard", "do not send", "don't send"}
+
+
+# ── Location helper ──────────────────────────────────────────────────────────
+
+def _location_prefix(state: "AgentState") -> str:
+    """Return a one-line location block to prepend to feedback_context, or '' if unknown."""
+    loc = state.get("user_location")
+    return f"[User office location: {loc}]\n" if loc else ""
 
 
 # ── Role Instructions ─────────────────────────────────────────────────────────
@@ -237,7 +251,7 @@ async def context_manager_node(state: AgentState) -> dict:
         "requests made, and decisions reached. Be concise and factual."
     )
     try:
-        summary_response = await summary_llm.ainvoke(
+        summary_response = await llm_controls.get_llm("summarizer", default_timeout=20).ainvoke(
             [
                 SystemMessage(content=summary_prompt),
                 HumanMessage(content="\n".join(
@@ -254,7 +268,11 @@ async def context_manager_node(state: AgentState) -> dict:
 
     session_id = state.get("session_id")
     if session_id:
-        _save_conversation_summary(session_id, summary_text, state.get("domain"))
+        # Fire-and-forget: don't block the pipeline on a DB write
+        import asyncio as _asyncio
+        _asyncio.get_event_loop().run_in_executor(
+            None, _save_conversation_summary, session_id, summary_text, state.get("domain")
+        )
 
     # Inject summary as a prefix to feedback_context — all agents append this to their system prompt
     existing_feedback = state.get("feedback_context") or ""
@@ -293,50 +311,17 @@ def apply_leave(
 def search_hr_policies(query: str):
     """Search HR policy documents. Call for any policy question. Answer from the result only.
     State policy name once. Never include metadata (author, version, review dates)."""
-    return HRService.search_policies(query, limit=4)
-
-@tool
-def search_health_benefits(query: str):
-    """Search the company's HEALTH & insurance documents (Group Health Insurance / mediclaim,
-    Group Personal Accident (GPA), parents & dependent coverage, claim & cashless process,
-    day-care surgeries, maternity/OPD, network hospitals, IL Take Care / iHealthcare apps,
-    Practo teleconsultation, wellness & health checkups).
-    Call this for ANY health-benefit question. Answer strictly from the result.
-    Never give medical advice/diagnosis and never use training knowledge — if nothing relevant
-    is found, say so and suggest contacting the HR team."""
-    return HRService.search_policies(query, limit=4)
-
-
-# ── A2A: HR delegates reimbursement to the Admin agent ──────────────────────────
-# Reimbursement (incl. medical/hospitalization expense claims) is OWNED by the Admin
-# agent. These thin tools hand the request to the Admin agent's own tools, return its
-# result to the HR agent, which then composes the final answer for the user.
-
-@tool
-def file_reimbursement(email: str, type: str, amount: float, reason: str = ""):
-    """Delegate a reimbursement claim to the Admin agent (A2A). Call ONLY when the user states a
-    specific amount. type: Travel, Medical, Certification, Equipment — infer from context, ask if
-    ambiguous. Use this for medical/hospitalization expense reimbursement too. Pass the logged-in
-    user's email. Returns the Admin agent's ticket result; Admin is notified by email."""
-    return _admin_submit_reimbursement.func(
-        type=type, amount=amount, reason=reason, state={"user_email": email}
-    )
+    return HRService.search_policies(query, limit=6)
 
 
 @tool
-def check_reimbursement_status(email: str):
-    """Delegate to the Admin agent to check the status of all the user's reimbursement tickets (A2A).
-    Pass the logged-in user's email."""
-    return _admin_check_reimbursement_status.func(state={"user_email": email})
-
-
-@tool
-def get_reimbursement_process(query: str):
-    """Delegate to the Admin agent for the reimbursement PROCESS — required documents, approval
-    workflow, submission steps, and processing timelines (A2A). Use this for healthcare/medical
-    reimbursement 'how do I claim / what documents / how long' questions, then combine it with
-    search_health_benefits (coverage/eligibility) into one merged answer."""
-    return _admin_search_policies.func(query=query)
+def search_company_projects(query: str):
+    """Search the company's project knowledge base — project summaries, demo
+    transcripts, and project details synced from SharePoint. Call for any question
+    about what projects the company has worked on, a specific project's summary or
+    status, or what was demoed. Answer only from the result."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_projects(query, limit=6)
 
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
@@ -559,9 +544,371 @@ def submit_hr_query(
     return HRService.submit_hr_query(email, category, subject, description)
 
 
+# ── Zoho People — per-user delegated tools ────────────────────────────────────
+
+def _zoho_token_or_error(email: str) -> str | None:
+    """Return valid Zoho token or None. Uses _run_coro to bridge async → sync."""
+    # In demo mode the services return mock data and ignore the token, so don't require
+    # a real Zoho connection — hand back a dummy token so tools don't show "connect Zoho".
+    if settings.ZOHO_DEMO_MODE:
+        return "demo-mode-token"
+    try:
+        from app.services.email_service import _run_coro
+        from app.services.oauth_service import get_valid_token
+        return _run_coro(get_valid_token(email, "zoho"))
+    except Exception:
+        return None
+
+_ZOHO_CONNECT_MSG = "Please connect your Zoho account first. Go to **Settings > Connected Accounts** and click **Connect Zoho**."
+
+@tool
+def get_my_timesheet(week: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my timesheet hours for a given week.
+    week: start date of the week in YYYY-MM-DD format (Monday). Leave blank for current week."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_timesheet
+        data = get_timesheet(token, week)
+        if not data.get("success"):
+            return "Could not retrieve timesheet data. Please try again."
+        logs = data.get("logs", [])
+        total = data.get("total_hours", 0)
+        if not logs:
+            return f"No timesheet entries found for the week of {data.get('week_start', week)}."
+        lines = [f"**Timesheet — week of {data['week_start']} to {data['week_end']}**\n"]
+        for log in logs:
+            lines.append(f"- {log['date']}: {log['hours']}h — {log['job'] or 'General'}")
+        lines.append(f"\n**Total: {total} hours**")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching timesheet: {exc}"
+
+
+def _format_attendance(data: dict, who: str = "") -> str:
+    title = f"Attendance — {who} — {data['month']}" if who else f"Attendance — {data['month']}"
+    lines = [
+        f"**{title}**\n",
+        f"- Present: {data['present']} days",
+        f"- Absent: {data['absent']} days",
+        f"- Work From Home: {data['wfh']} days",
+        f"- Late arrivals: {data['late']} days",
+    ]
+    if data.get("half_day"):
+        lines.append(f"- Half-days: {data['half_day']} days")
+    return "\n".join(lines)
+
+
+@tool
+def get_my_attendance(month: str = "", year: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my monthly attendance summary: days present, absent, WFH, and late arrivals.
+    month: numeric month 1-12. year: 4-digit year. Leave blank for current month."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    # Attendance is backed by the internal `attendance` table (demo data). In demo mode read
+    # from the DB; otherwise fall back to the live Zoho People API.
+    if settings.ZOHO_DEMO_MODE:
+        try:
+            from app.services.attendance_service import summary
+            data = summary(email, month, year)
+            if not data.get("success"):
+                return "No attendance records found for your account."
+            return _format_attendance(data)
+        except Exception as exc:
+            return f"Error fetching attendance: {exc}"
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_attendance_summary
+        data = get_attendance_summary(token, month, year)
+        if not data.get("success"):
+            return "Could not retrieve attendance data. Please try again."
+        return _format_attendance(data)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching attendance: {exc}"
+
+
+@tool
+def get_employee_attendance(employee: str, month: str = "", year: str = "",
+                            state: Annotated[dict, InjectedState] = None) -> str:
+    """Get the monthly attendance summary for one of your direct reportees, by name or email.
+    Managers can only view attendance for employees who report directly to them (and themselves).
+    employee: the reportee's full name or email address.
+    month: numeric month 1-12. year: 4-digit year. Leave blank for current month."""
+    if not settings.ZOHO_DEMO_MODE:
+        return ("Per-employee attendance requires Zoho admin API access, which isn't enabled "
+                "yet. Only your own attendance is available right now.")
+    requester_email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    try:
+        from app.services.attendance_service import summary_for_manager
+        data = summary_for_manager(requester_email, employee, month, year)
+        if not data.get("success"):
+            err = data.get("error")
+            if err == "not_authorized":
+                return data.get("message", "You can only view attendance for your direct reportees.")
+            if err == "requester_not_found":
+                return "Could not find your employee profile, so reportee access can't be verified."
+            return f"No employee found matching '{employee}'. Try their full name or work email."
+        return _format_attendance(data, who=data.get("employee", employee))
+    except Exception as exc:
+        return f"Error fetching attendance: {exc}"
+
+
+@tool
+def get_my_appraisal_status(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my current appraisal cycle status, due dates, and any pending tasks."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_appraisal_status
+        data = get_appraisal_status(token)
+        if not data.get("success"):
+            return "Could not retrieve appraisal data. Please try again."
+        cycles = data.get("cycles", [])
+        if not cycles:
+            return "No active appraisal cycles found at this time."
+        lines = ["**Appraisal Status**\n"]
+        for c in cycles:
+            lines.append(f"- **{c['name']}** — {c['status']}")
+            if c.get("start_date") and c.get("end_date"):
+                lines.append(f"  Period: {c['start_date']} to {c['end_date']}")
+            if c.get("due_date"):
+                lines.append(f"  Due: {c['due_date']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching appraisal status: {exc}"
+
+
+@tool
+def get_my_training_records(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my completed and upcoming training programs from Zoho People."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_people_service import get_training_records
+        data = get_training_records(token)
+        if not data.get("success"):
+            return "Could not retrieve training records. Please try again."
+        lines = []
+        completed = data.get("completed", [])
+        upcoming = data.get("upcoming", [])
+        if completed:
+            lines.append("**Completed Trainings**")
+            for t in completed:
+                lines.append(f"- {t['name']} ({t['end_date']})")
+        if upcoming:
+            lines.append("\n**Upcoming Trainings**")
+            for t in upcoming:
+                lines.append(f"- {t['name']} — starts {t['start_date']}")
+        if not lines:
+            return "No training records found."
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching training records: {exc}"
+
+
+@tool
+def get_my_expense_reports(status: str = "", state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my expense reports from Zoho Expense, with their approval/reimbursement status.
+    status: optional filter — submitted, approved, reimbursed. Leave blank for all."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_expense_service import get_my_expense_reports as _fetch
+        data = _fetch(token, status)
+        if not data.get("success"):
+            return "Could not retrieve expense reports. Please try again."
+        reports = data.get("reports", [])
+        if not reports:
+            return "No expense reports found."
+        lines = ["**Expense Reports**\n"]
+        for r in reports:
+            amt = f"{r['total']} {r['currency']}".strip()
+            lines.append(f"- **{r['name']}** — {r['status']} — {amt}")
+            if r.get("submitted_date"):
+                lines.append(f"  Submitted: {r['submitted_date']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching expense reports: {exc}"
+
+
+@tool
+def get_my_reimbursement_status(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my pending and reimbursed expense totals from Zoho Expense."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_expense_service import get_reimbursement_status
+        data = get_reimbursement_status(token)
+        if not data.get("success"):
+            return "Could not retrieve reimbursement status. Please try again."
+        pending = data.get("pending", [])
+        lines = [
+            "**Reimbursement Status**\n",
+            f"- Pending reimbursement: **{data['pending_total']}**",
+            f"- Already reimbursed: **{data['reimbursed_total']}**",
+        ]
+        if pending:
+            lines.append("\n**Awaiting reimbursement:**")
+            for r in pending:
+                lines.append(f"- {r['name']} — {r['status']} — {r['reimbursable']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching reimbursement status: {exc}"
+
+
+@tool
+def get_open_positions(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get currently open job openings from Zoho Recruit."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_recruit_service import get_open_positions as _fetch
+        data = _fetch(token)
+        if not data.get("success"):
+            return "Could not retrieve open positions. Please try again."
+        positions = data.get("positions", [])
+        if not positions:
+            return "No open positions found at this time."
+        lines = ["**Open Positions**\n"]
+        for p in positions:
+            loc = f" — {p['city']}" if p.get("city") else ""
+            lines.append(f"- **{p['title']}**{loc} ({p['status']})")
+            if p.get("date_opened"):
+                lines.append(f"  Opened: {p['date_opened']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching open positions: {exc}"
+
+
+@tool
+def get_candidate_status(email_address: str, state: Annotated[dict, InjectedState] = None) -> str:
+    """Look up a candidate's recruitment pipeline status in Zoho Recruit by their email.
+    email_address: the candidate's email to search for."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _zoho_token_or_error(email)
+    if not token:
+        return _ZOHO_CONNECT_MSG
+    try:
+        from app.services.zoho_recruit_service import get_candidate_status as _fetch
+        data = _fetch(token, email_address)
+        if not data.get("success"):
+            return "Could not retrieve candidate status. Please try again."
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return f"No candidate found for {email_address}."
+        lines = ["**Candidate Status**\n"]
+        for c in candidates:
+            lines.append(f"- **{c['name']}** ({c['email']}) — {c['status']}")
+        return "\n".join(lines)
+    except ValueError:
+        return _ZOHO_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching candidate status: {exc}"
+
+
+_ALCHEMY_CONNECT_MSG = (
+    "Please connect your Microsoft account first. "
+    "Go to **Settings > Connected Accounts** and click **Connect Microsoft**."
+)
+
+
+def _alchemy_token_or_none(email: str) -> str | None:
+    try:
+        from app.services.email_service import _run_coro
+        from app.services.oauth_service import get_alchemy_token
+        return _run_coro(get_alchemy_token(email))
+    except Exception:
+        return None
+
+
+@tool
+def get_my_alchemy_skills(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get my skills from the Alchemy skills portal."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _alchemy_token_or_none(email)
+    if not token:
+        return _ALCHEMY_CONNECT_MSG
+    try:
+        from app.services.alchemy_service import get_my_skills, get_employee_id
+        emp_id = get_employee_id(email)
+        if not emp_id:
+            return "Could not find your employee ID. Please contact IT support."
+        data = get_my_skills(token, emp_id)
+        skills = data if isinstance(data, list) else data.get("data", data.get("skills", []))
+        if not skills:
+            return "No skills found in your Alchemy profile."
+        lines = ["**Your Skills (Alchemy)**"]
+        for s in skills:
+            name = s.get("skillName") or s.get("name") or s.get("skill", "Unknown")
+            level = s.get("proficiencyLevel") or s.get("level") or ""
+            lines.append(f"- {name}" + (f" — {level}" if level else ""))
+        return "\n".join(lines)
+    except PermissionError:
+        return _ALCHEMY_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching skills: {exc}"
+
+
+@tool
+def get_alchemy_skills_overview(state: Annotated[dict, InjectedState] = None) -> str:
+    """Get org-wide skills summary and top skills by interest from Alchemy."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _alchemy_token_or_none(email)
+    if not token:
+        return _ALCHEMY_CONNECT_MSG
+    try:
+        from app.services.alchemy_service import get_skills_stats_summary, get_top_skills_by_interest
+        summary = get_skills_stats_summary(token)
+        top = get_top_skills_by_interest(token)
+        lines = ["**Org Skills Overview (Alchemy)**"]
+        # Summary stats
+        if isinstance(summary, dict):
+            for k, v in summary.items():
+                lines.append(f"- {k}: {v}")
+        # Top skills by interest
+        top_list = top if isinstance(top, list) else top.get("data", top.get("skills", []))
+        if top_list:
+            lines.append("\n**Top Skills by Interest**")
+            for s in top_list[:10]:
+                name = s.get("skillName") or s.get("name") or s.get("skill", "")
+                count = s.get("count") or s.get("userCount") or ""
+                lines.append(f"- {name}" + (f" ({count} employees)" if count else ""))
+        return "\n".join(lines)
+    except PermissionError:
+        return _ALCHEMY_CONNECT_MSG
+    except Exception as exc:
+        return f"Error fetching skills overview: {exc}"
+
+
 hr_tools = [
-    get_leave_balance, apply_leave, search_hr_policies, search_health_benefits,
-    file_reimbursement, check_reimbursement_status, get_reimbursement_process,
+    get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
     search_people_directory,
@@ -572,6 +919,11 @@ hr_tools = [
     submit_grievance, submit_grievance_for,
     trigger_onboarding_checklist, trigger_offboarding_checklist,
     submit_hr_query,
+    get_my_timesheet, get_my_attendance, get_employee_attendance,
+    get_my_appraisal_status, get_my_training_records,
+    get_my_expense_reports, get_my_reimbursement_status,
+    get_open_positions, get_candidate_status,
+    get_my_alchemy_skills, get_alchemy_skills_overview,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -579,46 +931,14 @@ hr_tool_node = ToolNode(hr_tools)
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. LLM INSTANCES
 # ═══════════════════════════════════════════════════════════════════════════════
-# Agent LLM — used for reasoning and tool calling (HR, PMO, Admin, IT, Manager)
-# max_retries=1 (not 2): a timed-out call retried N times multiplies latency before
-# the same failure (45s × 3 = 135s). One retry covers a transient blip without the
-# turn blowing past the 180s frontend/proxy abort.
-agent_llm = ChatOpenAI(
-    base_url=settings.AGENT_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.AGENT_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    max_retries=1,
-    timeout=60,
-)
-
-# General LLM — lighter qwen2.5:14b for greetings/small talk/announcements
-general_llm_base = ChatOpenAI(
-    base_url=settings.FAST_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=0.7,
-    max_retries=2,
-    timeout=20,
-)
-
-
-# Agent LLM with HR tools bound
-hr_llm = agent_llm.bind_tools(hr_tools)
-
-
-summary_llm = ChatOpenAI(
-    base_url=settings.FAST_BASE_URL,
-    api_key=settings.AGENT_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=0.3,
-    max_retries=1,
-    timeout=45,
-)
-
-# Max characters of tool output fed to the summarizer. The local model times out on very
-# large RAG dumps (multiple long policy chunks), so we keep only the most-relevant head.
-_SUMMARY_INPUT_CAP = 3500
+# LLM instances are built on demand by the runtime factory
+# (app.services.llm_controls_service.get_llm) so IT can tune model / temperature /
+# max_tokens / timeout live without a restart. Tier → call-site mapping:
+#   agent      → HR reasoning (hr_tools)           default_timeout=45
+#   general    → greetings / announcements / policy default_timeout=20
+#   summarizer → context + tool-result summaries    default_timeout=20
+# The factory caches each client by its effective param signature, so these are
+# rebuilt only when IT actually changes a value — no per-request construction cost.
 
 
 
@@ -646,12 +966,29 @@ _KW_HR_POLICY = re.compile(
     r'holiday\s+(list|calendar|policy)|appraisal\s+policy|'
     r'referral\s+bonus|onboarding\s+policy|offboarding\s+policy|'
     r'gratuity\s+policy|variable\s+pay\s+policy|'
-    r'sabbatical\s+policy|relocation\s+policy)\b', re.I
+    r'sabbatical\s+policy|relocation\s+policy|'
+    r'insurance|mediclaim|group\s+health|medical\s+insurance|'
+    r'esic?\b|health\s+(insurance|policy|cover(age)?)|'
+    r'insurance\s+claim|claim\s+(form|process))\b', re.I
 )
 
 _KW_HR_DOC = re.compile(
     r'\b(experience\s+certificate|generate\s+.{0,15}(certificate|letter|noc)|'
     r'relieving\s+letter|salary\s+certificate|noc\s+for)\b', re.I
+)
+
+# Medical / treatment / surgery coverage is governed by the health-insurance policy
+# (HR General), NOT admin reimbursement (travel/certification/equipment). A query that
+# combines a medical term with a reimburse/cover/claim term routes to HR's policy search.
+_KW_MEDICAL_TERM = re.compile(
+    r'\b(surger\w*|operation|hospitali[sz]ation|hospital\s+(bill|expense)|'
+    r'cosmetic|plastic\s+surgery|dental|maternity\s+(expense|bill|cost)|'
+    r'treatment|medical\s+(bill|expense|procedure|treatment|emergency)|'
+    r'\bmedical\b|illness|chemotherapy|dialysis|in[- ]?patient|out[- ]?patient|'
+    r'\bopd\b|\bipd\b)\b', re.I
+)
+_KW_REIMB_OR_COVER = re.compile(
+    r'\b(reimburs\w*|cover(ed|age|s)?|claim\w*|paid\s+by|insur\w*)\b', re.I
 )
 
 _KW_HR_GRIEVANCE = re.compile(
@@ -663,6 +1000,23 @@ _KW_HR_PEOPLE = re.compile(
     r'\b(employee\s+directory|org\s+chart|department\s+headcount|'
     r'who\s+is\s+\w+\s+\w+|find\s+(employee|person|people)\s+with|'
     r'who\s+has\s+\w+\s+skills?)\b', re.I
+)
+
+# People search by skill or role — "find Python developers", "list our QA
+# engineers", "who knows React", "find a senior architect". The role noun is the
+# disambiguator: an install request ("install Python", "setup Node") carries no
+# role noun, so it never matches here, while these phrasings would otherwise fall
+# through to the LLM router, which over-anchors on the tech word and misroutes to
+# software_install.
+_KW_HR_PEOPLE_ROLE = re.compile(
+    r'\b(?:find|show|list|search|get|any|anyone|looking\s+for|'
+    r'who\s+(?:are|is|knows?))\b'
+    r'[\w\s.+#,/&-]*?\b'
+    r'(?:developers?|engineers?|programmers?|coders?|designers?|testers?|'
+    r'qa|analysts?|architects?|specialists?|experts?|consultants?|'
+    r'scientists?|devops|sres?)\b'
+    # ...or an explicit "who knows X" / "someone who knows X" skill lookup.
+    r'|\b(?:who|someone|somebody|anyone)\s+knows?\s+\w+', re.I
 )
 
 _KW_ADMIN_REIMB = re.compile(
@@ -697,6 +1051,12 @@ _KW_ADMIN_ACCOM = re.compile(
 )
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
+
+_KW_ADMIN_VISITOR = re.compile(
+    r'\b(visitor|guest)\s+(pass|entry|registration|register)|'
+    r'register\s+(a\s+|my\s+)?(visitor|guest)|'
+    r'(request|need|book|get)\s+(a\s+|an\s+)?(visitor|guest)\s+pass\b', re.I
+)
 
 _KW_BOOKSHELF_RETURN = re.compile(
     r'\b(return\s+(my\s+|the\s+|a\s+)?book|'
@@ -755,10 +1115,26 @@ _KW_IT_HARDWARE = re.compile(
 _KW_IT_TICKETS = re.compile(r'\bmy\s+(it\s+)?(tickets?|requests?|issues?)\b', re.I)
 _KW_IT_ASSETS = re.compile(r'\bmy\s+(it\s+)?(assets?|equipment|devices?)\b', re.I)
 _KW_IT_CREATE = re.compile(r'\b(create|raise|log|open)\s+(a\s+|an\s+)?(it\s+)?ticket\b', re.I)
+# Strong, install-specific verbs — safe to fire on their own.
+# The negative lookahead rejects determiner/infinitive phrasing ("install the app
+# for me" stays, but a bare "a/an/the/to <noun>" is never a product name).
 _KW_IT_INSTALL = re.compile(
-    r'\b(?:install|need|want|get\s+me|setup|set\s+up)\s+'
+    r'\b(?:install|re-?install|setup|set\s+up)\s+'
+    r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
     r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
     r'(?:\s+(?:on|for|please|pls|in|app|software)\b|[.!?]?\s*$)', re.I
+)
+
+# Generic desire verbs (need/want/get me) are install requests ONLY when an
+# explicit install cue trails the product name ("I want Slack installed").
+# Bare "I need Figma" / "I need help" deliberately fall through to the LLM router,
+# which disambiguates far better than a keyword grab — this is what prevented
+# "I need <anything>" from being mistaken for a software install.
+_KW_IT_INSTALL_NEED = re.compile(
+    r'\b(?:need|want|get\s+me|require|requesting)\s+'
+    r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
+    r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
+    r'\s+(?:installed|installation|set\s*up)\b', re.I
 )
 _KW_IT_VPN = re.compile(
     r'\b(vpn\s+(not|issue|problem|access|connect)|'
@@ -769,6 +1145,10 @@ _KW_IT_LICENSE = re.compile(
     r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
 )
 
+_KW_PMO_UDEMY = re.compile(
+    r'\budemy\b|\btraining\s+license\b', re.I
+)
+
 _KW_PMO = re.compile(
     r'\b(project\s+(status|report|list|summary)|list\s+(all\s+)?projects|'
     r'active\s+projects|company\s+projects|our\s+projects|'
@@ -777,7 +1157,13 @@ _KW_PMO = re.compile(
 
 _KW_MANAGER = re.compile(
     r'\b(my\s+team|who\s+reports\s+to\s+me|direct\s+reports|'
-    r'my\s+reportees|team\s+members|meeting\s+room|conference\s+room)\b', re.I
+    r'my\s+reportees|team\s+members)\b', re.I
+)
+_KW_MS365_ROOMS = re.compile(
+    r'\b(meeting\s+room|conference\s+room|book\s+(a\s+)?\w+\s+room|book\s+(a\s+)?room|'
+    r'reserve\s+(a\s+)?\w+\s+room|reserve\s+(a\s+)?room|'
+    r'room\s+(available|free|booked|availability)|which\s+rooms?\s+(are\s+)?(free|available)|'
+    r'available\s+rooms?|rooms?\s+to\s+book|cabin\s+(available|free|book))\b', re.I
 )
 
 _KW_DEEPLINK_SETUP = re.compile(r'\bsetup\s+(zoho|powerapps|payroll)\b', re.I)
@@ -818,10 +1204,61 @@ _KW_MS365_YAMMER = re.compile(
     r'viva\s+engage\s+(feed|posts?|messages?))\b', re.I
 )
 
+# Explicit community search: capture group 1 = the topic to search for
+_KW_MS365_COMMUNITY_SEARCH = re.compile(
+    r'(?:'
+    r'search\s+(?:the\s+|our\s+|in\s+)?(?:communit(?:y|ies)|viva\s+engage|yammer)\s+(?:for|about|on)\s+'
+    r'|what(?:\'?s|\s+has\s+been|\s+did\s+anyone|\s+has\s+anyone)?\s+(?:posted?|shared|said|discussed|mentioned)\s+(?:about|on|regarding)\s+'
+    r'|has\s+anyone\s+(?:posted|asked|mentioned|discussed|shared|said)\s+(?:about|on)\s+'
+    r')(.+)', re.I
+)
+
 _KW_COMPANY_INFO = re.compile(
     r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
     r'company\s+(info|details|overview|profile)|'
     r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company))\b', re.I
+)
+
+# Company-project knowledge base (summaries / demo transcripts / details from the
+# SharePoint Projects tree). Deliberately DISTINCT from _KW_PMO (which owns project
+# status/tracking) — this targets demos, transcripts, and "what did we deliver/build":
+# overlapping phrasings like "project summary"/"company projects" stay with PMO.
+_KW_COMPANY_PROJECTS = re.compile(
+    r'\b((demo|demonstration|walkthrough)\s+(of|for)\b|'
+    r'what\s+was\s+dem(o|onstrat)|'
+    r'(demo|project)\s+transcript|transcript\s+(of|for)\s+\w+\s+project|'
+    r'project\s+(details|recap|deck|writeup|write-up)|'
+    r'(details|recap)\s+(of|for|on)\s+the\s+\w+\s+project|'
+    r'summar(y|ise|ize)\s+(of\s+)?the\s+\w+\s+project|'
+    r'what\s+(did|have)\s+we\s+(build|built|deliver|delivered)\s+for\b|'
+    r'(client|customer)\s+projects?\b)', re.I
+)
+
+# Zoho People — delegated per-user data
+_KW_ZOHO_TIMESHEET = re.compile(
+    r'\b(my\s+timesheet|timesheet|hours?\s+logged|work\s+hours?|log\s+hours?|'
+    r'did\s+i\s+log|time\s+entries?)\b', re.I
+)
+_KW_ZOHO_ATTENDANCE = re.compile(
+    r'\b(my\s+attendance|attendance\s+(summary|report|this\s+month)|'
+    r'days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark|punch\s+in|punch\s+out)\b', re.I
+)
+_KW_ZOHO_APPRAISAL = re.compile(
+    r'\b(my\s+appraisal|appraisal\s+status|performance\s+review|'
+    r'kpi\s+status|goal\s+setting|rating\s+status|appraisal\s+cycle)\b', re.I
+)
+_KW_ZOHO_TRAINING = re.compile(
+    r'\b(my\s+training(s|s\s+records?)?|training\s+history|courses?\s+completed|'
+    r'learning\s+history|upcoming\s+training|training\s+programs?)\b', re.I
+)
+_KW_ALCHEMY_MY_SKILLS = re.compile(
+    r'\b(my\s+skills?\s+(in\s+alchemy|portal|directory)?|alchemy\s+skills?|'
+    r'skills?\s+in\s+alchemy|what\s+skills?\s+do\s+i\s+have|my\s+skill\s+set)\b', re.I
+)
+_KW_ALCHEMY_ORG = re.compile(
+    r'\b(org\s+(skills?|capabilities)|top\s+skills?\s+in\s+(company|org|team)|'
+    r'skills?\s+(overview|summary|stats)|popular\s+skills?|trending\s+skills?|'
+    r'skills?\s+by\s+interest|alchemy\s+(overview|summary|stats))\b', re.I
 )
 
 
@@ -858,10 +1295,54 @@ def _try_keyword_route(message: str) -> dict | None:
                 "sub_intent": "grievance", "entities": {}}
 
     # HR — people search
-    if _KW_HR_PEOPLE.search(text):
+    if _KW_HR_PEOPLE.search(text) or _KW_HR_PEOPLE_ROLE.search(text):
         return {"domain": "hr", "confidence": 0.9,
                 "reasoning": "Keyword: people/directory search",
                 "sub_intent": "employee_search", "entities": {}}
+
+    # HR — Zoho People delegated: timesheet
+    if _KW_ZOHO_TIMESHEET.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: timesheet query",
+                "sub_intent": "timesheet", "entities": {}}
+
+    # HR — Zoho People delegated: attendance
+    if _KW_ZOHO_ATTENDANCE.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: attendance summary",
+                "sub_intent": "attendance", "entities": {}}
+
+    # HR — Zoho People delegated: appraisal
+    if _KW_ZOHO_APPRAISAL.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: appraisal status",
+                "sub_intent": "appraisal", "entities": {}}
+
+    # HR — Zoho People delegated: training
+    if _KW_ZOHO_TRAINING.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: training records",
+                "sub_intent": "training", "entities": {}}
+
+    # HR — Alchemy skills portal: my skills
+    if _KW_ALCHEMY_MY_SKILLS.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: alchemy my skills",
+                "sub_intent": "alchemy_my_skills", "entities": {}}
+
+    # HR — Alchemy skills portal: org overview
+    if _KW_ALCHEMY_ORG.search(text):
+        return {"domain": "hr", "confidence": 0.92,
+                "reasoning": "Keyword: alchemy org skills overview",
+                "sub_intent": "alchemy_skills_overview", "entities": {}}
+
+    # HR — medical/treatment/surgery coverage (insurance policy), checked BEFORE the
+    # admin reimbursement keyword so "will my surgery be reimbursed" goes to HR, not admin.
+    if _KW_MEDICAL_TERM.search(text) and _KW_REIMB_OR_COVER.search(text):
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: medical/treatment coverage (insurance policy)",
+                "sub_intent": "policy_query",
+                "entities": {"policy_topic": "medical insurance coverage"}}
 
     # Admin — reimbursement / expense
     if _KW_ADMIN_REIMB.search(text):
@@ -899,6 +1380,13 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "admin", "confidence": 0.95,
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
+
+    # Admin — visitor / guest pass (must precede IT install to avoid
+    # "I need to request a visitor pass" → software_install misroute)
+    if _KW_ADMIN_VISITOR.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: visitor/guest pass",
+                "sub_intent": "visitor_pass", "entities": {}}
 
     # Admin — Bookshelf Buddy (specific sub-intents first, then generic discovery)
     if _KW_BOOKSHELF_EXTEND.search(text):
@@ -948,6 +1436,15 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: Teams messages",
                 "sub_intent": "teams_messages", "entities": {}}
 
+    # MS365 — explicit community search (check before generic Yammer feed route)
+    _cs = _KW_MS365_COMMUNITY_SEARCH.search(text)
+    if _cs:
+        topic = _cs.group(1).strip().rstrip("?.! ")
+        if topic:
+            return {"domain": "ms365", "confidence": 0.95,
+                    "reasoning": "Keyword: search Viva Engage communities",
+                    "sub_intent": "community_search", "entities": {"query": topic}}
+
     # MS365 — Yammer / Viva Engage
     if _KW_MS365_YAMMER.search(text):
         return {"domain": "ms365", "confidence": 0.95,
@@ -990,9 +1487,15 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: create IT ticket",
                 "sub_intent": "create_ticket", "entities": {}}
 
+    # MS365 — rooms (must be before IT install to avoid "want to book a room" → software_install)
+    if _KW_MS365_ROOMS.search(text):
+        return {"domain": "ms365", "confidence": 0.95,
+                "reasoning": "Keyword: meeting room / conference room query",
+                "sub_intent": "room_availability", "entities": {}}
+
     # IT — software install (with entity extraction)
-    m = _KW_IT_INSTALL.search(text)
-    if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs)\b', text, re.I):
+    m = _KW_IT_INSTALL.search(text) or _KW_IT_INSTALL_NEED.search(text)
+    if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs|room|meeting|book|visitor|guest|pass)\b', text, re.I):
         sw = m.group(1).strip()
         if sw and 1 < len(sw) < 35:
             return {"domain": "it_support", "confidence": 0.9,
@@ -1000,13 +1503,19 @@ def _try_keyword_route(message: str) -> dict | None:
                     "sub_intent": "software_install",
                     "entities": {"software_name": sw}}
 
+    # PMO — Udemy / training license request (must precede the generic PMO project route)
+    if _KW_PMO_UDEMY.search(text):
+        return {"domain": "pmo", "confidence": 0.95,
+                "reasoning": "Keyword: Udemy / training license request",
+                "sub_intent": "udemy_license", "entities": {}}
+
     # PMO — projects / training licenses
     if _KW_PMO.search(text):
         return {"domain": "pmo", "confidence": 0.95,
                 "reasoning": "Keyword: PMO/project query",
                 "sub_intent": "list_projects", "entities": {}}
 
-    # Manager — team / room
+    # Manager — team structure
     if _KW_MANAGER.search(text):
         return {"domain": "functional_manager", "confidence": 0.95,
                 "reasoning": "Keyword: team/manager query",
@@ -1030,14 +1539,54 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: company info query",
                 "sub_intent": "company_info", "entities": {}}
 
+    # Company projects (summaries / demo transcripts / details) — general agent
+    if _KW_COMPANY_PROJECTS.search(text):
+        return {"domain": "general", "confidence": 0.9,
+                "reasoning": "Keyword: company project query",
+                "sub_intent": "company_projects", "entities": {}}
+
     return None  # Ambiguous — fall through to LLM router
+
+
+def _extract_entities(message: str, domain: str, sub_intent: str) -> dict:
+    """Extract entities for the few sub_intents that carry them, reusing the existing keyword
+    regexes. The semantic router supplies domain + sub_intent; only install / leave / community
+    search / desk-key need structured entities, and each already has a deterministic extractor.
+    Every other intent returns {} — the domain agent re-parses from the raw message, exactly as
+    the keyword router's many `entities: {}` branches always did. Fail-soft: never raises."""
+    text = (message or "").strip()
+    try:
+        if sub_intent == "software_install":
+            m = _KW_IT_INSTALL.search(text) or _KW_IT_INSTALL_NEED.search(text)
+            if m:
+                sw = m.group(1).strip()
+                if sw and 1 < len(sw) < 35:
+                    return {"software_name": sw}
+            return {}
+        if sub_intent in ("submit_leave", "zoho_leave_fastpath"):
+            return _try_extract_leave_params(text) or {}
+        if sub_intent == "community_search":
+            cs = _KW_MS365_COMMUNITY_SEARCH.search(text)
+            if cs:
+                topic = cs.group(1).strip().rstrip("?.! ")
+                if topic:
+                    return {"query": topic}
+            return {}
+        if sub_intent == "desk_key_request":
+            d = re.search(r'\b([A-Za-z]{1,3}[- ]?\d{1,3})\b', text)
+            if d:
+                return {"desk_number": d.group(1)}
+            return {}
+    except Exception:  # noqa: BLE001 — entity extraction is best-effort
+        return {}
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. GRAPH NODES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_STICKY_DOMAINS = {"hr", "health", "admin", "it_support", "pmo", "functional_manager", "ms365"}
+_STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager", "ms365"}
 
 
 def _last_ai_message(messages: list) -> str:
@@ -1095,11 +1644,24 @@ async def intent_router(state: AgentState):
             "entities": {},
         }
 
+    # Keyword fast-path is computed up-front so a clear, complete new intent can
+    # override stickiness. Terse follow-up answers ("B-07", "tomorrow 3pm") don't
+    # match any keyword route, so they still fall through to the sticky logic below.
+    keyword_result = _try_keyword_route(last_human)
+
     # Sticky domain: keep the same domain for follow-up messages that reference prior context.
     # Triggers on: (a) short reply to an agent question, OR (b) short message with context-reference
     # words after a substantive AI answer (e.g. "is there any timeline for applying it").
     existing_domain = state.get("domain")
-    if existing_domain in _STICKY_DOMAINS:
+    # A confident keyword match for a DIFFERENT domain is a genuine new request
+    # (e.g. "I need to request a visitor pass" while stuck in it_support) — never
+    # let stickiness swallow it.
+    keyword_overrides_sticky = bool(
+        keyword_result
+        and keyword_result["domain"] != existing_domain
+        and keyword_result.get("confidence", 0) >= 0.9
+    )
+    if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky:
         last_ai = _last_ai_message(state.get("messages", []))
         msg_len = len(last_human.strip())
         _CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "the", "about", "any"}
@@ -1138,8 +1700,45 @@ async def intent_router(state: AgentState):
             "entities": leave_params,
         }
 
-    # Keyword fast-path: classify via regex — 0 LLM calls, <1ms
-    keyword_result = _try_keyword_route(last_human)
+    # Fast Intent Dictionary (layer 4.5): O(1) exact normalised match against the curated/learned
+    # phrasing map. Microseconds, zero ml01 load, 100% precise — handles the high-frequency head
+    # and every seeded exact phrasing before we spend an embedding call. Lookup cost is flat no
+    # matter how many intents exist, so this scales cleanly as the intent set grows.
+    exact = SemanticRouterService.exact_match(last_human)
+    if exact is not None:
+        entities = _extract_entities(last_human, exact.domain, exact.sub_intent)
+        print(f"[Router] Exact dictionary -> {exact.domain} ({exact.sub_intent})")
+        return {
+            "domain": exact.domain,
+            "route_confidence": 1.0,
+            "route_reasoning": exact.reasoning,
+            "sub_intent": exact.sub_intent,
+            "entities": entities,
+        }
+
+    # Semantic intent router (layer 5): embed the message and match it against the closed set of
+    # labeled seed utterances (pgvector cosine k-NN). A strong, top-k-agreeing match routes
+    # directly with 0 LLM calls and — because the output space is the stored labels — cannot
+    # hallucinate a domain the way the generative LLM router can. Generalises to novel paraphrases
+    # the exact dictionary misses. Permanent replacement for the brittle keyword-regex bulk.
+    decision = SemanticRouterService.classify(last_human)
+    if decision.tier == "high":
+        entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
+        print(
+            f"[Router] Semantic fast-path -> {decision.domain} "
+            f"({decision.sub_intent}) sim={decision.similarity}"
+        )
+        return {
+            "domain": decision.domain,
+            "route_confidence": decision.similarity,
+            "route_reasoning": decision.reasoning,
+            "sub_intent": decision.sub_intent,
+            "entities": entities,
+        }
+
+    # Keyword fast-path: regex safety net beneath the semantic high tier. 0 LLM calls.
+    # (Computed up-front so it could override stickiness; reused here. Phased out once the
+    # semantic router's accuracy is confirmed against the eval set on live traffic.)
     if keyword_result:
         print(
             f"[Router] Keyword fast-path -> {keyword_result['domain']} "
@@ -1153,11 +1752,16 @@ async def intent_router(state: AgentState):
             "entities": keyword_result.get("entities", {}),
         }
 
+    # Ambiguous semantic match → hand the LLM router the semantic shortlist as a soft hint,
+    # constraining the 8-way choice to 2-3 and sharply cutting hallucination. Low/unavailable
+    # → plain LLM router (the original behaviour).
+    candidate_domains = decision.candidate_domains if decision.tier == "ambiguous" else None
     try:
-        result = await classify_intent_async(last_human)
+        result = await classify_intent_async(last_human, candidate_domains=candidate_domains)
         print(
             f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} "
             f"| Sub-intent: {result.get('sub_intent', '?')} | Entities: {result.get('entities', {})}"
+            f" | semantic_tier={decision.tier}"
         )
     except APIConnectionError:
         return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
@@ -1175,24 +1779,32 @@ async def intent_router(state: AgentState):
 _feedback_count_cache: dict = {"count": 0, "ts": 0.0}
 _FEEDBACK_COUNT_TTL = 300.0  # re-check every 5 minutes
 
+# Short-lived cache: avoid re-embedding the same query within 2 minutes
+_feedback_result_cache: dict[str, tuple[str, float]] = {}
+_FEEDBACK_RESULT_TTL = 120.0
 
-def feedback_lookup(state: AgentState) -> dict:
+
+async def feedback_lookup(state: AgentState) -> dict:
     """Fetch relevant past feedback for the current query and store as prompt context.
 
-    Optimization: skips the expensive Ollama embedding call when fewer than 3
-    feedback entries exist in the database (checked with a 5-minute cache).
+    Runs the blocking Ollama embedding + DB query off the event loop via
+    asyncio.to_thread so it never stalls the async pipeline.
     """
     import time as _t
+    import asyncio
     now = _t.time()
     if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
         try:
             from app.database import SessionLocal as _SL
             from app.models import ChatFeedback as _CF
-            _db = _SL()
-            try:
-                _feedback_count_cache.update({"count": _db.query(_CF).count(), "ts": now})
-            finally:
-                _db.close()
+            def _count():
+                _db = _SL()
+                try:
+                    return _db.query(_CF).count()
+                finally:
+                    _db.close()
+            count = await asyncio.to_thread(_count)
+            _feedback_count_cache.update({"count": count, "ts": now})
         except Exception:
             _feedback_count_cache.update({"count": 0, "ts": now})
 
@@ -1204,12 +1816,33 @@ def feedback_lookup(state: AgentState) -> dict:
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
         "",
     )
+    if not last_human:
+        return {}
+
+    # Cache key: domain + first 120 chars of query
+    cache_key = f"{domain}:{last_human[:120]}"
+    cached = _feedback_result_cache.get(cache_key)
+    if cached:
+        ctx, ts = cached
+        if now - ts < _FEEDBACK_RESULT_TTL:
+            return {"feedback_context": ctx} if ctx else {}
+
     try:
-        relevant = FeedbackService.get_relevant_feedback(domain, last_human, limit=3)
+        relevant = await asyncio.to_thread(
+            FeedbackService.get_relevant_feedback, domain, last_human, 3
+        )
         ctx = FeedbackService.build_feedback_prompt(relevant)
     except Exception:
         ctx = ""
-    return {"feedback_context": ctx}
+
+    _feedback_result_cache[cache_key] = (ctx, now)
+    # Prevent unbounded growth
+    if len(_feedback_result_cache) > 500:
+        oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
+        for k in oldest[:100]:
+            _feedback_result_cache.pop(k, None)
+
+    return {"feedback_context": ctx} if ctx else {}
 
 
 def hr_agent(state: AgentState):
@@ -1218,46 +1851,29 @@ def hr_agent(state: AgentState):
     messages = state["messages"]
     if not any(isinstance(m, SystemMessage) for m in messages):
         role_instruction = _get_role_instruction(state)
+        _loc = state.get("user_location")
+        _loc_line = f" Office: {_loc}." if _loc else ""
         base = PromptService.get_system_prompt(
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
-            f"Employee email: {user_email}. Never ask who the user is.\n"
-            f"Always respond in English regardless of the language of the user's message.\n"
+            f"Employee email: {user_email}.{_loc_line} Never ask who the user is.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
-            f"- Leave balance -> get_leave_balance(email='{user_email}')\n"
-            f"- Apply leave -> apply_leave with inferred leave_type (default Casual)\n"
-            f"- HR policy question (leave, attendance, WFH, holidays, promotion, performance, payroll) "
-            f"-> search_hr_policies. Do NOT use search_health_benefits for these.\n"
-            f"- ANY health / insurance / medical / wellness topic -> ALWAYS use search_health_benefits "
-            f"(prefer it over search_hr_policies). This covers: insurance coverage/limits/inclusions/"
-            f"exclusions, family/dependent/maternity/dental/vision/critical-illness cover, doctor & "
-            f"specialist consultations, health checkups, telemedicine, wellness & mental-health programs, "
-            f"Practo & appointment booking, network hospitals, cashless hospitalization, and medical-claim "
-            f"eligibility/coverage. Answer strictly from the result. Never give medical advice.\n"
-            f"- Healthcare REIMBURSEMENT questions (how to claim/submit, required documents, timelines, "
-            f"rejected claim - for medical/hospitalization/surgery/maternity) -> in the SAME step call BOTH "
-            f"search_health_benefits (coverage & eligibility) AND get_reimbursement_process (documents, "
-            f"approval workflow, submission steps, timelines). You may emit multiple tool calls at once. "
-            f"The two results are then merged into one comprehensive answer.\n"
-            f"- Submit a reimbursement WITH a specific amount -> file_reimbursement(email='{user_email}', "
-            f"type, amount, reason) (Admin A2A). Reimbursement status -> "
-            f"check_reimbursement_status(email='{user_email}').\n"
-            f"- Employee search -> search_employee_directory\n"
-            f"- Org chart / team -> get_org_chart or get_team_roster\n"
-            f"- Team absence -> get_team_absence_for(manager_email='{user_email}')\n"
-            f"- Document -> generate_hr_document(target_email='{user_email}')\n"
-            f"- Grievance -> collect category + description + ask if anonymous, THEN submit_grievance_for\n"
-            f"- Onboarding -> trigger_onboarding_checklist\n"
-            f"- Offboarding -> trigger_offboarding_checklist\n"
-            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) -> "
+            f"- Leave balance → get_leave_balance(email='{user_email}')\n"
+            f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
+            f"- Policy question → search_hr_policies, answer from result\n"
+            f"- Who is X / single person's profile → get_employee_profile(name_or_email)\n"
+            f"- Employee search (by skill/function/multiple people) → search_employee_directory\n"
+            f"- Org chart / team → get_org_chart or get_team_roster\n"
+            f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
+            f"- Document → generate_hr_document(target_email='{user_email}')\n"
+            f"- Grievance → collect category + description + ask if anonymous, THEN submit_grievance_for\n"
+            f"- Onboarding → trigger_onboarding_checklist\n"
+            f"- Offboarding → trigger_offboarding_checklist\n"
+            f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
-            f"Never answer from training knowledge - use tools only.\n"
-            f"GROUNDING: Answer ONLY with figures, dates, limits, and facts that appear verbatim in the "
-            f"tool results. If the retrieved policy text does not actually contain the specific detail asked "
-            f"for, say 'I couldn't find that detail in the policy documents - please check with HR' and STOP. "
-            f"NEVER invent or estimate numbers, days, amounts, or timelines.\n",
+            f"Never answer from training knowledge — use tools only.\n",
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = state.get("feedback_context") or ""
@@ -1272,7 +1888,7 @@ def hr_agent(state: AgentState):
         pass  # non-fatal — fall through to normal agent
 
     try:
-        response = hr_llm.invoke(messages)
+        response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, the HR system is currently unreachable.")]}
 
@@ -1280,12 +1896,12 @@ def hr_agent(state: AgentState):
 
 async def deeplink_agent_node(state: AgentState):
     """Deep-Link Agent — automates Zoho leave, PowerApps complaints, and Payroll via Playwright."""
-    # Fast-path: leave balance — call tool directly, format response, 0 LLM calls
+    # Fast-path: leave balance — call service directly, format response, 0 LLM calls
     if state.get("sub_intent") == "leave_balance":
         try:
-            from app.agents.deeplink_agent import get_zoho_leave_balance
-            result_json = get_zoho_leave_balance.invoke({})
-            result_data = json.loads(result_json)
+            from app.services.leave_balance_sync import get_or_refresh
+            user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+            result_data = get_or_refresh(user_email)
             if result_data.get("success"):
                 balances = result_data.get("balances") or []
                 if balances:
@@ -1300,14 +1916,10 @@ async def deeplink_agent_node(state: AgentState):
                         else:
                             lines.append(f"{leave_type} — {balance} days remaining")
                     return {"messages": [AIMessage(content="Here is your current leave balance:\n\n" + "\n".join(lines))]}
-                raw = result_data.get("raw_text", "")
-                if raw:
-                    # Fall through to LLM to parse raw_text
-                    pass
                 else:
                     return {"messages": [AIMessage(content="Your leave balance data was retrieved but appears empty. Please try again or check Zoho People directly.")]}
-            elif result_data.get("action") == "run_setup":
-                return {"messages": [AIMessage(content="Your Zoho session isn't set up yet. Please type 'setup zoho session' to log in once via SSO, then ask again.")]}
+            elif result_data.get("error") == "not_connected":
+                return {"messages": [AIMessage(content="Please connect your Zoho account first. Go to **Settings > Connected Accounts** and click **Connect Zoho**.")]}
             elif result_data.get("error"):
                 return {"messages": [AIMessage(content=f"I couldn't fetch your leave balance: {result_data['error']}. Please try again.")]}
         except Exception as _lb_err:
@@ -1319,7 +1931,8 @@ async def deeplink_agent_node(state: AgentState):
         if entities.get("start_date") and entities.get("end_date"):
             try:
                 from app.agents.deeplink_agent import submit_zoho_leave
-                result_json = submit_zoho_leave.invoke(entities)
+                entities_with_email = {**entities, "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL}
+                result_json = submit_zoho_leave.invoke(entities_with_email)
                 result_data = json.loads(result_json)
                 if result_data.get("success"):
                     return {"messages": [AIMessage(content=result_data["message"])]}
@@ -1345,7 +1958,7 @@ async def pmo_agent_node(state: AgentState):
     result = await pmo_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": state.get("feedback_context") or "",
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
         "sub_intent": state.get("sub_intent") or "",
         "entities": state.get("entities") or {},
         "user_role": state.get("user_role") or "employee",
@@ -1361,7 +1974,7 @@ async def admin_agent_node(state: AgentState):
     """Admin Agent - handles reimbursement, parking, etc."""
     sub_intent = state.get("sub_intent") or ""
     entities = state.get("entities") or {}
-    feedback_ctx = state.get("feedback_context") or ""
+    feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
 
     # Execute-first for policy queries: search embeddings/chunks at Python level,
     # avoiding an unreliable LLM tool-calling round-trip.
@@ -1448,7 +2061,7 @@ async def it_agent_node(state: AgentState):
     result = await it_agent.ainvoke({
         "messages": state["messages"],
         "user_email": user_email,
-        "feedback_context": (state.get("feedback_context") or "") + entity_hint,
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or "") + entity_hint,
         "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
@@ -1460,7 +2073,7 @@ async def manager_agent_node(state: AgentState):
     result = await manager_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": state.get("feedback_context") or "",
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
         "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
@@ -1513,7 +2126,21 @@ async def ms365_agent_node(state: AgentState):
         if result.get("success"):
             pre_fetched = f"[PRE-FETCHED YAMMER FEED]\n{json.dumps(result)}\n[END]"
 
-    feedback_ctx = state.get("feedback_context") or ""
+    elif yammer_token and sub_intent == "community_search":
+        from app.services import yammer_service
+        q = (state.get("entities") or {}).get("query") or next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        )
+        result = await yammer_service.search_with_replies(yammer_token, q)
+        if result.get("success"):
+            pre_fetched = (
+                f"[COMMUNITY SEARCH RESULTS for '{q}']\n{json.dumps(result)}\n[END]\n"
+                f"Each thread has the original post AND its replies/comments — the answer is often "
+                f"in a reply, not the question. Synthesize a direct answer from the whole thread and "
+                f"cite the author + web_url. If nothing relevant, say so plainly."
+            )
+
+    feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
     if pre_fetched:
         feedback_ctx = pre_fetched + "\n\n" + feedback_ctx
 
@@ -1548,9 +2175,8 @@ async def ms365_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
-general_tools = [get_announcements, search_hr_policies]
+general_tools = [get_announcements, search_hr_policies, search_company_projects]
 general_tool_node = ToolNode(general_tools)
-general_llm = general_llm_base.bind_tools(general_tools)
 
 
 def _greeting_response(state: AgentState) -> str:
@@ -1579,8 +2205,9 @@ def general_agent(state: AgentState):
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
-        "You handle company announcements and general policy questions. "
-        "Tools: get_announcements (news/updates), search_hr_policies (policy lookups). "
+        "You handle company announcements, general policy questions, and company-project questions. "
+        "Tools: get_announcements (news/updates), search_hr_policies (policy lookups), "
+        "search_company_projects (what projects the company has done, a project's summary/details, demos). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
         "Do not offer further assistance unless asked.",
     )
@@ -1588,7 +2215,7 @@ def general_agent(state: AgentState):
     feedback_ctx = state.get("feedback_context") or ""
     messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + state["messages"]
     try:
-        response = general_llm.invoke(messages)
+        response = llm_controls.get_llm("general", default_timeout=20).bind_tools(general_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
     return {"messages": [response]}
@@ -1614,91 +2241,96 @@ def placeholder_agent(state: AgentState):
     return {"messages": [AIMessage(content=get_placeholder_response(domain))]}
 
 
+# Read-only directory / data tools that already return display-ready Markdown.
+# Their output is deterministic structured data — running it through the
+# summarizer LLM only adds latency and paraphrase drift (e.g. turning a clean
+# profile into a chatty letter signed "[Your Name]"), so we pass it through
+# verbatim and skip the LLM entirely.
+_PASSTHROUGH_TOOLS = {
+    "search_employee_directory", "get_employee_profile", "get_org_chart",
+    "get_team_roster", "find_skills_expert", "get_department_headcount",
+    "search_people_directory", "get_leave_balance", "get_announcements",
+    "get_team_absence", "get_team_absence_for",
+    "get_my_timesheet", "get_my_attendance", "get_my_appraisal_status",
+    "get_my_training_records", "get_my_expense_reports", "get_my_reimbursement_status",
+    "get_open_positions", "get_candidate_status",
+    "get_my_alchemy_skills", "get_alchemy_skills_overview",
+}
+
+
+# Tool results that are policy/insurance Q&A — answered with the strong model for grounding.
+_POLICY_SEARCH_TOOLS = {"search_hr_policies"}
+
+
 def summarizer(state: AgentState):
     """Converts tool results to natural language, preserving download tags.
 
-    Aggregates ALL trailing ToolMessages (since the last tool-calling AIMessage), so a
-    multi-tool answer — e.g. healthcare reimbursement that merges search_health_benefits
-    (coverage) + get_reimbursement_process (process) — keeps every result, not just the last.
-    """
-    trailing_tools = []
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, ToolMessage):
-            trailing_tools.append(msg)
-        elif isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+    For deterministic directory/data tools (see _PASSTHROUGH_TOOLS) the result
+    is already formatted, so it is returned as-is with no LLM call."""
+    tool_message = state["messages"][-1]
+    tool_output = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
+
+    # Zero-LLM fast path for display-ready structured results.
+    tool_name = getattr(tool_message, "name", "")
+    if tool_name in _PASSTHROUGH_TOOLS:
+        return {"messages": [AIMessage(content=str(tool_output).strip())]}
+
+    # The summarizer must ANSWER THE QUESTION, not blindly paraphrase the tool output.
+    # Without the question, a weak model paraphrases whatever text it's handed — e.g. turning
+    # policy claim-process language into a fabricated "your claim is approved" letter. Pass the
+    # employee's actual question and pin the answer strictly to the excerpts.
+    user_question = ""
+    for _m in reversed(state["messages"]):
+        if isinstance(_m, HumanMessage) and isinstance(_m.content, str) and _m.content.strip():
+            user_question = _m.content.strip()
             break
-    trailing_tools.reverse()
-    if trailing_tools:
-        # Cap EACH result so the combined prompt stays small enough for the local model
-        # to summarize within the timeout (a single uncapped policy dump is ~7.5k chars).
-        per_tool_cap = max(800, _SUMMARY_INPUT_CAP // max(1, len(trailing_tools)))
-        parts = []
-        for m in trailing_tools:
-            c = m.content if hasattr(m, "content") else str(m)
-            parts.append(c[:per_tool_cap])
-        tool_output = "\n\n---\n\n".join(parts)
-    else:
-        tool_message = state["messages"][-1]
-        c = tool_message.content if hasattr(tool_message, "content") else str(tool_message)
-        tool_output = c[:_SUMMARY_INPUT_CAP]
 
-    merge_note = (
-        "5. Multiple results are shown (separated by ---). Merge them into ONE coherent answer."
-        if len(trailing_tools) > 1 else ""
-    )
     # Use HumanMessage as some models (like llama3.2) return empty for SystemMessage-only prompts
-    def _summarize(text: str) -> str:
-        p = [HumanMessage(content=(
-            "You are an HR Assistant. Summarize this tool result for the employee.\n\n"
-            f"TOOL RESULT:\n{text}\n\n"
-            "INSTRUCTIONS:\n"
-            "1. Provide a concise, friendly summary of the result.\n"
-            "2. IMPORTANT: If and ONLY IF the tool result contains a tag like [DOWNLOAD_PDF:url:title], include it exactly at the end.\n"
-            "3. If no such tag is present in the TOOL RESULT above, DO NOT make one up or add any links.\n"
-            "4. Do not include any JSON, curly braces, or technical metadata in your response.\n"
-            f"{merge_note}\n"
-        ))]
-        return summary_llm.invoke(p).content.strip()
+    prompt = [
+        HumanMessage(content=f"""You are an HR assistant. Answer the employee's question using ONLY the policy excerpts below.
 
-    # A [DOWNLOAD_PDF:...] tag is legitimate ONLY if it appeared verbatim in the tool
-    # output (a tool actually generated a PDF). Strip anything the summarizer invents —
-    # e.g. echoing the "[DOWNLOAD_PDF:url:title]" example — so plain policy answers don't
-    # sprout a bogus "Download Report" button.
-    _legit_tags = set(DOWNLOAD_TAG_PATTERN.findall(tool_output))
+EMPLOYEE QUESTION:
+{user_question or "(answer based on the excerpts below)"}
 
-    def _clean(text: str) -> str:
-        return DOWNLOAD_TAG_PATTERN.sub(
-            lambda m: m.group(0) if m.group(0) in _legit_tags else "", text
-        ).strip()
+POLICY EXCERPTS:
+{tool_output}
 
-    # If the search genuinely found nothing relevant, say so cleanly — never dump raw
-    # text or fabricate an answer.
-    _NOT_AVAILABLE = (
-        "I couldn't find this information in the company's policy documents. "
-        "Please contact the HR team for help."
-    )
-    if any(mk in tool_output for mk in (
-        "No policies found", "No specific policy found",
-        "No health document found", "no document was found",
-    )):
-        return {"messages": [AIMessage(content=_NOT_AVAILABLE)]}
-
+RULES:
+1. Answer the question directly and factually. Lead with the actual answer (e.g. yes / no / the figure), then a one-line reason drawn from the excerpts.
+2. GROUNDING: use ONLY facts present in the excerpts. If the excerpts do not answer the question, say you couldn't find it in the policy and suggest contacting HR — never guess or fill gaps.
+2a. EXCLUSIONS OVERRIDE COVERAGE: before answering any "is X covered / will X be reimbursed" question, scan ALL excerpts for an exclusions / general-exclusions / "not covered" list. If the thing asked about (or a clear synonym, e.g. cosmetic = plastic surgery) appears in such a list, the answer is NO — it is NOT covered/reimbursed — even if another excerpt (a claim form or general benefit list) seems to suggest it could be claimed. A generic claim-process or coverage excerpt does NOT override a specific exclusion. Cite the exclusion (e.g. the exclusion code) when present.
+3. NEVER write a letter, email, approval, or confirmation. NEVER claim the employee has submitted documents, that a claim was received/verified/processed/approved, or invent any name, amount, account, or date. You are answering a question, not processing a claim. Do not sign off or use "Dear Employee" / "Best regards".
+4. Start with the answer itself. Do not begin with "Here's a summary", and do not refer to "tool", "result(s)", or "excerpts". No JSON, curly braces, or metadata.
+5. Ignore and do not repeat any bracketed markers like [POLICY_IMG:...]. If and ONLY IF the excerpts contain a [DOWNLOAD_PDF:url:title] tag, include it exactly at the end; otherwise add no links.
+""")
+    ]
     try:
-        content = _clean(_summarize(tool_output))
+        # Policy/insurance Q&A is accuracy-critical and grounding-sensitive — answer it with the
+        # strong agent model, not the weak summarizer (which paraphrases and drifts). Other tool
+        # results stay on the cheap summarizer tier to spare the GPU.
+        _tier = "agent" if tool_name in _POLICY_SEARCH_TOOLS else "summarizer"
+        response = llm_controls.get_llm(_tier, default_timeout=30).invoke(prompt)
+        content = response.content.strip()
+
+        # Belt-and-braces: strip a leaked meta-preamble the weak summarizer model sometimes
+        # parrots from its instructions (e.g. "Here's a summary of the tool results for the
+        # employee:"). Only removes a leading meta sentence, never real answer content.
+        content = _SUMMARY_PREAMBLE_RE.sub("", content, count=1).strip()
+
+        # A download tag in the summary is only legitimate if the underlying tool
+        # result actually produced one. Otherwise the model has parroted the
+        # example tag from the prompt (e.g. "[DOWNLOAD_PDF:url:title]"), which
+        # leaks a bogus "Download title" link into the UI. Strip any invented tag.
+        if not DOWNLOAD_TAG_PATTERN.search(tool_output):
+            content = DOWNLOAD_TAG_PATTERN.sub("", content).strip()
+
+        # Fallback if content is empty after cleanup
         if not content:
-            content = _clean(tool_output)  # have data; summarizer returned empty
-        return {"messages": [AIMessage(content=content or _NOT_AVAILABLE)]}
-    except Exception:
-        # Most common cause is a timeout on a large RAG dump — retry once on a much
-        # smaller slice, which the local model can handle quickly.
-        try:
-            content = _clean(_summarize(tool_output[:1200]))
-            if content:
-                return {"messages": [AIMessage(content=content)]}
-        except Exception:
-            pass
-        # Final fallback: present the most-relevant slice cleanly (tags stripped).
-        return {"messages": [AIMessage(content=_clean(tool_output[:1500]) or _NOT_AVAILABLE)]}
+            content = f"I've retrieved the information for you: {tool_output}"
+
+        return {"messages": [AIMessage(content=content)]}
+    except Exception as e:
+        return {"messages": [AIMessage(content=f"The operation was successful, but I had trouble summarizing the result: {tool_output}")]}
 
 
 
@@ -1706,8 +2338,31 @@ def summarizer(state: AgentState):
 # 5. ROUTING LOGIC
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Friendly names for the per-domain disable message.
+_DOMAIN_LABELS = {
+    "hr": "HR", "admin": "Admin Services", "it_support": "IT Support",
+    "pmo": "PMO", "ms365": "Microsoft 365", "functional_manager": "Manager",
+}
+
+
+def disabled_agent(state: AgentState):
+    """Terminal node for domains IT has switched off — emits a friendly notice
+    instead of running the (disabled) domain agent. No LLM call."""
+    domain = state.get("domain", "")
+    label = _DOMAIN_LABELS.get(domain, "This")
+    msg = (
+        f"⚠️ The {label} assistant is temporarily unavailable — it's been paused by IT, "
+        f"likely for maintenance or to manage system load. Please try again shortly, or "
+        f"reach out to the IT helpdesk if it's urgent."
+    )
+    return {"messages": [AIMessage(content=msg)]}
+
+
 def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
+    # IT kill-switch for individual domains — short-circuit before the agent runs.
+    if domain in llm_controls.disabled_domains():
+        return "disabled_agent"
     status = get_domain_status(domain)
     if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
@@ -1715,9 +2370,6 @@ def route_to_agent(state: AgentState):
     if domain == "it_support": return "it_agent"
     if domain == "functional_manager": return "manager_agent"
     if domain == "ms365": return "ms365_agent"
-    # Health questions are handled by the HR agent's search_health_benefits tool
-    # (the Health Tool lives inside the HR domain — no separate health agent).
-    if domain == "health": return "hr_agent"
     if domain == "dummy_test": return "dummy_test_agent"
     if status == "placeholder": return "placeholder_agent"
     if domain == "hr": return "hr_agent"
@@ -1765,6 +2417,7 @@ workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
 workflow.add_node("placeholder_agent", placeholder_agent)
+workflow.add_node("disabled_agent", disabled_agent)
 workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
 
@@ -1787,5 +2440,6 @@ workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("ms365_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
+workflow.add_edge("disabled_agent", END)
 
 app_agent = workflow.compile(checkpointer=checkpointer)

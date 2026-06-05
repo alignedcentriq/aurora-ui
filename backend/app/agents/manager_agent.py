@@ -33,13 +33,8 @@ class ManagerState(TypedDict):
 tools = [get_my_team, search_people_directory]
 tool_node = ToolNode(tools)
 
-_manager_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.FAST_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=30,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 def manager_assistant(state: ManagerState):
@@ -47,18 +42,17 @@ def manager_assistant(state: ManagerState):
     default_prompt = (
         f"You are the Manager Assistant for Aligned Automation.\n"
         f"Manager email: {user_email}. Never ask who the user is.\n"
-        f"Always respond in English regardless of the language of the user's message.\n"
         f"Leave approval is handled via email links — there is no leave approval action in this chat.\n"
         f"For HR policy questions, tell the manager to ask Centriq in the HR context.\n"
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
     guardrail = PromptService.get_guardrail("functional_manager")
     feedback_ctx = state.get("feedback_context") or ""
-    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
-    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
+    system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_manager_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("router", default_timeout=30).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: ManagerState):

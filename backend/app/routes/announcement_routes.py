@@ -36,16 +36,10 @@ def suggest_announcement_body(
     _: CurrentUser = Depends(require_domain_manager),
 ):
     """Use the LLM to draft an announcement body from the given title and category."""
-    from langchain_openai import ChatOpenAI
-    from app.config import settings
+    from app.services import llm_controls_service as llm_controls
 
-    model = ChatOpenAI(
-        base_url=settings.ROUTER_BASE_URL,
-        api_key=settings.ROUTER_API_KEY,
-        model=settings.ROUTER_MODEL_NAME,
-        temperature=0.7,
-        timeout=60,
-    )
+    # General tier (creative, temperature 0.7) from the live IT-tunable params.
+    model = llm_controls.get_llm("general", default_timeout=60)
     prompt = (
         f"Write a professional company announcement for the following:\n"
         f"Title: {req.title}\nCategory: {req.category}\n\n"

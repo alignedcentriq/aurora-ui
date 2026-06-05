@@ -13,7 +13,6 @@ All policy data lives in the DB — no runtime dependency on the PDF folder.
 
 import os
 import re
-import time
 import datetime
 from difflib import get_close_matches
 from pathlib import Path
@@ -26,6 +25,12 @@ from app.models import Policy
 POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-2026"
 CHUNK_SIZE = settings.POLICY_CHUNK_SIZE
 CHUNK_OVERLAP = settings.POLICY_CHUNK_OVERLAP
+
+# Company project content (summaries, demo transcripts, details) is stored in the
+# same Policy/PolicyChunk tables but tagged with this category, so it stays isolated
+# from HR/IT/Admin policy answers: search_policies excludes it, search_projects
+# includes only it. See sharepoint_project_sync.py.
+PROJECT_CATEGORY = "Project Showcase"
 
 # ── Category mapping from filename ───────────────────────────────────────────
 CATEGORY_MAP = {
@@ -108,67 +113,21 @@ _QUERY_SYNONYMS: dict[str, str] = {
     "referral": "employee referral recruitment bonus",
     "relocation": "relocation transfer allowance",
     "sabbatical": "sabbatical long leave career break",
-    # ── Health insurance / GHI / mediclaim / claims ──────────────────────────
-    "tat": "turnaround time claim settlement processing time",
-    "ghi": "group health insurance mediclaim floater",
-    "gpa": "group personal accident insurance",
-    "sum insured": "sum insured coverage amount floater",
-    "cashless": "cashless hospitalization network hospital pre-authorization",
-    "opd": "outpatient department consultation",
-    "ipd": "inpatient hospitalization",
-    "ped": "pre-existing disease waiting period",
-    "copay": "co-payment cost sharing",
-    "co-pay": "co-payment cost sharing",
-    "day care": "day care procedure surgery",
-    "daycare": "day care procedure surgery",
-    "room rent": "room rent limit hospitalization",
-    "network hospital": "network hospital cashless empanelled",
-    "ncb": "cumulative bonus no claim bonus",
 }
 
 
-# ── Auto-learned acronyms (mined from each doc at ingestion time) ─────────────
-_ACRONYM_RE = re.compile(r'([A-Za-z][A-Za-z0-9&/.\- ]{2,40}?)\s*\(([A-Z][A-Z0-9]{1,5})\)')
-_LEARNED_SYN_CACHE = {"data": {}, "ts": 0.0}
-_LEARNED_TTL = 300  # seconds; reset to 0 on ingestion so new terms apply immediately
-
-
-def _extract_acronyms(text: str) -> dict:
-    """Mine 'Full Phrase (ACRONYM)' patterns from doc text -> {acronym_lower: phrase_lower}.
-    Policy docs define acronyms inline (e.g. 'Turn Around Time (TAT)'), so each ingested doc
-    teaches the system its own vocabulary — no manual synonym edits needed.
-
-    A pair is kept ONLY when the acronym is the initialism of the phrase's trailing words.
-    This filters false matches ('(TAT)' after unrelated text) and trims the phrase to exactly
-    the defining words — e.g. 'turn around time', not '...and reduced errors. time'."""
-    found = {}
-    for phrase, acro in _ACRONYM_RE.findall(text or ""):
-        acro = acro.strip().lower()
-        words = [w for w in re.split(r'[\s.&/\-]+', phrase.strip().lower()) if w]
-        if len(acro) < 2 or len(words) < len(acro):
-            continue
-        tail = words[-len(acro):]
-        if "".join(w[0] for w in tail) == acro:
-            found[acro] = " ".join(tail)
-    return found
-
-
-def _get_learned_synonyms() -> dict:
-    """Acronym->expansion pairs auto-learned from ingested docs (cached ~5 min; no per-query DB hit)."""
-    now = time.time()
-    if now - _LEARNED_SYN_CACHE["ts"] > _LEARNED_TTL:
-        from app.models import PolicySynonym
-        db = SessionLocal()
-        try:
-            _LEARNED_SYN_CACHE["data"] = {
-                t: e for t, e in db.query(PolicySynonym.term, PolicySynonym.expansion).all()
-            }
-            _LEARNED_SYN_CACHE["ts"] = now
-        except Exception:
-            pass
-        finally:
-            db.close()
-    return _LEARNED_SYN_CACHE["data"]
+# Common English words that must never be fuzzy-matched to an acronym.
+# (e.g. "any"/"can"/"van" share two chars with "uan" → 0.67 similarity.)
+_FUZZY_STOPWORDS: frozenset[str] = frozenset({
+    "any", "can", "man", "van", "ban", "ran", "tan", "fan", "pan", "san",
+    "the", "for", "you", "are", "was", "but", "not", "all", "out", "our",
+    "use", "new", "has", "had", "his", "her", "its", "who", "why", "how",
+    "may", "say", "way", "day", "get", "got", "let", "set", "see", "two",
+    "ten", "one", "now", "off", "own", "per", "via", "yes", "and", "any",
+    "have", "this", "that", "with", "what", "when", "your", "from", "they",
+    "them", "then", "than", "some", "such", "into", "over", "more", "most",
+    "will", "want", "need", "does", "done", "make", "made", "many", "much",
+})
 
 
 def _expand_query(query: str) -> tuple[str, str | None]:
@@ -183,21 +142,18 @@ def _expand_query(query: str) -> tuple[str, str | None]:
     extras: list[str] = []
     suggestion: str | None = None
 
-    # 1. Exact matches (static dictionary)
+    # 1. Exact matches
     for term, expansion in _QUERY_SYNONYMS.items():
         if re.search(r'\b' + re.escape(term) + r'\b', lower):
             extras.append(expansion)
 
-    # 1b. Learned acronyms auto-extracted from ingested docs (e.g. tat -> turn around time)
-    for term, expansion in _get_learned_synonyms().items():
-        if expansion not in extras and re.search(r'\b' + re.escape(term) + r'\b', lower):
-            extras.append(expansion)
-
-    # 2. Fuzzy correction — only when no exact synonym matched
+    # 2. Fuzzy correction — only when no exact synonym matched.
+    # Require length >= 4 and skip common English words so everyday words
+    # ("any", "can", "what") don't collide with short acronyms ("uan").
     if not extras:
         synonym_keys = list(_QUERY_SYNONYMS.keys())
         for word in words:
-            if len(word) < 3:
+            if len(word) < 4 or word in _FUZZY_STOPWORDS:
                 continue
             # Only compare against keys of similar length (±1 char) to avoid
             # common words like "tell" fuzzy-matching short acronyms like "el".
@@ -271,6 +227,41 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
         return results
     except Exception as e:
         print(f"[PolicyService] DOCX image extraction error: {e}")
+        return []
+
+
+def _extract_images_from_pptx_bytes(data: bytes) -> list:
+    """
+    Return list of (position_ratio, image_bytes, ext) tuples — same shape as the
+    DOCX extractor, so the ratio-based chunk assignment path is reused.
+    position_ratio = slide_index / num_slides (0.0–1.0).
+    Skips images smaller than 20 KB (logos, headers, decorations).
+    """
+    try:
+        import io as _io
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        prs = Presentation(_io.BytesIO(data))
+        slides = list(prs.slides)
+        total = len(slides)
+        results = []
+        for s_idx, slide in enumerate(slides):
+            position_ratio = s_idx / max(total, 1)
+            for shape in slide.shapes:
+                if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+                    continue
+                try:
+                    blob = shape.image.blob
+                except Exception:
+                    continue
+                if len(blob) < _MIN_IMAGE_BYTES:
+                    continue
+                ext = (shape.image.ext or "png").lower()
+                results.append((position_ratio, blob, ext))
+        return results
+    except Exception as e:
+        print(f"[PolicyService] PPTX image extraction error: {e}")
         return []
 
 
@@ -370,6 +361,42 @@ def _extract_text_from_docx_bytes(data: bytes) -> str:
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     except Exception as e:
         print(f"[PolicyService] DOCX bytes read error: {e}")
+        return ""
+
+
+def _extract_text_from_pptx_bytes(data: bytes) -> str:
+    """Extract text from a PowerPoint deck: per slide, pull shape text frames,
+    table cells, and speaker notes. Slides are separated by blank lines so the
+    sentence chunker keeps slide boundaries reasonably intact."""
+    try:
+        import io as _io
+        from pptx import Presentation
+
+        prs = Presentation(_io.BytesIO(data))
+        parts = []
+        for slide in prs.slides:
+            slide_lines = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        line = "".join(run.text for run in para.runs).strip()
+                        if line:
+                            slide_lines.append(line)
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                        if cells:
+                            slide_lines.append(" | ".join(cells))
+            # Speaker notes often carry the real narrative of a slide deck
+            if slide.has_notes_slide:
+                notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+                if notes:
+                    slide_lines.append(notes)
+            if slide_lines:
+                parts.append("\n".join(slide_lines))
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[PolicyService] PPTX bytes read error: {e}")
         return ""
 
 
@@ -590,15 +617,6 @@ class PolicyService:
                 embedding=emb,
                 image_urls=img_keys if img_keys else None,
             ))
-
-        # Auto-learn this doc's acronyms (e.g. "Turn Around Time (TAT)") for query expansion.
-        # Runs on every ingest/re-ingest, so policy changes re-harvest vocabulary automatically.
-        from app.models import PolicySynonym
-        db.query(PolicySynonym).filter(PolicySynonym.policy_id == policy.id).delete()
-        for _term, _exp in _extract_acronyms(policy.content or "").items():
-            db.add(PolicySynonym(policy_id=policy.id, term=_term, expansion=_exp))
-        _LEARNED_SYN_CACHE["ts"] = 0.0  # invalidate cache so new terms apply on next query
-
         return len(chunks)
 
     @staticmethod
@@ -697,6 +715,22 @@ class PolicyService:
 
     @staticmethod
     def search_policies(query: str, limit: int = 4) -> str:
+        """Hybrid search over policy documents (excludes company-project content)."""
+        return PolicyService._hybrid_search(query, limit, category_not_in=[PROJECT_CATEGORY])
+
+    @staticmethod
+    def search_projects(query: str, limit: int = 6) -> str:
+        """Hybrid search scoped to company-project content (summaries, demo
+        transcripts, project details) — never touches HR/IT/Admin policies."""
+        return PolicyService._hybrid_search(query, limit, category_in=[PROJECT_CATEGORY])
+
+    @staticmethod
+    def _hybrid_search(
+        query: str,
+        limit: int = 4,
+        category_in: list | None = None,
+        category_not_in: list | None = None,
+    ) -> str:
         """
         Hybrid BM25 + pgvector search with Reciprocal Rank Fusion.
 
@@ -705,6 +739,9 @@ class PolicyService:
         3. RRF fusion of both ranked lists
         4. Fallback: keyword search on chunks/policies if no embeddings available
         Returns top `limit` (default 4) unique-policy chunks.
+
+        `category_in` / `category_not_in` scope the candidate set by Policy.category
+        at the SQL level (so excluded categories never steal candidate slots).
         """
         from app.models import PolicyChunk
         from sqlalchemy import text as sql_text
@@ -717,6 +754,14 @@ class PolicyService:
             query_keywords = [w for w in query.lower().split() if len(w) > 2]
             policy_title_map = {p.id: (p.title or "").lower() for p in db.query(Policy).all()}
 
+            def _apply_cat(q):
+                """Apply category filters to an ORM query already joined to Policy."""
+                if category_in:
+                    q = q.filter(Policy.category.in_(category_in))
+                if category_not_in:
+                    q = q.filter(Policy.category.notin_(category_not_in))
+                return q
+
             sem_ids: list = []
             bm25_ids: list = []
 
@@ -724,29 +769,38 @@ class PolicyService:
             query_emb = PolicyService._get_embedding(query)
             if query_emb:
                 dist_expr = PolicyChunk.embedding.cosine_distance(query_emb)
-                sem_rows = (
+                sem_q = (
                     db.query(PolicyChunk.id, dist_expr.label("dist"))
+                    .join(Policy, Policy.id == PolicyChunk.policy_id)
                     .filter(
                         PolicyChunk.embedding.isnot(None),
                         dist_expr < 0.65,
                     )
-                    .order_by(dist_expr)
-                    .limit(20)
-                    .all()
                 )
+                sem_rows = _apply_cat(sem_q).order_by(dist_expr).limit(20).all()
                 sem_ids = [r.id for r in sem_rows]
 
             # ── 2. BM25 keyword search via tsvector ───────────────────────────
             try:
+                bm25_params = {"q": query}
+                cat_sql = ""
+                if category_in:
+                    cat_sql += " AND p.category = ANY(:cat_in)"
+                    bm25_params["cat_in"] = list(category_in)
+                if category_not_in:
+                    cat_sql += " AND p.category <> ALL(:cat_not_in)"
+                    bm25_params["cat_not_in"] = list(category_not_in)
                 bm25_rows = db.execute(
                     sql_text(
-                        f"SELECT id FROM \"{SCHEMA}\".policy_chunks "
-                        f"WHERE text_tsv IS NOT NULL "
-                        f"AND text_tsv @@ plainto_tsquery('english', :q) "
-                        f"ORDER BY ts_rank(text_tsv, plainto_tsquery('english', :q)) DESC "
+                        f"SELECT pc.id FROM \"{SCHEMA}\".policy_chunks pc "
+                        f"JOIN \"{SCHEMA}\".policies p ON p.id = pc.policy_id "
+                        f"WHERE pc.text_tsv IS NOT NULL "
+                        f"AND pc.text_tsv @@ plainto_tsquery('english', :q)"
+                        f"{cat_sql} "
+                        f"ORDER BY ts_rank(pc.text_tsv, plainto_tsquery('english', :q)) DESC "
                         f"LIMIT 20"
                     ),
-                    {"q": query},
+                    bm25_params,
                 ).fetchall()
                 bm25_ids = [r[0] for r in bm25_rows]
             except Exception as bm25_err:
@@ -778,6 +832,7 @@ class PolicyService:
                 reranked.sort(key=lambda x: x[0], reverse=True)
 
                 seen_policies: set = set()
+                seen_titles: set = set()
                 results = []
                 all_image_keys: list = []
                 for _, c in reranked:
@@ -787,7 +842,15 @@ class PolicyService:
                         continue
                     policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                     if policy:
+                        # Dedup duplicate-ingested docs that share a title under different
+                        # policy_ids (e.g. "GHI Policy_2025-26" vs "GHI Policy 2025-26"),
+                        # so copies don't crowd out other relevant policies.
+                        norm = PolicyService._norm_title(policy.title)
+                        if norm and norm in seen_titles:
+                            seen_policies.add(c.policy_id)
+                            continue
                         seen_policies.add(c.policy_id)
+                        seen_titles.add(norm)
                         clean_text = PolicyService._strip_metadata_lines(c.text)
                         results.append(
                             f"**{policy.title}** ({policy.category}):\n{clean_text}"
@@ -800,7 +863,9 @@ class PolicyService:
                     return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 4. Keyword fallback on chunks ──────────────────────────────────
-            chunks_all = db.query(PolicyChunk).all()
+            chunks_all = _apply_cat(
+                db.query(PolicyChunk).join(Policy, Policy.id == PolicyChunk.policy_id)
+            ).all()
             if chunks_all:
                 keywords = PolicyService._expand_keywords(query)
                 scored = []
@@ -819,6 +884,7 @@ class PolicyService:
 
                 if scored:
                     seen_policies: set = set()
+                    seen_titles: set = set()
                     results = []
                     all_image_keys: list = []
                     for _, c in scored:
@@ -828,7 +894,12 @@ class PolicyService:
                             continue
                         policy = db.query(Policy).filter(Policy.id == c.policy_id).first()
                         if policy:
+                            norm = PolicyService._norm_title(policy.title)
+                            if norm and norm in seen_titles:
+                                seen_policies.add(c.policy_id)
+                                continue
                             seen_policies.add(c.policy_id)
+                            seen_titles.add(norm)
                             clean_text = PolicyService._strip_metadata_lines(c.text)
                             results.append(
                                 f"**{policy.title}** ({policy.category}):\n{clean_text}"
@@ -841,13 +912,22 @@ class PolicyService:
                         return PolicyService._append_image_marker(text, all_image_keys)
 
             # ── 5. Last resort: keyword search on full Policy.content ──────────
-            fallback = PolicyService._fallback_policy_search(query, db, limit)
+            fallback = PolicyService._fallback_policy_search(
+                query, db, limit, category_in=category_in, category_not_in=category_not_in
+            )
             if fallback.startswith("No policies found") and did_you_mean:
                 return f"I couldn't find a policy matching your query. Did you mean **{did_you_mean}**? Please try again with the correct term."
             return fallback
 
         finally:
             db.close()
+
+    @staticmethod
+    def _norm_title(title: str | None) -> str:
+        """Normalize a policy title for dedup: lowercase, strip all non-alphanumerics.
+        Collapses duplicate-ingested docs like 'GHI Policy_2025-26' / 'GHI Policy 2025-26'."""
+        import re as _re
+        return _re.sub(r"[^a-z0-9]+", "", (title or "").lower())
 
     @staticmethod
     def _expand_keywords(query: str) -> list:
@@ -860,10 +940,18 @@ class PolicyService:
         return list(expanded)
 
     @staticmethod
-    def _fallback_policy_search(query: str, db, limit: int = 2) -> str:
+    def _fallback_policy_search(
+        query: str, db, limit: int = 2,
+        category_in: list | None = None, category_not_in: list | None = None,
+    ) -> str:
         """Keyword search directly on Policy.content — no chunks needed."""
         keywords = PolicyService._expand_keywords(query)
-        policies = db.query(Policy).all()
+        pq = db.query(Policy)
+        if category_in:
+            pq = pq.filter(Policy.category.in_(category_in))
+        if category_not_in:
+            pq = pq.filter(Policy.category.notin_(category_not_in))
+        policies = pq.all()
         if not policies:
             return "No policies found in the system."
 

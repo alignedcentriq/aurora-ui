@@ -26,6 +26,7 @@ def search_people(
     max_exp: Optional[float] = Query(None),
     status: Optional[str] = Query(None, description="Active or Inactive"),
     limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
     user: CurrentUser = Depends(require_search_access),
 ):
     return PeopleService.search_people(
@@ -38,6 +39,7 @@ def search_people(
         max_exp=max_exp,
         status=status,
         limit=limit,
+        offset=offset,
     )
 
 

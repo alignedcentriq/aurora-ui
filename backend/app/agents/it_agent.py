@@ -1,10 +1,9 @@
 from typing import Annotated, List, TypedDict
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import InjectedState, ToolNode
 from app.services.it_service import ITService
-from app.services.policy_service import PolicyService
 from app.services.prompt_service import PromptService
 from app.config import settings
 from langchain_openai import ChatOpenAI
@@ -25,8 +24,10 @@ def request_software_install(
     software_name: str,
     state: Annotated[dict, InjectedState],
 ):
-    """Request software installation on your machine. Call immediately when user names a software.
-    Do NOT ask for justification or reason. Show the tool result as-is (it contains a mailto link)."""
+    """Request software installation on your machine. Call immediately when the user names an actual
+    software product (e.g. 'Node.js', 'Figma', 'Docker'). software_name must be the product name ONLY —
+    never a sentence or a non-software phrase. If no specific software is named, ask which software they
+    need instead of calling this. Do NOT ask for justification. Show the tool result as-is (mailto link)."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     return ITService.request_software_install(email, software_name)
 
@@ -67,24 +68,11 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
     return ITService.get_my_assets(email)
 
 
-@tool
-def search_it_policies(query: str):
-    """Search IT policy and procedure documents (VPN setup, password reset steps, software guides, security policies).
-    Call for any 'how to', 'steps', 'guide', or 'procedure' question before creating a ticket.
-    Answer from the result only. Never use training knowledge."""
-    return PolicyService.search_policies(query, limit=4)
-
-
-tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets, search_it_policies]
+tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets]
 tool_node = ToolNode(tools)
 
-_it_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=45,
-).bind_tools(tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 # -- Agent Node ---------------------------------------------------------------
@@ -93,11 +81,9 @@ def it_assistant(state: ITState):
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     default_prompt = (
         f"You are the IT Support Assistant for Aligned Automation.\n"
-        f"Employee: {user_email}. Never ask for email or justification.\n"
-        f"Always respond in English regardless of the language of the user's message.\n\n"
-        f"How-to / steps / guide / setup question (e.g. 'how to connect VPN', 'steps to reset password') → call search_it_policies first. Answer from the result. If no result found, then create a ticket.\n"
+        f"Employee: {user_email}. Never ask for email or justification.\n\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
-        f"Specific problem described (something is broken, not working, error) → call create_it_ticket immediately.\n"
+        f"Specific problem described → call create_it_ticket immediately.\n"
         f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
         f"If ticket already created in this conversation, do not create another.\n"
         f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"
@@ -105,11 +91,11 @@ def it_assistant(state: ITState):
     base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
     guardrail = PromptService.get_guardrail("it_support")
     feedback_ctx = state.get("feedback_context") or ""
-    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
-    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
+    system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    return {"messages": [_it_llm.invoke(messages)]}
+    llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(tools)
+    return {"messages": [llm.invoke(messages)]}
 
 
 def should_continue(state: ITState):
@@ -118,13 +104,33 @@ def should_continue(state: ITState):
     return END
 
 
+# Read-only lookups whose service output is already display-ready and that never
+# feed a follow-up tool call — these skip the LLM re-read (no latency, no drift).
+_PASSTHROUGH_TOOLS = {"check_ticket_status", "get_my_tickets", "get_my_assets"}
+
+
+def it_passthrough(state: ITState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def route_after_tools(state: ITState):
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "it_assistant"
+
+
 # -- Graph --------------------------------------------------------------------
 
 workflow = StateGraph(ITState)
 workflow.add_node("it_assistant", it_assistant)
 workflow.add_node("tools", tool_node)
+workflow.add_node("passthrough", it_passthrough)
 workflow.set_entry_point("it_assistant")
 workflow.add_conditional_edges("it_assistant", should_continue, ["tools", END])
-workflow.add_edge("tools", "it_assistant")
+workflow.add_conditional_edges("tools", route_after_tools, ["passthrough", "it_assistant"])
+workflow.add_edge("passthrough", END)
 
 it_agent = workflow.compile()

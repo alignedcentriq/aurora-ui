@@ -96,6 +96,22 @@ def request_accommodation(
     return AdminService.request_accommodation(email, type, check_in, check_out, location)
 
 @tool
+def request_visitor_pass(
+    visitor_name: str,
+    visit_date: str,
+    purpose: str,
+    visit_time: str = "",
+    visitor_company: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a visitor/guest pass for someone coming to the office to meet the employee.
+    REQUIRED: visitor_name, visit_date (YYYY-MM-DD), purpose — ask for any that are missing, one at a time.
+    visit_time and visitor_company are optional — only include if the user states them, never guess.
+    Do NOT call with placeholder values. Admin/reception is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return AdminService.request_visitor_pass(email, visitor_name, visit_date, purpose, visit_time, visitor_company)
+
+@tool
 def file_facility_complaint(
     category: str,
     description: str,
@@ -266,6 +282,20 @@ def post_admin_announcement(title: str, body: str, category: str = "General", ta
     )
 
 @tool
+def request_desk_key(
+    desk_number: str,
+    reason: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a desk key for a specific desk.
+    REQUIRED: desk_number (e.g. B-07, A-3) — ask the user for it if not stated; never guess.
+    reason: optional note on why the key is needed.
+    The request is automatically declined if that desk is already assigned to someone else.
+    The Admin team is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return AdminService.request_desk_key(email, desk_number, reason)
+
+@tool
 def update_admin_prompt(new_prompt: str):
     """Update the Admin agent system prompt (Admin manager role only)."""
     return PromptService.update_prompt(
@@ -282,11 +312,12 @@ def update_admin_prompt(new_prompt: str):
 tools = [
     submit_reimbursement, check_reimbursement_status, search_admin_policies,
     request_parking_sticker, surrender_parking_sticker, get_parking_info,
-    request_accommodation,
+    request_accommodation, request_visitor_pass,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
     list_available_books, borrow_book_by_name, request_book, check_book_requests,
     return_my_book, request_book_extension,
+    request_desk_key,
     post_admin_announcement, update_admin_prompt,
 ]
 
@@ -307,8 +338,9 @@ _TOOL_GROUPS: dict[str, list] = {
     "facility_complaint": [file_facility_complaint, check_complaint_status],
     "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],
     "accommodation":      [request_accommodation, search_admin_policies],
+    "visitor_pass":       [request_visitor_pass],
     "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
-    "desk_key_request":   [search_admin_policies],
+    "desk_key_request":   [request_desk_key],
 }
 
 import re as _re
@@ -316,19 +348,15 @@ _SUB_INTENT_RE = _re.compile(r'\[SUB_INTENT:([^\]]+)\]')
 
 tool_node = ToolNode(tools)
 
-_admin_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    timeout=120,
-)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
+
+
 def admin_assistant(state: AdminState):
     user_email = state.get("user_email", settings.DEFAULT_USER_EMAIL)
     default_prompt = (
         f"You are the Admin Services Assistant for Aligned Automation.\n"
         f"Employee email: {user_email}. Never ask for it.\n\n"
-        f"Always respond in English regardless of the language of the user's message.\n"
         f"Answer from tool results and provided policy context only.\n"
         f"If [PRE-SEARCHED POLICY] is in context, answer from it directly — do not call search_admin_policies.\n"
         f"If [POLICY SEARCH RESULT] says none found, tell user and suggest contacting Admin team or Zoho (expense.zoho@alignedautomation.com).\n"
@@ -339,9 +367,7 @@ def admin_assistant(state: AdminState):
     base_prompt = PromptService.get_system_prompt("admin", default_prompt)
     guardrail = PromptService.get_guardrail("admin")
     feedback_ctx = state.get("feedback_context") or ""
-    # Always enforce English regardless of what the stored prompt says
-    english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
-    system_prompt = base_prompt + english_rule + guardrail + feedback_ctx
+    system_prompt = base_prompt + guardrail + feedback_ctx
 
     # Detect sub_intent injected by admin_agent_node and select a narrow tool set.
     # Fallback to all tools when sub_intent is unknown or a follow-up.
@@ -359,7 +385,7 @@ def admin_assistant(state: AdminState):
         active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = _admin_llm.bind_tools(active_tools).invoke(messages)
+    response = llm_controls.get_llm("router", default_timeout=120).bind_tools(active_tools).invoke(messages)
 
     # If the model returned empty text with no tool calls, surface the last tool result directly.
     # This prevents the "unable to generate a text summary" fallback on weak models.
@@ -381,14 +407,39 @@ def should_continue(state: AdminState):
     return END
 
 
+# Read-only lookups whose service output is already display-ready AND that never
+# feed a follow-up tool call. These skip the LLM re-read entirely (no latency, no
+# paraphrase drift). Tools that can chain (e.g. list_available_books → request_book)
+# are deliberately excluded so ReAct flows still work.
+_PASSTHROUGH_TOOLS = {
+    "check_reimbursement_status", "get_parking_info", "get_vendor_ratings",
+    "check_complaint_status", "check_book_requests",
+}
+
+
+def admin_passthrough(state: AdminState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def route_after_tools(state: AdminState):
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "admin_assistant"
+
+
 # ── Graph ─────────────────────────────────────────────────────────────────────
 
 workflow = StateGraph(AdminState)
 workflow.add_node("admin_assistant", admin_assistant)
 workflow.add_node("tools", tool_node)
+workflow.add_node("passthrough", admin_passthrough)
 
 workflow.set_entry_point("admin_assistant")
 workflow.add_conditional_edges("admin_assistant", should_continue, ["tools", END])
-workflow.add_edge("tools", "admin_assistant")
+workflow.add_conditional_edges("tools", route_after_tools, ["passthrough", "admin_assistant"])
+workflow.add_edge("passthrough", END)
 
 admin_agent = workflow.compile()

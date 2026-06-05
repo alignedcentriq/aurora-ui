@@ -16,7 +16,7 @@ export function UserMessage({
   return (
     <div className="flex w-full justify-end gap-3">
       <div className="chat-bubble-user">
-        <div className="text-[15px] leading-relaxed">{children}</div>
+        <div className="text-[15px] leading-relaxed select-text cursor-text">{children}</div>
       </div>
     </div>
   );

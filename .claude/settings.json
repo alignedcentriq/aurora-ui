@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git fetch *)",
-      "Bash(git checkout *)",
-      "Bash(git merge *)"
-    ]
+      "Bash(npx tsc *)",
+      "Bash(git stash *)"
+    ],
+     "deny": ["Read(.env)"]
   }
 }

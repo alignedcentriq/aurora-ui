@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
+import { getApiToken } from "@/lib/api-token";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   XAxis,
@@ -20,7 +21,8 @@ import {
 } from "recharts";
 import {
   Activity,
-  Search,
+  Eye,
+  Lock,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -80,25 +82,29 @@ interface LogEntry {
   id: number;
   created_at: string;
   session_id: string;
-  user_email: string;
+  user_label: string;
   domain: string;
-  user_message: string;
   total_latency_ms: number;
   total_tokens: number;
   llm_call_count: number;
   error: string | null;
 }
 
+interface RevealedContent {
+  id: number;
+  user_email: string;
+  user_message: string;
+  response_text: string | null;
+}
+
 interface LogDetail {
   id: number;
   created_at: string;
   session_id: string;
-  user_email: string;
-  user_message: string;
+  user_label: string;
   domain: string;
   sub_intent: string | null;
   route_method: string | null;
-  response_text: string | null;
   response_length: number;
   total_latency_ms: number;
   total_prompt_tokens: number;
@@ -270,7 +276,6 @@ function LogsTab() {
   const [loading, setLoading] = useState(true);
 
   // Filters
-  const [search, setSearch] = useState("");
   const [domain, setDomain] = useState("All");
   const [status, setStatus] = useState("All");
 
@@ -279,11 +284,34 @@ function LogsTab() {
   const [detail, setDetail] = useState<LogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Content reveal (Azure-group gated, audited) — scoped to the currently expanded row
+  const [revealScope, setRevealScope] = useState<string[]>([]);
+  const [revealed, setRevealed] = useState<RevealedContent | null>(null);
+  const [revealReason, setRevealReason] = useState("");
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  // Domains this user may reveal — derived server-side from validated Azure AD group
+  // membership (or DEV_REVEAL_DOMAINS in local dev). Fetched once with a Bearer token.
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await getApiToken();
+        const res = await fetch("/api/observability/reveal-scope", {
+          headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        const data = await res.json();
+        setRevealScope(data.domains || []);
+      } catch {
+        setRevealScope([]);
+      }
+    })();
+  }, [authHeaders]);
+
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: "50" });
-      if (search) params.set("search", search);
       if (domain !== "All") params.set("domain", domain);
       if (status !== "All") params.set("status", status.toLowerCase());
 
@@ -297,19 +325,13 @@ function LogsTab() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, domain, status, authHeaders]);
+  }, [page, domain, status, authHeaders]);
 
   useEffect(() => {
     fetchLogs();
   }, [fetchLogs]);
 
-  const handleExpand = async (id: number) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setDetail(null);
-      return;
-    }
-    setExpandedId(id);
+  const loadDetail = async (id: number) => {
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/observability/logs/${id}`, { headers: authHeaders });
@@ -321,26 +343,49 @@ function LogsTab() {
     }
   };
 
-  const handleSearch = () => {
-    setPage(1);
-    fetchLogs();
+  const handleExpand = async (id: number) => {
+    // collapsing or switching rows clears any revealed content
+    setRevealed(null);
+    setRevealReason("");
+    setRevealError(null);
+    if (expandedId === id) {
+      setExpandedId(null);
+      setDetail(null);
+      return;
+    }
+    setExpandedId(id);
+    await loadDetail(id);
+  };
+
+  // Reveal content — gated by Azure AD group membership (validated server-side), audited.
+  const handleReveal = async (id: number) => {
+    setRevealLoading(true);
+    setRevealError(null);
+    try {
+      const token = await getApiToken();
+      const res = await fetch(`/api/observability/logs/${id}/reveal`, {
+        method: "POST",
+        headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ reason: revealReason.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        setRevealError(err?.detail || "Unable to reveal content.");
+        return;
+      }
+      setRevealed(await res.json());
+    } catch {
+      setRevealError("Unable to reveal content.");
+    } finally {
+      setRevealLoading(false);
+    }
   };
 
   return (
     <div className="space-y-4">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-[400px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search messages..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            className="w-full rounded-xl border border-[var(--border)] bg-card pl-10 pr-4 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
+        <span className="text-[12px] text-muted-foreground mr-1">Filter</span>
 
         <select
           value={domain}
@@ -427,9 +472,9 @@ function LogsTab() {
                       : "—"}
                   </span>
 
-                  {/* User */}
-                  <span className="text-[12px] text-foreground truncate w-[140px] shrink-0" title={log.user_email}>
-                    {log.user_email?.split("@")[0] || "—"}
+                  {/* User (pseudonymized) */}
+                  <span className="text-[12px] font-mono text-muted-foreground truncate w-[140px] shrink-0">
+                    {log.user_label || "—"}
                   </span>
 
                   {/* Domain */}
@@ -437,10 +482,8 @@ function LogsTab() {
                     <DomainBadge domain={log.domain} />
                   </div>
 
-                  {/* Message preview */}
-                  <span className="text-[12px] text-muted-foreground truncate flex-1 min-w-0">
-                    {log.user_message || "—"}
-                  </span>
+                  {/* spacer — message content is hidden by default */}
+                  <span className="flex-1 min-w-0" />
 
                   {/* Latency */}
                   <div className="shrink-0 w-[50px] text-right">
@@ -483,13 +526,59 @@ function LogsTab() {
                           <InfoItem label="Response Length" value={`${detail.response_length} chars`} />
                         </div>
 
-                        {/* Full user message */}
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">User Message</p>
-                          <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3">
-                            {detail.user_message}
-                          </p>
-                        </div>
+                        {/* Conversation content — hidden until revealed (audited, domain-scoped) */}
+                        {revealed && revealed.id === detail.id ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-[11px] text-amber-400">
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>Content revealed for {revealed.user_email} — this access has been logged. IDs, contact details, and money amounts are masked.</span>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">User Message</p>
+                              <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 whitespace-pre-wrap">
+                                {revealed.user_message}
+                              </p>
+                            </div>
+                            {revealed.response_text && (
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">AI Response</p>
+                                <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
+                                  {revealed.response_text}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ) : revealScope.includes(detail.domain) ? (
+                          <div className="rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 space-y-2">
+                            <p className="text-[12px] text-muted-foreground">
+                              Conversation content is hidden to protect employee privacy. Revealing it is logged
+                              against your name (IDs and money amounts are masked). Enter a reason to proceed.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                placeholder="Reason (e.g. abuse investigation INC-1234)"
+                                value={revealReason}
+                                onChange={(e) => setRevealReason(e.target.value)}
+                                className="flex-1 rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              />
+                              <button
+                                onClick={() => handleReveal(detail.id)}
+                                disabled={revealLoading || !revealReason.trim()}
+                                className="flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-3.5 py-2 text-[12px] font-medium hover:bg-primary/20 disabled:opacity-40 transition-colors"
+                              >
+                                {revealLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                                Reveal content
+                              </button>
+                            </div>
+                            {revealError && <p className="text-[11px] text-rose-400">{revealError}</p>}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 text-[12px] text-muted-foreground">
+                            <Lock className="h-3.5 w-3.5 shrink-0" />
+                            <span>Conversation content is restricted. Your Azure AD group membership does not grant access to {detail.domain} conversations.</span>
+                          </div>
+                        )}
 
                         {/* LLM Calls Timeline */}
                         {detail.llm_calls.length > 0 && (
@@ -529,16 +618,6 @@ function LogsTab() {
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        )}
-
-                        {/* Response text */}
-                        {detail.response_text && (
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">AI Response</p>
-                            <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
-                              {detail.response_text}
-                            </p>
                           </div>
                         )}
 

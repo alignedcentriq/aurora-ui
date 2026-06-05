@@ -39,6 +39,19 @@ def _category_for_folder(folder: str) -> str:
     return _FOLDER_CATEGORY.get(folder.lower(), "General")
 
 
+# ── Folder → semantic-answer-cache domain (for invalidation on doc change) ────
+_FOLDER_CACHE_DOMAIN = {
+    "admin":      "admin",
+    "hr":         "hr",
+    "it support": "it_support",
+    "pmo":        "pmo",
+}
+
+
+def _cache_domain_for_folder(folder: str) -> str | None:
+    return _FOLDER_CACHE_DOMAIN.get(folder.lower())
+
+
 def _sp_key(relative_path: str, folder: str) -> str:
     """Build a unique source_key value for a SharePoint-sourced file.
     e.g. sp:ADMIN/SubDir/Leave Policy.pdf"""
@@ -47,6 +60,50 @@ def _sp_key(relative_path: str, folder: str) -> str:
 
 # ── Reuse text extraction from PolicyService ─────────────────────────────────
 
+def _extract_vtt(file_bytes: bytes) -> str:
+    """Clean a WebVTT/SRT transcript into plain spoken text.
+
+    Drops the `WEBVTT` header, NOTE/STYLE blocks, numeric cue indices, and
+    `00:00:00.000 --> 00:00:02.000` timestamp lines, then collapses consecutive
+    duplicate caption lines (Teams transcripts repeat the rolling caption)."""
+    try:
+        text = file_bytes.decode("utf-8-sig", errors="replace")
+    except Exception:
+        return ""
+    lines, prev = [], None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low == "webvtt" or low.startswith("webvtt ") or low.startswith(("note", "style", "region")):
+            continue
+        if "-->" in line:  # timestamp cue line
+            continue
+        if line.isdigit():  # SRT/cue index
+            continue
+        # Strip inline <v Speaker> / <00:00:00.000> tags VTT may carry.
+        line = re.sub(r"<[^>]+>", "", line).strip()
+        if not line or line == prev:
+            continue
+        lines.append(line)
+        prev = line
+    return "\n".join(lines)
+
+
+def _extract_via_markitdown(file_bytes: bytes, ext: str) -> str:
+    """Convert text-bearing formats (txt/md/xlsx/csv/html/json/...) to plain text
+    via MarkItDown. Fail-soft: returns '' on any error, matching the other extractors."""
+    try:
+        import io
+        from markitdown import MarkItDown
+        result = MarkItDown().convert_stream(io.BytesIO(file_bytes), file_extension=f".{ext}")
+        return (result.text_content or "").strip()
+    except Exception as e:
+        logger.warning(f"[extract] MarkItDown failed for .{ext}: {e}")
+        return ""
+
+
 def _extract_text(file_bytes: bytes, ext: str) -> str:
     if ext == "pdf":
         from app.services.policy_service import _extract_text_from_pdf_bytes
@@ -54,7 +111,13 @@ def _extract_text(file_bytes: bytes, ext: str) -> str:
     elif ext == "docx":
         from app.services.policy_service import _extract_text_from_docx_bytes
         return _extract_text_from_docx_bytes(file_bytes)
-    return ""
+    elif ext == "pptx":
+        from app.services.policy_service import _extract_text_from_pptx_bytes
+        return _extract_text_from_pptx_bytes(file_bytes)
+    elif ext in ("vtt", "srt"):
+        return _extract_vtt(file_bytes)
+    # txt / md / xlsx / csv / html / htm / json / … → unified MarkItDown conversion
+    return _extract_via_markitdown(file_bytes, ext)
 
 
 def _extract_images(file_bytes: bytes, ext: str) -> list:
@@ -64,7 +127,15 @@ def _extract_images(file_bytes: bytes, ext: str) -> list:
     elif ext == "docx":
         from app.services.policy_service import _extract_images_from_docx_bytes
         return _extract_images_from_docx_bytes(file_bytes)
+    elif ext == "pptx":
+        from app.services.policy_service import _extract_images_from_pptx_bytes
+        return _extract_images_from_pptx_bytes(file_bytes)
     return []
+
+
+# Extensions whose images carry a position_ratio (0-1) rather than a page number,
+# so _assign_images_to_chunks must use the ratio-based path (is_docx=True).
+_RATIO_IMAGE_EXTS = ("docx", "pptx")
 
 
 def _categorize_file(filename: str, folder_category: str) -> str:
@@ -77,13 +148,54 @@ def _categorize_file(filename: str, folder_category: str) -> str:
 
 def sync_folder(folder: str) -> dict:
     """
-    Sync a single SharePoint folder into the Policy table.
+    Sync a single SharePoint POLICY folder into the Policy table.
+
+    Thin wrapper around `_sync_files_into_policies` — handles PDF/DOCX only,
+    derives the category from filename (falling back to the folder's category),
+    and invalidates the folder's answer-cache domain plus 'general'.
+    """
+    base      = settings.SHAREPOINT_BASE_FOLDER  # e.g. "IQ"
+    full_path = f"{base}/{folder}" if base else folder
+    folder_category = _category_for_folder(folder)
+
+    cache_domains = ["general"]
+    cd = _cache_domain_for_folder(folder)
+    if cd:
+        cache_domains.append(cd)
+
+    return _sync_files_into_policies(
+        label=folder,
+        full_path=full_path,
+        key_prefix=f"sp:{folder}/",
+        categorizer=lambda fn: _categorize_file(fn, folder_category),
+        exts=("pdf", "docx"),
+        cache_domains=cache_domains,
+    )
+
+
+def _sync_files_into_policies(
+    label: str,
+    full_path: str,
+    key_prefix: str,
+    categorizer,
+    exts: tuple,
+    cache_domains: list,
+    exclude_segments: tuple = (),
+    title_builder=None,
+) -> dict:
+    """
+    Generic SharePoint-folder → Policy-table sync.
 
     1. Resolve site → drive via sp_client
-    2. Recursively list all PDF/DOCX files
+    2. Recursively list all files matching `exts`
     3. Compare cTag with stored source_etag → skip unchanged
     4. Download new/changed files → extract text → chunk → embed → DB
     5. Delete policies whose source file no longer exists in SharePoint
+    6. Invalidate the given answer-cache domains if anything changed
+
+    `key_prefix` namespaces this source's rows in Policy.source_key (e.g. "sp:HR/")
+    so different folders never collide. `categorizer(filename)`
+    returns the Policy.category for each file.
 
     Returns: {"new": int, "updated": int, "skipped": int, "deleted": int, "errors": list}
     """
@@ -93,9 +205,6 @@ def sync_folder(folder: str) -> dict:
     )
 
     site_url = settings.SHAREPOINT_SITE_URL
-    base     = settings.SHAREPOINT_BASE_FOLDER  # e.g. "IQ"
-    full_path = f"{base}/{folder}" if base else folder
-    folder_category = _category_for_folder(folder)
 
     new, updated, skipped, deleted, errors = 0, 0, 0, 0, []
 
@@ -116,21 +225,27 @@ def sync_folder(folder: str) -> dict:
         logger.error(msg)
         return {"new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": [msg]}
 
-    # Filter to PDF/DOCX only
+    # Filter to the requested extensions, skipping any file whose relative path
+    # contains an excluded path segment (e.g. raw "Transcript" subfolders).
+    excl = {s.strip().lower() for s in exclude_segments if s.strip()}
     valid_items = []
     for item in items:
         name = item.get("name", "")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        if ext in ("pdf", "docx"):
-            item["_ext"] = ext
-            valid_items.append(item)
+        if ext not in exts:
+            continue
+        if excl:
+            segs = {p.strip().lower() for p in item.get("relative_path", name).split("/")}
+            if segs & excl:
+                continue
+        item["_ext"] = ext
+        valid_items.append(item)
 
-    # ── Build lookup of existing SP-sourced policies for this folder ──────
+    # ── Build lookup of existing rows for this source ─────────────────────
     db = SessionLocal()
     try:
-        sp_prefix = f"sp:{folder}/"
         rows = db.query(Policy.id, Policy.source_key, Policy.source_etag).filter(
-            Policy.source_key.like(f"{sp_prefix}%")
+            Policy.source_key.like(f"{key_prefix}%")
         ).all()
         existing = {r.source_key: (r.id, r.source_etag) for r in rows}
 
@@ -138,7 +253,7 @@ def sync_folder(folder: str) -> dict:
 
         for item in valid_items:
             rel_path = item.get("relative_path", item["name"])
-            sp_k     = _sp_key(rel_path, folder)
+            sp_k     = f"{key_prefix}{rel_path}"
             ctag     = item.get("cTag") or item.get("eTag") or ""
             filename = item["name"]
             ext      = item["_ext"]
@@ -174,8 +289,13 @@ def sync_folder(folder: str) -> dict:
                 continue
 
             # ── Create Policy record ──────────────────────────────────────
-            title    = filename.rsplit(".", 1)[0].strip()
-            category = _categorize_file(filename, folder_category)
+            title = (
+                title_builder(filename, rel_path).strip()
+                if title_builder
+                else filename.rsplit(".", 1)[0].strip()
+            )
+            category = categorizer(filename)
+            ratio_imgs = ext in _RATIO_IMAGE_EXTS
 
             policy = Policy(
                 title=title,
@@ -192,10 +312,10 @@ def sync_folder(folder: str) -> dict:
             raw_images = _extract_images(file_bytes, ext)
             chunk_images: dict = {}
             if raw_images:
-                img_ids = _upload_policy_images(policy.id, title, raw_images, db, is_docx=(ext == "docx"))
+                img_ids = _upload_policy_images(policy.id, title, raw_images, db, is_docx=ratio_imgs)
                 chunks_preview = _chunk_text_sentences(content[:50000])
                 assignment = _assign_images_to_chunks(
-                    raw_images, len(chunks_preview), is_docx=(ext == "docx")
+                    raw_images, len(chunks_preview), is_docx=ratio_imgs
                 )
                 chunk_images = {
                     ci: [img_ids[ii] for ii in idxs if ii < len(img_ids)]
@@ -227,13 +347,26 @@ def sync_folder(folder: str) -> dict:
     except Exception as e:
         db.rollback()
         errors.append(str(e))
-        logger.error(f"[SP sync] Error syncing folder '{folder}': {e}")
+        logger.error(f"[SP sync] Error syncing '{label}': {e}")
     finally:
         db.close()
 
+    # ── Invalidate the semantic answer cache when this source changed ─────
+    # Guarantees users never get a cached answer built from now-stale content.
+    if (new + updated + deleted) > 0:
+        try:
+            from app.services.answer_cache_service import AnswerCacheService
+            removed = 0
+            for dom in dict.fromkeys(cache_domains):  # de-dup, preserve order
+                removed += AnswerCacheService.invalidate_domain(dom)
+            if removed:
+                logger.info(f"  [CACHE] invalidated {removed} cached answers ('{label}' changed)")
+        except Exception as e:
+            logger.warning(f"  [CACHE] invalidation skipped for '{label}': {e}")
+
     result = {"new": new, "updated": updated, "skipped": skipped,
               "deleted": deleted, "errors": errors}
-    logger.info(f"[SP sync] Folder '{folder}': {result}")
+    logger.info(f"[SP sync] '{label}': {result}")
     return result
 
 

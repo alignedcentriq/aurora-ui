@@ -12,6 +12,20 @@ from app.services.email_service import send_facility_complaint_status_email, sen
 router = APIRouter(prefix="/api/portal/admin", tags=["Admin Portal"])
 
 
+class RejectBody(BaseModel):
+    reason: str = ""
+
+
+class ParkingSettingsBody(BaseModel):
+    two_wheeler_cost: Optional[float] = None
+    four_wheeler_cost: Optional[float] = None
+    cadence: Optional[str] = None
+
+
+class RemindBody(BaseModel):
+    email: Optional[str] = None
+
+
 # ── Reimbursements ────────────────────────────────────────────────────────────
 
 @router.get("/reimbursements")
@@ -628,3 +642,106 @@ def reject_book_extension(
     except Exception as e:
         print(f"[admin-portal] Extension rejection email error: {e}")
     return result
+
+
+# ── Desk Keys ─────────────────────────────────────────────────────────────────
+
+@router.get("/desk-keys")
+def list_desk_keys(
+    status: Optional[str] = None,
+    _: CurrentUser = Depends(require_admin),
+):
+    from app.services.admin_service import AdminService
+    return AdminService.list_desk_keys(status)
+
+
+@router.put("/desk-keys/{req_id}/approve")
+def approve_desk_key(req_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    res = AdminService.approve_desk_key(req_id, decided_by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=409, detail=res.get("error", "Could not approve."))
+    return {"message": "Desk key request approved."}
+
+
+@router.put("/desk-keys/{req_id}/reject")
+def reject_desk_key(req_id: int, body: RejectBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required to reject this request.")
+    res = AdminService.reject_desk_key(req_id, decided_by=user.email, reason=reason)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
+    return {"message": "Desk key request rejected."}
+
+
+@router.put("/desk-keys/{req_id}/release")
+def release_desk_key(req_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.admin_service import AdminService
+    res = AdminService.release_desk_key(req_id, decided_by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
+    return {"message": "Desk released."}
+
+
+# ── Parking Dues ──────────────────────────────────────────────────────────────
+
+@router.get("/parking-dues")
+def list_parking_dues(_: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    ParkingPaymentService.accrue_dues()
+    return {
+        "settings": ParkingPaymentService.get_settings(),
+        "holders": ParkingPaymentService.list_holders_with_dues(),
+    }
+
+
+@router.put("/parking-dues/settings")
+def update_parking_dues_settings(body: ParkingSettingsBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    if body.two_wheeler_cost is not None and body.four_wheeler_cost is not None:
+        ParkingPaymentService.set_costs(body.two_wheeler_cost, body.four_wheeler_cost, by=user.email)
+    if body.cadence:
+        ParkingPaymentService.set_cadence(body.cadence, by=user.email)
+    return {"message": "Parking settings updated.", "settings": ParkingPaymentService.get_settings()}
+
+
+@router.post("/parking-dues/remind")
+def send_parking_reminders(body: RemindBody, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    # Send FROM the logged-in admin's mailbox so a connected Graph token is available.
+    if body.email:
+        res = ParkingPaymentService.send_reminder_now(body.email, sender=user.email)
+        if not res.get("ok"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Could not send reminder."))
+        return {"message": "Reminder sent."}
+    sent = ParkingPaymentService.send_all_reminders(sender=user.email)
+    return {"message": f"Reminders sent to {sent} employee(s)."}
+
+
+@router.put("/parking-dues/{payment_id}/paid")
+def mark_parking_paid(payment_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.mark_month_paid(payment_id, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Payment not found."))
+    return {"message": "Month marked paid."}
+
+
+@router.put("/parking-dues/{payment_id}/close")
+def close_parking_payment(payment_id: int, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.close_payment(payment_id, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Payment not found."))
+    return {"message": "Month closed."}
+
+
+@router.post("/parking-dues/{email}/pay-full")
+def pay_parking_full(email: str, user: CurrentUser = Depends(require_admin)):
+    from app.services.parking_payment_service import ParkingPaymentService
+    res = ParkingPaymentService.pay_full(email, by=user.email)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "Employee not found."))
+    return {"message": f"Settled {res.get('count', 0)} month(s)."}

@@ -71,11 +71,12 @@ def _resolve_redis_url() -> str:
 
 
 def _resolve_router_model() -> str:
-    """Use qwen2.5:14b for routing/admin/IT/PMO/manager — lighter and fast enough for structured output."""
+    """Use llama3.2:3b for routing/admin/IT/PMO/manager — tiny, instant, and reliable
+    at the structured (tool-calling) output the router needs via .with_structured_output."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    return "qwen2.5:14b"
+    return "llama3.2:3b"
 
 
 class Config:
@@ -91,13 +92,14 @@ class Config:
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── General Model (greetings, small talk) ──
-    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "qwen2.5:14b")
+    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "llama3.2:3b")
 
     # ── Summarizer Model (context_manager_node, conversation summaries) ──
-    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "qwen2.5:14b")
+    # 8B (not 3B) here — summarization benefits from the extra capacity.
+    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "llama3.1:8b")
 
     # ── Fast Model (lightweight agents: manager, general, summarizer, suggestions) ──
-    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "qwen2.5:7b")
+    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "llama3.2:3b")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")
@@ -111,11 +113,6 @@ class Config:
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-    # ── Fast/Summarizer endpoint — defaults to the agent's endpoint, but can be pointed at a
-    #    lighter/cheaper model server so the summarizer/general roles don't sit on the heavy
-    #    agent GPU (Option B). Falls back to AGENT_BASE_URL when FAST_BASE_URL is unset. ──
-    FAST_BASE_URL = _resolve_llm_base_url("FAST_BASE_URL", "AGENT_BASE_URL")
-
     # ── Embedding + Chunking Models (semantic search / RAG ingestion) ──
     EMBEDDING_BASE_URL = _resolve_llm_base_url("EMBEDDING_BASE_URL", "LLM_BASE_URL")
     EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
@@ -123,6 +120,35 @@ class Config:
 
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
+
+    # ── Semantic Answer Cache (instant repeat-question answers, zero LLM) ──
+    ANSWER_CACHE_ENABLED = os.getenv("ANSWER_CACHE_ENABLED", "true").lower() == "true"
+    # Cosine similarity required to serve a cached answer. High by design — a near-miss must
+    # recompute rather than risk returning a subtly-wrong answer.
+    ANSWER_CACHE_SIM_THRESHOLD = float(os.getenv("ANSWER_CACHE_SIM_THRESHOLD", "0.93"))
+    # Safety net: never serve a cached answer older than this, even if not explicitly invalidated.
+    ANSWER_CACHE_MAX_AGE_DAYS = int(os.getenv("ANSWER_CACHE_MAX_AGE_DAYS", "7"))
+
+    # ── Semantic Intent Router (embedding nearest-neighbour domain classification) ──
+    # Closed-set routing: the message is matched against labeled seed utterances by cosine
+    # similarity instead of being classified by the generative LLM router (which hallucinates).
+    SEMANTIC_ROUTER_ENABLED = os.getenv("SEMANTIC_ROUTER_ENABLED", "true").lower() == "true"
+    # >= this similarity AND top-k agreement → route directly, zero LLM. Conservative 0.85: the
+    # Fast Intent Dictionary already handles exact/seeded phrasings, so this only gates NOVEL
+    # paraphrases. Eval shows precision stays 100% down to ~0.72, so this is safely tunable
+    # lower at runtime (llm_controls.semantic_router_cfg) to trade more LLM calls for coverage.
+    SEMANTIC_ROUTER_HIGH_THRESHOLD = float(os.getenv("SEMANTIC_ROUTER_HIGH_THRESHOLD", "0.85"))
+    # A near-exact match to a curated seed (>= this) is the highest-confidence signal there is,
+    # so it routes directly even if lower-ranked neighbours from other domains break agreement
+    # (e.g. "find python developers" matches its seed at 1.00 though "python" also pulls install
+    # neighbours into the top-k). Bypasses the agreement check only.
+    SEMANTIC_ROUTER_STRONG_THRESHOLD = float(os.getenv("SEMANTIC_ROUTER_STRONG_THRESHOLD", "0.90"))
+    # Below this → too weak to trust the neighbours; fall through to the LLM router.
+    SEMANTIC_ROUTER_AMBIG_LOW = float(os.getenv("SEMANTIC_ROUTER_AMBIG_LOW", "0.55"))
+    # Fraction of the top-k neighbours that must share the winning domain for a HIGH route.
+    SEMANTIC_ROUTER_AGREE_FRAC = float(os.getenv("SEMANTIC_ROUTER_AGREE_FRAC", "0.6"))
+    # Neighbours fetched per lookup.
+    SEMANTIC_ROUTER_K = int(os.getenv("SEMANTIC_ROUTER_K", "5"))
 
     # Database
     DATABASE_URL = _resolve_db_url()
@@ -150,6 +176,15 @@ class Config:
         )
     )(os.getenv("SHAREPOINT_FOLDER_PATH", "").strip("/").strip())
 
+    # ── AI chat concurrency gate ──────────────────────────────────────────────
+    # Caps simultaneous LLM generations so a burst of users doesn't overwhelm the
+    # shared GPU server. Extra requests wait in a bounded queue; when the queue is
+    # full they're rejected fast with a "busy" signal. Tune CHAT_MAX_CONCURRENCY to
+    # the number of parallel generations ml01 sustains at acceptable latency.
+    CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "8"))
+    CHAT_MAX_QUEUE = int(os.getenv("CHAT_MAX_QUEUE", "50"))
+    CHAT_QUEUE_TIMEOUT = float(os.getenv("CHAT_QUEUE_TIMEOUT_SECONDS", "90"))
+
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
     PORT = int(os.getenv("PORT", "8080"))
@@ -158,6 +193,10 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
+    HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "shivam.sharma@alignedautomation.com")
+    # Mailbox used as the SENDER for unattended/background emails (parking reminders).
+    # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
+    PARKING_REMINDER_SENDER = os.getenv("PARKING_REMINDER_SENDER", "")
     # Bookshelf Buddy — book request notifications go to this admin
     BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     # Nexus Library mock server — single source of truth for book inventory
@@ -190,13 +229,19 @@ class Config:
         or os.getenv("VITE_MSAL_TENANT_ID")
         or os.getenv("GRAPH_TENANT_ID", "")
     )
+    # NOTE: org-directory reads (all users, any user's profile/manager/reports) use the
+    # *application* User.Read.All on the GRAPH_* app via client-credentials — NOT a
+    # delegated scope (see ms365_service._app_token). So User.Read.All is deliberately
+    # absent here; the delegated flow only needs the signed-in user's own + basic reads.
     MICROSOFT_OAUTH_SCOPES = os.getenv(
         "MICROSOFT_OAUTH_SCOPES",
         "openid profile email offline_access User.Read User.ReadBasic.All "
         "Mail.Read Mail.ReadWrite Mail.Send "
         "Calendars.Read Calendars.Read.Shared Calendars.ReadWrite "
         "Chat.Read Chat.ReadWrite "
-        "Place.Read.All",
+        "Place.Read.All "
+        "Team.ReadBasic.All Channel.ReadBasic.All "
+        "ChannelMessage.Read.All ChannelMessage.Send",
     )
     # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
     TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
@@ -207,10 +252,25 @@ class Config:
     ZOHO_CLIENT_ID     = os.getenv("ZOHO_CLIENT_ID", "")
     ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")
     ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "")
-    ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "https://accounts.zoho.com")
-    ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "https://people.zoho.com")
+    ZOHO_ACCOUNTS_URL  = os.getenv("ZOHO_ACCOUNTS_URL", "") or "https://accounts.zoho.com"
+    ZOHO_BASE_URL      = os.getenv("ZOHO_BASE_URL", "") or "https://people.zoho.com"
+    # Expense and Recruit live on different hosts than People (cannot reuse ZOHO_BASE_URL).
+    # Recruit's data API is recruit.zoho.com/recruit/v2 (the www.zohoapis.com/recruit form
+    # bounces to a CRM error page). On the .in datacenter, override these env vars to .in.
+    ZOHO_EXPENSE_BASE_URL = os.getenv("ZOHO_EXPENSE_BASE_URL", "") or "https://www.zohoapis.com/expense/v1"
+    ZOHO_RECRUIT_BASE_URL = os.getenv("ZOHO_RECRUIT_BASE_URL", "") or "https://recruit.zoho.com/recruit/v2"
+    # DEMO MODE: when true, all Zoho service calls (People/Expense/Recruit) return realistic
+    # mock data instead of hitting the live API. Used for competition demos while real API
+    # access is pending org approval. Flip to false once the admin grants API access.
+    ZOHO_DEMO_MODE     = os.getenv("ZOHO_DEMO_MODE", "true").lower() in ("1", "true", "yes", "on")
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
+
+    # ── Alchemy Skills Portal (Azure AD-secured internal API) ─────────────────
+    ALCHEMY_BASE_URL          = os.getenv("ALCHEMY_BASE_URL", "https://apps.alignedautomation.com/alchemyapi/api/v1")
+    # Prefix prepended to numeric employee IDs when calling the Alchemy API.
+    # DB stores "1540", Alchemy expects "AASPL-1540" → prefix = "AASPL-"
+    ALCHEMY_EMPLOYEE_PREFIX   = os.getenv("ALCHEMY_EMPLOYEE_PREFIX", "AASPL-")
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.
@@ -225,5 +285,56 @@ class Config:
     SHAREPOINT_POLICY_FOLDERS = os.getenv("SHAREPOINT_POLICY_FOLDERS", "ADMIN,IT PMO")
     # How often (seconds) to poll SharePoint for new/changed files (default 10 min)
     SHAREPOINT_SYNC_INTERVAL = int(os.getenv("SHAREPOINT_SYNC_INTERVAL_SECONDS", "600"))
+
+    # ── SharePoint Document-Template Sync ──────────────────────────────────────
+    # FULL path (from the document-library root) to the folder holding the HR document
+    # templates — plain PDF/DOCX, no markup. This is a SIBLING of the policies folder, NOT
+    # under SHAREPOINT_BASE_FOLDER; set it like SHAREPOINT_PROJECTS_ROOT, e.g.
+    # "General/Templates". Each file becomes a generatable document type. Blank = disabled.
+    SHAREPOINT_TEMPLATES_FOLDER = os.getenv("SHAREPOINT_TEMPLATES_FOLDER", "")
+    # File extensions to ingest as templates (comma-separated, no dots).
+    SHAREPOINT_TEMPLATES_EXTS = os.getenv("SHAREPOINT_TEMPLATES_EXTS", "pdf,docx")
+    # Company name used for the {{company_name}} auto-field in generated documents.
+    DOC_COMPANY_NAME = os.getenv("DOC_COMPANY_NAME", "Aligned Automation")
+
+    # ── SharePoint Company-Project Sync ────────────────────────────────────────
+    # Root folder holding one sub-folder per company/project (summaries, demo
+    # transcripts, project details). Inner structure may change; the top-level
+    # sub-folder name is used as the project key. Leave blank to disable.
+    SHAREPOINT_PROJECTS_ROOT = os.getenv("SHAREPOINT_PROJECTS_ROOT", "General/Projects")
+    # File extensions to ingest from project folders (comma-separated, no dots).
+    SHAREPOINT_PROJECT_EXTS = os.getenv(
+        "SHAREPOINT_PROJECT_EXTS", "pdf,docx,pptx,vtt,srt,txt,md,xlsx,csv,html,htm"
+    )
+
+    # ── Observability content-reveal access (Azure AD groups, validated JWT) ───
+    # When enabled, the /observability reveal endpoints validate the Azure access
+    # token (signature/audience/issuer) and read the `groups` claim. When disabled
+    # (local dev), they fall back to header identity + DEV_REVEAL_DOMAINS.
+    AZURE_JWT_ENABLED = os.getenv("AZURE_JWT_ENABLED", "false").lower() == "true"
+    AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID") or os.getenv("GRAPH_TENANT_ID", "")
+    AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID") or os.getenv("VITE_MSAL_CLIENT_ID", "")
+    AZURE_API_AUDIENCE = os.getenv("AZURE_API_AUDIENCE") or (
+        f"api://{os.getenv('AZURE_CLIENT_ID') or os.getenv('VITE_MSAL_CLIENT_ID', '')}"
+    )
+    # Domains a dev user may reveal when AZURE_JWT_ENABLED is false.
+    DEV_REVEAL_DOMAINS = [
+        d.strip() for d in os.getenv(
+            "DEV_REVEAL_DOMAINS", "hr,it_support,pmo,admin,general"
+        ).split(",") if d.strip()
+    ]
+
+    # Map of conversation domain → set of Azure AD security-group object IDs whose
+    # members may reveal that domain's content. Each env var is a CSV of GUIDs.
+    REVEAL_GROUP_DOMAIN_MAP = {
+        domain: {g.strip() for g in os.getenv(env_var, "").split(",") if g.strip()}
+        for domain, env_var in (
+            ("hr", "REVEAL_GROUP_HR"),
+            ("it_support", "REVEAL_GROUP_IT"),
+            ("pmo", "REVEAL_GROUP_PMO"),
+            ("admin", "REVEAL_GROUP_ADMIN"),
+            ("general", "REVEAL_GROUP_GENERAL"),
+        )
+    }
 
 settings = Config()

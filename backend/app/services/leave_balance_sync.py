@@ -6,8 +6,7 @@ On-demand, per-user leave balance via Zoho People REST API.
 Design:
   - NO background threads, NO headless browser, NO file system sessions.
   - get_or_refresh(email) → check DB cache → if stale, call Zoho API → persist → return.
-  - One admin-level OAuth2 refresh_token in .env serves all employees
-    (Zoho respects hierarchy: admin token + userId param returns that employee's balance).
+  - Per-user delegated OAuth2 token from ConnectedAccount table (provider="zoho").
   - Load = O(active queries), not O(total users).
 
 Cache TTL: LEAVE_BALANCE_CACHE_TTL_SECONDS (default 900s = 15 min).
@@ -24,34 +23,18 @@ from app.models import LeaveBalanceCache
 CACHE_TTL = int(os.getenv("LEAVE_BALANCE_CACHE_TTL_SECONDS", "900"))
 
 
-# ── Token management ────────────────────────────────────────────────────────────
-
-def _get_access_token() -> str:
-    """Exchange the stored refresh_token for a fresh access_token."""
-    from app.config import settings
-    resp = requests.post(
-        f"{settings.ZOHO_ACCOUNTS_URL}/oauth/v2/token",
-        data={
-            "refresh_token": settings.ZOHO_REFRESH_TOKEN,
-            "client_id":     settings.ZOHO_CLIENT_ID,
-            "client_secret": settings.ZOHO_CLIENT_SECRET,
-            "grant_type":    "refresh_token",
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if "access_token" not in data:
-        raise RuntimeError(f"Token refresh failed: {data}")
-    return data["access_token"]
+def _get_zoho_token(email: str) -> str | None:
+    """Get a valid per-user Zoho token from ConnectedAccount, refreshing if needed."""
+    from app.services.email_service import _run_coro
+    from app.services.oauth_service import get_valid_token
+    return _run_coro(get_valid_token(email, "zoho"))
 
 
 # ── Zoho People API call ────────────────────────────────────────────────────────
 
-def _fetch_from_api(email: str) -> list[dict]:
+def _fetch_from_api(email: str, token: str) -> list[dict]:
     """Call Zoho People leave balance API and return a normalised balances list."""
     from app.config import settings
-    token = _get_access_token()
 
     year = datetime.datetime.utcnow().year
     url  = f"{settings.ZOHO_BASE_URL}/people/api/v2/leavetracker/reports/bookedAndBalance"
@@ -112,6 +95,16 @@ def get_or_refresh(email: str) -> dict:
         {"success": True,  "balances": [...], "source": "cache"|"live", "cached_at": "..."}
         {"success": False, "error": "..."}
     """
+    from app.config import settings
+    if settings.ZOHO_DEMO_MODE:
+        from app.services import zoho_demo_data
+        return {
+            "success":   True,
+            "balances":  zoho_demo_data.leave_balances(),
+            "source":    "demo",
+            "cached_at": datetime.datetime.utcnow().isoformat(),
+        }
+
     cached = _read_cache(email)
     if cached and cached["age_seconds"] < CACHE_TTL and cached["sync_status"] == "ok":
         return {
@@ -126,13 +119,12 @@ def get_or_refresh(email: str) -> dict:
 # ── Internal helpers ────────────────────────────────────────────────────────────
 
 def _fetch_and_cache(email: str) -> dict:
-    from app.config import settings
-
-    if not settings.ZOHO_REFRESH_TOKEN:
-        return {"success": False, "error": "Zoho API not configured — add ZOHO_REFRESH_TOKEN to .env"}
+    token = _get_zoho_token(email)
+    if not token:
+        return {"success": False, "error": "not_connected"}
 
     try:
-        balances = _fetch_from_api(email)
+        balances = _fetch_from_api(email, token)
         _persist(email, balances, "ok", None)
         return {
             "success":   True,
@@ -144,7 +136,7 @@ def _fetch_and_cache(email: str) -> dict:
         code = exc.response.status_code if exc.response is not None else 0
         if code in (401, 403):
             _persist(email, None, "auth_error", str(exc))
-            return {"success": False, "error": "Zoho API authentication failed — refresh token may need to be regenerated."}
+            return {"success": False, "error": "not_connected"}
         _persist(email, None, "error", str(exc))
         return {"success": False, "error": f"Zoho API error {code} — please try again."}
     except Exception as exc:

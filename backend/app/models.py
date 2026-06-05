@@ -21,6 +21,7 @@ class Employee(Base):
     email = Column(String, unique=True, index=True)
     department = Column(String)
     designation = Column(String)
+    location = Column(String)  # Pune, Indore, Dubai, US
     manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
     joining_date = Column(Date)
     employment_type = Column(String) # Full-time, Contract
@@ -28,10 +29,11 @@ class Employee(Base):
     insurance_plan = Column(String)
     tax_regime = Column(String) # Old, New
     shift_type = Column(String) # Day, Night
-    
+
     # Relationships
     leaves = relationship("Leave", back_populates="employee")
     attendance = relationship("Attendance", back_populates="employee")
+    skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
 
 class Leave(Base):
     __tablename__ = "leaves"
@@ -61,6 +63,30 @@ class Attendance(Base):
     
     employee = relationship("Employee", back_populates="attendance")
 
+class AttendanceSchedule(Base):
+    """
+    A manager's automation to receive a whole-hierarchy attendance report by email on a
+    recurring schedule. Persisted so it survives backend restarts; the startup scheduler
+    loop runs any rows whose next_run <= now (see attendance_schedule_service).
+    """
+    __tablename__ = "attendance_schedules"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    manager_email = Column(String, index=True)
+    manager_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    frequency = Column(String)              # daily | weekly | monthly | custom
+    day_of_week = Column(Integer, nullable=True)   # 0=Mon .. 6=Sun (weekly / custom)
+    day_of_month = Column(Integer, nullable=True)  # 1..28 (monthly / custom)
+    hour = Column(Integer, default=8)       # local hour of day, 0..23
+    recipients = Column(Text)               # comma-separated; empty => manager_email
+    period_mode = Column(String, default="prev_period")  # prev_period | current
+    active = Column(Boolean, default=True)
+    next_run = Column(DateTime, nullable=True)
+    last_run = Column(DateTime, nullable=True)
+    last_status = Column(String, nullable=True)  # sent | failed:<reason>
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Policy(Base):
     __tablename__ = "policies"
     __table_args__ = {"schema": SCHEMA}
@@ -86,19 +112,6 @@ class PolicyChunk(Base):
     text = Column(Text, nullable=False)
     embedding = Column(Vector(768), nullable=True)
     image_urls = Column(JSON, nullable=True)  # list of PolicyImage IDs for images near this chunk
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-
-class PolicySynonym(Base):
-    """Acronyms/terms auto-learned from each policy doc at ingestion (e.g. tat -> turn around
-    time). Merged into query expansion so new docs' vocabulary is searchable with no manual edit."""
-    __tablename__ = "policy_synonyms"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    policy_id = Column(Integer, ForeignKey(f"{SCHEMA}.policies.id", ondelete="CASCADE"), index=True, nullable=False)
-    term = Column(String, index=True)   # acronym, lowercased  (e.g. "tat")
-    expansion = Column(Text)            # full phrase, lowercased (e.g. "turn around time")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
@@ -242,6 +255,21 @@ class Accommodation(Base):
     location = Column(String)
     status = Column(String, default="Pending")
     approved_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class VisitorPass(Base):
+    __tablename__ = "visitor_passes"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    pass_id = Column(String, unique=True, index=True)  # VP-001
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))  # host
+    visitor_name = Column(String)
+    visitor_company = Column(String, nullable=True)
+    visit_date = Column(Date)
+    visit_time = Column(String, nullable=True)  # free-text, e.g. "2:00 PM" or "afternoon"
+    purpose = Column(Text)
+    status = Column(String, default="Pending")  # Pending, Approved, Rejected, Completed
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class FacilityComplaint(Base):
@@ -584,6 +612,61 @@ class ChatFeedback(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class CachedAnswer(Base):
+    """Semantic answer cache: a previously-answered informational question + its final answer.
+    Looked up by embedding similarity so near-identical repeat questions return instantly with
+    zero LLM calls. Only informational answers are ever stored (never actions/widgets/drafts) —
+    that store-side filter is what makes lookups inherently safe. Policy-derived rows carry
+    source_keys so they can be invalidated the moment the underlying SharePoint doc changes.
+    """
+    __tablename__ = "cached_answers"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    query_text = Column(Text, nullable=False)
+    query_embedding = Column(Vector(768), nullable=True)
+    answer_text = Column(Text, nullable=False)
+    domain = Column(String, nullable=True, index=True)       # hr, admin, it_support, pmo, general
+    sub_intent = Column(String, nullable=True)
+    source_keys = Column(JSON, nullable=True)                # list of Policy.source_key used to build answer
+    is_seed = Column(Boolean, default=False)                 # True for curated warm-FAQ entries
+    hit_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class RouterExample(Base):
+    """Labeled seed utterance for the embedding-based semantic intent router.
+
+    Each row is one example phrasing mapped to a (domain, sub_intent). At route time the
+    incoming message is embedded and matched against these by pgvector cosine similarity —
+    the nearest neighbours decide the domain. Because the output space is the closed set of
+    stored labels, the router structurally cannot hallucinate a domain the way the generative
+    LLM router can. New phrasings are added as rows (data), not regexes (code), and a confirmed
+    misroute can be corrected by inserting the corrected example — reusing ChatFeedback's
+    already-stored message embedding for zero re-embed.
+
+    NOTE: this stores example *phrasings* only, never *answers*. It changes which agent runs,
+    not how that agent answers — live Zoho/API calls, announcements, and prompt configs are
+    all downstream of routing and unaffected.
+    """
+    __tablename__ = "router_examples"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    utterance = Column(Text, nullable=False)
+    # Normalised (lowercased/whitespace-collapsed) form — idempotency key for upserts.
+    utterance_norm = Column(String, unique=True, index=True, nullable=False)
+    embedding = Column(Vector(768), nullable=True)
+    domain = Column(String, nullable=False, index=True)      # hr, admin, it_support, pmo, functional_manager, ms365, deeplink, general
+    sub_intent = Column(String, nullable=False)
+    entities = Column(JSON, nullable=True)                    # template entities for this intent (usually empty)
+    source = Column(String, default="seed")                  # seed | kw | prompt | feedback | manual
+    is_active = Column(Boolean, default=True, index=True)     # soft-disable a bad seed without deleting
+    weight = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class LeaveBalanceCache(Base):
     """Stores the most recent leave balance scraped from Zoho People for each user.
     Refreshed in the background every LEAVE_BALANCE_SYNC_INTERVAL_SECONDS (default 30 min).
@@ -818,5 +901,179 @@ class AiLlmCallLog(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     request = relationship("AiRequestLog", back_populates="llm_calls")
+
+
+class GeneratedDocument(Base):
+    """One row per generated letter/document (NOC, experience cert, project proposal, etc.).
+
+    Stores the finalised letter text so the PDF can be rebuilt on download, and records
+    who it was generated for (subject) vs who generated it (actor) for audit. Non-HR
+    self-serve docs are marked is_official=False and carry a draft watermark on download."""
+    __tablename__ = "generated_documents"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_type = Column(String, index=True)              # no_objection_certificate, experience_certificate, ...
+    title = Column(String)
+    subject_email = Column(String, index=True)         # employee the document is about
+    subject_name = Column(String)
+    generated_by_email = Column(String, index=True)    # who clicked generate
+    is_official = Column(Boolean, default=False)        # mirror of status == "verified" (kept for back-compat)
+    status = Column(String, default="draft", index=True)  # draft | verified
+    verify_token = Column(String, unique=True, index=True)  # unguessable token for the public verify page
+    verified_by_email = Column(String, nullable=True)  # HR/Admin who approved & released
+    verified_at = Column(DateTime, nullable=True)
+    purpose = Column(Text, nullable=True)
+    additional_info = Column(Text, nullable=True)
+    content = Column(Text, nullable=True)              # merged rendered HTML (source for /verify + PDF)
+    field_values = Column(JSON, nullable=True)         # filled placeholder values {field: value} for audit/re-render
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class DocumentTemplate(Base):
+    """A document template synced from a SharePoint folder of plain PDF/DOCX files.
+
+    Each source file becomes one generatable document type. The file is converted to
+    HTML once at sync time and an LLM tags the fill-in spots as ``{{field}}`` tokens
+    (HR reviews/edits the detected fields). At generation time the app does a
+    deterministic placeholder merge — no LLM — auto-filling employee-known fields and
+    prompting the user for the rest. HR controls the catalogue (enable/disable, label,
+    whether the type needs approval) via the fields below; these survive re-sync."""
+    __tablename__ = "document_templates"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_type = Column(String, index=True)              # slug derived from the filename stem
+    label = Column(String)                             # HR-editable display label
+    source_key = Column(String, unique=True, index=True)   # sp:<TemplatesFolder>/<relative_path>
+    source_etag = Column(String, nullable=True)        # Graph cTag for change detection
+    filename = Column(String)
+    source_format = Column(String, nullable=True)      # pdf | docx
+    html_template = Column(Text, nullable=True)        # converted HTML carrying {{field}} tokens
+    fields = Column(JSON, nullable=True)               # [{name,label,type,required,source,options?}]
+    enabled = Column(Boolean, default=False, index=True)   # HR must opt a new template into the dropdown
+    requires_approval = Column(Boolean, default=True)  # approval-gated vs auto-release
+    setup_status = Column(String, default="needs_review")  # needs_review | ready
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class ContentRevealAudit(Base):
+    """Audit trail for revealing conversation content. One row per actual view. Access is
+    gated by Azure AD group membership (validated server-side); this records who saw whose
+    conversation, for which domain, and why."""
+    __tablename__ = "content_reveal_audits"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_log_id = Column(Integer, ForeignKey(f"{SCHEMA}.ai_request_logs.id", ondelete="CASCADE"), index=True)
+    viewer_email = Column(String, index=True)
+    viewer_oid = Column(String, nullable=True)               # Azure AD object id (when JWT-validated)
+    domain = Column(String)                                  # domain of the revealed log
+    reason = Column(Text)                                    # required justification
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class MS365User(Base):
+    """Azure AD / Microsoft 365 user directory synced via Graph API."""
+    __tablename__ = "ms365_users"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    azure_id = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=True)
+    job_title = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    office_location = Column(String, nullable=True)
+    # Richer profile fields (require User.Read.All)
+    employee_id = Column(String, nullable=True)
+    employee_type = Column(String, nullable=True)
+    company_name = Column(String, nullable=True)
+    mobile_phone = Column(String, nullable=True)
+    business_phone = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    account_enabled = Column(Boolean, nullable=True)
+    hire_date = Column(DateTime, nullable=True)
+    # Reporting hierarchy from Azure AD (manager relationship)
+    manager_email = Column(String, nullable=True)
+    manager_name = Column(String, nullable=True)
+    synced_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class EmployeeSkill(Base):
+    """A skill held by an employee, paired with its certification. Child of Employee."""
+    __tablename__ = "employee_skills"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id", ondelete="CASCADE"), index=True, nullable=False)
+    skill = Column(String, nullable=False)
+    certification = Column(String, nullable=True)        # certification title/name (text)
+    is_primary = Column(Boolean, default=False)          # the employee's primary skill (at most one)
+    years_experience = Column(Float, nullable=True)      # years of experience in this skill
+    last_used = Column(Date, nullable=True)              # when the skill was last used
+    cert_file_data = Column(LargeBinary, nullable=True)  # uploaded certification image/PDF
+    cert_file_name = Column(String, nullable=True)
+    cert_content_type = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    employee = relationship("Employee", back_populates="skills")
+
+
+class UdemyLicenseRequest(Base):
+    """Employee request for a Udemy license, managed by the PMO team (subject to availability)."""
+    __tablename__ = "udemy_license_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    course_name = Column(String, nullable=True)
+    justification = Column(Text, nullable=True)
+    status = Column(String, default="Pending")       # Pending, Approved, Rejected
+    decided_by = Column(String, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+
+class DeskKeyRequest(Base):
+    """Employee request for a desk key. Auto-rejected if the desk is already assigned."""
+    __tablename__ = "desk_key_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    desk_number = Column(String, index=True)
+    status = Column(String, default="Pending")       # Pending, Approved, Rejected, Auto-Rejected, Released
+    reason = Column(Text, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    assigned_at = Column(DateTime, nullable=True)
+    released_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ParkingPayment(Base):
+    """Monthly parking-due ledger: one row per sticker holder per calendar month."""
+    __tablename__ = "parking_payments"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "period_month", name="uq_parking_payment_emp_month"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    parking_sticker_id = Column(Integer, ForeignKey(f"{SCHEMA}.parking_stickers.id"), nullable=True)
+    period_month = Column(Date, index=True)          # first day of the month the charge is for
+    vehicle_type = Column(String)                    # 2-wheeler, 4-wheeler
+    amount_due = Column(Float, default=0.0)
+    amount_paid = Column(Float, default=0.0)
+    status = Column(String, default="Due")           # Due, Paid, Closed
+    paid_at = Column(DateTime, nullable=True)
+    closed_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 

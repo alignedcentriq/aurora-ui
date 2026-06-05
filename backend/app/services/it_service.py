@@ -138,8 +138,29 @@ class ITService:
         return {"to": settings.HELPDESK_EMAIL, "subject": subject, "body": body}
 
     @staticmethod
+    def _looks_like_software_name(software_name: str) -> bool:
+        """Reject sentences / non-product phrases that get mis-extracted into software_name."""
+        s = (software_name or "").strip()
+        if not s:
+            return False
+        lowered = s.lower()
+        # Phrases that signal a mis-routed request rather than a product name.
+        bad_leads = ("to ", "i ", "a ", "an ", "the ", "please ", "request ", "need ", "want ")
+        if lowered.startswith(bad_leads):
+            return False
+        # Real product names are short; full sentences are not.
+        if len(s.split()) > 5:
+            return False
+        return True
+
+    @staticmethod
     def request_software_install(email: str, software_name: str):
         import json
+        if not ITService._looks_like_software_name(software_name):
+            return (
+                "I couldn't tell which software you'd like installed. "
+                "Please tell me the exact application name (for example: Node.js, Figma, or Docker)."
+            )
         draft = ITService.build_software_install_email(email, software_name)
         draft_json = json.dumps({"to": draft["to"], "subject": draft["subject"], "body": draft["body"]})
         return (

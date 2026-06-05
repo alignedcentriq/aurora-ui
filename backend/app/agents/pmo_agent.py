@@ -1,18 +1,17 @@
 import uuid
 from typing import Annotated, List, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode, tools_condition, InjectedState
 
 from app.config import settings
 from app.services.prompt_service import PromptService
 
 
 PMO_SYSTEM_PROMPT = """You are the PMO Assistant for Aligned Automation. You have access to a real company project database.
-Always respond in English regardless of the language of the user's message.
 
 CONVERSATION MEMORY RULE:
 Read the full conversation history before responding.
@@ -189,6 +188,21 @@ def search_people_directory(query: str):
     return PeopleService.search_people_text(query)
 
 
+@tool
+def request_udemy_license(
+    justification: str = "",
+    course_name: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request a Udemy license from the PMO team. Use when the user asks for a Udemy license / online course access.
+    course_name: the course or topic they want (ask if not stated).
+    justification: a one-line reason / how it helps their work (ask if not stated).
+    Licenses are provided subject to availability — make this clear. The PMO team is notified by email."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    from app.services.udemy_service import UdemyService
+    return UdemyService.request_license(email, justification, course_name)
+
+
 pmo_tools = [
     list_projects,
     get_project_status,
@@ -196,17 +210,11 @@ pmo_tools = [
     generate_project_report,
     generate_multi_project_report,
     search_people_directory,
+    request_udemy_license,
 ]
 
-pmo_llm = ChatOpenAI(
-    base_url=settings.ROUTER_BASE_URL,
-    api_key=settings.ROUTER_API_KEY,
-    model=settings.ROUTER_MODEL_NAME,
-    temperature=settings.AGENT_TEMPERATURE,
-    max_retries=2,
-    timeout=45,
-)
-pmo_llm_with_tools = pmo_llm.bind_tools(pmo_tools)
+# LLM built on demand from the live IT-tunable params (router tier).
+from app.services import llm_controls_service as llm_controls
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -355,10 +363,10 @@ def pmo_assistant(state: PMOState):
         base_prompt = PromptService.get_system_prompt("pmo", PMO_SYSTEM_PROMPT)
         guardrail = PromptService.get_guardrail("pmo")
         feedback_ctx = state.get("feedback_context") or ""
-        english_rule = "\nALWAYS respond in English regardless of the language of the user's message.\n"
-        messages = [SystemMessage(content=base_prompt + english_rule + guardrail + feedback_ctx)] + messages
+        messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
     try:
-        return {"messages": [pmo_llm_with_tools.invoke(messages)]}
+        llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(pmo_tools)
+        return {"messages": [llm.invoke(messages)]}
     except Exception as exc:
         print(f"PMO Agent LLM error: {exc}")
         return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}
@@ -366,10 +374,35 @@ def pmo_assistant(state: PMOState):
 
 # ── Workflow ───────────────────────────────────────────────────────────────────
 
+# Tools whose output is display-ready and never feeds a follow-up tool call.
+# Report tools especially benefit: they carry a [DOWNLOAD_PDF:...] tag the LLM is
+# only *instructed* to preserve — passing them through verbatim removes the risk
+# of the model mangling or dropping the tag. list_projects is excluded because the
+# PMO prompt deliberately chains it (call list_projects → answer from the names).
+_PASSTHROUGH_TOOLS = {
+    "generate_project_report", "generate_multi_project_report",
+    "get_project_status", "get_project_achievements", "search_people_directory",
+}
+
+
+def pmo_passthrough(state: PMOState):
+    """Emit a display-ready tool result verbatim — zero LLM."""
+    last = state["messages"][-1]
+    return {"messages": [AIMessage(content=(getattr(last, "content", "") or "").strip())]}
+
+
+def _route_after_tools(state: PMOState) -> str:
+    last = state["messages"][-1]
+    if isinstance(last, ToolMessage) and getattr(last, "name", "") in _PASSTHROUGH_TOOLS:
+        return "passthrough"
+    return "pmo_assistant"
+
+
 pmo_workflow = StateGraph(PMOState)
 pmo_workflow.add_node("smart_dispatcher", smart_dispatcher)
 pmo_workflow.add_node("pmo_assistant", pmo_assistant)
 pmo_workflow.add_node("tools", ToolNode(pmo_tools))
+pmo_workflow.add_node("passthrough", pmo_passthrough)
 
 pmo_workflow.set_entry_point("smart_dispatcher")
 pmo_workflow.add_conditional_edges(
@@ -378,6 +411,7 @@ pmo_workflow.add_conditional_edges(
     {"done": END, "tools": "tools", "pmo_assistant": "pmo_assistant"},
 )
 pmo_workflow.add_conditional_edges("pmo_assistant", tools_condition)
-pmo_workflow.add_edge("tools", "pmo_assistant")
+pmo_workflow.add_conditional_edges("tools", _route_after_tools, ["passthrough", "pmo_assistant"])
+pmo_workflow.add_edge("passthrough", END)
 
 pmo_agent = pmo_workflow.compile()

@@ -2,7 +2,6 @@ import { Link, useLocation } from "@tanstack/react-router";
 import {
   MessageSquare,
   Settings,
-  LayoutDashboard,
   Database,
   ChevronDown,
   Users,
@@ -25,6 +24,8 @@ import {
   Activity,
   BookOpen,
   Library as LibraryIcon,
+  FileText,
+  GraduationCap,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -44,13 +45,29 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string }> = {
-  Employee: { icon: Briefcase, color: "text-blue-400", label: "Employee" },
-  HR: { icon: Users, color: "text-emerald-400", label: "Human Resources" },
-  IT: { icon: Wrench, color: "text-amber-400", label: "IT Support" },
-  PMO: { icon: ClipboardList, color: "text-cyan-400", label: "Project Management" },
-  Admin: { icon: Shield, color: "text-rose-400", label: "Administrator" },
-  "Functional Manager": { icon: UserCog, color: "text-violet-400", label: "Functional Manager" },
+/** 4C color coding for roles */
+const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string; cKey: string }> = {
+  Employee:          { icon: Briefcase,    color: "text-[#3B8FE8]",  label: "Employee",          cKey: "Clarity"       },
+  HR:                { icon: Users,        color: "text-[#22C55E]",  label: "Human Resources",   cKey: "Collaboration" },
+  IT:                { icon: Wrench,       color: "text-[#14B8A6]",  label: "IT Support",        cKey: "Connectivity"  },
+  PMO:               { icon: ClipboardList,color: "text-[#4F6FEF]",  label: "Project Management",cKey: "Capacity"      },
+  Admin:             { icon: Shield,       color: "text-[#3B8FE8]",  label: "Administrator",     cKey: "Clarity"       },
+  "Functional Manager": { icon: UserCog,   color: "text-[#22C55E]",  label: "Functional Manager",cKey: "Collaboration" },
+};
+
+/** 4C Nav item accent colors for icons */
+const NAV_COLORS: Record<string, string> = {
+  "/":              "var(--clarity)",
+  "/people":        "var(--collaboration)",
+  "/documents":     "var(--connectivity)",
+  "/config":        "var(--connectivity)",
+  "/observability": "var(--capacity)",
+  "/hr-portal":     "var(--collaboration)",
+  "/admin-portal":  "var(--clarity)",
+  "/it-portal":     "var(--connectivity)",
+  "/pmo-portal":    "var(--capacity)",
+  "/manager-portal": "var(--collaboration)",
+  "/settings":      "var(--capacity)",
 };
 
 interface SidebarProps {
@@ -85,7 +102,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     });
   };
 
-  // Reset avatar error when the URL changes (e.g. after re-login)
   useEffect(() => {
     setAvatarError(false);
   }, [user?.avatarUrl]);
@@ -136,21 +152,22 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       label: "People",
       show: ["HR", "PMO", "Admin", "Functional Manager"].includes(user.role),
     },
+    { to: "/documents", icon: FileText, label: "Documents", show: true },
     {
       to: "/config",
       icon: Database,
       label: "Prompt Config",
       show: ["Admin", "HR", "IT", "PMO"].includes(user.role),
     },
-    { to: "/admin", icon: LayoutDashboard, label: "Analytics", show: user.role === "Admin" },
-    { to: "/observability", icon: Activity, label: "Observability", show: ["IT", "Admin"].includes(user.role) },
+    { to: "/observability", icon: Activity, label: "Observability", show: user.role === "IT" },
     { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
     { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
     { to: "/it-portal", icon: Ticket, label: "IT Portal", show: user.role === "IT" },
+    { to: "/pmo-portal", icon: GraduationCap, label: "PMO Portal", show: user.role === "PMO" },
+    { to: "/manager-portal", icon: UserCog, label: "Manager Portal", show: user.role === "Functional Manager" },
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 
-  // Show labels when expanded on desktop/tablet, or when the mobile drawer is open
   const showLabels = !isCollapsed || mobileOpen;
 
   const avatarEl = user.avatarUrl && !avatarError ? (
@@ -158,10 +175,16 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       src={user.avatarUrl}
       alt={user.name}
       onError={() => setAvatarError(true)}
-      className="h-9 w-9 rounded-full object-cover shadow-lg shadow-black/20 shrink-0 ring-2 ring-white/10"
+      className="h-9 w-9 rounded-full object-cover shrink-0 ring-2 ring-[var(--clarity)]/30"
     />
   ) : (
-    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary/30 to-accent-cyan/20 text-[13px] font-bold text-primary shadow-lg shadow-black/10 shrink-0 ring-2 ring-white/10">
+    <div
+      className="flex h-9 w-9 items-center justify-center rounded-full text-[13px] font-bold text-white shrink-0"
+      style={{
+        background: "var(--gradient-primary)",
+        boxShadow: "0 0 0 2px rgba(27,111,200,0.25)",
+      }}
+    >
       {user.name.split(" ").map((n) => n[0]).join("")}
     </div>
   );
@@ -176,7 +199,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 md:hidden"
             onClick={onMobileClose}
           />
         )}
@@ -184,51 +207,84 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
       <motion.aside
         layout
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         className={cn(
-          "flex flex-col h-screen",
-          // Background with subtle gradient
-          "bg-[var(--sidebar-bg)] border-r border-white/[0.06]",
-          // Mobile: fixed overlay drawer
+          "flex flex-col h-screen relative",
+          "border-r border-white/[0.05]",
           "fixed md:relative inset-y-0 left-0 z-50",
-          // Mobile drawer width
-          "w-[280px]",
-          // Mobile slide via transform; desktop collapses via width
-          "transition-transform md:transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+          "w-[272px]",
+          "transition-transform md:transition-[width] duration-250 ease-[cubic-bezier(0.16,1,0.3,1)]",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
-          // Desktop collapsible width
-          isCollapsed ? "md:w-[60px]" : "md:w-[240px]",
+          isCollapsed ? "md:w-[62px]" : "md:w-[240px]",
         )}
+        style={{ background: "var(--gradient-sidebar)" }}
       >
-        {/* Subtle gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-b from-primary/[0.03] via-transparent to-accent-cyan/[0.02] pointer-events-none" />
+        {/* ── Unique: Vertical gradient brand stripe (leftmost 3px) ── */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-[3px] pointer-events-none"
+          style={{ background: "var(--gradient-primary)" }}
+        />
 
-        {/* Header */}
+        {/* ── Unique: Subtle hex mesh overlay ── */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.04]"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 66L0 50V16L28 0l28 16v34L28 66zm0-6l22-13V19L28 6 6 19v28l22 13z' fill='none' stroke='%233B8FE8' stroke-width='0.5'/%3E%3C/svg%3E")`,
+            backgroundSize: "56px 100px",
+          }}
+        />
+
+        {/* Animated scan-line for the sidebar */}
+        <motion.div
+          className="absolute inset-0 pointer-events-none overflow-hidden"
+          aria-hidden="true"
+        >
+          <motion.div
+            className="absolute w-full h-[1px] opacity-[0.08]"
+            style={{
+              background: "linear-gradient(90deg, transparent, var(--clarity), var(--connectivity), transparent)",
+            }}
+            animate={{ top: ["-2%", "102%"] }}
+            transition={{ duration: 6, repeat: Infinity, ease: "linear", repeatDelay: 3 }}
+          />
+        </motion.div>
+
+        {/* ── Header ─────────────────────────────────── */}
         <div
           className={cn(
-            "relative flex h-14 items-center border-b border-white/[0.06] shrink-0",
-            showLabels ? "px-4 gap-2" : "px-0 justify-center",
+            "relative flex h-[60px] items-center shrink-0",
+            "border-b border-white/[0.06]",
+            showLabels ? "pl-5 pr-3 gap-2.5" : "px-0 justify-center",
           )}
         >
           {showLabels ? (
             <>
-              <Logo size="sm" />
+              {/* Logo with 4C glow */}
+              <div className="relative shrink-0">
+                <Logo size="sm" />
+                <motion.div
+                  className="absolute -inset-1 rounded-xl opacity-30 blur-sm pointer-events-none"
+                  style={{ background: "var(--gradient-primary)" }}
+                  animate={{ opacity: [0.2, 0.4, 0.2] }}
+                  transition={{ duration: 3, repeat: Infinity }}
+                />
+              </div>
               <BrandName
-                className="text-[14px] text-[var(--sidebar-foreground)] flex-1 min-w-0"
+                className="text-[14px] font-bold text-[var(--sidebar-foreground)] flex-1 min-w-0"
                 withAI={true}
               />
-              {/* Desktop collapse button */}
+              {/* Desktop collapse */}
               <button
                 onClick={toggle}
-                className="hidden md:flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)] transition-all duration-150 shrink-0"
+                className="hidden md:flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/30 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)]/80 transition-all duration-150 shrink-0"
                 title="Collapse sidebar"
               >
                 <PanelLeftClose className="h-4 w-4" />
               </button>
-              {/* Mobile close button */}
+              {/* Mobile close */}
               <button
                 onClick={onMobileClose}
-                className="md:hidden flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)] transition-all duration-150 shrink-0"
+                className="md:hidden flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/30 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)]/80 transition-all duration-150 shrink-0"
                 title="Close"
               >
                 <X className="h-4 w-4" />
@@ -237,7 +293,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           ) : (
             <button
               onClick={toggle}
-              className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)] transition-all duration-150"
+              className="flex items-center justify-center h-7 w-7 rounded-lg text-[var(--sidebar-foreground)]/30 hover:bg-white/[0.06] hover:text-[var(--sidebar-foreground)]/80 transition-all duration-150"
               title="Expand sidebar"
             >
               <PanelLeftOpen className="h-4 w-4" />
@@ -245,13 +301,14 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           )}
         </div>
 
-        {/* Navigation */}
+        {/* ── Navigation ─────────────────────────────── */}
         <nav className="relative flex-1 overflow-y-auto py-3 space-y-0.5 no-scrollbar px-2">
           {navItems
             .filter((n) => n.show)
-            .map((item) => {
+            .map((item, idx) => {
               const Icon = item.icon;
               const active = isActive(item.to);
+              const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
               return (
                 <Link
                   key={item.to}
@@ -265,60 +322,110 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                     "group relative flex items-center rounded-xl py-2.5 text-[13px] font-medium transition-all duration-200",
                     showLabels ? "gap-3 px-3" : "justify-center px-0",
                     active
-                      ? "bg-white/[0.08] text-[var(--sidebar-foreground)]"
-                      : "text-[var(--sidebar-foreground)]/50 hover:bg-white/[0.04] hover:text-[var(--sidebar-foreground)]/80",
+                      ? "text-[var(--sidebar-foreground)]"
+                      : "text-[var(--sidebar-foreground)]/45 hover:text-[var(--sidebar-foreground)]/80",
                   )}
+                  style={active ? {
+                    background: `linear-gradient(90deg, color-mix(in oklab, ${accentColor} 16%, transparent), color-mix(in oklab, ${accentColor} 6%, transparent))`,
+                    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 12%, transparent)`,
+                  } : undefined}
                 >
-                  {/* Active indicator line */}
+                  {/* Unique: Left accent bar (per-C color coded) */}
                   {active && (
                     <motion.div
-                      layoutId="nav-active"
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-full bg-gradient-to-b from-primary to-accent-cyan"
+                      layoutId="nav-active-bar"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-full"
+                      style={{
+                        height: "65%",
+                        background: accentColor,
+                        boxShadow: `0 0 8px ${accentColor}`,
+                      }}
                       transition={{ type: "spring", stiffness: 500, damping: 35 }}
                     />
                   )}
-                  <Icon className={cn(
-                    "h-[18px] w-[18px] shrink-0 transition-colors",
-                    active && "text-primary",
-                  )} />
+
+                  {/* Icon with per-C color glow when active */}
+                  <div
+                    className={cn(
+                      "relative flex items-center justify-center rounded-lg h-7 w-7 shrink-0 transition-all duration-200",
+                      active ? "" : "opacity-60 group-hover:opacity-90",
+                    )}
+                    style={active ? {
+                      background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
+                    } : undefined}
+                  >
+                    <Icon
+                      className="h-[16px] w-[16px] shrink-0 transition-colors"
+                      style={{ color: active ? accentColor : "inherit" }}
+                    />
+                    {/* Active icon glow pulse */}
+                    {active && (
+                      <motion.div
+                        className="absolute inset-0 rounded-lg pointer-events-none"
+                        style={{ background: `color-mix(in oklab, ${accentColor} 20%, transparent)` }}
+                        animate={{ opacity: [0.5, 1, 0.5] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
+                    )}
+                  </div>
+
                   {showLabels && <span className="flex-1 truncate">{item.label}</span>}
+
+                  {/* Unique: Active C-badge */}
                   {showLabels && active && (
-                    <div className="ml-auto h-1.5 w-1.5 rounded-full bg-primary shrink-0 animate-pulse" />
+                    <motion.div
+                      initial={{ scale: 0, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      className="ml-auto shrink-0 h-4 w-4 rounded-full flex items-center justify-center text-[7px] font-black"
+                      style={{
+                        background: accentColor,
+                        color: "#fff",
+                        boxShadow: `0 0 6px ${accentColor}`,
+                      }}
+                    >
+                      C
+                    </motion.div>
                   )}
                 </Link>
               );
             })}
 
-          {/* New conversation shortcut — collapsed desktop only */}
+          {/* New conversation (collapsed) */}
           {isCollapsed && !mobileOpen && isActive("/") && (
             <button
               onClick={() => createThread()}
               title="New Conversation"
-              className="flex w-full items-center justify-center rounded-xl py-2.5 text-[var(--sidebar-foreground)]/50 hover:bg-white/[0.04] hover:text-primary transition-all duration-150"
+              className="flex w-full items-center justify-center rounded-xl py-2.5 text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.05] hover:text-[var(--clarity)] transition-all duration-150"
             >
               <Plus className="h-[18px] w-[18px] shrink-0" />
             </button>
           )}
 
-          {/* Recent Chats — only when labels are visible */}
+          {/* Recent Chats */}
           {showLabels && isActive("/") && (
             <>
-              <div className="px-3 pt-5 pb-2">
-                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--sidebar-foreground)]/25">
-                  Recent Chats
+              <div className="px-3 pt-5 pb-2 flex items-center gap-2">
+                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--sidebar-foreground)]/25">
+                  Recent
                 </span>
+                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
               </div>
               <div className="space-y-0.5">
                 <motion.button
-                  whileHover={{ scale: 1.01 }}
+                  whileHover={{ x: 3, scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     createThread();
                     if (mobileOpen) onMobileClose();
                   }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium text-primary/80 hover:bg-primary/5 transition-colors"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-150"
+                  style={{ color: "var(--clarity)" }}
                 >
-                  <div className="flex h-5 w-5 items-center justify-center rounded-md bg-primary/10">
+                  <div
+                    className="flex h-5 w-5 items-center justify-center rounded-md"
+                    style={{ background: "color-mix(in oklab, var(--clarity) 15%, transparent)" }}
+                  >
                     <Plus className="h-3.5 w-3.5" />
                   </div>
                   <span>New Conversation</span>
@@ -335,9 +442,9 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                         <motion.div
                           key={thread.id}
                           layout
-                          initial={{ opacity: 0, x: -10 }}
+                          initial={{ opacity: 0, x: -12 }}
                           animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -10, height: 0 }}
+                          exit={{ opacity: 0, x: -12, height: 0 }}
                           transition={{ duration: 0.2 }}
                           role="button"
                           tabIndex={0}
@@ -354,19 +461,26 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                           className={cn(
                             "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-150 cursor-pointer",
                             active
-                              ? "bg-white/[0.06] text-[var(--sidebar-foreground)]"
-                              : "text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.03] hover:text-[var(--sidebar-foreground)]/70",
+                              ? "text-[var(--sidebar-foreground)]"
+                              : "text-[var(--sidebar-foreground)]/35 hover:bg-white/[0.03] hover:text-[var(--sidebar-foreground)]/65",
                           )}
+                          style={active ? {
+                            background: "color-mix(in oklab, var(--clarity) 10%, transparent)",
+                            border: "1px solid color-mix(in oklab, var(--clarity) 12%, transparent)",
+                          } : undefined}
                         >
                           <MessageSquare
-                            className={cn(
-                              "h-[16px] w-[16px] shrink-0 transition-colors",
-                              active ? "text-primary" : "opacity-40",
-                            )}
+                            className="h-[15px] w-[15px] shrink-0 transition-colors"
+                            style={{ color: active ? "var(--clarity)" : "inherit", opacity: active ? 1 : 0.4 }}
                           />
                           <span className="truncate text-left flex-1">{title}</span>
                           {active && (
-                            <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0 group-hover:hidden" />
+                            <motion.div
+                              className="h-1.5 w-1.5 rounded-full shrink-0 group-hover:hidden"
+                              style={{ background: "var(--clarity)", boxShadow: "0 0 4px var(--clarity)" }}
+                              animate={{ opacity: [1, 0.4, 1] }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
+                            />
                           )}
                           <button
                             onClick={(e) => {
@@ -376,8 +490,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                             className={cn(
                               "shrink-0 p-1 hover:bg-white/10 rounded-lg transition-all hover:text-red-400",
                               active
-                                ? "hidden group-hover:block text-[var(--sidebar-foreground)]/50"
-                                : "opacity-0 group-hover:opacity-100 text-[var(--sidebar-foreground)]/30",
+                                ? "hidden group-hover:block text-[var(--sidebar-foreground)]/40"
+                                : "opacity-0 group-hover:opacity-100 text-[var(--sidebar-foreground)]/25",
                             )}
                             title="Delete conversation"
                           >
@@ -392,18 +506,38 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           )}
         </nav>
 
-        {/* User section */}
+        {/* ── User Section ────────────────────────────── */}
         <div
           className={cn(
-            "relative border-t border-white/[0.06] shrink-0",
+            "relative shrink-0",
+            "border-t border-white/[0.06]",
             showLabels ? "p-2" : "px-0 py-2",
           )}
           ref={dropdownRef}
         >
+          {/* Unique: 4C role indicator strip above user */}
+          {showLabels && (
+            <div className="flex items-center gap-1 px-2.5 pb-2">
+              {(["Clarity", "Connectivity", "Collaboration", "Capacity"] as const).map((c, i) => {
+                const colors = ["var(--clarity)", "var(--connectivity)", "var(--collaboration)", "var(--capacity)"];
+                return (
+                  <motion.div
+                    key={c}
+                    className="flex-1 h-[2px] rounded-full"
+                    style={{ background: colors[i] }}
+                    animate={{ opacity: [0.4, 1, 0.4] }}
+                    transition={{ duration: 2, repeat: Infinity, delay: i * 0.5 }}
+                    title={c}
+                  />
+                );
+              })}
+            </div>
+          )}
+
           <button
             onClick={() => setRoleDropdownOpen(!isRoleDropdownOpen)}
             className={cn(
-              "flex w-full items-center rounded-xl transition-all duration-150 hover:bg-white/[0.04]",
+              "flex w-full items-center rounded-xl transition-all duration-150 hover:bg-white/[0.05]",
               showLabels ? "gap-3 p-2.5" : "justify-center py-2.5",
             )}
           >
@@ -411,16 +545,16 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             {showLabels && (
               <>
                 <div className="flex flex-1 flex-col items-start min-w-0">
-                  <span className="text-[13px] font-medium text-[var(--sidebar-foreground)] truncate w-full text-left">
+                  <span className="text-[13px] font-semibold text-[var(--sidebar-foreground)] truncate w-full text-left">
                     {user.name}
                   </span>
-                  <span className="text-[11px] text-[var(--sidebar-foreground)]/40 truncate w-full text-left">
+                  <span className="text-[10px] text-[var(--sidebar-foreground)]/35 truncate w-full text-left font-medium">
                     {user.role}
                   </span>
                 </div>
                 <ChevronDown
                   className={cn(
-                    "h-4 w-4 text-[var(--sidebar-foreground)]/30 transition-transform duration-200 shrink-0",
+                    "h-4 w-4 text-[var(--sidebar-foreground)]/25 transition-transform duration-200 shrink-0",
                     isRoleDropdownOpen && "rotate-180",
                   )}
                 />
@@ -431,13 +565,15 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           <AnimatePresence>
             {isRoleDropdownOpen && (
               <motion.div
-                initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
                 transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                className="absolute bottom-20 left-2 w-52 z-[60] rounded-2xl border border-white/[0.08] bg-[#0c1222]/95 backdrop-blur-xl p-1.5 shadow-2xl"
+                className="absolute bottom-24 left-2 w-54 z-[60] rounded-2xl border border-white/[0.07] backdrop-blur-xl p-1.5 shadow-2xl"
+                style={{ background: "rgba(4, 18, 40, 0.96)", minWidth: "210px" }}
               >
-                <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
+                <div className="px-3 py-2 border-b border-white/[0.06] mb-1 flex items-center gap-2">
+                  <Sparkles className="h-3 w-3" style={{ color: "var(--clarity)" }} />
                   <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/30">
                     Switch Role (Demo)
                   </span>
@@ -449,37 +585,42 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                   return (
                     <motion.button
                       key={r}
-                      whileHover={{ x: 2 }}
+                      whileHover={{ x: 3 }}
                       whileTap={{ scale: 0.97 }}
                       onClick={() => {
                         setRole(r);
                         setRoleDropdownOpen(false);
                       }}
                       className={cn(
-                        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-[13px] transition-all duration-150",
+                        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-[12px] transition-all duration-150",
                         isSelected
-                          ? "bg-white/[0.08] text-white"
-                          : "text-white/60 hover:bg-white/[0.04] hover:text-white/80",
+                          ? "bg-white/[0.07] text-white"
+                          : "text-white/55 hover:bg-white/[0.04] hover:text-white/80",
                       )}
                     >
-                      <RIcon className={cn("h-4 w-4", meta.color)} />
-                      <span className="flex-1 text-left font-medium">{r}</span>
-                      {isSelected && <Check className="h-4 w-4 text-primary" />}
+                      <RIcon className={cn("h-3.5 w-3.5", meta.color)} />
+                      <div className="flex flex-1 flex-col items-start">
+                        <span className="font-semibold">{r}</span>
+                        <span className="text-[9px] opacity-40 font-medium">{meta.cKey}</span>
+                      </div>
+                      {isSelected && (
+                        <Check className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--clarity)" }} />
+                      )}
                     </motion.button>
                   );
                 })}
                 <div className="border-t border-white/[0.06] mt-1 pt-1">
                   <motion.button
-                    whileHover={{ x: 2 }}
+                    whileHover={{ x: 3 }}
                     whileTap={{ scale: 0.97 }}
                     onClick={() => {
                       logout();
                       setRoleDropdownOpen(false);
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-[13px] text-rose-400/80 hover:bg-rose-500/10 hover:text-rose-400 transition-all duration-150"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-[12px] text-rose-400/75 hover:bg-rose-500/10 hover:text-rose-400 transition-all duration-150"
                   >
-                    <LogOut className="h-4 w-4" />
-                    <span className="font-medium">Sign Out</span>
+                    <LogOut className="h-3.5 w-3.5" />
+                    <span className="font-semibold">Sign Out</span>
                   </motion.button>
                 </div>
               </motion.div>

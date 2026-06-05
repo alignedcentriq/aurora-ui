@@ -120,6 +120,89 @@ async def fetch_community_messages(token: str, group_id: int, top: int = 20) -> 
         return _error(f"Failed to fetch community messages: {e}")
 
 
+async def search_messages(token: str, query: str, top: int = 15) -> dict:
+    """Search across all Viva Engage (Yammer) communities for posts matching a query.
+
+    Unlike my_feed, the search endpoint nests messages under data["messages"]["messages"].
+    """
+    url = f"{YAMMER_BASE}/search.json"
+    params = {"search": query, "num_perpage": str(min(top, 20))}
+
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        raw = (data.get("messages") or {}).get("messages", [])
+        messages = [_parse_message(m) for m in raw]
+        return {"success": True, "query": query, "count": len(messages), "messages": messages}
+
+    except httpx.HTTPStatusError as e:
+        return _error(f"Yammer search error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to search communities: {e}")
+
+
+async def fetch_thread(token: str, thread_id: int, top: int = 20) -> dict:
+    """Fetch all messages in a thread — the original post AND every reply/comment.
+
+    On Viva Engage the answer to a question is usually in the replies, not the
+    starter post, so callers should pull the whole thread to capture responses.
+    """
+    url = f"{YAMMER_BASE}/messages/in_thread/{thread_id}.json"
+    params = {"limit": str(min(top, 50))}
+
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        messages = [_parse_message(m) for m in data.get("messages", [])]
+        # Yammer returns newest-first; show oldest-first so the question leads.
+        messages.reverse()
+        return {"success": True, "thread_id": thread_id, "count": len(messages), "messages": messages}
+
+    except httpx.HTTPStatusError as e:
+        return _error(f"Yammer thread error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch thread: {e}")
+
+
+async def search_with_replies(token: str, query: str, max_threads: int = 3, replies_per_thread: int = 20) -> dict:
+    """Search communities, then expand the top matching threads to include replies/comments.
+
+    Returns threads (question + responses) so the answer in a reply isn't missed.
+    """
+    base = await search_messages(token, query, top=20)
+    if not base.get("success"):
+        return base
+
+    # Distinct thread IDs in match order (a post and its reply can both match).
+    seen: list = []
+    for m in base["messages"]:
+        tid = m.get("thread_id")
+        if tid and tid not in seen:
+            seen.append(tid)
+        if len(seen) >= max_threads:
+            break
+
+    threads = []
+    for tid in seen:
+        t = await fetch_thread(token, tid, top=replies_per_thread)
+        posts = t.get("messages", []) if t.get("success") else []
+        threads.append({"thread_id": tid, "post_count": len(posts), "posts": posts})
+
+    return {
+        "success": True,
+        "query": query,
+        "matches": base.get("count", 0),
+        "thread_count": len(threads),
+        "threads": threads,
+    }
+
+
 async def resolve_community_id(token: str, name: str) -> int | None:
     """Find a community ID by name (case-insensitive partial match)."""
     result = await fetch_my_communities(token)

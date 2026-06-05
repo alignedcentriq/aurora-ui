@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -20,13 +20,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
+import { VisitorPassForm } from "./VisitorPassForm";
+import { RoomBookingWidget } from "./RoomBookingWidget";
+import { CancelBookingWidget } from "./CancelBookingWidget";
+import { MyScheduleWidget } from "./MyScheduleWidget";
+import { SkillsEditorWidget } from "./SkillsEditorWidget";
+import { AnnouncementWidget } from "./AnnouncementWidget";
+import { PromptConfigWidget } from "./PromptConfigWidget";
+import { AttendanceScheduleWidget } from "./AttendanceScheduleWidget";
+import { VoiceOrb } from "./VoiceOrb";
 import { ThinkingBuddy } from "./ThinkingBuddy";
 import { SmartWidgets } from "./SmartWidgets";
+import { useVoiceStore } from "@/lib/voice-store";
+import { createRecognition, resetSpeech, enqueueFrom, cancelSpeech } from "@/lib/speech";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { Turn } from "@/lib/chat-store";
+import { QUICK_QUERIES } from "@/lib/quickQueries";
 
 function getGreeting(name: string): { heading: string; subheading: string } {
   const firstName = name.split(" ")[0];
@@ -90,8 +102,16 @@ function detectBookIntent(text: string): { path: string; label: string; reply: s
 }
 
 export function AssistantView() {
-  const { threads, activeId, thinking, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
+  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
+  // The active chat is "thinking" only if it is the thread currently generating a response
+  // (pre-first-token phase — drives the ThinkingBuddy bubble).
+  const thinking = activeId ? !!thinkingThreads[activeId] : false;
+  // "busy" stays true for the whole in-flight response (thinking OR tokens still streaming),
+  // so the Stop button and input lock persist until the active chat's reply completes.
+  const activeTurnsForBusy = (activeId && threads[activeId]?.turns) || [];
+  const lastActiveTurn = activeTurnsForBusy[activeTurnsForBusy.length - 1];
+  const busy = thinking || (lastActiveTurn?.role === "ai" && lastActiveTurn.streaming === true);
   const { theme } = useSettings();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -104,9 +124,24 @@ export function AssistantView() {
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [activity, setActivity] = useState("");
   const [vpnWarning, setVpnWarning] = useState(false);
+  const [vpnRetrying, setVpnRetrying] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [starterPage, setStarterPage] = useState(0);
+
+  // Hands-free voice mode ("Jarvis")
+  const { voiceMode, voiceState, setVoiceState, setLiveTranscript } = useVoiceStore();
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalTranscriptRef = useRef("");
+  const lastSpokenIndexRef = useRef(-1);
+  const lastSpokenLenRef = useRef(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // In-flight request control, keyed by thread id, so each chat can be stopped
+  // independently and a stopped abort isn't mistaken for a timeout.
+  const controllersRef = useRef<Map<string, AbortController>>(new Map());
+  const stoppedRef = useRef<Set<string>>(new Set());
 
   // Create a thread whenever there is no active one
   useEffect(() => {
@@ -120,6 +155,14 @@ export function AssistantView() {
     setSuggestions([]);
   }, [activeId]);
 
+  // Cycle starter prompts every 4s on empty state
+  const STARTER_PAGE_SIZE = 3;
+  const starterTotal = Math.ceil(QUICK_QUERIES.length / STARTER_PAGE_SIZE);
+  useEffect(() => {
+    const id = setInterval(() => setStarterPage((p) => (p + 1) % starterTotal), 4000);
+    return () => clearInterval(id);
+  }, [starterTotal]);
+
   // Listen for quick-action events from CommandPalette
   useEffect(() => {
     const handler = (e: CustomEvent<{ prompt: string }>) => {
@@ -130,6 +173,21 @@ export function AssistantView() {
     window.addEventListener("centriq:quick-action", handler as EventListener);
     return () => window.removeEventListener("centriq:quick-action", handler as EventListener);
   }, [activeId, threads]);
+
+  const retryVpn = () => {
+    setVpnRetrying(true);
+    fetch("/api/health/llm")
+      .then((res) => {
+        if (res.ok) {
+          setVpnWarning(false);
+          toast.success("VPN connected", { description: "You're back on the office network." });
+        } else {
+          toast.error("Still unreachable", { description: "Check your VPN connection and try again." });
+        }
+      })
+      .catch(() => toast.error("Still unreachable", { description: "Check your VPN connection and try again." }))
+      .finally(() => setVpnRetrying(false));
+  };
 
   // Check LLM reachability on mount
   useEffect(() => {
@@ -168,6 +226,105 @@ export function AssistantView() {
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
     setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
   }, []);
+
+  // Parse room-booking entities from a natural-language message (no LLM)
+  function parseRoomBooking(text: string) {
+    const lower = text.toLowerCase();
+
+    // Date: "tomorrow" / "today"
+    let date: string | undefined;
+    const localISO = (offsetDays = 0) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offsetDays);
+      return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+    };
+    if (/\btomorrow\b/.test(lower)) date = localISO(1);
+    else if (/\btoday\b/.test(lower)) date = localISO(0);
+
+    // Time range: "10 am to 11 am", "10:30am-11:30am", "10 to 11 pm"
+    let startTime: string | undefined;
+    let endTime: string | undefined;
+    const to24 = (h: number, m: number, p: string) => {
+      let hr = h;
+      if (p.toLowerCase() === "pm" && h !== 12) hr = h + 12;
+      if (p.toLowerCase() === "am" && h === 12) hr = 0;
+      return `${String(hr).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    };
+    const tRe = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i;
+    const tm = text.match(tRe);
+    if (tm) {
+      const p2 = tm[6];
+      const p1 = tm[3] ?? p2;
+      startTime = to24(parseInt(tm[1]), parseInt(tm[2] ?? "0"), p1);
+      endTime   = to24(parseInt(tm[4]), parseInt(tm[5] ?? "0"), p2);
+    }
+
+    // Room hint: words after "book"/"reserve" before a preposition/date word
+    let roomHint: string | undefined;
+    const rRe = /\b(?:book|reserve)(?:ing)?\s+([\w\s]+?)\s+(?:for\b|on\b|at\b|from\b|tomorrow\b|today\b|\d)/i;
+    const rm = text.match(rRe);
+    if (rm) roomHint = rm[1].trim();
+
+    // Title: after "title", "titled", "called"
+    let title: string | undefined;
+    const titRe = /\b(?:title(?:d)?|called)\s+([^\n]+?)(?:\s+(?:no\s+attendees?|with(?:\s+no)?\s+attendees?|attendees?\s*(?:needed)?)\b.*)?$/i;
+    const tit = text.match(titRe);
+    if (tit) title = tit[1].trim().replace(/\s+(?:no\s+attendees?|attendees?\s*(?:needed)?).*$/i, "").trim();
+
+    // Attendees: explicit "no attendees" → empty string
+    let attendees: string | undefined;
+    if (/\bno\s+attendees?\b/.test(lower) || /\battendees?\s+(?:not\s+)?needed\b/.test(lower)) attendees = "";
+
+    return { date, startTime, endTime, roomHint, title, attendees };
+  }
+
+  // Parse an announcement command (no LLM). Structural — keyword for the
+  // domain, topic after "about/titled/saying", remainder becomes the body.
+  function parseAnnouncement(text: string) {
+    const lower = text.toLowerCase();
+    const DOMAIN_KW: Record<string, string> = {
+      hr: "hr", "human resource": "hr",
+      it: "it_support", "it support": "it_support", tech: "it_support",
+      pmo: "pmo", project: "pmo",
+      admin: "admin", facilit: "admin", office: "admin",
+    };
+    let domain: string | undefined;
+    let category: string | undefined;
+    for (const [kw, dom] of Object.entries(DOMAIN_KW)) {
+      if (lower.includes(kw)) { domain = dom; break; }
+    }
+    if (/\bholiday\b/.test(lower)) category = "Holiday";
+    else if (/\bpolicy\b/.test(lower)) category = "Policy Update";
+    else if (/\bhiring\b|\bjob\b/.test(lower)) category = "Hiring";
+    else if (/\btraining\b/.test(lower)) category = "Training";
+    else if (/\bevent\b/.test(lower)) category = "Events";
+
+    let title: string | undefined;
+    const m = text.match(/\b(?:about|titled|called|saying|regarding|on)\s+(.+)$/i);
+    if (m) title = m[1].trim().replace(/[.?!]+$/, "");
+    return { title, category, domain } as { title?: string; category?: string; domain?: string };
+  }
+
+  // Parse a prompt-config command (no LLM). Domain keyword + section + value.
+  function parsePromptConfig(text: string) {
+    const lower = text.toLowerCase();
+    const DOMAIN_KW: Record<string, string> = {
+      hr: "hr", "human resource": "hr",
+      "it support": "it_support", it: "it_support",
+      pmo: "pmo", project: "pmo",
+      admin: "admin",
+      manager: "functional_manager",
+    };
+    let domain: string | undefined;
+    for (const [kw, dom] of Object.entries(DOMAIN_KW)) {
+      if (lower.includes(kw)) { domain = dom; break; }
+    }
+    const promptKey = /\bguardrail\b/.test(lower) ? "guardrail" : "system_prompt";
+    let value: string | undefined;
+    const m = text.match(/\b(?:to|say(?:ing)?|that|with)\s+(.+)$/i);
+    if (m) value = m[1].trim();
+    return { domain, promptKey, value } as { domain?: string; promptKey?: string; value?: string };
+  }
 
   const scrollToBottom = () => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -209,17 +366,167 @@ export function AssistantView() {
         return;
       }
 
-      setSuggestions([]);
-      addTurn(activeId, { role: "user", text });
-      setInput("");
-      setThinking(true);
+      // Intercept room booking requests.
+      // Matches: "book/reserve a room", "book [named room] for/on/at [time or date]"
+      // Does NOT rely on hardcoded room names — uses structure instead.
+      const isRoomBooking =
+        /\b(book|reserve)\b.{0,40}\b(room|conference|meeting room|conf room)\b/i.test(text) ||
+        /\b(room|conference room|meeting room)\b.{0,40}\b(book|reserve|available|free)\b/i.test(text) ||
+        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(text);
+      if (isRoomBooking) {
+        const prefill = parseRoomBooking(text);
+        const hasContext = !!(prefill.roomHint && prefill.date && prefill.startTime && prefill.endTime);
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: hasContext
+            ? "On it — checking availability and booking your room."
+            : "Let's book a meeting room. Pick your date, time, and duration — I'll show you what's available.",
+          interactive: { type: "room_booking_form", data: prefill },
+        });
+        setInput("");
+        return;
+      }
 
-      const history = (threads[activeId]?.turns || []).map((t) => ({
+      // Intercept room cancellation requests
+      if (/\b(cancel|cancell?ation|delete|remove)\b.{0,30}\b(booking|reservation|room|meeting room|conference)\b/i.test(text) ||
+          /\b(booking|reservation|room booking)\b.{0,30}\b(cancel|delete|remove)\b/i.test(text)) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here are your upcoming room bookings — select one to cancel.",
+          interactive: { type: "cancel_booking_form" },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept "show my schedule / my meetings / upcoming bookings" — read-only calendar pull, zero LLM.
+      if (
+        /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(text) ||
+        /\bwhat('?s| is| are)\b.{0,30}\b(my )?(schedule|meetings?|calendar|agenda)\b/i.test(text)
+      ) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here's what's on your calendar.",
+          interactive: { type: "my_schedule" },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept "update/add my skills / certifications", "set primary skill",
+      // "years of experience". Self-serve for all roles — zero LLM. Structural, not name-based.
+      const isSkillsEditor =
+        /\b(update|edit|add|change|manage|set)\b.{0,30}\b(skill|skills|certification|certificate|cert|expertise)\b/i.test(text) ||
+        /\b(skill|skills|certification|certificate|expertise)\b.{0,30}\b(update|edit|add|upload|manage|change)\b/i.test(text) ||
+        /\bprimary skill\b/i.test(text) ||
+        /\byears? of experience\b/i.test(text) ||
+        /\bupload\b.{0,20}\bcertif/i.test(text);
+      if (isSkillsEditor) {
+        const m = text.match(/\badd\s+(?:a\s+|an\s+|my\s+)?([A-Za-z][A-Za-z0-9+.# ]{1,30}?)\s+(?:skill|certification|cert)\b/i);
+        const prefill = { skill: m?.[1]?.trim() };
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here's your skills profile — add or update skills, set your primary skill, years of experience, when you last used it, and attach a certification.",
+          interactive: { type: "skills_editor", data: prefill },
+        });
+        setInput("");
+        return;
+      }
+
+      // Admin commands — only for domain managers; others fall through to chat.
+      const role = (user?.role || "employee").toLowerCase();
+      const isManager = ["hr", "it", "pmo", "admin"].includes(role);
+
+      // Intercept team attendance requests — Functional Managers only. Zero-LLM, structural.
+      // "generate/show attendance for everyone under me / my team / my hierarchy" -> report view.
+      // "email me / schedule / automate ... attendance ... every month/week/day" -> schedule setup.
+      const mentionsAttendance = /\battendance\b/i.test(text);
+      const mentionsTeamScope = /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(text);
+      if (role === "functional manager" && mentionsAttendance && mentionsTeamScope) {
+        const isRecurring = /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(text);
+        addTurn(activeId, { role: "user", text });
+        if (isRecurring) {
+          // Parse cadence cues.
+          const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text) ? "daily"
+            : /\b(weekly|every week|each week)\b/i.test(text) ? "weekly"
+            : /\b(monthly|every month|each month)\b/i.test(text) ? "monthly"
+            : "monthly";
+          const dows = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+          const dowIdx = dows.findIndex(d => new RegExp(`\\b${d}\\b`, "i").test(text));
+          const hourM = text.match(/\bat\s+(\d{1,2})\s*(am|pm)?\b/i);
+          let hour: number | undefined;
+          if (hourM) {
+            hour = Number(hourM[1]) % 12;
+            if (/pm/i.test(hourM[2] || "")) hour += 12;
+          }
+          const prefill: Record<string, number | string> = { frequency: dowIdx >= 0 ? "weekly" : freq };
+          if (dowIdx >= 0) prefill.day_of_week = dowIdx;
+          if (hour !== undefined) prefill.hour = hour;
+          addTurn(activeId, {
+            role: "ai",
+            text: "Let's set up an automated attendance email for your team. Confirm the schedule below.",
+            interactive: { type: "attendance_schedule", data: prefill },
+          });
+        } else {
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's the attendance for everyone in your reporting hierarchy.",
+            interactive: { type: "team_attendance" },
+          });
+        }
+        setInput("");
+        return;
+      }
+
+      // Intercept "create/add an announcement …"
+      if (isManager && /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)) {
+        const prefill = parseAnnouncement(text);
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Let's publish an announcement. Review the details below — add a message or let me draft one, then publish.",
+          interactive: { type: "announcement_form", data: prefill },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept "update/change the … prompt/guardrail/system prompt …"
+      if (
+        isManager &&
+        /\b(update|change|edit|set|add|configure|tweak)\b.{0,40}\b(prompt|config(?:uration)?|guardrail|system prompt|instruction)\b/i.test(text)
+      ) {
+        const prefill = parsePromptConfig(text);
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here's the prompt configuration — confirm the domain and section, edit the text, then save.",
+          interactive: { type: "prompt_config_form", data: prefill },
+        });
+        setInput("");
+        return;
+      }
+
+      // Pin the originating thread so the streaming closure writes to the chat that
+      // asked, even if the user switches to another chat mid-response.
+      const threadId = activeId;
+
+      setSuggestions([]);
+      addTurn(threadId, { role: "user", text });
+      setInput("");
+      setThinking(threadId, true);
+
+      const history = (threads[threadId]?.turns || []).map((t) => ({
         role: t.role === "user" ? "user" : "assistant",
         content: t.text,
       }));
 
       const controller = new AbortController();
+      controllersRef.current.set(threadId, controller);
       const timeoutId = window.setTimeout(() => controller.abort(), 180000);
       const activitySteps = getActivitySteps(text);
       setActivity(activitySteps[0]);
@@ -256,7 +563,7 @@ export function AssistantView() {
         body: JSON.stringify({
           message: text,
           history,
-          session_id: activeId,
+          session_id: threadId,
           preferences: {},
         }),
       })
@@ -286,24 +593,41 @@ export function AssistantView() {
             let evt: Record<string, unknown>;
             try { evt = JSON.parse(line.slice(6)); } catch { return; }
 
-            if (evt.type === "token") {
+            if (evt.type === "queued") {
+              // Server is at capacity; our request is waiting for a slot.
+              setActivity((evt.message as string) ?? "High demand — waiting in queue…");
+            } else if (evt.type === "busy") {
+              // Queue is full — degrade gracefully instead of timing out.
+              setThinking(threadId, false);
+              activityTimers.forEach((t) => window.clearTimeout(t));
+              setActivity("");
+              if (!aiTurnAdded) {
+                addTurn(threadId, {
+                  role: "ai",
+                  text:
+                    (evt.message as string) ??
+                    "Centriq is handling a lot of requests right now. Please try again in a moment.",
+                });
+                aiTurnAdded = true;
+              }
+            } else if (evt.type === "token") {
               const content = (evt.content as string) ?? "";
               accumulatedText += content;
               if (!aiTurnAdded) {
                 // First token — switch from "thinking" to streaming message
-                setThinking(false);
+                setThinking(threadId, false);
                 activityTimers.forEach((t) => window.clearTimeout(t));
                 setActivity("");
-                addTurn(activeId, { role: "ai", text: content, streaming: true });
+                addTurn(threadId, { role: "ai", text: content, streaming: true });
                 aiTurnAdded = true;
               } else {
-                updateLastAITurn(activeId, { text: accumulatedText });
+                updateLastAITurn(threadId, { text: accumulatedText });
               }
             } else if (evt.type === "replace") {
               accumulatedText = (evt.content as string) ?? accumulatedText;
-              updateLastAITurn(activeId, { text: accumulatedText });
+              updateLastAITurn(threadId, { text: accumulatedText });
             } else if (evt.type === "done") {
-              updateLastAITurn(activeId, {
+              updateLastAITurn(threadId, {
                 streaming: false,
                 domain: (evt.domain as string) ?? undefined,
                 interactive: (evt.interactive as Turn["interactive"]) ?? undefined,
@@ -316,12 +640,19 @@ export function AssistantView() {
               fetchSuggestions(text, accumulatedText, (evt.domain as string) ?? "general");
             } else if (evt.type === "error") {
               if (!aiTurnAdded) {
-                setThinking(false);
+                setThinking(threadId, false);
                 setActivity("");
-                addTurn(activeId, {
-                  role: "ai",
-                  text: "Sorry, something went wrong. Please try again.",
-                });
+                const errCode = (evt.code as string) ?? "";
+                const errMsg = (evt.message as string) ?? "";
+                const friendlyText =
+                  errCode === "TOOL_FAILURE"
+                    ? `I couldn't complete that step — ${errMsg || "a tool call failed"}. Please try rephrasing or try again.`
+                    : errCode === "CONTEXT_LIMIT"
+                    ? "This conversation is getting long. Start a new chat to continue with a fresh context."
+                    : errCode === "MODEL_UNAVAILABLE"
+                    ? "The AI model is temporarily unavailable. Please try again in a moment."
+                    : errMsg || "Something went wrong. Please try again.";
+                addTurn(threadId, { role: "ai", text: friendlyText });
                 aiTurnAdded = true;
               }
             }
@@ -339,20 +670,27 @@ export function AssistantView() {
 
           // If stream ended without a done event and we never got tokens
           if (!aiTurnAdded) {
-            setThinking(false);
+            setThinking(threadId, false);
             setActivity("");
-            addTurn(activeId, {
+            addTurn(threadId, {
               role: "ai",
-              text: "Sorry, I received an empty response. Please try again.",
+              text: "I didn't receive a response — the server may be busy. Please try again.",
             });
           }
         })
         .catch((err: Error & { code?: string }) => {
+          // User pressed Stop — abort the request quietly, finalize any partial reply,
+          // and don't show a timeout/error message.
+          if (err.name === "AbortError" && stoppedRef.current.has(threadId)) {
+            updateLastAITurn(threadId, { streaming: false });
+            return;
+          }
+
           console.error("Backend Error:", err);
           const isVpn = err.code === "VPN_REQUIRED";
           const isTimeout = err.name === "AbortError";
 
-          addTurn(activeId, {
+          addTurn(threadId, {
             role: "ai",
             text: isVpn
               ? "I can't reach the AI service right now.\n\n**You appear to be outside the office network.** Please connect to the VPN and try again."
@@ -378,11 +716,144 @@ export function AssistantView() {
           window.clearTimeout(timeoutId);
           activityTimers.forEach((timer) => window.clearTimeout(timer));
           setActivity("");
-          setThinking(false);
+          setThinking(threadId, false);
+          controllersRef.current.delete(threadId);
+          stoppedRef.current.delete(threadId);
         });
     },
     [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role],
   );
+
+  // Stop the in-flight response for the active chat.
+  const stop = useCallback(() => {
+    if (!activeId) return;
+    const controller = controllersRef.current.get(activeId);
+    if (!controller) return;
+    stoppedRef.current.add(activeId);
+    controller.abort();
+    setThinking(activeId, false);
+    setActivity("");
+  }, [activeId, setThinking]);
+
+  // ── Hands-free voice loop ("Jarvis") ──────────────────────────────────────
+  // Keep a live ref to send() so recognition callbacks never capture a stale one.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
+  const stopListening = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    const rec = recognitionRef.current;
+    if (rec) {
+      rec.onend = null; // prevent auto-restart on a deliberate stop
+      try { rec.stop(); } catch { /* already stopped */ }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  const startListening = useCallback(() => {
+    if (recognitionRef.current) return; // already running
+    const rec = createRecognition({ continuous: true, interimResults: true });
+    if (!rec) return;
+    finalTranscriptRef.current = "";
+
+    const resetSilence = () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(() => {
+        const transcript = finalTranscriptRef.current.trim();
+        if (!transcript) return;
+        finalTranscriptRef.current = "";
+        setLiveTranscript("");
+        useVoiceStore.getState().setVoiceState("thinking"); // pauses recognition
+        sendRef.current(transcript);
+      }, 1500);
+    };
+
+    rec.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscriptRef.current += t + " ";
+        else interim = t;
+      }
+      setLiveTranscript((finalTranscriptRef.current + interim).trim());
+      resetSilence();
+    };
+    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        toast.error("Microphone access denied. Allow it to use voice mode.");
+        useVoiceStore.getState().setVoiceMode(false);
+      }
+    };
+    rec.onend = () => {
+      recognitionRef.current = null;
+      // Browsers auto-stop after a while; restart if we're still listening.
+      const s = useVoiceStore.getState();
+      if (s.voiceMode && s.voiceState === "listening") startListening();
+    };
+    recognitionRef.current = rec;
+    try { rec.start(); } catch { /* already started */ }
+  }, [setLiveTranscript]);
+
+  // Drive the microphone from the loop phase: listen only while "listening".
+  useEffect(() => {
+    if (voiceMode && voiceState === "listening") startListening();
+    else stopListening();
+  }, [voiceMode, voiceState, startListening, stopListening]);
+
+  // Entering/leaving voice mode: reset speech cursor so history isn't replayed.
+  useEffect(() => {
+    if (!voiceMode) {
+      cancelSpeech();
+      stopListening();
+      setLiveTranscript("");
+      return;
+    }
+    const turns = (activeId ? threads[activeId]?.turns : []) || [];
+    let idx = -1;
+    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "ai") { idx = i; break; }
+    lastSpokenIndexRef.current = idx;
+    lastSpokenLenRef.current = idx >= 0 ? turns[idx].text.length : 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
+
+  // Mark the thinking phase while a streamed reply is being generated.
+  useEffect(() => {
+    if (voiceMode && thinking) setVoiceState("thinking");
+  }, [voiceMode, thinking, setVoiceState]);
+
+  // Speak AI turns aloud (sentence-by-sentence as they stream).
+  useEffect(() => {
+    if (!voiceMode) return;
+    const turns = activeThread.turns;
+    let idx = -1;
+    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "ai") { idx = i; break; }
+    if (idx === -1) return;
+    const turn = turns[idx];
+
+    if (idx !== lastSpokenIndexRef.current) {
+      lastSpokenIndexRef.current = idx;
+      lastSpokenLenRef.current = 0;
+      resetSpeech({
+        onStart: () => useVoiceStore.getState().setVoiceState("speaking"),
+        onAllDone: () => {
+          const s = useVoiceStore.getState();
+          if (s.voiceMode) s.setVoiceState("listening");
+        },
+      });
+    } else if (turn.text.length === lastSpokenLenRef.current) {
+      return; // no new text (e.g. an unrelated turn was appended)
+    }
+    lastSpokenLenRef.current = turn.text.length;
+    enqueueFrom(turn.text, turn.streaming !== true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode, activeThread.turns]);
+
+  // Reset when switching threads.
+  useEffect(() => {
+    cancelSpeech();
+    lastSpokenIndexRef.current = -1;
+    lastSpokenLenRef.current = 0;
+  }, [activeId]);
 
   const handleNewChat = () => {
     createThread();
@@ -476,15 +947,25 @@ export function AssistantView() {
             >
               <WifiOff className="h-4 w-4 shrink-0" />
               <span>
-                <strong>VPN not connected</strong> — You appear to be outside the office network. Connect to the VPN to use Centriq AI.
+                <strong>VPN not connected</strong> — Connect to the office VPN to use Centriq AI.
               </span>
-              <button
-                onClick={() => setVpnWarning(false)}
-                className="ml-auto shrink-0 rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
-                aria-label="Dismiss"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <div className="ml-auto flex items-center gap-1 shrink-0">
+                <button
+                  onClick={retryVpn}
+                  disabled={vpnRetrying}
+                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-200/60 dark:text-amber-300 dark:hover:bg-amber-800/40 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${vpnRetrying ? "animate-spin" : ""}`} />
+                  Retry
+                </button>
+                <button
+                  onClick={() => setVpnWarning(false)}
+                  className="rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
+                  aria-label="Dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -496,7 +977,7 @@ export function AssistantView() {
           className="relative flex-1 overflow-y-auto scroll-smooth"
         >
           <div className={cn(
-            "mx-auto w-full max-w-4xl px-4 sm:px-8 flex flex-col",
+            "mx-auto w-full max-w-5xl px-4 sm:px-8 flex flex-col",
             activeThread.turns.length === 0 ? "min-h-full justify-center py-8" : "py-8",
           )}>
             {activeThread.turns.length === 0 ? (
@@ -515,7 +996,7 @@ export function AssistantView() {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-                        className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-2"
+                        className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-2 text-glow"
                       >
                         <span className="text-gradient">{heading}</span>
                       </motion.h1>
@@ -536,9 +1017,47 @@ export function AssistantView() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.3 }}
-                  className="w-full max-w-3xl mb-8"
+                  className="w-full max-w-4xl mb-6"
                 >
-                  <SmartWidgets onAction={(prompt) => !thinking && send(prompt)} />
+                  <SmartWidgets onAction={(prompt) => !busy && send(prompt)} />
+                </motion.div>
+
+                {/* Starter prompt chips */}
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.4 }}
+                  className="w-full max-w-4xl mb-5"
+                >
+                  <div className="try-asking-container">
+                    <p className="text-[11px] text-muted-foreground font-semibold mb-3 text-center tracking-wide">Try asking…</p>
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={starterPage}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex flex-wrap justify-center gap-2.5"
+                      >
+                        {QUICK_QUERIES.slice(
+                          starterPage * STARTER_PAGE_SIZE,
+                          starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
+                        ).map((q) => (
+                          <button
+                            key={q.prompt}
+                            onClick={() => !busy && send(q.prompt)}
+                            className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-4 py-2 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                          >
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                              <q.icon className={`h-3 w-3 ${q.iconColor}`} />
+                            </span>
+                            {q.label}
+                          </button>
+                        ))}
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
                 </motion.div>
 
                 {/* Composer */}
@@ -546,19 +1065,22 @@ export function AssistantView() {
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.45 }}
-                  className="w-full max-w-3xl"
+                  className="w-full max-w-4xl ambient-glow"
                 >
+                  <VoiceOrb />
                   <Composer
                     value={input}
                     onChange={setInput}
                     onSubmit={() => send()}
-                    disabled={thinking}
+                    disabled={busy}
+                    busy={busy}
+                    onStop={stop}
                     onAttach={() =>
                       toast("Attachments", { description: "This feature is currently in preview." })
                     }
-                    onQuickAction={(p) => !thinking && send(p)}
+                    onQuickAction={(p) => !busy && send(p)}
                     suggestions={suggestions}
-                    onSuggestionSelect={(t) => !thinking && send(t)}
+                    onSuggestionSelect={(t) => !busy && send(t)}
                   />
                 </motion.div>
               </motion.section>
@@ -693,12 +1215,87 @@ export function AssistantView() {
                                 }
                               />
                             )}
+                            {t.interactive?.type === "visitor_pass_form" && (
+                              <VisitorPassForm
+                                userEmail={user?.email || ""}
+                                prefill={t.interactive.data as import("@/lib/chat-store").VisitorPassPrefill | undefined}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
                             {t.interactive?.type === "email_draft" && t.interactive.data && (
                               <InteractiveEmailDraft
-                                data={t.interactive.data}
+                                data={t.interactive.data as import("@/lib/chat-store").EmailDraftData}
                                 userEmail={user?.email}
                                 onSent={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "room_booking_form" && (
+                              <RoomBookingWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").RoomBookingPrefill | undefined}
+                                onBooked={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "cancel_booking_form" && (
+                              <CancelBookingWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                onCancelled={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "my_schedule" && (
+                              <MyScheduleWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                              />
+                            )}
+                            {t.interactive?.type === "skills_editor" && (
+                              <SkillsEditorWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").SkillsEditorPrefill | undefined}
+                                onSaved={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "announcement_form" && (
+                              <AnnouncementWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").AnnouncementPrefill | undefined}
+                                onPublished={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "prompt_config_form" && (
+                              <PromptConfigWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").PromptConfigPrefill | undefined}
+                                onSaved={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {(t.interactive?.type === "team_attendance" || t.interactive?.type === "attendance_schedule") && (
+                              <AttendanceScheduleWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                mode={t.interactive.type === "attendance_schedule" ? "schedule" : "report"}
+                                prefill={t.interactive.data as import("@/lib/chat-store").AttendanceSchedulePrefill | undefined}
+                                onDone={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}
@@ -719,7 +1316,7 @@ export function AssistantView() {
                       transition={{ type: "spring", stiffness: 300, damping: 30 }}
                     >
                       <AIMessage live>
-                        <ThinkingBuddy />
+                        <ThinkingBuddy activity={activity} />
                       </AIMessage>
                     </motion.div>
                   )}
@@ -755,18 +1352,21 @@ export function AssistantView() {
             className="relative border-t border-border bg-background/60 backdrop-blur-xl px-4 pb-6 pt-4 sm:px-8"
           >
             <div className="mx-auto w-full max-w-4xl space-y-4">
+              <VoiceOrb />
               <Composer
                 value={input}
                 onChange={setInput}
                 onSubmit={() => send()}
-                disabled={thinking}
+                disabled={busy}
+                busy={busy}
+                onStop={stop}
                 onAttach={() =>
                   toast("Attachments", { description: "This feature is currently in preview." })
                 }
-                onQuickAction={(p) => !thinking && send(p)}
+                onQuickAction={(p) => !busy && send(p)}
                 onGenerateDoc={openDocModal}
                 suggestions={suggestions}
-                onSuggestionSelect={(t) => !thinking && send(t)}
+                onSuggestionSelect={(t) => !busy && send(t)}
               />
             </div>
           </motion.footer>

@@ -299,7 +299,8 @@ class PeopleService:
         max_exp: Optional[float] = None,
         status: Optional[str] = None,
         limit: int = 50,
-    ) -> list:
+        offset: int = 0,
+    ) -> dict:
         db = SessionLocal()
         try:
             q = db.query(EmployeeZohoProfile)
@@ -339,23 +340,34 @@ class PeopleService:
                     EmployeeZohoProfile.functional_manager.ilike(f"%{reporting_manager}%"),
                 ))
 
-            profiles = q.limit(limit).all()
+            # Stable ordering so offset-based pagination is consistent
+            q = q.order_by(EmployeeZohoProfile.first_name, EmployeeZohoProfile.last_name, EmployeeZohoProfile.id)
+
+            # Experience is stored as a string, so it is filtered in Python.
+            # Fetch all SQL-matching rows (lightweight — no joins), apply the
+            # experience filter, then paginate the resulting list. Allocation
+            # subqueries run only for the current page below.
+            matching = q.all()
+            if min_exp is not None or max_exp is not None:
+                filtered = []
+                for p in matching:
+                    try:
+                        exp_val = float(p.total_experience) if p.total_experience else None
+                    except Exception:
+                        exp_val = None
+                    if min_exp is not None and (exp_val is None or exp_val < min_exp):
+                        continue
+                    if max_exp is not None and (exp_val is None or exp_val > max_exp):
+                        continue
+                    filtered.append(p)
+                matching = filtered
+
+            total = len(matching)
+            page = matching[offset:offset + limit]
 
             results = []
-            for p in profiles:
+            for p in page:
                 full_name = f"{p.first_name or ''} {p.last_name or ''}".strip()
-
-                # Experience filter (stored as string like "5.2")
-                exp_val = None
-                try:
-                    exp_val = float(p.total_experience) if p.total_experience else None
-                except Exception:
-                    pass
-
-                if min_exp is not None and exp_val is not None and exp_val < min_exp:
-                    continue
-                if max_exp is not None and exp_val is not None and exp_val > max_exp:
-                    continue
 
                 # Fetch recent project allocations
                 allocations = db.query(EmployeeAllocation).filter(
@@ -406,14 +418,14 @@ class PeopleService:
                     ],
                 })
 
-            return results
+            return {"total": total, "offset": offset, "limit": limit, "results": results}
         finally:
             db.close()
 
     @staticmethod
     def search_people_text(query: str) -> str:
         """LLM-friendly string result for agent tool use."""
-        results = PeopleService.search_people(query=query, limit=10)
+        results = PeopleService.search_people(query=query, limit=10).get("results", [])
         if not results:
             return "No employees found matching your query."
         lines = [f"Found {len(results)} employee(s):\n"]

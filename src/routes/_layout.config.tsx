@@ -32,6 +32,7 @@ import {
   FolderSync,
 } from "lucide-react";
 import { toast } from "sonner";
+import { flyBanner } from "@/lib/fly-banner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_layout/config")({
@@ -266,7 +267,7 @@ function ConfigPage() {
       if (!res.ok) throw new Error(data.detail || "Update failed");
 
       if (data.mode === "draft") {
-        toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
+        flyBanner("Submitted for peer approval");
         fetchDrafts();
         fetchMyDrafts();
       } else {
@@ -295,7 +296,7 @@ function ConfigPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Save failed");
       if (data.mode === "draft") {
-        toast.success("Submitted for approval", { description: "A peer with the same role will review your change." });
+        flyBanner("Submitted for peer approval");
         fetchDrafts();
         fetchMyDrafts();
       } else {
@@ -360,7 +361,7 @@ function ConfigPage() {
       const res = await fetch(`/api/prompts/drafts/${draftId}/approve`, { method: "POST", headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Approval failed");
-      toast.success(data.message);
+      flyBanner(data.message);
       fetchDrafts();
       fetchPrompts(activeDomain);
     } catch (err: unknown) {
@@ -376,7 +377,7 @@ function ConfigPage() {
       const res = await fetch(`/api/prompts/drafts/${draftId}/force-approve`, { method: "POST", headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Force approval failed");
-      toast.success(data.message, { description: "Applied via test override." });
+      flyBanner(data.message);
       fetchMyDrafts();
       fetchDrafts();
       fetchPrompts(activeDomain);
