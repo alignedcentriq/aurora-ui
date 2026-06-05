@@ -436,6 +436,30 @@ def send_visitor_pass_email(
     return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
 
 
+def send_form_submission_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    form_name: str,
+    reference_id: str,
+    rows: "list[tuple[str, str]]",
+    to: "str | None" = None,
+) -> bool:
+    """Generic notification for any Form Library submission. `rows` are the [(label, value)]
+    pairs of the filled fields. `to` overrides the recipient (per-form notify_email); falls
+    back to NOTIFY_TO_EMAIL."""
+    subject = f"[Form] {form_name} — {reference_id}"
+    intro = (f"<p><strong>{html.escape(employee_name)}</strong> submitted the "
+             f"<strong>{html.escape(form_name)}</strong> form.</p>")
+    detail = [("Reference", html.escape(reference_id)),
+              ("Submitted by", f"{html.escape(employee_name)} ({html.escape(employee_email)})")]
+    detail += [(html.escape(str(lbl)), _nl2br(str(val)) if val else "—") for lbl, val in rows]
+    body_html = _detail_rows(detail) + _note("Submitted via Centriq AI. Review it in the Form Library.")
+    html_body = _email_shell(f"{form_name} Submission", intro, body_html,
+                             preheader=f"{form_name} · {reference_id}")
+    return _send_html(user_email, to or settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
 def send_food_complaint_email(
     user_email: str,
     employee_name: str,
@@ -836,6 +860,104 @@ def send_leave_fyi_notification(
     html_body = _email_shell("Leave Notification (FYI)", intro, body_html,
                              preheader=f"{employee_name} · {leave_type}")
     return _send_html(user_email, functional_manager_email, subject, html_body)
+
+
+# ── Biweekly Project Update ───────────────────────────────────────────────────
+
+def send_project_update_form_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    form_link: str,
+    period: str,
+) -> bool:
+    """Biweekly nudge asking an employee to confirm what they're working on."""
+    subject = f"[Action Needed] Confirm what you're working on — {period}"
+    intro = (f'<p>{_status_pill("Action Needed", _C_AMBER)}</p>'
+             f"<p>Hi {html.escape(employee_name)},</p>"
+             f"<p>To keep your project allocation up to date, please take a moment to tell us "
+             f"what you're currently working on for <strong>{html.escape(period)}</strong> — "
+             f"a project, learning, or a PoC.</p>")
+    body_html = _button_row([("Open the form", form_link, _C_OK)])
+    body_html += _note("Your reporting manager reviews each submission before it updates your "
+                       "allocation. Submitted via Centriq AI.")
+    html_body = _email_shell("What are you working on?", intro, body_html,
+                             preheader=f"Confirm your project allocation · {period}")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+def send_project_update_approval_request(
+    user_email: str,
+    approver_email: str,
+    employee_name: str,
+    employee_email: str,
+    activity_type: str,
+    project_name: str,
+    duration_text: str,
+    details: str,
+    period: str,
+    approve_url: str,
+    reject_url: str,
+    submission_id: int,
+) -> bool:
+    subject = f"[Project Update Approval] {employee_name} — {activity_type}"
+    intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
+             f"<p>Hi,</p>"
+             f"<p><strong>{html.escape(employee_name)}</strong> submitted a project update that "
+             f"needs your approval before it updates the allocation data.</p>")
+    rows = [
+        ("Update ID", f"#{submission_id}"),
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Period", html.escape(period)),
+        ("Activity", html.escape(activity_type)),
+    ]
+    if project_name:
+        rows.append(("Project", html.escape(project_name)))
+    if duration_text:
+        rows.append(("How long", html.escape(duration_text)))
+    if details:
+        rows.append(("Details", _nl2br(details)))
+    body_html = _detail_rows(rows)
+    body_html += _button_row([
+        ("✓ Approve", approve_url, _C_OK),
+        ("✗ Reject", reject_url, _C_NO),
+    ])
+    body_html += _note("Approving writes this into the allocation data with a timestamp. "
+                       "These links expire in 24 hours. Submitted via Centriq AI.")
+    html_body = _email_shell("Project Update Approval", intro, body_html,
+                             preheader=f"{employee_name} · {activity_type} · {period}")
+    return _send_html(user_email, approver_email, subject, html_body)
+
+
+def send_project_update_decision_notification(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    activity_type: str,
+    project_name: str,
+    decision: str,
+    decided_by: str,
+    reason: str = "",
+) -> bool:
+    color = _C_OK if decision == "Approved" else _C_NO
+    subject = f"[Project Update {decision}] {activity_type}"
+    intro = (f'<p>{_status_pill(decision, color)}</p>'
+             f"<p>Hi {html.escape(employee_name)},</p>"
+             f'<p>Your project update has been '
+             f'<strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
+    rows = [("Activity", html.escape(activity_type))]
+    if project_name:
+        rows.append(("Project", html.escape(project_name)))
+    rows += [
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+        ("Actioned by", html.escape(decided_by)),
+    ]
+    if reason:
+        rows.append(("Reason for Rejection", _nl2br(reason)))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    html_body = _email_shell(f"Project Update {decision}", intro, body_html,
+                             preheader=f"{activity_type} · {decision}")
+    return _send_html(user_email, employee_email, subject, html_body)
 
 
 # ── HR Notifications ──────────────────────────────────────────────────────────

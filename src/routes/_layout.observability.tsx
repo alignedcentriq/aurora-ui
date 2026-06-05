@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { getApiToken } from "@/lib/api-token";
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -43,6 +43,12 @@ import {
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_layout/observability")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/control-hub",
+      search: { tab: "observability" },
+    });
+  },
   component: ObservabilityDashboard,
 });
 
@@ -200,7 +206,7 @@ function DomainBadge({ domain }: { domain: string }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-function ObservabilityDashboard() {
+export function ObservabilityDashboard() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"logs" | "charts">("logs");
 

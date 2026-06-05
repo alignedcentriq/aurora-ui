@@ -324,6 +324,17 @@ def search_company_projects(query: str):
     return PolicyService.search_projects(query, limit=6)
 
 
+@tool
+def find_apps(query: str):
+    """Find an internal app, tool, portal, or website the company offers for a task.
+    Call whenever the user asks where to do something, what tool/app/portal/website to use,
+    or mentions needing a system for a task (e.g. 'where do I book travel', 'is there an app
+    for expenses', 'tool to submit timesheets', 'which portal for IT requests'). Returns the
+    matching apps with their links — present them with the link; do not invent apps or URLs."""
+    from app.services.app_directory_service import AppDirectoryService
+    return AppDirectoryService.search(query)
+
+
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
 
 @tool
@@ -1661,7 +1672,19 @@ async def intent_router(state: AgentState):
         and keyword_result["domain"] != existing_domain
         and keyword_result.get("confidence", 0) >= 0.9
     )
-    if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky:
+    # Data-driven stickiness override: a confident NEW-domain signal from the semantic router
+    # (exact dictionary, or high-tier embedding k-NN) is a genuine topic switch and must override
+    # stickiness too — not just the keyword layer. Otherwise a short, novel-phrasing new-topic
+    # question after an agent reply (e.g. "what's the POSH policy?" mid IT chat) gets swallowed.
+    # exact is O(1)/free; classify is one embedding, spent only when the exact dictionary misses
+    # (so exact hits stay embedding-free). Both are reused at their return points below.
+    exact = SemanticRouterService.exact_match(last_human)
+    decision = SemanticRouterService.classify(last_human) if exact is None else None
+    semantic_overrides_sticky = bool(
+        (exact is not None and exact.domain != existing_domain)
+        or (decision is not None and decision.tier == "high" and decision.domain != existing_domain)
+    )
+    if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky and not semantic_overrides_sticky:
         last_ai = _last_ai_message(state.get("messages", []))
         msg_len = len(last_human.strip())
         _CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "the", "about", "any"}
@@ -1701,10 +1724,8 @@ async def intent_router(state: AgentState):
         }
 
     # Fast Intent Dictionary (layer 4.5): O(1) exact normalised match against the curated/learned
-    # phrasing map. Microseconds, zero ml01 load, 100% precise — handles the high-frequency head
-    # and every seeded exact phrasing before we spend an embedding call. Lookup cost is flat no
-    # matter how many intents exist, so this scales cleanly as the intent set grows.
-    exact = SemanticRouterService.exact_match(last_human)
+    # phrasing map (computed above for the stickiness override; reused here). Microseconds, zero
+    # ml01 load, 100% precise — handles the high-frequency head and every seeded exact phrasing.
     if exact is not None:
         entities = _extract_entities(last_human, exact.domain, exact.sub_intent)
         print(f"[Router] Exact dictionary -> {exact.domain} ({exact.sub_intent})")
@@ -1721,7 +1742,9 @@ async def intent_router(state: AgentState):
     # directly with 0 LLM calls and — because the output space is the stored labels — cannot
     # hallucinate a domain the way the generative LLM router can. Generalises to novel paraphrases
     # the exact dictionary misses. Permanent replacement for the brittle keyword-regex bulk.
-    decision = SemanticRouterService.classify(last_human)
+    # (Computed above when exact missed, for the stickiness override; reused here, never twice.)
+    if decision is None:
+        decision = SemanticRouterService.classify(last_human)
     if decision.tier == "high":
         entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
         print(
@@ -1734,6 +1757,30 @@ async def intent_router(state: AgentState):
             "route_reasoning": decision.reasoning,
             "sub_intent": decision.sub_intent,
             "entities": entities,
+        }
+
+    # Form Library (layer 5.5): match the message against admin-defined fillable forms
+    # (pgvector cosine k-NN over enabled FormTemplate embeddings). A confident match short-
+    # circuits to render the form inline — fully data-driven, so a brand-new form created by an
+    # admin becomes chat-triggerable with no code change. Runs AFTER the curated exact/semantic-
+    # high tiers (so a precise domain intent always wins) and reuses the LRU-cached embedding of
+    # this same message (no extra ml01 call). Fail-soft: returns None if the embed model is down.
+    # Stickiness is already handled by the early-return above, so a follow-up never lands here.
+    try:
+        from app.services.form_library_service import FormLibraryService
+        form_match = FormLibraryService.match(last_human)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Router] Form match skipped ({type(e).__name__}): {e}")
+        form_match = None
+    if form_match:
+        print(f"[Router] Form Library match -> '{form_match['name']}' "
+              f"(id={form_match['id']}, sim={form_match['similarity']})")
+        return {
+            "domain": "dynamic_form",
+            "route_confidence": form_match["similarity"],
+            "route_reasoning": f"Message matched the '{form_match['name']}' form.",
+            "sub_intent": f"form:{form_match['id']}",
+            "entities": {"form_template_id": form_match["id"]},
         }
 
     # Keyword fast-path: regex safety net beneath the semantic high tier. 0 LLM calls.
@@ -1783,16 +1830,67 @@ _FEEDBACK_COUNT_TTL = 300.0  # re-check every 5 minutes
 _feedback_result_cache: dict[str, tuple[str, float]] = {}
 _FEEDBACK_RESULT_TTL = 120.0
 
+# Short-lived cache for the proactive URL-library nudge (keyed on the raw query).
+_app_nudge_cache: dict[str, tuple[str, float]] = {}
+_APP_NUDGE_TTL = 120.0
+
+
+def _app_directory_nudge(query: str) -> str:
+    """Return a '[RELEVANT APPS]' block for a confident URL-library match, or ''.
+
+    Surfaces an admin-registered app to ANY agent (not just the general one), so a relevant
+    link can be mentioned mid-conversation. Uses a stricter threshold than the find_apps tool
+    so unrelated chats aren't peppered with suggestions. Fail-soft and embedding-cache-reusing.
+    """
+    from app.config import settings as _s
+    from app.services.app_directory_service import AppDirectoryService
+    matches = AppDirectoryService.search_raw(
+        query, k=2, threshold=_s.APP_DIRECTORY_NUDGE_THRESHOLD
+    )
+    if not matches:
+        return ""
+    lines = [
+        "\n\n[RELEVANT APPS] The company offers these tools for this — if helpful, mention "
+        "them by name with their link (markdown). Do not invent other apps or URLs:"
+    ]
+    for m in matches:
+        lines.append(f"- {m['name']} ({m['url']}): {m['purpose']}")
+    return "\n".join(lines)
+
 
 async def feedback_lookup(state: AgentState) -> dict:
     """Fetch relevant past feedback for the current query and store as prompt context.
 
-    Runs the blocking Ollama embedding + DB query off the event loop via
-    asyncio.to_thread so it never stalls the async pipeline.
+    Also runs the proactive URL-library nudge so a relevant registered app link can surface in
+    any domain. Both the blocking Ollama embedding + DB queries run off the event loop via
+    asyncio.to_thread so they never stall the async pipeline.
     """
     import time as _t
     import asyncio
     now = _t.time()
+
+    last_human = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+        "",
+    )
+    if not last_human:
+        return {}
+
+    # ── Proactive URL-library nudge (independent of feedback availability) ──
+    nudge_cached = _app_nudge_cache.get(last_human[:160])
+    if nudge_cached and now - nudge_cached[1] < _APP_NUDGE_TTL:
+        app_nudge = nudge_cached[0]
+    else:
+        try:
+            app_nudge = await asyncio.to_thread(_app_directory_nudge, last_human)
+        except Exception:
+            app_nudge = ""
+        _app_nudge_cache[last_human[:160]] = (app_nudge, now)
+        if len(_app_nudge_cache) > 500:
+            for k in sorted(_app_nudge_cache, key=lambda k: _app_nudge_cache[k][1])[:100]:
+                _app_nudge_cache.pop(k, None)
+
+    # ── Past-feedback context (gated on having enough feedback rows) ──
     if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
         try:
             from app.database import SessionLocal as _SL
@@ -1808,41 +1906,29 @@ async def feedback_lookup(state: AgentState) -> dict:
         except Exception:
             _feedback_count_cache.update({"count": 0, "ts": now})
 
-    if _feedback_count_cache["count"] < 3:
-        return {}
-
     domain = state.get("domain", "unknown") or "unknown"
-    last_human = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        "",
-    )
-    if not last_human:
-        return {}
+    fb_ctx = ""
+    if _feedback_count_cache["count"] >= 3:
+        cache_key = f"{domain}:{last_human[:120]}"
+        cached = _feedback_result_cache.get(cache_key)
+        if cached and now - cached[1] < _FEEDBACK_RESULT_TTL:
+            fb_ctx = cached[0]
+        else:
+            try:
+                relevant = await asyncio.to_thread(
+                    FeedbackService.get_relevant_feedback, domain, last_human, 3
+                )
+                fb_ctx = FeedbackService.build_feedback_prompt(relevant)
+            except Exception:
+                fb_ctx = ""
+            _feedback_result_cache[cache_key] = (fb_ctx, now)
+            if len(_feedback_result_cache) > 500:
+                oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
+                for k in oldest[:100]:
+                    _feedback_result_cache.pop(k, None)
 
-    # Cache key: domain + first 120 chars of query
-    cache_key = f"{domain}:{last_human[:120]}"
-    cached = _feedback_result_cache.get(cache_key)
-    if cached:
-        ctx, ts = cached
-        if now - ts < _FEEDBACK_RESULT_TTL:
-            return {"feedback_context": ctx} if ctx else {}
-
-    try:
-        relevant = await asyncio.to_thread(
-            FeedbackService.get_relevant_feedback, domain, last_human, 3
-        )
-        ctx = FeedbackService.build_feedback_prompt(relevant)
-    except Exception:
-        ctx = ""
-
-    _feedback_result_cache[cache_key] = (ctx, now)
-    # Prevent unbounded growth
-    if len(_feedback_result_cache) > 500:
-        oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
-        for k in oldest[:100]:
-            _feedback_result_cache.pop(k, None)
-
-    return {"feedback_context": ctx} if ctx else {}
+    combined = (fb_ctx or "") + (app_nudge or "")
+    return {"feedback_context": combined} if combined else {}
 
 
 def hr_agent(state: AgentState):
@@ -1953,6 +2039,39 @@ async def deeplink_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
+# Marker the chat endpoint's _postprocess extracts into the `dynamic_form` interactive payload.
+DYNAMIC_FORM_START = "[DYNAMIC_FORM_START]"
+DYNAMIC_FORM_END = "[DYNAMIC_FORM_END]"
+
+
+async def dynamic_form_agent_node(state: AgentState):
+    """Form Library node — terminal, 0 LLM. Loads the matched FormTemplate and emits its schema
+    inside [DYNAMIC_FORM_START]…[DYNAMIC_FORM_END] markers so _postprocess can turn it into the
+    `dynamic_form` interactive widget the frontend renders inline."""
+    entities = state.get("entities") or {}
+    form_id = entities.get("form_template_id")
+    try:
+        from app.services.form_library_service import FormLibraryService
+        tpl = FormLibraryService.get(form_id) if form_id is not None else None
+    except Exception as e:  # noqa: BLE001
+        print(f"[dynamic_form] load failed ({type(e).__name__}): {e}")
+        tpl = None
+
+    if not tpl or not tpl.get("enabled"):
+        return {"messages": [AIMessage(content="That form isn't available right now. Please try again later.")]}
+
+    payload = {
+        "template_id": tpl["id"],
+        "name": tpl["name"],
+        "description": tpl["description"],
+        "fields": tpl["fields"],
+        "submit_endpoint": "/api/forms/submit",
+    }
+    intro = f"Sure — please fill in the **{tpl['name']}** form below and submit."
+    content = f"{intro}\n{DYNAMIC_FORM_START}{json.dumps(payload)}{DYNAMIC_FORM_END}"
+    return {"messages": [AIMessage(content=content)]}
+
+
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
     result = await pmo_agent.ainvoke({
@@ -2051,7 +2170,11 @@ async def it_agent_node(state: AgentState):
             or entities.get("application")
             or entities.get("app")
         )
-        if software_name:
+        # Only short-circuit to the email draft when a real product is named.
+        # A generic noun ("software", "app") or a sentence fragment means the user
+        # hasn't told us *what* to install — fall through to the LLM agent, which
+        # asks "which software?" instead of drafting an email for "software".
+        if software_name and ITService._looks_like_software_name(str(software_name)):
             PENDING_IT_EMAIL_DRAFTS[draft_key] = {"software_name": str(software_name)}
             return {"messages": [AIMessage(content=ITService.request_software_install(user_email, str(software_name)))]}
 
@@ -2175,7 +2298,7 @@ async def ms365_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
-general_tools = [get_announcements, search_hr_policies, search_company_projects]
+general_tools = [get_announcements, search_hr_policies, search_company_projects, find_apps]
 general_tool_node = ToolNode(general_tools)
 
 
@@ -2207,7 +2330,8 @@ def general_agent(state: AgentState):
         "You are Centriq, the AI assistant for Aligned Automation. "
         "You handle company announcements, general policy questions, and company-project questions. "
         "Tools: get_announcements (news/updates), search_hr_policies (policy lookups), "
-        "search_company_projects (what projects the company has done, a project's summary/details, demos). "
+        "search_company_projects (what projects the company has done, a project's summary/details, demos), "
+        "find_apps (which internal app/tool/portal/website to use for a task, e.g. 'where do I book travel'). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
         "Do not offer further assistance unless asked.",
     )
@@ -2363,6 +2487,7 @@ def route_to_agent(state: AgentState):
     # IT kill-switch for individual domains — short-circuit before the agent runs.
     if domain in llm_controls.disabled_domains():
         return "disabled_agent"
+    if domain == "dynamic_form": return "dynamic_form_agent"
     status = get_domain_status(domain)
     if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
@@ -2412,6 +2537,7 @@ workflow.add_node("admin_agent", admin_agent_node)
 workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("deeplink_agent", deeplink_agent_node)
+workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
 workflow.add_node("ms365_agent", ms365_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
@@ -2437,6 +2563,7 @@ workflow.add_edge("admin_agent", END)
 workflow.add_edge("it_agent", END)
 workflow.add_edge("manager_agent", END)
 workflow.add_edge("deeplink_agent", END)
+workflow.add_edge("dynamic_form_agent", END)
 workflow.add_edge("ms365_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)

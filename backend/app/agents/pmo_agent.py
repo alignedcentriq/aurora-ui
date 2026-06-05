@@ -27,6 +27,7 @@ Rules:
 5. If the user asks for a specific number of projects (e.g. "Give 5 projects"), list them from the tool results only.
 6. Summarize tool results concisely. Never add examples or suggestions from your own knowledge.
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
+8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -189,6 +190,16 @@ def search_people_directory(query: str):
 
 
 @tool
+def search_pmo_docs(query: str):
+    """Search PMO process / governance documents for how-to / process / policy questions
+    (project onboarding, governance, change-request process, PMO templates). Call for any
+    'how do I…', 'what is the process for…', or PMO-policy question. Infer the query from the
+    user's message — never ask what to search."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_pmo_docs(query)
+
+
+@tool
 def request_udemy_license(
     justification: str = "",
     course_name: str = "",
@@ -210,6 +221,7 @@ pmo_tools = [
     generate_project_report,
     generate_multi_project_report,
     search_people_directory,
+    search_pmo_docs,
     request_udemy_license,
 ]
 
@@ -365,7 +377,7 @@ def pmo_assistant(state: PMOState):
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
     try:
-        llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(pmo_tools)
+        llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(pmo_tools)
         return {"messages": [llm.invoke(messages)]}
     except Exception as exc:
         print(f"PMO Agent LLM error: {exc}")

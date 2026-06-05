@@ -26,6 +26,8 @@ import {
   Library as LibraryIcon,
   FileText,
   GraduationCap,
+  Link2,
+  Megaphone,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -58,17 +60,102 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
 /** 4C Nav item accent colors for icons */
 const NAV_COLORS: Record<string, string> = {
   "/":              "var(--clarity)",
-  "/people":        "var(--collaboration)",
   "/documents":     "var(--connectivity)",
-  "/config":        "var(--connectivity)",
-  "/observability": "var(--capacity)",
-  "/hr-portal":     "var(--collaboration)",
-  "/admin-portal":  "var(--clarity)",
-  "/it-portal":     "var(--connectivity)",
-  "/pmo-portal":    "var(--capacity)",
-  "/manager-portal": "var(--collaboration)",
+  "/project-update": "var(--capacity)",
+  "/control-hub":   "var(--clarity)",
   "/settings":      "var(--capacity)",
 };
+
+interface ControlHubSubItem {
+  id: string;
+  label: string;
+  category: "System & Ops" | "Management Portals" | "Assets & Config";
+  icon: any;
+  show: (role: string) => boolean;
+}
+
+const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
+  // SYSTEM & OPS
+  {
+    id: "dashboard",
+    label: "Announcements & Status",
+    category: "System & Ops",
+    icon: Megaphone,
+    show: (role) => role === "Admin",
+  },
+  {
+    id: "observability",
+    label: "AI Observability",
+    category: "System & Ops",
+    icon: Activity,
+    show: (role) => role === "IT",
+  },
+  // PORTALS
+  {
+    id: "admin-portal",
+    label: "Admin Services",
+    category: "Management Portals",
+    icon: Car,
+    show: (role) => role === "Admin",
+  },
+  {
+    id: "hr-portal",
+    label: "HR Leave Portal",
+    category: "Management Portals",
+    icon: CalendarDays,
+    show: (role) => role === "HR",
+  },
+  {
+    id: "it-portal",
+    label: "IT Support & Control",
+    category: "Management Portals",
+    icon: Ticket,
+    show: (role) => role === "IT",
+  },
+  {
+    id: "pmo-portal",
+    label: "PMO Portal",
+    category: "Management Portals",
+    icon: GraduationCap,
+    show: (role) => role === "PMO",
+  },
+  {
+    id: "manager-portal",
+    label: "Manager Attendance",
+    category: "Management Portals",
+    icon: UserCog,
+    show: (role) => role === "Functional Manager",
+  },
+  // ASSETS & CONFIG
+  {
+    id: "people",
+    label: "People Directory",
+    category: "Assets & Config",
+    icon: Users,
+    show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
+  },
+  {
+    id: "config",
+    label: "AI Prompt Config",
+    category: "Assets & Config",
+    icon: Database,
+    show: (role) => ["Admin", "HR", "IT", "PMO"].includes(role),
+  },
+  {
+    id: "url-library",
+    label: "URL Library",
+    category: "Assets & Config",
+    icon: Link2,
+    show: (role) => role === "Admin",
+  },
+  {
+    id: "form-library",
+    label: "Form Library",
+    category: "Assets & Config",
+    icon: FileText,
+    show: (role) => role === "Admin",
+  },
+];
 
 interface SidebarProps {
   mobileOpen: boolean;
@@ -83,6 +170,16 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [avatarError, setAvatarError] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const isControlHubActive = location.pathname.startsWith("/control-hub");
+  const [isControlHubExpanded, setIsControlHubExpanded] = useState(isControlHubActive);
+
+  // Auto-expand when path changes to control-hub
+  useEffect(() => {
+    if (isControlHubActive) {
+      setIsControlHubExpanded(true);
+    }
+  }, [isControlHubActive]);
 
   const defaultCollapsed = () => {
     if (typeof window === "undefined") return false;
@@ -146,25 +243,14 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
     { to: "/books", icon: BookOpen, label: "Library", show: true },
     { to: "/my-library", icon: LibraryIcon, label: "My Library", show: true },
-    {
-      to: "/people",
-      icon: Users,
-      label: "People",
-      show: ["HR", "PMO", "Admin", "Functional Manager"].includes(user.role),
-    },
     { to: "/documents", icon: FileText, label: "Documents", show: true },
+    { to: "/project-update", icon: ClipboardList, label: "Project Update", show: true },
     {
-      to: "/config",
-      icon: Database,
-      label: "Prompt Config",
-      show: ["Admin", "HR", "IT", "PMO"].includes(user.role),
+      to: "/control-hub",
+      icon: Shield,
+      label: "Control Hub",
+      show: user.role !== "Employee",
     },
-    { to: "/observability", icon: Activity, label: "Observability", show: user.role === "IT" },
-    { to: "/hr-portal", icon: CalendarDays, label: "HR Portal", show: user.role === "HR" },
-    { to: "/admin-portal", icon: Car, label: "Admin Portal", show: user.role === "Admin" },
-    { to: "/it-portal", icon: Ticket, label: "IT Portal", show: user.role === "IT" },
-    { to: "/pmo-portal", icon: GraduationCap, label: "PMO Portal", show: user.role === "PMO" },
-    { to: "/manager-portal", icon: UserCog, label: "Manager Portal", show: user.role === "Functional Manager" },
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 
@@ -309,14 +395,19 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
               const Icon = item.icon;
               const active = isActive(item.to);
               const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-              return (
+              
+              const isControlHub = item.to === "/control-hub";
+
+              const content = (
                 <Link
                   key={item.to}
                   to={item.to}
                   title={!showLabels ? item.label : undefined}
                   onClick={() => {
                     if (mobileOpen) onMobileClose();
-                    if (isCollapsed && item.to === "/") toggle();
+                    if (isCollapsed) {
+                      toggle();
+                    }
                   }}
                   className={cn(
                     "group relative flex items-center rounded-xl py-2.5 text-[13px] font-medium transition-all duration-200",
@@ -371,8 +462,23 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
                   {showLabels && <span className="flex-1 truncate">{item.label}</span>}
 
+                  {/* Expand/Collapse Chevron for Control Hub */}
+                  {showLabels && isControlHub && (
+                    <ChevronDown
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setIsControlHubExpanded((prev) => !prev);
+                      }}
+                      className={cn(
+                        "ml-auto h-4 w-4 text-[var(--sidebar-foreground)]/25 transition-transform duration-200 hover:text-[var(--sidebar-foreground)]/80",
+                        isControlHubExpanded && "rotate-180"
+                      )}
+                    />
+                  )}
+
                   {/* Unique: Active C-badge */}
-                  {showLabels && active && (
+                  {showLabels && active && !isControlHub && (
                     <motion.div
                       initial={{ scale: 0, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
@@ -388,6 +494,47 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                   )}
                 </Link>
               );
+
+              if (isControlHub) {
+                return (
+                  <div key={item.to} className="space-y-0.5">
+                    {content}
+                    <AnimatePresence>
+                      {showLabels && isControlHubExpanded && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden pl-7 pr-1 mt-1 space-y-1"
+                        >
+                          {CONTROL_HUB_SUB_ITEMS.filter((sub) => sub.show(user.role)).map((sub) => {
+                            const SubIcon = sub.icon;
+                            const isSubActive = isControlHubActive && (location.search as any).tab === sub.id;
+                            return (
+                              <Link
+                                key={sub.id}
+                                to="/control-hub"
+                                search={{ tab: sub.id }}
+                                className={cn(
+                                  "flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition-all duration-200 border border-transparent",
+                                  isSubActive
+                                    ? "text-white bg-[#00a29a]/20 border-[#00a29a]/30 shadow-[0_0_12px_rgba(0,162,154,0.1)] font-semibold"
+                                    : "text-[var(--sidebar-foreground)]/50 hover:text-[var(--sidebar-foreground)]/80 hover:bg-white/[0.04]"
+                                )}
+                              >
+                                <SubIcon className="h-3.5 w-3.5 opacity-60 shrink-0" />
+                                <span className="truncate flex-1 text-left">{sub.label}</span>
+                              </Link>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              }
+
+              return content;
             })}
 
           {/* New conversation (collapsed) */}

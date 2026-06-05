@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw } from "lucide-react";
+import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw, Activity } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { VisitorPassForm } from "./VisitorPassForm";
+import { DynamicFormWidget } from "./DynamicFormWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
@@ -68,6 +69,7 @@ interface ThreadData {
 
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
+import { useServerLoad } from "@/hooks/use-server-load";
 
 // ── Book intent helpers ─────────────────────────────────────────────────────
 // Client-side intercept for the most common book-discovery / status / return /
@@ -125,6 +127,14 @@ export function AssistantView() {
   const [activity, setActivity] = useState("");
   const [vpnWarning, setVpnWarning] = useState(false);
   const [vpnRetrying, setVpnRetrying] = useState(false);
+  // Proactive load awareness: warn (but never block) when the shared LLM server
+  // has no free slots. `serverBusy` is independent of the per-thread `busy` above.
+  const { serverBusy, waiting } = useServerLoad();
+  const [loadBannerDismissed, setLoadBannerDismissed] = useState(false);
+  // Re-arm the banner each time the server transitions back to "busy".
+  useEffect(() => {
+    if (!serverBusy) setLoadBannerDismissed(false);
+  }, [serverBusy]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [starterPage, setStarterPage] = useState(0);
 
@@ -707,7 +717,7 @@ export function AssistantView() {
           } else {
             toast.error("Service unavailable", {
               description: isTimeout
-                ? "The request timed out after 90 seconds."
+                ? "The request timed out after 3 minutes."
                 : err.message || "Please try again later.",
             });
           }
@@ -970,6 +980,32 @@ export function AssistantView() {
           )}
         </AnimatePresence>
 
+        {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
+        <AnimatePresence>
+          {serverBusy && !loadBannerDismissed && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300 overflow-hidden"
+            >
+              <Activity className="h-4 w-4 shrink-0" />
+              <span>
+                <strong>Server is busy right now</strong> — replies may take a little longer than usual.
+                You can still send your message{waiting > 0 ? ` (${waiting} ahead of you)` : ""}; it'll be
+                answered as soon as a slot frees up.
+              </span>
+              <button
+                onClick={() => setLoadBannerDismissed(true)}
+                className="ml-auto shrink-0 rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Messages Area */}
         <div
           ref={scrollRef}
@@ -1221,6 +1257,16 @@ export function AssistantView() {
                                 prefill={t.interactive.data as import("@/lib/chat-store").VisitorPassPrefill | undefined}
                                 onSubmitted={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "dynamic_form" && t.interactive.data && (
+                              <DynamicFormWidget
+                                data={t.interactive.data as import("@/lib/chat-store").DynamicFormData}
+                                userEmail={user?.email || ""}
+                                userRole={user?.role}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg })
                                 }
                               />
                             )}

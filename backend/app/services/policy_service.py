@@ -725,6 +725,23 @@ class PolicyService:
         return PolicyService._hybrid_search(query, limit, category_in=[PROJECT_CATEGORY])
 
     @staticmethod
+    def search_it_docs(query: str, limit: int = 3) -> str:
+        """Hybrid search scoped to IT support documents (VPN, wifi, printer, email setup, etc.)."""
+        return PolicyService._hybrid_search(query, limit, category_in=["IT"])
+
+    @staticmethod
+    def search_pmo_docs(query: str, limit: int = 3) -> str:
+        """Hybrid search scoped to PMO process / governance documents.
+        Empty until PMO-category docs are ingested (future-ready)."""
+        return PolicyService._hybrid_search(query, limit, category_in=["PMO"])
+
+    @staticmethod
+    def search_admin_docs(query: str, limit: int = 3) -> str:
+        """Hybrid search scoped to admin-owned documents: Admin (relocation, travel, parking,
+        accommodation) + Finance (reimbursement, expense, PF) — the categories the admin agent owns."""
+        return PolicyService._hybrid_search(query, limit, category_in=["Admin", "Finance"])
+
+    @staticmethod
     def _hybrid_search(
         query: str,
         limit: int = 4,

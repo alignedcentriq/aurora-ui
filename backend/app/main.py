@@ -37,9 +37,12 @@ from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
+from app.routes.project_update_routes import router as project_update_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
+from app.routes.app_links_routes import router as app_links_router
+from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
 from app.routes.llm_controls_routes import router as llm_controls_router
 from app.routes.integration_routes import router as integration_router
@@ -98,9 +101,12 @@ app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
+app.include_router(project_update_router)
 app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
+app.include_router(app_links_router)
+app.include_router(form_library_router)
 app.include_router(observability_router)
 app.include_router(llm_controls_router)
 app.include_router(integration_router)
@@ -202,7 +208,7 @@ async def startup_event():
 
     # Run any due attendance-report automations every minute (schedules persist in DB).
     async def attendance_scheduler():
-        from app.services import attendance_schedule_service
+        from app.services import attendance_schedule_service, project_update_service
         while True:
             await asyncio.sleep(60)
             try:
@@ -211,6 +217,11 @@ async def startup_event():
                     print(f"[attendance_scheduler] ran {fired} due schedule(s)")
             except Exception as e:
                 print(f"[attendance_scheduler] error: {e}")
+            # Biweekly project-update form — cadence gating lives inside run_due().
+            try:
+                await asyncio.to_thread(project_update_service.run_due)
+            except Exception as e:
+                print(f"[project_update] scheduler error: {e}")
 
     asyncio.create_task(attendance_scheduler())
 
@@ -346,6 +357,7 @@ _REJECT_LABELS = {
     "book_extension": "Reject Extension Request",
     "udemy_license": "Decline Udemy License",
     "desk_key": "Reject Desk Key Request",
+    "project_update": "Reject Project Update",
 }
 
 
@@ -706,6 +718,59 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
             color,
         ))
 
+    if tok.entity_type == "project_update":
+        from app.services import project_update_service
+        from app.services.email_service import send_project_update_decision_notification
+        # Invalidate the sibling token
+        db.query(ApprovalToken).filter(
+            ApprovalToken.entity_type == "project_update",
+            ApprovalToken.entity_id == tok.entity_id,
+            ApprovalToken.token != tok.token,
+            ApprovalToken.used == False,
+        ).update({"used": True})
+        try:
+            if decision == "Approved":
+                sub = project_update_service.approve(db, tok.entity_id, approved_by=tok.approver_email)
+            else:
+                sub = project_update_service.reject(db, tok.entity_id, approved_by=tok.approver_email, reason=reject_note)
+            if sub is None:
+                return HTMLResponse(_approval_html(
+                    "Not Found", "This project update no longer exists.", "#dc2626",
+                ), status_code=404)
+            activity_type = sub.activity_type
+            project_name = sub.project_name or ""
+            employee_email = sub.employee_email
+            employee_name = sub.employee_name
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            return HTMLResponse(_approval_html(
+                "Action Failed", f"We couldn't update the project update: {html.escape(str(e))}", "#dc2626",
+            ), status_code=502)
+
+        try:
+            send_project_update_decision_notification(
+                user_email=tok.approver_email,
+                employee_email=employee_email,
+                employee_name=employee_name,
+                activity_type=activity_type,
+                project_name=project_name,
+                decision=decision,
+                decided_by=tok.approver_email,
+                reason=reject_note,
+            )
+        except Exception as e:
+            print(f"[Approval] Project update notification error: {e}")
+
+        color = "#16A34A" if decision == "Approved" else "#dc2626"
+        applied = " The allocation data has been updated." if decision == "Approved" else ""
+        return HTMLResponse(_approval_html(
+            f"Project Update {decision}",
+            f"The project update has been <strong>{decision}</strong>.{applied} "
+            f"The employee has been notified by email.{reason_block}",
+            color,
+        ))
+
     db.commit()
     return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
@@ -758,6 +823,13 @@ _NON_CACHEABLE_SUBINTENTS = {
     "asset_request", "create_ticket", "hardware_issue", "my_tickets", "my_assets",
     "send_email", "send_teams_message", "room_availability", "book_room",
     "announcement", "prompt_config",
+    # Dynamic directory / per-user data lookups: the underlying employee data
+    # changes and the output is rendered live (tables), so a cached copy goes
+    # stale and freezes the formatting. Always run these live.
+    "employee_search", "alchemy_my_skills", "alchemy_skills_overview",
+    # URL library: admins can re-point / rename / remove an app at any time, so a
+    # cached answer would freeze a stale link. Always run the find_apps tool live.
+    "app_directory",
 }
 
 # Refusal / no-answer responses must NEVER be cached: they're a transient routing or
@@ -776,6 +848,7 @@ _REFUSAL_RE = re.compile(
 
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
+_dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
 
 
@@ -814,6 +887,17 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             draft_data = json.loads(email_match.group(1))
             interactive = {"type": "email_draft", "data": draft_data}
             final_message = _email_draft_re.sub("", final_message).strip()
+        except Exception:
+            pass
+
+    # Extract dynamic form (Form Library) — must run BEFORE the JSON-blob stripping below so the
+    # form schema JSON isn't mangled. The marker wraps the JSON, so it's gone before any blob regex.
+    form_match = _dynamic_form_re.search(final_message)
+    if form_match:
+        try:
+            form_data = json.loads(form_match.group(1))
+            interactive = {"type": "dynamic_form", "data": form_data}
+            final_message = _dynamic_form_re.sub("", final_message).strip()
         except Exception:
             pass
 
@@ -1584,6 +1668,26 @@ async def submit_visitor_pass(req: VisitorPassSubmitRequest):
     return {"message": result}
 
 
+class FormSubmitRequest(BaseModel):
+    form_template_id: int
+    field_values: dict = {}
+
+
+@app.post("/api/forms/submit")
+async def submit_dynamic_form(req: FormSubmitRequest,
+                              user: CurrentUser = Depends(get_current_user)):
+    # Generic Form Library submit — no LLM. employee_email is taken from the authenticated
+    # user, never the payload, so a user can't submit as someone else. Required-field
+    # validation is enforced server-side in the service. Runs off the loop (DB + email).
+    from app.services.form_library_service import FormLibraryService
+    res = await asyncio.to_thread(
+        FormLibraryService.submit, req.form_template_id, user.email, req.field_values
+    )
+    if res.get("status") != "ok":
+        raise HTTPException(status_code=400, detail=res.get("message", "Submission failed."))
+    return {"message": res["message"], "reference_id": res["reference_id"]}
+
+
 @app.post("/api/email/send-draft")
 async def send_email_draft(req: SendEmailDraftRequest):
     import html as html_lib
@@ -1595,10 +1699,10 @@ async def send_email_draft(req: SendEmailDraftRequest):
     </body></html>
     """
     sent = _send(
+        user_email=req.requester_email or settings.DEFAULT_USER_EMAIL,
         to=req.to,
         subject=req.subject,
         html_body=html_body,
-        reply_to=req.requester_email or None,
     )
     if sent:
         return {"message": f"Email sent to **{req.to}** successfully."}

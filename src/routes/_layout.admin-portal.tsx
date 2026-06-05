@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
@@ -7,27 +7,33 @@ import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 
 export const Route = createFileRoute("/_layout/admin-portal")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/control-hub",
+      search: { tab: "admin-portal" },
+    });
+  },
   component: AdminPortal,
 });
 
 type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
 
 const STATUS_BADGE: Record<string, string> = {
-  Pending: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  Approved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  Active: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  Rejected: "bg-rose-500/15 text-rose-400 border border-rose-500/20",
-  Surrendered: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  Expired: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  Open: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "In Progress": "bg-violet-500/15 text-violet-400 border border-violet-500/20",
-  Acknowledged: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  Resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  Closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  "Auto-Rejected": "bg-rose-500/15 text-rose-400 border border-rose-500/20",
-  Released: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  Due: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  Paid: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
+  Pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  Approved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  Active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  Rejected: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+  Surrendered: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
+  Expired: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
+  Open: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20",
+  "In Progress": "bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20",
+  Acknowledged: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  Resolved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  Closed: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
+  "Auto-Rejected": "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+  Released: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
+  Due: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  Paid: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -37,7 +43,7 @@ const PRIORITY_BADGE: Record<string, string> = {
   Critical: "text-rose-400",
 };
 
-function AdminPortal() {
+export function AdminPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("reimbursements");
 
@@ -58,41 +64,46 @@ function AdminPortal() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex items-center justify-between px-8 py-5 border-b border-[#e2e8f0] dark:border-white/[0.08] shrink-0 bg-white dark:bg-card">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground">Admin Portal</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">Manage reimbursements, parking stickers, facility complaints, food complaints, and the company library</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
+            Management Portals
+          </p>
+          <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">Admin Portal</h1>
+          <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">Manage reimbursements, parking stickers, facility complaints, food complaints, and the company library.</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 px-8 py-3 border-b border-[var(--border)] shrink-0">
-        {[
-          { id: "reimbursements", label: "Reimbursements", icon: Receipt },
-          { id: "parking", label: "Parking Stickers", icon: Car },
-          { id: "parking-dues", label: "Parking Dues", icon: Wallet },
-          { id: "desk-keys", label: "Desk Keys", icon: KeyRound },
-          { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
-          { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
-          { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
-        ].map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id as Tab)}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition-colors",
-              tab === id
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </button>
-        ))}
+      <div className="px-8 py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex">
+        <div className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex flex-wrap gap-1.5 w-max max-w-full shadow-sm">
+          {[
+            { id: "reimbursements", label: "Reimbursements", icon: Receipt },
+            { id: "parking", label: "Parking Stickers", icon: Car },
+            { id: "parking-dues", label: "Parking Dues", icon: Wallet },
+            { id: "desk-keys", label: "Desk Keys", icon: KeyRound },
+            { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
+            { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
+            { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id as Tab)}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200",
+                tab === id
+                  ? "bg-[#00a29a] text-white shadow-sm"
+                  : "text-[#64748b] dark:text-white/50 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.04] hover:text-[#0f172a] dark:hover:text-white"
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-8 py-6 bg-[#f5f7fa] dark:bg-background">
         {tab === "reimbursements" && <ReimbursementsTab authHeaders={authHeaders} />}
         {tab === "parking" && <ParkingTab authHeaders={authHeaders} />}
         {tab === "parking-dues" && <ParkingDuesTab authHeaders={authHeaders} />}
@@ -153,34 +164,34 @@ function ReimbursementsTab({ authHeaders }: { authHeaders: Record<string, string
     <div>
       <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetch_} />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="reimbursements" /> : (
-        <div className="overflow-x-auto rounded-lg">
+        <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
           <table className="w-full min-w-[900px] text-[13px]">
             <thead>
-              <tr className="border-b border-[var(--border)]">
-                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">Employee</th>
-                {["Type", "Amount (INR)", "Reason", "Status", "Submitted", "Actions"].map((h) => (
-                  <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
+                <th className="sticky left-0 z-20 bg-white dark:bg-card py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">Employee</th>
+                {["Type", "Amount", "Reason", "Status", "Submitted", "Actions"].map((h) => (
+                  <th key={h} className="text-left py-3 px-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {items.map((r) => (
-                <tr key={r.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
-                  <td className="sticky left-0 z-10 bg-background py-3.5 pr-4">
-                    <div className="font-medium text-foreground">{r.employee_name}</div>
-                    <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
+                <tr key={r.id} className="border-b border-[#f1f5f9] dark:border-white/[0.05] last:border-0 hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors">
+                  <td className="sticky left-0 z-10 bg-white dark:bg-card py-3.5 px-5">
+                    <div className="font-semibold text-[#0f172a] dark:text-white">{r.employee_name}</div>
+                    <div className="text-[11px] text-[#94a3b8] dark:text-white/40">{r.employee_email}</div>
                   </td>
-                  <td className="py-3.5 pr-4 text-foreground/80 whitespace-nowrap">{r.type}</td>
-                  <td className="py-3.5 pr-4 font-medium text-foreground whitespace-nowrap">{r.amount.toLocaleString("en-IN")}</td>
-                  <td className="py-3.5 pr-4 text-foreground/70 max-w-[220px]">
+                  <td className="py-3.5 px-4 text-[#64748b] dark:text-white/60 whitespace-nowrap">{r.type}</td>
+                  <td className="py-3.5 px-4 font-semibold text-[#0f172a] dark:text-white whitespace-nowrap">₹ {r.amount.toLocaleString("en-IN")}</td>
+                  <td className="py-3.5 px-4 text-[#64748b] dark:text-white/50 max-w-[220px]">
                     <p className="line-clamp-2 leading-snug" title={r.reason}>{r.reason || "—"}</p>
                   </td>
-                  <td className="py-3.5 pr-4"><StatusBadge status={r.status} /></td>
-                  <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">{r.created_at.slice(0, 10)}</td>
-                  <td className="py-3.5">
+                  <td className="py-3.5 px-4"><StatusBadge status={r.status} /></td>
+                  <td className="py-3.5 px-4 text-[#94a3b8] dark:text-white/40 whitespace-nowrap">{r.created_at.slice(0, 10)}</td>
+                  <td className="py-3.5 px-4">
                     {r.status === "Pending" ? (
                       <ActionButtons id={r.id} acting={acting} onApprove={() => act(r.id, "approve")} onReject={() => act(r.id, "reject")} />
-                    ) : <span className="text-muted-foreground/40 text-[12px]">{r.approved_by ? `by ${r.approved_by}` : "—"}</span>}
+                    ) : <span className="text-[#94a3b8] dark:text-white/30 text-[12px]">{r.approved_by ? `by ${r.approved_by}` : "—"}</span>}
                   </td>
                 </tr>
               ))}
@@ -263,7 +274,7 @@ function ParkingTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <thead>
             <tr className="border-b border-[var(--border)]">
               {["Employee", "Vehicle", "Type", "Sticker #", "Valid Until", "Status", "Actions"].map((h) => (
-                <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
               ))}
             </tr>
           </thead>
@@ -390,13 +401,13 @@ function ComplaintsTab({ authHeaders }: { authHeaders: Record<string, string> })
           <table className="w-full min-w-[1000px] text-[13px]">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Ticket
                 </th>
                 {["Employee", "Category", "Description", "Location", "Priority", "Status", "Reported",
                   ...(showClosure ? ["Closure Comment"] : []),
                   "Update Status"].map((h) => (
-                  <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                  <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -560,13 +571,13 @@ function FoodComplaintsTab({ authHeaders }: { authHeaders: Record<string, string
           <table className="w-full min-w-[1000px] text-[13px]">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Ticket
                 </th>
                 {["Employee", "Vendor", "Type", "Description", "Status", "Submitted",
                   ...(showClosure ? ["Closure Comment"] : []),
                   "Update Status"].map((h) => (
-                  <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                  <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1028,7 +1039,7 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                 <thead>
                   <tr className="border-b border-[var(--border)]">
                     {["Ticket", "Employee", "Book", "+Days", "Reason", "Current Due", "New Due", "Status", "Actions"].map((h) => (
-                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1085,7 +1096,7 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                 <thead>
                   <tr className="border-b border-[var(--border)]">
                     {["Book", "Employee", "Ticket", "Copy", "Issue Date", "Due Date", "Status"].map((h) => (
-                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1124,7 +1135,7 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                 <thead>
                   <tr className="border-b border-[var(--border)]">
                     {["Ticket", "Employee", "Book", "Notes", "Status", "Due Date", "Requested", "Actions"].map((h) => (
-                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                      <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1361,7 +1372,7 @@ function DeskKeysTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <thead>
             <tr className="border-b border-[var(--border)]">
               {["Employee", "Desk", "Reason", "Status", "Actions"].map((h) => (
-                <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
+                <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
               ))}
             </tr>
           </thead>
@@ -1598,7 +1609,7 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
                     ) : (
                       <table className="w-full text-[12px]">
                         <thead>
-                          <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                          <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                             <th className="py-1.5 pr-4">Month</th><th className="py-1.5 pr-4">Amount</th><th className="py-1.5 pr-4">Status</th><th className="py-1.5">Actions</th>
                           </tr>
                         </thead>
@@ -1641,7 +1652,7 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", STATUS_BADGE[status] ?? "bg-zinc-500/10 text-zinc-400")}>
+    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", STATUS_BADGE[status] ?? "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400")}>
       {status}
     </span>
   );
@@ -1649,13 +1660,13 @@ function StatusBadge({ status }: { status: string }) {
 
 function ActionButtons({ id, acting, onApprove, onReject }: { id: number; acting: number | null; onApprove: () => void; onReject: () => void }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <button onClick={onApprove} disabled={acting === id} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
-        {acting === id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+    <div className="flex items-center gap-2">
+      <button onClick={onApprove} disabled={acting === id} className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50">
+        {acting === id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
         Approve
       </button>
-      <button onClick={onReject} disabled={acting === id} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50">
-        <X className="h-3 w-3" />
+      <button onClick={onReject} disabled={acting === id} className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
+        <X className="h-3.5 w-3.5" />
         Reject
       </button>
     </div>
@@ -1664,22 +1675,24 @@ function ActionButtons({ id, acting, onApprove, onReject }: { id: number; acting
 
 function FilterBar({ filter, setFilter, options, onRefresh }: { filter: string; setFilter: (s: string) => void; options: string[]; onRefresh: () => void }) {
   return (
-    <div className="flex items-center justify-between mb-4">
-      <div className="flex gap-1">
+    <div className="flex items-center justify-between mb-5">
+      <div className="flex gap-0.5 bg-[#f1f5f9] dark:bg-white/[0.06] rounded-lg p-0.5">
         {options.map((s) => (
           <button
             key={s}
             onClick={() => setFilter(s)}
             className={cn(
-              "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors",
-              filter === s ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              "rounded-md px-4 py-1.5 text-[13px] font-medium transition-all",
+              filter === s
+                ? "bg-white dark:bg-white/[0.12] text-[#0f172a] dark:text-white shadow-sm"
+                : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60"
             )}
           >
             {s}
           </button>
         ))}
       </div>
-      <button onClick={onRefresh} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
+      <button onClick={onRefresh} className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card px-3.5 py-1.5 text-[13px] font-medium text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white hover:border-[#cbd5e1] dark:hover:border-white/[0.15] transition-all">
         <RefreshCw className="h-3.5 w-3.5" />
         Refresh
       </button>
@@ -1688,9 +1701,9 @@ function FilterBar({ filter, setFilter, options, onRefresh }: { filter: string; 
 }
 
 function TableLoader() {
-  return <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  return <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-[#94a3b8]" /></div>;
 }
 
 function TableEmpty({ label }: { label: string }) {
-  return <div className="flex h-40 items-center justify-center text-[13px] text-muted-foreground">No {label} found</div>;
+  return <div className="flex h-40 items-center justify-center text-[13px] text-[#94a3b8] dark:text-white/40">No {label} found</div>;
 }

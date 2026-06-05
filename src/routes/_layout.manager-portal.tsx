@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
@@ -10,6 +10,12 @@ import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 
 export const Route = createFileRoute("/_layout/manager-portal")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/control-hub",
+      search: { tab: "manager-portal" },
+    });
+  },
   component: ManagerPortal,
 });
 
@@ -48,7 +54,7 @@ function describeCadence(s: Schedule): string {
   return `Custom at ${at}`;
 }
 
-function ManagerPortal() {
+export function ManagerPortal() {
   const { user } = useAuth();
   const auth = useMemo(
     () => ({ "x-user-email": user?.email ?? "", "x-user-role": (user?.role ?? "").toLowerCase() }),

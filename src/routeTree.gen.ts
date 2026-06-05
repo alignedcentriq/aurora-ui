@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
+import { Route as LayoutUrlLibraryRouteImport } from './routes/_layout.url-library'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
+import { Route as LayoutProjectUpdateRouteImport } from './routes/_layout.project-update'
 import { Route as LayoutPmoPortalRouteImport } from './routes/_layout.pmo-portal'
 import { Route as LayoutPeopleRouteImport } from './routes/_layout.people'
 import { Route as LayoutObservabilityRouteImport } from './routes/_layout.observability'
@@ -20,7 +22,9 @@ import { Route as LayoutMyLibraryRouteImport } from './routes/_layout.my-library
 import { Route as LayoutManagerPortalRouteImport } from './routes/_layout.manager-portal'
 import { Route as LayoutItPortalRouteImport } from './routes/_layout.it-portal'
 import { Route as LayoutHrPortalRouteImport } from './routes/_layout.hr-portal'
+import { Route as LayoutFormLibraryRouteImport } from './routes/_layout.form-library'
 import { Route as LayoutDocumentsRouteImport } from './routes/_layout.documents'
+import { Route as LayoutControlHubRouteImport } from './routes/_layout.control-hub'
 import { Route as LayoutConfigRouteImport } from './routes/_layout.config'
 import { Route as LayoutBooksRouteImport } from './routes/_layout.books'
 import { Route as LayoutAdminPortalRouteImport } from './routes/_layout.admin-portal'
@@ -35,6 +39,11 @@ const LayoutIndexRoute = LayoutIndexRouteImport.update({
   path: '/',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutUrlLibraryRoute = LayoutUrlLibraryRouteImport.update({
+  id: '/url-library',
+  path: '/url-library',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutTeamRoute = LayoutTeamRouteImport.update({
   id: '/team',
   path: '/team',
@@ -43,6 +52,11 @@ const LayoutTeamRoute = LayoutTeamRouteImport.update({
 const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutProjectUpdateRoute = LayoutProjectUpdateRouteImport.update({
+  id: '/project-update',
+  path: '/project-update',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutPmoPortalRoute = LayoutPmoPortalRouteImport.update({
@@ -80,9 +94,19 @@ const LayoutHrPortalRoute = LayoutHrPortalRouteImport.update({
   path: '/hr-portal',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutFormLibraryRoute = LayoutFormLibraryRouteImport.update({
+  id: '/form-library',
+  path: '/form-library',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutDocumentsRoute = LayoutDocumentsRouteImport.update({
   id: '/documents',
   path: '/documents',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutControlHubRoute = LayoutControlHubRouteImport.update({
+  id: '/control-hub',
+  path: '/control-hub',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutConfigRoute = LayoutConfigRouteImport.update({
@@ -112,7 +136,9 @@ export interface FileRoutesByFullPath {
   '/admin-portal': typeof LayoutAdminPortalRoute
   '/books': typeof LayoutBooksRoute
   '/config': typeof LayoutConfigRoute
+  '/control-hub': typeof LayoutControlHubRoute
   '/documents': typeof LayoutDocumentsRoute
+  '/form-library': typeof LayoutFormLibraryRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
   '/manager-portal': typeof LayoutManagerPortalRoute
@@ -120,15 +146,19 @@ export interface FileRoutesByFullPath {
   '/observability': typeof LayoutObservabilityRoute
   '/people': typeof LayoutPeopleRoute
   '/pmo-portal': typeof LayoutPmoPortalRoute
+  '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
+  '/url-library': typeof LayoutUrlLibraryRoute
 }
 export interface FileRoutesByTo {
   '/admin': typeof LayoutAdminRoute
   '/admin-portal': typeof LayoutAdminPortalRoute
   '/books': typeof LayoutBooksRoute
   '/config': typeof LayoutConfigRoute
+  '/control-hub': typeof LayoutControlHubRoute
   '/documents': typeof LayoutDocumentsRoute
+  '/form-library': typeof LayoutFormLibraryRoute
   '/hr-portal': typeof LayoutHrPortalRoute
   '/it-portal': typeof LayoutItPortalRoute
   '/manager-portal': typeof LayoutManagerPortalRoute
@@ -136,8 +166,10 @@ export interface FileRoutesByTo {
   '/observability': typeof LayoutObservabilityRoute
   '/people': typeof LayoutPeopleRoute
   '/pmo-portal': typeof LayoutPmoPortalRoute
+  '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
+  '/url-library': typeof LayoutUrlLibraryRoute
   '/': typeof LayoutIndexRoute
 }
 export interface FileRoutesById {
@@ -147,7 +179,9 @@ export interface FileRoutesById {
   '/_layout/admin-portal': typeof LayoutAdminPortalRoute
   '/_layout/books': typeof LayoutBooksRoute
   '/_layout/config': typeof LayoutConfigRoute
+  '/_layout/control-hub': typeof LayoutControlHubRoute
   '/_layout/documents': typeof LayoutDocumentsRoute
+  '/_layout/form-library': typeof LayoutFormLibraryRoute
   '/_layout/hr-portal': typeof LayoutHrPortalRoute
   '/_layout/it-portal': typeof LayoutItPortalRoute
   '/_layout/manager-portal': typeof LayoutManagerPortalRoute
@@ -155,8 +189,10 @@ export interface FileRoutesById {
   '/_layout/observability': typeof LayoutObservabilityRoute
   '/_layout/people': typeof LayoutPeopleRoute
   '/_layout/pmo-portal': typeof LayoutPmoPortalRoute
+  '/_layout/project-update': typeof LayoutProjectUpdateRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
+  '/_layout/url-library': typeof LayoutUrlLibraryRoute
   '/_layout/': typeof LayoutIndexRoute
 }
 export interface FileRouteTypes {
@@ -167,7 +203,9 @@ export interface FileRouteTypes {
     | '/admin-portal'
     | '/books'
     | '/config'
+    | '/control-hub'
     | '/documents'
+    | '/form-library'
     | '/hr-portal'
     | '/it-portal'
     | '/manager-portal'
@@ -175,15 +213,19 @@ export interface FileRouteTypes {
     | '/observability'
     | '/people'
     | '/pmo-portal'
+    | '/project-update'
     | '/settings'
     | '/team'
+    | '/url-library'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/admin'
     | '/admin-portal'
     | '/books'
     | '/config'
+    | '/control-hub'
     | '/documents'
+    | '/form-library'
     | '/hr-portal'
     | '/it-portal'
     | '/manager-portal'
@@ -191,8 +233,10 @@ export interface FileRouteTypes {
     | '/observability'
     | '/people'
     | '/pmo-portal'
+    | '/project-update'
     | '/settings'
     | '/team'
+    | '/url-library'
     | '/'
   id:
     | '__root__'
@@ -201,7 +245,9 @@ export interface FileRouteTypes {
     | '/_layout/admin-portal'
     | '/_layout/books'
     | '/_layout/config'
+    | '/_layout/control-hub'
     | '/_layout/documents'
+    | '/_layout/form-library'
     | '/_layout/hr-portal'
     | '/_layout/it-portal'
     | '/_layout/manager-portal'
@@ -209,8 +255,10 @@ export interface FileRouteTypes {
     | '/_layout/observability'
     | '/_layout/people'
     | '/_layout/pmo-portal'
+    | '/_layout/project-update'
     | '/_layout/settings'
     | '/_layout/team'
+    | '/_layout/url-library'
     | '/_layout/'
   fileRoutesById: FileRoutesById
 }
@@ -234,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutIndexRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/url-library': {
+      id: '/_layout/url-library'
+      path: '/url-library'
+      fullPath: '/url-library'
+      preLoaderRoute: typeof LayoutUrlLibraryRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/team': {
       id: '/_layout/team'
       path: '/team'
@@ -246,6 +301,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof LayoutSettingsRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/project-update': {
+      id: '/_layout/project-update'
+      path: '/project-update'
+      fullPath: '/project-update'
+      preLoaderRoute: typeof LayoutProjectUpdateRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/pmo-portal': {
@@ -297,11 +359,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutHrPortalRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/form-library': {
+      id: '/_layout/form-library'
+      path: '/form-library'
+      fullPath: '/form-library'
+      preLoaderRoute: typeof LayoutFormLibraryRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/documents': {
       id: '/_layout/documents'
       path: '/documents'
       fullPath: '/documents'
       preLoaderRoute: typeof LayoutDocumentsRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/control-hub': {
+      id: '/_layout/control-hub'
+      path: '/control-hub'
+      fullPath: '/control-hub'
+      preLoaderRoute: typeof LayoutControlHubRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/config': {
@@ -340,7 +416,9 @@ interface LayoutRouteChildren {
   LayoutAdminPortalRoute: typeof LayoutAdminPortalRoute
   LayoutBooksRoute: typeof LayoutBooksRoute
   LayoutConfigRoute: typeof LayoutConfigRoute
+  LayoutControlHubRoute: typeof LayoutControlHubRoute
   LayoutDocumentsRoute: typeof LayoutDocumentsRoute
+  LayoutFormLibraryRoute: typeof LayoutFormLibraryRoute
   LayoutHrPortalRoute: typeof LayoutHrPortalRoute
   LayoutItPortalRoute: typeof LayoutItPortalRoute
   LayoutManagerPortalRoute: typeof LayoutManagerPortalRoute
@@ -348,8 +426,10 @@ interface LayoutRouteChildren {
   LayoutObservabilityRoute: typeof LayoutObservabilityRoute
   LayoutPeopleRoute: typeof LayoutPeopleRoute
   LayoutPmoPortalRoute: typeof LayoutPmoPortalRoute
+  LayoutProjectUpdateRoute: typeof LayoutProjectUpdateRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
+  LayoutUrlLibraryRoute: typeof LayoutUrlLibraryRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
 }
 
@@ -358,7 +438,9 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminPortalRoute: LayoutAdminPortalRoute,
   LayoutBooksRoute: LayoutBooksRoute,
   LayoutConfigRoute: LayoutConfigRoute,
+  LayoutControlHubRoute: LayoutControlHubRoute,
   LayoutDocumentsRoute: LayoutDocumentsRoute,
+  LayoutFormLibraryRoute: LayoutFormLibraryRoute,
   LayoutHrPortalRoute: LayoutHrPortalRoute,
   LayoutItPortalRoute: LayoutItPortalRoute,
   LayoutManagerPortalRoute: LayoutManagerPortalRoute,
@@ -366,8 +448,10 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutObservabilityRoute: LayoutObservabilityRoute,
   LayoutPeopleRoute: LayoutPeopleRoute,
   LayoutPmoPortalRoute: LayoutPmoPortalRoute,
+  LayoutProjectUpdateRoute: LayoutProjectUpdateRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,
+  LayoutUrlLibraryRoute: LayoutUrlLibraryRoute,
   LayoutIndexRoute: LayoutIndexRoute,
 }
 

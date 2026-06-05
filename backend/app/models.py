@@ -441,6 +441,42 @@ class EmployeeAllocation(Base):
     functional_manager = Column(String, nullable=True)
     function = Column(String, nullable=True)
     status = Column(String, nullable=True)              # Active / Inactive
+    expected_end_date = Column(Date, nullable=True)     # set by approved biweekly project-update drafts
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+# ── Biweekly Project-Update Submission (audited draft → main allocation) ──────
+class ProjectUpdateSubmission(Base):
+    """An employee's biweekly self-report of what they're working on.
+
+    This is an AUDITED DRAFT — it never writes to employee_allocations directly.
+    It becomes real allocation data only after the Reporting Manager approves it
+    (see app.main._finalize_decision, entity_type="project_update").
+    """
+    __tablename__ = "project_update_submissions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, index=True)           # employees.id
+    employee_email = Column(String, index=True)
+    employee_name = Column(String)
+    period_start = Column(Date, nullable=True)          # the fortnight covered
+    period_end = Column(Date, nullable=True)
+    activity_type = Column(String)                      # Project | Learning | PoC (PMO-configurable)
+    project_name = Column(String, nullable=True)        # required when activity_type == "Project"
+    expected_end_date = Column(Date, nullable=True)     # parsed "how long" answer
+    duration_text = Column(String, nullable=True)       # free-text "how long" answer
+    details = Column(Text, nullable=True)
+    # audit: who filled
+    filled_by_email = Column(String)
+    filled_at = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(String, default="submitted")        # submitted | approved | rejected
+    # audit: who approved
+    approved_by_email = Column(String, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+    allocation_id = Column(Integer, nullable=True)      # employee_allocations row written on approval
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -665,6 +701,31 @@ class RouterExample(Base):
     is_active = Column(Boolean, default=True, index=True)     # soft-disable a bad seed without deleting
     weight = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class AppLink(Base):
+    """Admin-curated external app / website / portal that Centriq can point users to.
+
+    Each row is a tool the company offers (travel desk, expense portal, a newly-launched
+    internal app, etc.) with its purpose + capabilities. The combined text is embedded once,
+    and at chat time a user's query is matched by pgvector cosine similarity — so a brand-new
+    app becomes discoverable the moment an admin adds a row, with no code change. The link is
+    surfaced two ways: the general agent's find_apps tool (explicit asks) and a proactive
+    nudge injected into feedback_context for any agent (mid-conversation mentions).
+    """
+    __tablename__ = "app_links"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    url = Column(String, nullable=False)
+    purpose = Column(Text, nullable=False)                   # what it's for
+    capabilities = Column(Text, nullable=True)               # what it can do (free text)
+    embedding = Column(Vector(768), nullable=True)           # of name + purpose + capabilities
+    is_active = Column(Boolean, default=True, index=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 class LeaveBalanceCache(Base):
@@ -956,6 +1017,60 @@ class DocumentTemplate(Base):
     setup_status = Column(String, default="needs_review")  # needs_review | ready
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class FormTemplate(Base):
+    """An admin-defined fillable form (visitor pass, parking request, desk booking, …).
+
+    The whole point: admins create a new form — name, description, and an arbitrary list of
+    fields — from the Form Library page, with ZERO code change. The name + description + field
+    labels are embedded once; at chat time a user's message is matched against those embeddings
+    by pgvector cosine similarity, and a confident match short-circuits the router to render the
+    form inline in chat. The user fills it and submits → a FormSubmission row.
+
+    Mirrors AppLink's embed-once / cosine-k-NN discovery and DocumentTemplate's JSON field shape.
+    """
+    __tablename__ = "form_templates"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=False)               # what it's for — also matched against queries
+    category = Column(String, nullable=True)                 # free-text grouping (HR, Admin, Facilities…)
+    fields = Column(JSON, nullable=True)                     # [{name,label,type,required,options?,placeholder?}]
+    embedding = Column(Vector(768), nullable=True)           # of name + description + category + field labels
+    enabled = Column(Boolean, default=True, index=True)      # disable to pull a form out of chat without deleting
+    notify_email = Column(String, nullable=True)             # explicit recipient for new submissions
+    notify_domain = Column(String, nullable=True)            # fallback recipient by domain (admin/hr/…)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    submissions = relationship("FormSubmission", back_populates="template", cascade="all, delete-orphan")
+
+
+class FormSubmission(Base):
+    """A user's filled-in submission of a FormTemplate.
+
+    Generic capture: the field values are stored as JSON (keyed by field name) rather than
+    mapped to bespoke columns, so any form — current or future — persists the same way. Admins
+    review submissions in the Form Library Submissions tab (Approve/Reject)."""
+    __tablename__ = "form_submissions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference_id = Column(String, unique=True, index=True)   # FRM-<MMDDHHMMSS>
+    form_template_id = Column(Integer, ForeignKey(f"{SCHEMA}.form_templates.id"), index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    employee_email = Column(String, index=True)
+    field_values = Column(JSON, nullable=True)               # {field_name: submitted_value}
+    status = Column(String, default="Pending", index=True)   # Pending | Approved | Rejected
+    admin_remarks = Column(Text, nullable=True)
+    reviewed_by = Column(String, nullable=True)
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    template = relationship("FormTemplate", back_populates="submissions")
 
 
 class ContentRevealAudit(Base):

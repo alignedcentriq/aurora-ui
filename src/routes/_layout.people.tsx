@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useCallback, useEffect } from "react";
 import {
@@ -27,6 +27,12 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_layout/people")({
+  beforeLoad: () => {
+    throw redirect({
+      to: "/control-hub",
+      search: { tab: "people" },
+    });
+  },
   component: PeoplePage,
 });
 
@@ -77,7 +83,7 @@ function initials(name: string) {
 
 function SkillTag({ label, color = "primary" }: { label: string; color?: string }) {
   const colorMap: Record<string, string> = {
-    primary: "bg-primary/10 text-primary/90 border-primary/20",
+    primary: "bg-[#00a29a]/10 dark:bg-primary/10 text-[#00a29a] dark:text-primary/90 border-[#00a29a]/20 dark:border-primary/20",
     amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
     emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
     violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
@@ -110,18 +116,18 @@ function PersonCard({ person }: { person: Person }) {
   const recentProject = person.projects[0];
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden transition-all hover:shadow-md hover:border-primary/20">
+    <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card overflow-hidden transition-all hover:shadow-md hover:border-[#00a29a]/20 dark:hover:border-primary/20">
       {/* Card Header */}
       <div className="p-5">
         <div className="flex items-start gap-4">
           <div className="relative shrink-0">
-            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary flex items-center justify-center text-[16px] font-bold border border-primary/10">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-[#00a29a]/20 to-[#0d9488]/20 dark:from-primary/20 dark:to-primary/5 text-[#00a29a] dark:text-primary flex items-center justify-center text-[16px] font-bold border border-[#00a29a]/10 dark:border-primary/10">
               {initials(person.name || "?")}
             </div>
             {person.status && (
               <span className={cn(
-                "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-card",
-                person.status.toLowerCase().includes("active") ? "bg-emerald-500" : "bg-muted-foreground"
+                "absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white dark:border-card",
+                person.status.toLowerCase().includes("active") ? "bg-emerald-500" : "bg-[#94a3b8]"
               )} />
             )}
           </div>
@@ -129,8 +135,8 @@ function PersonCard({ person }: { person: Person }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-[15px] font-semibold text-foreground leading-tight">{person.name}</p>
-                <p className="text-[13px] text-primary/70 font-medium mt-0.5">{person.designation || "—"}</p>
+                <p className="text-[15px] font-bold text-[#0f172a] dark:text-white leading-tight">{person.name}</p>
+                <p className="text-[13px] text-[#00a29a] dark:text-primary/70 font-semibold mt-0.5">{person.designation || "—"}</p>
               </div>
               {(person.level || person.grade) && (
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20 shrink-0">
@@ -139,7 +145,7 @@ function PersonCard({ person }: { person: Person }) {
               )}
             </div>
 
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#64748b] dark:text-white/50">
               {person.function && <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" />{person.function}</span>}
               {person.total_experience && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{person.total_experience} yrs</span>}
               {person.reporting_manager && <span className="flex items-center gap-1"><UserCheck className="h-3 w-3" />{person.reporting_manager}</span>}
@@ -155,10 +161,10 @@ function PersonCard({ person }: { person: Person }) {
 
             {/* Recent Project Preview */}
             {recentProject && (
-              <div className="mt-3 rounded-xl bg-muted/40 border border-[var(--border)] px-3 py-2 text-[12px] flex items-center gap-2">
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="font-medium text-foreground truncate">{recentProject.project}</span>
-                {recentProject.client && <span className="text-muted-foreground shrink-0">· {recentProject.client}</span>}
+              <div className="mt-3 rounded-xl bg-[#f8fafc] dark:bg-muted/40 border border-[#e2e8f0] dark:border-white/[0.08] px-3 py-2 text-[12px] flex items-center gap-2">
+                <FolderOpen className="h-3.5 w-3.5 text-[#94a3b8] dark:text-muted-foreground shrink-0" />
+                <span className="font-medium text-[#0f172a] dark:text-white truncate">{recentProject.project}</span>
+                {recentProject.client && <span className="text-[#94a3b8] dark:text-muted-foreground shrink-0">· {recentProject.client}</span>}
                 {activeProjects.length > 0 && (
                   <span className="ml-auto shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-semibold">
                     {activeProjects.length} active
@@ -171,7 +177,7 @@ function PersonCard({ person }: { person: Person }) {
 
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="mt-4 w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12px] font-medium text-muted-foreground hover:text-primary hover:bg-primary/5 transition-all border border-[var(--border)]"
+          className="mt-4 w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12px] font-medium text-[#94a3b8] dark:text-muted-foreground hover:text-[#00a29a] dark:hover:text-primary hover:bg-[#00a29a]/5 dark:hover:bg-primary/5 transition-all border border-[#e2e8f0] dark:border-white/[0.08]"
         >
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           {expanded ? "Show less" : `Full profile · ${person.projects.length} project(s)`}
@@ -312,7 +318,7 @@ function PersonCard({ person }: { person: Person }) {
   );
 }
 
-function PeoplePage() {
+export function PeoplePage() {
   const { user } = useAuth();
 
   const PAGE_SIZE = 10;
@@ -391,26 +397,29 @@ function PeoplePage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
+      <div className="shrink-0 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card px-8 py-5">
         <div>
-          <h1 className="text-xl font-semibold text-foreground tracking-tight">People</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
+            Assets & Config
+          </p>
+          <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">People Directory</h1>
+          <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">
             Search employees by skills, experience, projects, and reporting structure.
           </p>
         </div>
       </div>
 
       {/* Search area */}
-      <div className="shrink-0 px-8 py-4 border-b border-[var(--border)] bg-background space-y-3">
+      <div className="shrink-0 px-8 py-4 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card space-y-3">
         <div className="flex gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8] dark:text-muted-foreground/50" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               placeholder="Search by name, skill, designation, or keyword..."
-              className="w-full rounded-xl border border-[var(--border)] bg-card pl-11 pr-4 py-2.5 text-[14px] text-foreground outline-none focus:border-primary/40 focus:ring-4 focus:ring-primary/5"
+              className="w-full rounded-xl border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background pl-11 pr-4 py-2.5 text-[14px] text-foreground outline-none focus:border-[#00a29a]/40 dark:focus:border-primary/40 focus:ring-4 focus:ring-[#00a29a]/5 dark:focus:ring-primary/5"
             />
           </div>
           <button
@@ -418,20 +427,20 @@ function PeoplePage() {
             className={cn(
               "flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition-all",
               showFilters || activeFilters > 0
-                ? "border-primary/40 bg-primary/10 text-primary"
-                : "border-[var(--border)] bg-card text-muted-foreground hover:text-foreground"
+                ? "border-[#00a29a]/40 dark:border-primary/40 bg-[#00a29a]/10 dark:bg-primary/10 text-[#00a29a] dark:text-primary"
+                : "border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card text-[#64748b] dark:text-muted-foreground hover:text-[#0f172a] dark:hover:text-foreground"
             )}
           >
             <SlidersHorizontal className="h-4 w-4" />
             Filters
             {activeFilters > 0 && (
-              <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-white">{activeFilters}</span>
+              <span className="rounded-full bg-[#00a29a] dark:bg-primary px-1.5 text-[10px] font-semibold text-white">{activeFilters}</span>
             )}
           </button>
           <button
             onClick={() => handleSearch(0)}
             disabled={loading}
-            className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[13px] font-semibold text-white hover:bg-primary/90 disabled:opacity-50 transition-all"
+            className="flex items-center gap-2 rounded-full bg-[#00a29a] hover:bg-[#008f88] px-5 py-2.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-all shadow-sm"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             Search
@@ -448,17 +457,17 @@ function PeoplePage() {
               { label: "Min Experience (yrs)", value: minExp, setter: setMinExp, placeholder: "e.g. 3" },
             ].map(({ label, value, setter, placeholder }) => (
               <div key={label} className="relative">
-                <label className="block text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 mb-1">{label}</label>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-[#94a3b8] dark:text-muted-foreground/60 mb-1">{label}</label>
                 <div className="relative">
                   <input
                     value={value}
                     onChange={(e) => setter(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                     placeholder={placeholder}
-                    className="w-full rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/40 pr-7"
+                    className="w-full rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-[#00a29a]/40 dark:focus:border-primary/40 pr-7"
                   />
                   {value && (
-                    <button onClick={() => clearFilter(setter)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground">
+                    <button onClick={() => clearFilter(setter)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#94a3b8] dark:text-muted-foreground/50 hover:text-[#0f172a] dark:hover:text-foreground">
                       <X className="h-3 w-3" />
                     </button>
                   )}
@@ -470,13 +479,13 @@ function PeoplePage() {
       </div>
 
       {/* Results */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-8 py-6 bg-[#f5f7fa] dark:bg-background">
         {!searched && (
           <div className="flex h-full items-center justify-center text-center">
             <div>
-              <Users className="h-16 w-16 text-muted-foreground/20 mx-auto mb-4" />
-              <p className="text-[15px] font-medium text-foreground">Search your people directory</p>
-              <p className="text-[13px] text-muted-foreground mt-1 max-w-sm">
+              <Users className="h-16 w-16 text-[#94a3b8]/30 dark:text-muted-foreground/20 mx-auto mb-4" />
+              <p className="text-[15px] font-bold text-[#0f172a] dark:text-white">Search your people directory</p>
+              <p className="text-[13px] text-[#64748b] dark:text-muted-foreground mt-1 max-w-sm">
                 Find employees by skill, experience, project history, or reporting manager.
               </p>
             </div>
@@ -486,9 +495,9 @@ function PeoplePage() {
         {searched && !loading && results?.length === 0 && (
           <div className="flex h-full items-center justify-center text-center">
             <div>
-              <Search className="h-12 w-12 text-muted-foreground/20 mx-auto mb-4" />
-              <p className="text-[15px] font-medium text-foreground">No results found</p>
-              <p className="text-[13px] text-muted-foreground mt-1">
+              <Search className="h-12 w-12 text-[#94a3b8]/30 dark:text-muted-foreground/20 mx-auto mb-4" />
+              <p className="text-[15px] font-bold text-[#0f172a] dark:text-white">No results found</p>
+              <p className="text-[13px] text-[#64748b] dark:text-muted-foreground mt-1">
                 Try different keywords or adjust your filters.
               </p>
             </div>
@@ -504,25 +513,25 @@ function PeoplePage() {
               const hasNext = (page + 1) * PAGE_SIZE < total;
               const Pager = () => (
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-[13px] text-muted-foreground">
-                    Showing <span className="font-medium text-foreground">{start}–{end}</span> of{" "}
-                    <span className="font-medium text-foreground">{total}</span>
+                  <p className="text-[13px] text-[#64748b] dark:text-muted-foreground">
+                    Showing <span className="font-semibold text-[#0f172a] dark:text-white">{start}–{end}</span> of{" "}
+                    <span className="font-semibold text-[#0f172a] dark:text-white">{total}</span>
                   </p>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleSearch(page - 1)}
                       disabled={!hasPrev || loading}
-                      className="flex items-center gap-1 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-foreground hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      className="flex items-center gap-1 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card px-3 py-1.5 text-[12px] font-medium text-[#0f172a] dark:text-white hover:bg-[#f1f5f9] dark:hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                     >
                       <ChevronLeft className="h-3.5 w-3.5" /> Previous
                     </button>
-                    <span className="text-[12px] text-muted-foreground tabular-nums">
+                    <span className="text-[12px] text-[#94a3b8] dark:text-muted-foreground tabular-nums">
                       Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
                     </span>
                     <button
                       onClick={() => handleSearch(page + 1)}
                       disabled={!hasNext || loading}
-                      className="flex items-center gap-1 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-foreground hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      className="flex items-center gap-1 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card px-3 py-1.5 text-[12px] font-medium text-[#0f172a] dark:text-white hover:bg-[#f1f5f9] dark:hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                     >
                       Next <ChevronRight className="h-3.5 w-3.5" />
                     </button>

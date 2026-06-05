@@ -182,6 +182,28 @@ class AnswerCacheService:
             db.close()
 
     @staticmethod
+    def invalidate_by_subintent(sub_intents: list[str]) -> int:
+        """Delete all cached answers for the given sub_intents (e.g. dynamic
+        directory lookups that should never have been cached). Returns rows deleted."""
+        if not sub_intents:
+            return 0
+        db = SessionLocal()
+        try:
+            deleted = (
+                db.query(CachedAnswer)
+                .filter(CachedAnswer.sub_intent.in_(sub_intents))
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+            return deleted
+        except Exception as e:
+            db.rollback()
+            print(f"[AnswerCache] invalidate_by_subintent skipped ({type(e).__name__}): {e}")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
     def invalidate_domain(domain: str) -> int:
         """Delete all cached answers for a domain (e.g. when a doc's category changed)."""
         if not domain:
