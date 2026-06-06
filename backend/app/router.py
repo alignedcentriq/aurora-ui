@@ -63,8 +63,8 @@ DOMAIN_REGISTRY = {
                        "AI projects, technology projects, initiatives the company is working on, "
                        "project status, completion percentage, project owner, next milestone, "
                        "PDF report generation, project summary, what projects exist, "
-                       "Udemy training licenses — an employee requesting a Udemy license / online course access, "
-                       "assigning seats, checking who has access, revoking expired Udemy licenses",
+                       "training-platform licenses — an employee requesting a Udemy or Coursera license / online course access, "
+                       "assigning seats, checking who has access, revoking expired licenses",
         "status": "active",
     },
     "functional_manager": {
@@ -169,8 +169,9 @@ EXAMPLES:
 - "extend my borrow for 7 more days" → domain: admin, sub_intent: bookshelf.extend, entities: {{"additional_days": 7}}
 - "renew Atomic Habits, I need more time" → domain: admin, sub_intent: bookshelf.extend, entities: {{"book_name": "Atomic Habits"}}
 - "show all company projects" → domain: pmo, sub_intent: list_projects, entities: {{}}
-- "I need a Udemy license for a Python course" → domain: pmo, sub_intent: udemy_license, entities: {{"course_name": "Python"}}
-- "can I get access to a Udemy course" → domain: pmo, sub_intent: udemy_license, entities: {{}}
+- "I need a Udemy license for a Python course" → domain: pmo, sub_intent: udemy_license, entities: {{"platform": "Udemy", "course_name": "Python"}}
+- "can I get access to a Udemy course" → domain: pmo, sub_intent: udemy_license, entities: {{"platform": "Udemy"}}
+- "I need a Coursera license" → domain: pmo, sub_intent: udemy_license, entities: {{"platform": "Coursera"}}
 - "who has Udemy licenses" → domain: pmo, sub_intent: list_license_holders, entities: {{"license_name": "Udemy"}}
 - "who reports to me" → domain: functional_manager, sub_intent: team_structure, entities: {{}}
 - "is Salween room free tomorrow 2-3pm" → domain: ms365, sub_intent: room_availability, entities: {{"room_name": "Salween", "date": "tomorrow", "start_time": "14:00", "end_time": "15:00"}}

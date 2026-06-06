@@ -55,6 +55,18 @@ _RAW: list[tuple[str, str, str]] = [
     ("tell me about the projects we delivered for clients", "general", "company_projects"),
     ("recap of the customer portal project", "general", "company_projects"),
 
+    # ── general: URL library / app directory (admin-registered apps & portals) ───
+    # "which app/tool/portal/website do I use for X" — matched against admin-curated
+    # AppLink rows by find_apps. Kept generic so new apps need no new seeds.
+    ("is there an app for expense reports", "general", "app_directory"),
+    ("what tool do I use to book travel", "general", "app_directory"),
+    ("where do I go to submit my timesheet", "general", "app_directory"),
+    ("is there a portal for raising IT requests", "general", "app_directory"),
+    ("what website do I use to apply for leave", "general", "app_directory"),
+    ("which application should I use to track my reimbursements", "general", "app_directory"),
+    ("do we have a tool for booking meeting rooms", "general", "app_directory"),
+    ("link to the employee self service portal", "general", "app_directory"),
+
     # ── hr: policy ───────────────────────────────────────────────────────────────
     ("leave policy", "hr", "policy_query"),
     ("what is the work from home policy", "hr", "policy_query"),
@@ -194,6 +206,27 @@ _RAW: list[tuple[str, str, str]] = [
     ("VPN is not connecting", "it_support", "create_ticket"),
     ("reset my password", "it_support", "create_ticket"),
     ("network is down", "it_support", "create_ticket"),
+    ("wifi is not working", "it_support", "create_ticket"),
+    ("wifi not working in office", "it_support", "create_ticket"),
+    ("internet is not working", "it_support", "create_ticket"),
+    ("no internet connection", "it_support", "create_ticket"),
+    ("office wifi keeps disconnecting", "it_support", "create_ticket"),
+    ("who do I contact for wifi issues", "it_support", "it_howto"),
+    ("who should I reach out to for internet problems", "it_support", "it_howto"),
+
+    # ── it_support: how-to / setup (answered from IT docs, not a ticket) ─────────
+    ("how do I connect to the VPN", "it_support", "it_howto"),
+    ("how to connect vpn", "it_support", "it_howto"),
+    ("how do I access the VPN", "it_support", "it_howto"),
+    ("VPN setup guide", "it_support", "it_howto"),
+    ("remote access setup", "it_support", "it_howto"),
+    ("how to connect to wifi", "it_support", "it_howto"),
+    ("connect to office wifi", "it_support", "it_howto"),
+    ("what is the wifi password", "it_support", "it_howto"),
+    ("how do I configure my email", "it_support", "it_howto"),
+    ("set up email on my phone", "it_support", "it_howto"),
+    ("how to set up the printer", "it_support", "it_howto"),
+    ("how do I set up OneDrive", "it_support", "it_howto"),
 
     # ── it_support: licenses / assets ────────────────────────────────────────────
     ("I need a GitHub Copilot license", "it_support", "license_request"),
@@ -208,7 +241,16 @@ _RAW: list[tuple[str, str, str]] = [
     ("generate a PDF report for project X", "pmo", "list_projects"),
     ("I need a Udemy license for a Python course", "pmo", "udemy_license"),
     ("can I get access to a Udemy course", "pmo", "udemy_license"),
+    ("I need a Coursera license", "pmo", "udemy_license"),
+    ("can I get a Coursera course subscription", "pmo", "udemy_license"),
+    ("request an online course / training license", "pmo", "udemy_license"),
     ("who has Udemy licenses", "pmo", "list_license_holders"),
+
+    # ── pmo: process / how-to / governance (answered from PMO docs) ──────────────
+    ("what is the project onboarding process", "pmo", "pmo_howto"),
+    ("PMO process guide", "pmo", "pmo_howto"),
+    ("how do I raise a project change request", "pmo", "pmo_howto"),
+    ("what is the project governance policy", "pmo", "pmo_howto"),
 
     # ── functional_manager ───────────────────────────────────────────────────────
     ("who reports to me", "functional_manager", "team_structure"),

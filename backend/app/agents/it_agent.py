@@ -68,7 +68,17 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
     return ITService.get_my_assets(email)
 
 
-tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets]
+@tool
+def search_it_docs(query: str):
+    """Search IT support documents for how-to / setup / configuration questions
+    (VPN, wifi, printer, email setup, software config). Call for any 'how do I…',
+    'how to…', 'setup', 'configure', 'connect' question. Infer the query from the
+    user's message — never ask what to search."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_it_docs(query)
+
+
+tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets, search_it_docs]
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (router tier).
@@ -82,6 +92,9 @@ def it_assistant(state: ITState):
     default_prompt = (
         f"You are the IT Support Assistant for Aligned Automation.\n"
         f"Employee: {user_email}. Never ask for email or justification.\n\n"
+        f"How-to / setup question ('how do I…', 'how to…', connect/configure VPN, wifi, printer, email) →\n"
+        f"   call search_it_docs first and answer concisely from the result. Only create a ticket if no doc\n"
+        f"   answers or the user needs an action taken.\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
         f"Specific problem described → call create_it_ticket immediately.\n"
         f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
@@ -94,7 +107,7 @@ def it_assistant(state: ITState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(tools)
+    llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(tools)
     return {"messages": [llm.invoke(messages)]}
 
 

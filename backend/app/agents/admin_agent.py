@@ -47,7 +47,10 @@ def check_reimbursement_status(state: Annotated[dict, InjectedState] = None):
 def search_admin_policies(query: str):
     """Search admin policy documents. Call for any reimbursement/expense/claim/policy question
     where the user is NOT submitting a specific amount. Infer query from user message — never ask what to search."""
-    return HRService.search_policies(query, limit=2)
+    # Scoped to admin-owned categories: Admin (relocation/travel/parking/accommodation) +
+    # Finance (reimbursement/expense/PF — where the Reimbursement Policy actually lives).
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_admin_docs(query, limit=3)
 
 @tool
 def request_parking_sticker(
@@ -385,7 +388,7 @@ def admin_assistant(state: AdminState):
         active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = llm_controls.get_llm("router", default_timeout=120).bind_tools(active_tools).invoke(messages)
+    response = llm_controls.get_llm("service", default_timeout=120).bind_tools(active_tools).invoke(messages)
 
     # If the model returned empty text with no tool calls, surface the last tool result directly.
     # This prevents the "unable to generate a text summary" fallback on weak models.

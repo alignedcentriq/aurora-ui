@@ -42,12 +42,13 @@ _TTL = 5.0  # seconds — propagation window across workers
 # importing the router (which pulls in every agent) at this low level.
 DISABLEABLE_DOMAINS = ["hr", "admin", "it_support", "pmo", "ms365", "functional_manager"]
 
-VALID_TIERS = ("agent", "router", "general", "summarizer")
+VALID_TIERS = ("agent", "service", "router", "general", "summarizer")
 
 # Connection (base_url + api_key) is fixed per tier and NOT IT-editable — it points
 # at the shared Aligned server. Only model/temperature/max_tokens/timeout are tunable.
 _TIER_CONN = {
     "agent": (settings.AGENT_BASE_URL, settings.AGENT_API_KEY),
+    "service": (settings.AGENT_BASE_URL, settings.AGENT_API_KEY),
     "router": (settings.ROUTER_BASE_URL, settings.ROUTER_API_KEY),
     "general": (settings.AGENT_BASE_URL, settings.AGENT_API_KEY),
     "summarizer": (settings.AGENT_BASE_URL, settings.AGENT_API_KEY),
@@ -135,6 +136,7 @@ def _defaults() -> dict[str, Any]:
         "max_queue": settings.CHAT_MAX_QUEUE,
         "tiers": {
             "agent":      {"model": settings.AGENT_MODEL_NAME,  "temperature": settings.AGENT_TEMPERATURE, "max_tokens": None, "timeout": None},
+            "service":    {"model": settings.SERVICE_MODEL_NAME, "temperature": 0.0, "max_tokens": None, "timeout": None},
             "router":     {"model": settings.ROUTER_MODEL_NAME, "temperature": 0.0, "max_tokens": None, "timeout": None},
             "general":    {"model": settings.FAST_MODEL_NAME,   "temperature": 0.7, "max_tokens": None, "timeout": None},
             "summarizer": {"model": settings.FAST_MODEL_NAME,   "temperature": 0.3, "max_tokens": None, "timeout": None},

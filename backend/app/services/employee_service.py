@@ -9,6 +9,22 @@ from app.database import SessionLocal
 from app.models import Employee, EmployeeZohoProfile, MS365User, EmployeeSkill
 
 
+def _employee_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render rows as a GitHub-flavored markdown table.
+
+    A markdown table renders far more readably than newline-joined bullets,
+    which the frontend (remark-gfm) otherwise collapses into one paragraph.
+    Pipes inside cell values are escaped so they don't break the table.
+    """
+    def cell(v) -> str:
+        return str(v if v not in (None, "") else "N/A").replace("|", "\\|").strip()
+
+    head = "| " + " | ".join(headers) + " |"
+    sep = "| " + " | ".join("---" for _ in headers) + " |"
+    body = "\n".join("| " + " | ".join(cell(c) for c in r) + " |" for r in rows)
+    return f"{head}\n{sep}\n{body}"
+
+
 class EmployeeService:
 
     @staticmethod
@@ -49,15 +65,17 @@ class EmployeeService:
                         return ms
                 return "No employees found matching your search."
 
-            lines = []
+            rows = []
             for p in results:
                 name = f"{p.first_name or ''} {p.last_name or ''}".strip()
-                mgr = p.reporting_manager or "N/A"
-                lines.append(
-                    f"• **{name}** | {p.designation or 'N/A'} | {p.function or 'N/A'} | "
-                    f"Reporting to: {mgr} | Email: {p.official_email or 'N/A'}"
-                )
-            return f"Found {len(results)} employee(s):\n" + "\n".join(lines)
+                rows.append([
+                    name, p.designation, p.function,
+                    p.reporting_manager, p.official_email,
+                ])
+            table = _employee_table(
+                ["Name", "Designation", "Function", "Reporting To", "Email"], rows
+            )
+            return f"Found {len(results)} employee(s):\n\n{table}"
         finally:
             db.close()
 
@@ -80,16 +98,18 @@ class EmployeeService:
             )
             if not rows:
                 return None
-            lines = []
+            table_rows = []
             for u in rows:
-                mgr = u.manager_name or "N/A"
-                lines.append(
-                    f"• **{u.name or u.email}** | {u.job_title or 'N/A'} | {u.department or 'N/A'} | "
-                    f"Reporting to: {mgr} | Email: {u.email or 'N/A'}"
-                )
+                table_rows.append([
+                    u.name or u.email, u.job_title, u.department,
+                    u.manager_name, u.email,
+                ])
+            table = _employee_table(
+                ["Name", "Designation", "Department", "Reporting To", "Email"],
+                table_rows,
+            )
             return (
-                f"Found {len(rows)} employee(s) in the Microsoft 365 directory:\n"
-                + "\n".join(lines)
+                f"Found {len(rows)} employee(s) in the Microsoft 365 directory:\n\n{table}"
             )
         finally:
             db.close()
@@ -179,24 +199,39 @@ class EmployeeService:
 
             skills = EmployeeService._real_skills(db, email if email != "N/A" else "")
 
-            lines = [
-                f"**Employee Profile — {name}**",
-                f"• **Email:** {email}",
-                f"• **Designation:** {pick(ms.job_title if ms else None, profile.designation if profile else None)}",
-                f"• **Department / Function:** {pick(ms.department if ms else None, profile.function if profile else None)}",
-                f"• **Office Location:** {office}",
-                f"• **Reporting Manager:** {pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)}",
-                f"• **Skills:** {skills or 'None on file'}",
+            lines = []
+            lines.append(f"### 👤 Employee Profile: **{name}**\n")
+
+            table_rows = [
+                ["Email", email],
+                ["Designation", pick(ms.job_title if ms else None, profile.designation if profile else None)],
+                ["Department / Function", pick(ms.department if ms else None, profile.function if profile else None)],
+                ["Office Location", office],
+                ["Reporting Manager", pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)],
             ]
-            # Supplementary detail from the Zoho profile, only where present.
+
             if profile:
-                lines.extend([
-                    f"• **Level / Grade:** {profile.level or 'N/A'} / {profile.grade or 'N/A'}",
-                    f"• **Employment Type:** {pick(profile.employment_type, ms.employee_type if ms else None)}",
-                    f"• **Total Experience:** {profile.total_experience or 'N/A'}",
-                    f"• **Expertise / Ask Me About:** {profile.expertise or 'N/A'}",
-                    f"• **Languages Known:** {profile.language_known or 'N/A'}",
+                table_rows.extend([
+                    ["Level / Grade", f"{profile.level or 'N/A'} / {profile.grade or 'N/A'}"],
+                    ["Employment Type", pick(profile.employment_type, ms.employee_type if ms else None)],
+                    ["Total Experience", f"{profile.total_experience} years" if profile.total_experience else "N/A"],
+                    ["Languages Known", profile.language_known or "N/A"]
                 ])
+
+            lines.append(_employee_table(["Field", "Detail"], table_rows))
+            lines.append("")
+
+            if profile and profile.expertise:
+                lines.append(f"**Expertise / Ask Me About:**\n{profile.expertise}\n")
+
+            lines.append("**Skills & Certifications:**")
+            if skills:
+                skill_items = [s.strip() for s in skills.split(",") if s.strip()]
+                for s in skill_items:
+                    lines.append(f"- {s}")
+            else:
+                lines.append("- None on file")
+
             return "\n".join(lines)
         finally:
             db.close()
@@ -255,13 +290,14 @@ class EmployeeService:
             if not reports:
                 return f"No direct reports found for '{manager_name}'."
 
-            lines = [f"**Team roster for {manager_name} ({len(reports)} members):**"]
+            rows = []
             for r in reports:
                 name = f"{r.first_name or ''} {r.last_name or ''}".strip()
-                lines.append(
-                    f"  • {name} | {r.designation or 'N/A'} | {r.official_email or 'N/A'}"
-                )
-            return "\n".join(lines)
+                rows.append([name, r.designation, r.official_email])
+            table = _employee_table(["Name", "Designation", "Email"], rows)
+            return (
+                f"**Team roster for {manager_name} ({len(reports)} members):**\n\n{table}"
+            )
         finally:
             db.close()
 
@@ -278,13 +314,16 @@ class EmployeeService:
             if not matches:
                 return f"No employees found with '{skill}' in their skill set."
 
-            lines = [f"**Employees with '{skill}' expertise ({len(matches)}):**"]
+            rows = []
             for p in matches:
                 name = f"{p.first_name or ''} {p.last_name or ''}".strip()
-                lines.append(
-                    f"  • {name} | {p.designation or 'N/A'} | {p.function or 'N/A'} | {p.official_email or 'N/A'}"
-                )
-            return "\n".join(lines)
+                rows.append([name, p.designation, p.function, p.official_email])
+            table = _employee_table(
+                ["Name", "Designation", "Function", "Email"], rows
+            )
+            return (
+                f"**Employees with '{skill}' expertise ({len(matches)}):**\n\n{table}"
+            )
         finally:
             db.close()
 

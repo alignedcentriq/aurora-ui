@@ -13,8 +13,20 @@ logger = logging.getLogger(__name__)
 _APPROVAL_TOKEN_TTL_HOURS = 24
 
 
+_SUPPORTED_PLATFORMS = ("Udemy", "Coursera")
+
+
+def normalize_platform(value: str) -> str:
+    """Map free text to a canonical training platform. Defaults to 'Udemy'."""
+    v = (value or "").strip().lower()
+    for p in _SUPPORTED_PLATFORMS:
+        if p.lower() in v:
+            return p
+    return "Udemy"
+
+
 class UdemyService:
-    """PMO-managed Udemy license requests (granted subject to availability)."""
+    """PMO-managed training-license requests — Udemy, Coursera, … (granted subject to availability)."""
 
     @staticmethod
     def _mint_action_tokens(entity_id: int, approver_email: str, employee_email: str) -> tuple[str, str]:
@@ -34,12 +46,15 @@ class UdemyService:
         return approve_tok, reject_tok
 
     @staticmethod
-    def request_license(email: str, justification: str = "", course_name: str = "") -> str:
+    def request_license(email: str, justification: str = "", course_name: str = "",
+                        platform: str = "Udemy") -> str:
+        platform = normalize_platform(platform)
         db = SessionLocal()
         try:
             emp = AdminService._get_or_create_employee(db, email)
             req = UdemyLicenseRequest(
                 employee_id=emp.id,
+                platform=platform,
                 course_name=(course_name or "").strip() or None,
                 justification=(justification or "").strip() or None,
                 status="Pending",
@@ -69,7 +84,7 @@ class UdemyService:
                 send_udemy_request_email(
                     user_email=email, employee_name=emp_name, employee_email=email,
                     course_name=course_name or "", justification=justification or "",
-                    approve_url=approve_url, reject_url=reject_url,
+                    approve_url=approve_url, reject_url=reject_url, platform=platform,
                 )
             except Exception as e:
                 logger.warning("[udemy] PMO notification email failed for request %s: %s", req_id, e)
@@ -78,7 +93,7 @@ class UdemyService:
 
         course_label = f" for '{course_name}'" if course_name else ""
         return (
-            f"Your Udemy license request{course_label} has been submitted to the PMO team (Request #{req_id}). "
+            f"Your {platform} license request{course_label} has been submitted to the PMO team (Request #{req_id}). "
             "Licenses are provided subject to availability — you'll be notified by email once it's reviewed."
         )
 
@@ -100,6 +115,7 @@ class UdemyService:
                 "employee_email": emp.email if emp else "",
                 "employee_name": emp.name if emp else "",
                 "course_name": req.course_name or "",
+                "platform": req.platform or "Udemy",
             }
         finally:
             db.close()
@@ -112,6 +128,7 @@ class UdemyService:
                     user_email=decided_by or info["employee_email"],
                     employee_email=info["employee_email"], employee_name=info["employee_name"],
                     course_name=info["course_name"], decision=decision, reason=reason,
+                    platform=info["platform"],
                 )
         except Exception as e:
             logger.warning("[udemy] Decision email failed for request %s: %s", req_id, e)
@@ -140,6 +157,7 @@ class UdemyService:
                     "id": req.id,
                     "employee_name": emp.name,
                     "employee_email": emp.email,
+                    "platform": req.platform or "Udemy",
                     "course_name": req.course_name or "",
                     "justification": req.justification or "",
                     "status": req.status,

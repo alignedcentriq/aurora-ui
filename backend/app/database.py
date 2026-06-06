@@ -45,6 +45,7 @@ from app.models import (
     HRQuery,
     MS365User,
     EmployeeSkill,
+    FormTemplate,
     SCHEMA,
 )
 from app.config import settings
@@ -112,6 +113,7 @@ def init_db():
             for stmt in [
                 f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS location VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
+                f'ALTER TABLE "{SCHEMA}".employee_allocations ADD COLUMN IF NOT EXISTS expected_end_date DATE',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_url VARCHAR',
@@ -144,6 +146,8 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_data BYTEA',
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_name VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_content_type VARCHAR',
+                # Training-license requests: which platform (Udemy / Coursera / …)
+                f'ALTER TABLE "{SCHEMA}".udemy_license_requests ADD COLUMN IF NOT EXISTS platform VARCHAR DEFAULT \'Udemy\'',
                 # Document generation: approval-gated verification fields
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT \'draft\'',
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verify_token VARCHAR',
@@ -219,6 +223,12 @@ def init_db():
                 # HNSW index for the semantic intent router (nearest labeled seed utterance)
                 f'CREATE INDEX IF NOT EXISTS idx_router_examples_embedding_hnsw ON "{SCHEMA}".router_examples '
                 f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the admin URL library (nearest registered app for a query)
+                f'CREATE INDEX IF NOT EXISTS idx_app_links_embedding_hnsw ON "{SCHEMA}".app_links '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for the Form Library (nearest admin-defined form for a query)
+                f'CREATE INDEX IF NOT EXISTS idx_form_templates_embedding_hnsw ON "{SCHEMA}".form_templates '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))
@@ -252,6 +262,25 @@ def init_db():
             threading.Thread(target=SemanticRouterService.seed_from_catalog, daemon=True).start()
         except Exception as e:
             print(f"[init_db] Semantic router seed thread notice: {e}")
+
+        # Background thread: back-fill embeddings for URL-library rows that failed to embed
+        # (admin added an app while ml01 was down). Self-healing on next boot.
+        try:
+            from app.services.app_directory_service import AppDirectoryService
+            threading.Thread(target=AppDirectoryService.backfill_embeddings, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] App directory backfill thread notice: {e}")
+
+        # Background thread: seed default forms (idempotent) then back-fill any Form Library
+        # rows whose embedding is NULL (admin created a form while the embed model was down).
+        try:
+            def _form_library_boot():
+                _seed_form_templates(SessionLocal())
+                from app.services.form_library_service import FormLibraryService
+                FormLibraryService.backfill_embeddings()
+            threading.Thread(target=_form_library_boot, daemon=True).start()
+        except Exception as e:
+            print(f"[init_db] Form library boot thread notice: {e}")
 
         # Background thread: polls SharePoint for new/changed policy documents
         try:
@@ -332,6 +361,66 @@ def _seed_leave_types(db):
     ])
     db.commit()
     print("Leave types seeding complete.")
+
+
+# Default forms seeded into the Form Library so the feature is demoable out-of-the-box and the
+# migrated Visitor Pass / Parking flows have a data-driven equivalent. Idempotent: only a form
+# whose name doesn't already exist is inserted, so admin edits/deletes are never overwritten.
+_DEFAULT_FORM_TEMPLATES = [
+    {
+        "name": "Visitor Pass",
+        "description": ("Request a visitor / guest pass for someone coming to the office. "
+                        "Register a visitor, guest entry, gate pass for a client or candidate."),
+        "category": "Admin",
+        "fields": [
+            {"name": "visitor_name", "label": "Visitor Name", "type": "text", "required": True},
+            {"name": "visitor_company", "label": "Visitor Company", "type": "text", "required": False},
+            {"name": "visit_date", "label": "Visit Date", "type": "date", "required": True},
+            {"name": "visit_time", "label": "Visit Time", "type": "text", "required": False,
+             "placeholder": "e.g. 2:30 PM"},
+            {"name": "purpose", "label": "Purpose of Visit", "type": "textarea", "required": True},
+        ],
+    },
+    {
+        "name": "Parking Request",
+        "description": ("Request a parking sticker / parking spot for your vehicle. "
+                        "Apply for office parking, car or bike parking permit."),
+        "category": "Admin",
+        "fields": [
+            {"name": "vehicle_type", "label": "Vehicle Type", "type": "select", "required": True,
+             "options": ["Car", "Bike", "Other"]},
+            {"name": "vehicle_number", "label": "Vehicle Number", "type": "text", "required": True},
+            {"name": "vehicle_make", "label": "Make", "type": "text", "required": False},
+            {"name": "vehicle_model", "label": "Model", "type": "text", "required": False},
+        ],
+    },
+]
+
+
+def _seed_form_templates(db):
+    """Seed default Form Library templates if absent (idempotent by name)."""
+    try:
+        from app.services.form_library_service import FormLibraryService
+        for spec in _DEFAULT_FORM_TEMPLATES:
+            if db.query(FormTemplate).filter(FormTemplate.name == spec["name"]).first():
+                continue
+            row = FormTemplate(
+                name=spec["name"],
+                description=spec["description"],
+                category=spec.get("category"),
+                fields=spec["fields"],
+                embedding=FormLibraryService._embed_text(
+                    spec["name"], spec["description"], spec.get("category"), spec["fields"]
+                ),
+                created_by="system",
+            )
+            db.add(row)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[init_db] Form template seeding notice: {e}")
+    finally:
+        db.close()
 
 
 def _migrate_prompt_configs(db):

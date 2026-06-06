@@ -137,6 +137,17 @@ class ITService:
         )
         return {"to": settings.HELPDESK_EMAIL, "subject": subject, "body": body}
 
+    # Generic nouns that are NOT a specific product. When the user says
+    # "install software" / "an app" / "some program", these get mis-extracted as
+    # the product name — we must ask which one instead of drafting an email for a
+    # product literally named "software".
+    _GENERIC_SOFTWARE_WORDS = frozenset({
+        "software", "softwares", "app", "apps", "application", "applications",
+        "program", "programs", "programme", "programmes", "tool", "tools",
+        "package", "packages", "something", "anything", "stuff", "it", "this",
+        "that",
+    })
+
     @staticmethod
     def _looks_like_software_name(software_name: str) -> bool:
         """Reject sentences / non-product phrases that get mis-extracted into software_name."""
@@ -150,6 +161,9 @@ class ITService:
             return False
         # Real product names are short; full sentences are not.
         if len(s.split()) > 5:
+            return False
+        # A bare generic noun ("software", "app", "program") names no product.
+        if lowered in ITService._GENERIC_SOFTWARE_WORDS:
             return False
         return True
 

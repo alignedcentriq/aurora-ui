@@ -1,4 +1,3 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -34,10 +33,6 @@ import {
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/config")({
-  component: ConfigPage,
-});
 
 interface PromptRow {
   domain: string;
@@ -108,7 +103,7 @@ function userDomains(role: string): string[] {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-function ConfigPage() {
+export function ConfigPage() {
   const { user } = useAuth();
   const role = user?.role?.toLowerCase() ?? "";
   const allowed = userDomains(role);
@@ -547,14 +542,17 @@ function ConfigPage() {
   const domainDrafts = pendingDrafts.filter((d) => allowed.includes(d.domain));
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden bg-[#f5f7fa] dark:bg-background">
       {/* Header */}
-      <div className="shrink-0 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
+      <div className="shrink-0 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-foreground tracking-tight">Configuration</h1>
-            <p className="text-[13px] text-muted-foreground mt-0.5">
-              Manage prompts and announcements for your domain.
+            <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
+              Assets & Config
+            </p>
+            <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">AI Prompt Config</h1>
+            <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">
+              Tune the prompts, announcements, and grounding sources that power your domain.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -564,23 +562,38 @@ function ConfigPage() {
                 {domainDrafts.length} pending approval
               </span>
             )}
-            <div className="flex items-center gap-1 rounded-xl border border-[var(--border)] bg-card p-1">
+            <div className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/50 dark:border-white/[0.04] p-1">
               <button
                 onClick={() => setTab("prompts")}
-                className={cn("rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all", tab === "prompts" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")}
+                className={cn(
+                  "rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer",
+                  tab === "prompts"
+                    ? "bg-white dark:bg-slate-800 text-[#0f172a] dark:text-white shadow-sm font-semibold"
+                    : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80"
+                )}
               >
                 Prompts
               </button>
               <button
                 onClick={() => setTab("announcements")}
-                className={cn("rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all", tab === "announcements" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")}
+                className={cn(
+                  "rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer",
+                  tab === "announcements"
+                    ? "bg-white dark:bg-slate-800 text-[#0f172a] dark:text-white shadow-sm font-semibold"
+                    : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80"
+                )}
               >
                 Announcements
               </button>
               {isAdmin && (
                 <button
                   onClick={() => { setTab("company"); fetchCompanyContext(); }}
-                  className={cn("rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all", tab === "company" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")}
+                  className={cn(
+                    "rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer",
+                    tab === "company"
+                      ? "bg-white dark:bg-slate-800 text-[#0f172a] dark:text-white shadow-sm font-semibold"
+                      : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80"
+                  )}
                 >
                   Company
                 </button>
@@ -588,7 +601,12 @@ function ConfigPage() {
               {isAdmin && (
                 <button
                   onClick={() => setTab("sharepoint")}
-                  className={cn("rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all", tab === "sharepoint" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")}
+                  className={cn(
+                    "rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer",
+                    tab === "sharepoint"
+                      ? "bg-white dark:bg-slate-800 text-[#0f172a] dark:text-white shadow-sm font-semibold"
+                      : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80"
+                  )}
                 >
                   SharePoint
                 </button>
@@ -601,27 +619,27 @@ function ConfigPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Domain Sidebar — only show if admin (multiple domains) */}
         {isAdmin && (
-          <aside className="w-48 shrink-0 border-r border-[var(--border)] p-4 space-y-1 overflow-y-auto">
+          <aside className="w-52 shrink-0 border-r border-[#e2e8f0] dark:border-white/[0.08] p-4 space-y-1 overflow-y-auto bg-white dark:bg-[#0a1628]">
             {visibleDomains.map((d) => (
               <button
                 key={d.id}
                 onClick={() => setActiveDomain(d.id)}
                 className={cn(
-                  "w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-medium text-left transition-all",
+                  "w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-left transition-all",
                   activeDomain === d.id
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]",
+                    ? "bg-[#f0fdfa] dark:bg-[#00a29a]/10 text-[#00a29a] dark:text-[#00c4bb]"
+                    : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.04]",
                 )}
               >
                 <span className={cn("h-2 w-2 rounded-full bg-current shrink-0", activeDomain === d.id ? "" : d.color)} />
-                {d.label}
+                {d.label} Prompts
               </button>
             ))}
           </aside>
         )}
 
         {/* Main Area */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto bg-[#f5f7fa] dark:bg-background">
           {tab === "prompts" ? (
             <div className="p-8 space-y-6 max-w-4xl">
               <div className="flex items-center gap-2 mb-2">
@@ -630,7 +648,7 @@ function ConfigPage() {
                 <div className="ml-auto flex items-center gap-2">
                   <button
                     onClick={() => { setNewKey(""); setNewValue(""); setShowAddForm(true); }}
-                    className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary hover:bg-primary/20 transition-all"
+                    className="flex items-center gap-1.5 rounded-full bg-[#00a29a] hover:bg-[#008f88] px-4 py-1.5 text-[12px] font-bold text-white transition-all shadow-sm"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     Add Prompt
@@ -638,7 +656,7 @@ function ConfigPage() {
                   <button
                     onClick={() => fetchPrompts(activeDomain)}
                     disabled={loading}
-                    className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-all disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-full border border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card px-4 py-1.5 text-[12px] font-bold text-[#64748b] dark:text-white/60 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.04] transition-all disabled:opacity-50"
                   >
                     <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                     Refresh

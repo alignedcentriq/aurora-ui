@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, Sparkles, WifiOff, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw } from "lucide-react";
+import { Download, Sparkles, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw, Activity } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { VisitorPassForm } from "./VisitorPassForm";
+import { DynamicFormWidget } from "./DynamicFormWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
@@ -68,6 +69,7 @@ interface ThreadData {
 
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings } from "@/lib/settings-store";
+import { useServerLoad } from "@/hooks/use-server-load";
 
 // ── Book intent helpers ─────────────────────────────────────────────────────
 // Client-side intercept for the most common book-discovery / status / return /
@@ -123,8 +125,14 @@ export function AssistantView() {
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const [activity, setActivity] = useState("");
-  const [vpnWarning, setVpnWarning] = useState(false);
-  const [vpnRetrying, setVpnRetrying] = useState(false);
+  // Proactive load awareness: warn (but never block) when the shared LLM server
+  // has no free slots. `serverBusy` is independent of the per-thread `busy` above.
+  const { serverBusy, waiting } = useServerLoad();
+  const [loadBannerDismissed, setLoadBannerDismissed] = useState(false);
+  // Re-arm the banner each time the server transitions back to "busy".
+  useEffect(() => {
+    if (!serverBusy) setLoadBannerDismissed(false);
+  }, [serverBusy]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [starterPage, setStarterPage] = useState(0);
 
@@ -174,43 +182,7 @@ export function AssistantView() {
     return () => window.removeEventListener("centriq:quick-action", handler as EventListener);
   }, [activeId, threads]);
 
-  const retryVpn = () => {
-    setVpnRetrying(true);
-    fetch("/api/health/llm")
-      .then((res) => {
-        if (res.ok) {
-          setVpnWarning(false);
-          toast.success("VPN connected", { description: "You're back on the office network." });
-        } else {
-          toast.error("Still unreachable", { description: "Check your VPN connection and try again." });
-        }
-      })
-      .catch(() => toast.error("Still unreachable", { description: "Check your VPN connection and try again." }))
-      .finally(() => setVpnRetrying(false));
-  };
 
-  // Check LLM reachability on mount
-  useEffect(() => {
-    fetch("/api/health/llm")
-      .then((res) => { if (!res.ok) setVpnWarning(true); })
-      .catch(() => { /* backend itself unreachable */ });
-  }, []);
-
-  // Poll health endpoint while VPN warning is active
-  useEffect(() => {
-    if (!vpnWarning) return;
-    const id = setInterval(() => {
-      fetch("/api/health/llm")
-        .then((res) => {
-          if (res.ok) {
-            setVpnWarning(false);
-            toast.success("VPN connected", { description: "You're back on the office network." });
-          }
-        })
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(id);
-  }, [vpnWarning]);
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
@@ -527,7 +499,10 @@ export function AssistantView() {
 
       const controller = new AbortController();
       controllersRef.current.set(threadId, controller);
-      const timeoutId = window.setTimeout(() => controller.abort(), 180000);
+      // Idle-reset timeout: abort only after 180s of *no* output. Reset on every token
+      // so a slow-but-progressing answer (e.g. a long policy reply on a busy LLM server)
+      // streams to completion instead of being killed at a fixed wall-clock deadline.
+      let timeoutId = window.setTimeout(() => controller.abort(), 180000);
       const activitySteps = getActivitySteps(text);
       setActivity(activitySteps[0]);
       const activityTimers = activitySteps
@@ -572,12 +547,6 @@ export function AssistantView() {
           if (!res.ok) {
             const errorData = await res.json().catch(() => ({}));
             const detail = errorData.detail;
-            if (detail && typeof detail === "object" && detail.code === "VPN_REQUIRED") {
-              setVpnWarning(true);
-              const err = new Error(detail.message) as Error & { code: string };
-              err.code = "VPN_REQUIRED";
-              throw err;
-            }
             throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
           }
 
@@ -611,6 +580,9 @@ export function AssistantView() {
                 aiTurnAdded = true;
               }
             } else if (evt.type === "token") {
+              // Output is flowing — restart the idle window so streaming isn't cut off.
+              window.clearTimeout(timeoutId);
+              timeoutId = window.setTimeout(() => controller.abort(), 180000);
               const content = (evt.content as string) ?? "";
               accumulatedText += content;
               if (!aiTurnAdded) {
@@ -687,30 +659,20 @@ export function AssistantView() {
           }
 
           console.error("Backend Error:", err);
-          const isVpn = err.code === "VPN_REQUIRED";
           const isTimeout = err.name === "AbortError";
 
           addTurn(threadId, {
             role: "ai",
-            text: isVpn
-              ? "I can't reach the AI service right now.\n\n**You appear to be outside the office network.** Please connect to the VPN and try again."
-              : isTimeout
+            text: isTimeout
               ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
               : "I couldn't complete that request right now. Please try again in a moment.",
           });
 
-          if (isVpn) {
-            toast.error("VPN not connected", {
-              description: "Connect to the office VPN to use Centriq AI.",
-              duration: 8000,
-            });
-          } else {
-            toast.error("Service unavailable", {
-              description: isTimeout
-                ? "The request timed out after 90 seconds."
-                : err.message || "Please try again later.",
-            });
-          }
+          toast.error("Service unavailable", {
+            description: isTimeout
+              ? "The request timed out after 3 minutes."
+              : err.message || "Please try again later.",
+          });
         })
         .finally(() => {
           window.clearTimeout(timeoutId);
@@ -936,36 +898,30 @@ export function AssistantView() {
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* VPN Warning */}
+
+
+        {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
         <AnimatePresence>
-          {vpnWarning && (
+          {serverBusy && !loadBannerDismissed && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
               className="flex items-center gap-3 border-b border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300 overflow-hidden"
             >
-              <WifiOff className="h-4 w-4 shrink-0" />
+              <Activity className="h-4 w-4 shrink-0" />
               <span>
-                <strong>VPN not connected</strong> — Connect to the office VPN to use Centriq AI.
+                <strong>Server is busy right now</strong> — replies may take a little longer than usual.
+                You can still send your message{waiting > 0 ? ` (${waiting} ahead of you)` : ""}; it'll be
+                answered as soon as a slot frees up.
               </span>
-              <div className="ml-auto flex items-center gap-1 shrink-0">
-                <button
-                  onClick={retryVpn}
-                  disabled={vpnRetrying}
-                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-200/60 dark:text-amber-300 dark:hover:bg-amber-800/40 transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-3 w-3 ${vpnRetrying ? "animate-spin" : ""}`} />
-                  Retry
-                </button>
-                <button
-                  onClick={() => setVpnWarning(false)}
-                  className="rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
-                  aria-label="Dismiss"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
+              <button
+                onClick={() => setLoadBannerDismissed(true)}
+                className="ml-auto shrink-0 rounded-lg p-1 text-amber-700 hover:bg-amber-200/60 dark:text-amber-400 dark:hover:bg-amber-800/40 transition-colors"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1221,6 +1177,16 @@ export function AssistantView() {
                                 prefill={t.interactive.data as import("@/lib/chat-store").VisitorPassPrefill | undefined}
                                 onSubmitted={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "dynamic_form" && t.interactive.data && (
+                              <DynamicFormWidget
+                                data={t.interactive.data as import("@/lib/chat-store").DynamicFormData}
+                                userEmail={user?.email || ""}
+                                userRole={user?.role}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg })
                                 }
                               />
                             )}

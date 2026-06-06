@@ -1,36 +1,28 @@
 services:
+  # nginx builds the SPA (static, baked into the image) AND reverse-proxies /api + /verify.
+  # The Node frontend container is gone — the bundle is served directly from disk.
   nginx:
-    image: nginx:alpine
-    ports:
-      - "8090:80"
-      - "8443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-    networks:
-      - centriq-network
-    depends_on:
-      - frontend
-      - backend
-    restart: always
-
-  frontend:
     build:
       context: .
+      dockerfile: nginx/Dockerfile
       args:
         - VITE_MSAL_CLIENT_ID=${VITE_MSAL_CLIENT_ID}
         - VITE_MSAL_TENANT_ID=${VITE_MSAL_TENANT_ID}
         - VITE_MSAL_REDIRECT_URI=${VITE_MSAL_REDIRECT_URI}
         - VITE_MSAL_AUTHORITY=${VITE_MSAL_AUTHORITY}
-    restart: always
-    environment:
-      - PORT=3000
-      - NODE_ENV=production
+    # Branch B: host nginx (port 80) forwards hackathon.alignedautomation.com → 8090.
+    # Host nginx config already has: proxy_pass http://127.0.0.1:8090 — no admin action needed.
+    # Branch A only (we own 80/443): change to "80:80","443:443" and run first-deploy.sh.
+    ports:
+      - "8090:80"
+    volumes:
+      # Mounted conf wins over the baked copy — edit + `docker compose restart nginx`, no rebuild.
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - centriq-network
     depends_on:
       - backend
+    restart: always
 
   backend:
     build: ./backend

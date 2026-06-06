@@ -27,6 +27,7 @@ Rules:
 5. If the user asks for a specific number of projects (e.g. "Give 5 projects"), list them from the tool results only.
 6. Summarize tool results concisely. Never add examples or suggestions from your own knowledge.
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
+8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -189,18 +190,31 @@ def search_people_directory(query: str):
 
 
 @tool
-def request_udemy_license(
-    justification: str = "",
+def search_pmo_docs(query: str):
+    """Search PMO process / governance documents for how-to / process / policy questions
+    (project onboarding, governance, change-request process, PMO templates). Call for any
+    'how do I…', 'what is the process for…', or PMO-policy question. Infer the query from the
+    user's message — never ask what to search."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_pmo_docs(query)
+
+
+@tool
+def request_training_license(
+    platform: str = "Udemy",
     course_name: str = "",
+    justification: str = "",
     state: Annotated[dict, InjectedState] = None,
 ):
-    """Request a Udemy license from the PMO team. Use when the user asks for a Udemy license / online course access.
-    course_name: the course or topic they want (ask if not stated).
-    justification: a one-line reason / how it helps their work (ask if not stated).
-    Licenses are provided subject to availability — make this clear. The PMO team is notified by email."""
+    """Submit a request for a company-provided training-platform license to the PMO team.
+    The company provides both Udemy and Coursera licenses to employees, subject to availability.
+    platform: 'Udemy' or 'Coursera' (default 'Udemy' if the user didn't say which).
+    course_name: the course or topic they want (optional — leave blank if not stated).
+    justification: a one-line reason, ONLY if the user gave one — never invent one.
+    The PMO team is notified by email and reviews the request."""
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
     from app.services.udemy_service import UdemyService
-    return UdemyService.request_license(email, justification, course_name)
+    return UdemyService.request_license(email, justification, course_name, platform)
 
 
 pmo_tools = [
@@ -210,7 +224,8 @@ pmo_tools = [
     generate_project_report,
     generate_multi_project_report,
     search_people_directory,
-    request_udemy_license,
+    search_pmo_docs,
+    request_training_license,
 ]
 
 # LLM built on demand from the live IT-tunable params (router tier).
@@ -283,6 +298,41 @@ def _db_project_achievements(project_name: str) -> dict:
         db.close()
 
 
+def _detect_platform(entities: dict, text: str) -> str:
+    """Resolve the training platform from router entities, else from the raw message.
+    Defaults to 'Udemy'. Coursera wins if the user explicitly named it."""
+    explicit = (entities or {}).get("platform") or ""
+    blob = f"{explicit} {text}".lower()
+    if "coursera" in blob:
+        return "Coursera"
+    return "Udemy"
+
+
+def _inject_training_tool_call(entities: dict, text: str) -> dict:
+    """Inject the training-license request tool call directly — zero LLM.
+    Only carries what the router actually extracted; justification is NEVER
+    fabricated (an empty one renders as '—' in the PMO email)."""
+    entities = entities or {}
+    args = {
+        "platform": _detect_platform(entities, text),
+        "course_name": (entities.get("course_name") or entities.get("course") or "").strip(),
+        "justification": (entities.get("justification") or "").strip(),
+    }
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "request_training_license",
+                    "args": args,
+                    "id": str(uuid.uuid4()),
+                    "type": "tool_call",
+                }],
+            )
+        ]
+    }
+
+
 def _inject_pdf_tool_call(project_name: str, scope: str) -> dict:
     """Inject a PDF tool call directly — no LLM needed to make this decision."""
     is_multi = scope == "multi" or not project_name or project_name.lower() == "all"
@@ -337,6 +387,11 @@ def smart_dispatcher(state: PMOState) -> dict:
             return _db_project_achievements(project_name)
         return _db_list_all_projects()
 
+    if sub_intent == "udemy_license":
+        last = state["messages"][-1]
+        text = getattr(last, "content", "") if isinstance(last, HumanMessage) else ""
+        return _inject_training_tool_call(entities, text or "")
+
     if sub_intent in _REPORT_INTENTS:
         scope = "multi" if not project_name or project_name.lower() == "all" else "single"
         return _inject_pdf_tool_call(project_name, scope)
@@ -365,7 +420,7 @@ def pmo_assistant(state: PMOState):
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
     try:
-        llm = llm_controls.get_llm("router", default_timeout=45).bind_tools(pmo_tools)
+        llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(pmo_tools)
         return {"messages": [llm.invoke(messages)]}
     except Exception as exc:
         print(f"PMO Agent LLM error: {exc}")
@@ -382,6 +437,9 @@ def pmo_assistant(state: PMOState):
 _PASSTHROUGH_TOOLS = {
     "generate_project_report", "generate_multi_project_report",
     "get_project_status", "get_project_achievements", "search_people_directory",
+    # Training-license confirmation is display-ready; passing it through avoids the
+    # LLM reflexively refusing ("can't help get a discounted Udemy/Coursera license").
+    "request_training_license",
 }
 
 

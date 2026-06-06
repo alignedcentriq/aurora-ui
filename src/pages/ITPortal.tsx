@@ -1,14 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
-
-export const Route = createFileRoute("/_layout/it-portal")({
-  component: ITPortal,
-});
 
 type Tab = "tickets" | "software" | "controls";
 
@@ -33,7 +28,7 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 const TICKET_STATUSES = ["Open", "Awaiting Approval", "In Progress", "Resolved", "Closed"];
 
-function ITPortal() {
+export function ITPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("tickets");
 
@@ -386,13 +381,14 @@ interface LlmControlsResponse {
 
 const TIER_META: Record<string, { label: string; sub: string }> = {
   agent: { label: "Agent", sub: "Reasoning & tool calling — HR, MS365, deep-links" },
-  router: { label: "Router & Domain Agents", sub: "Intent routing + HR, Admin, IT, PMO, Manager" },
+  service: { label: "Domain Service Agents", sub: "Tool calling — Admin, IT, PMO, Manager" },
+  router: { label: "Router", sub: "Intent-router LLM fallback" },
   general: { label: "General", sub: "Greetings, announcements, policy Q&A" },
   summarizer: { label: "Summarizer", sub: "Context & tool-result summaries" },
 };
 // Tiers whose models MUST support tool-calling / structured output — swapping these
 // to an incompatible model breaks routing or agent actions outright.
-const TOOLCALL_TIERS = new Set(["agent", "router"]);
+const TOOLCALL_TIERS = new Set(["agent", "service", "router"]);
 const DOMAIN_LABELS: Record<string, string> = {
   hr: "HR", admin: "Admin Services", it_support: "IT Support",
   pmo: "PMO", ms365: "Microsoft 365", functional_manager: "Manager",
