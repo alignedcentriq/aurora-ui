@@ -378,17 +378,25 @@ def admin_assistant(state: AdminState):
     detected_sub = _m.group(1).strip() if _m else ""
     pre_fetched = "[PRE-SEARCHED POLICY]" in feedback_ctx or "[POLICY SEARCH RESULT]" in feedback_ctx
 
+    policy_already_injected = "[PRE-SEARCHED POLICY]" in feedback_ctx
+    no_policy_found = "[POLICY SEARCH RESULT]" in feedback_ctx and "No policy found" in feedback_ctx
+
     if detected_sub in _TOOL_GROUPS:
         active_tools = _TOOL_GROUPS[detected_sub]
-        # Still strip search_admin_policies when policy was already pre-fetched
         if pre_fetched:
             active_tools = [t for t in active_tools if t.name != "search_admin_policies"]
     else:
-        # Unknown / followup — show all, strip search if already pre-fetched
         active_tools = [t for t in tools if not (pre_fetched and t.name == "search_admin_policies")]
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = llm_controls.get_llm("service", default_timeout=120).bind_tools(active_tools).invoke(messages)
+
+    # When policy was already injected, strip all tools — the LLM must answer in plain
+    # text from the pre-fetched context. Leaving tools bound causes weak models to emit
+    # tool calls as JSON text instead of prose.
+    if policy_already_injected or no_policy_found:
+        response = llm_controls.get_llm("service", default_timeout=120).invoke(messages)
+    else:
+        response = llm_controls.get_llm("service", default_timeout=120).bind_tools(active_tools).invoke(messages)
 
     # If the model returned empty text with no tool calls, surface the last tool result directly.
     # This prevents the "unable to generate a text summary" fallback on weak models.

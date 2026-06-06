@@ -93,10 +93,10 @@ export function UrlLibrary() {
   }, [user?.email, user?.role]);
 
   useEffect(() => {
-    if (user?.role === "Admin") load();
+    if (user?.role === "Super Admin") load();
   }, [user?.role, load]);
 
-  if (user?.role !== "Admin") {
+  if (user?.role !== "Super Admin") {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Access restricted to the Admin team.

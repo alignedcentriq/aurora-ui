@@ -20,9 +20,9 @@ from app.models import AiRequestLog, AiLlmCallLog, ChatFeedback, ContentRevealAu
 router = APIRouter(prefix="/api/observability", tags=["Observability"])
 
 
-def _require_it_or_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    if user.role not in ("it", "admin"):
-        raise HTTPException(status_code=403, detail="IT or Admin access required.")
+def _require_super_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    if user.role != "super admin":
+        raise HTTPException(status_code=403, detail="Super Admin access required.")
     return user
 
 
@@ -84,7 +84,7 @@ def get_logs(
     status: Optional[str] = Query(None),       # "success" or "error"
     from_date: Optional[str] = Query(None),     # ISO date string
     to_date: Optional[str] = Query(None),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Paginated activity log list — operational metadata only. User identity is
@@ -136,7 +136,7 @@ def get_logs(
 @router.get("/logs/{log_id}")
 def get_log_detail(
     log_id: int,
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Full log detail with LLM call breakdown (for expanded row). Operational only —
@@ -279,7 +279,7 @@ def list_reveal_audit(
 @router.get("/summary")
 def get_summary(
     period: str = Query("24h"),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """KPI summary for dashboard cards."""
@@ -348,7 +348,7 @@ def get_summary(
 @router.get("/charts/volume")
 def get_volume_chart(
     period: str = Query("24h"),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Request volume + avg latency over time (for time series chart)."""
@@ -380,7 +380,7 @@ def get_volume_chart(
 @router.get("/charts/domains")
 def get_domain_distribution(
     period: str = Query("24h"),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Request count + avg latency by domain (for pie + bar chart)."""
@@ -411,7 +411,7 @@ def get_domain_distribution(
 @router.get("/charts/models")
 def get_model_usage(
     period: str = Query("24h"),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Token usage by model (for stacked bar chart)."""
@@ -446,7 +446,7 @@ def get_model_usage(
 @router.get("/charts/nodes")
 def get_node_performance(
     period: str = Query("24h"),
-    _: CurrentUser = Depends(_require_it_or_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
     """Per-node LLM performance (for performance table)."""

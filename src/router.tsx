@@ -4,6 +4,20 @@ import { routeTree } from "./routeTree.gen";
 function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
 
+  // "Failed to fetch dynamically imported module" means Vite regenerated chunk hashes
+  // (after a file save / HMR / server restart) and the old URL is stale in the browser.
+  // A full page reload fetches fresh URLs; router.invalidate() alone won't help here.
+  const isStaleChunk = error.message?.includes("Failed to fetch dynamically imported module");
+
+  const handleTryAgain = () => {
+    if (isStaleChunk) {
+      window.location.reload();
+    } else {
+      router.invalidate();
+      reset();
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -25,7 +39,9 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Something went wrong</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          An unexpected error occurred. Please try again.
+          {isStaleChunk
+            ? "The app was updated. Click \"Try again\" to reload with the latest version."
+            : "An unexpected error occurred. Please try again."}
         </p>
         {import.meta.env.DEV && error.message && (
           <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive">
@@ -34,10 +50,7 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
         )}
         <div className="mt-6 flex items-center justify-center gap-3">
           <button
-            onClick={() => {
-              router.invalidate();
-              reset();
-            }}
+            onClick={handleTryAgain}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Try again

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from app.auth import CurrentUser, require_admin
+from app.auth import CurrentUser, require_super_admin
 from app.services.company_settings_service import CompanySettingsService
 from app.services.answer_cache_service import AnswerCacheService
 
@@ -12,7 +12,7 @@ class CompanyContextPayload(BaseModel):
 
 
 @router.get("")
-async def get_company_context(_: CurrentUser = Depends(require_admin)):
+async def get_company_context(_: CurrentUser = Depends(require_super_admin)):
     return {
         "key": "company_context",
         "value": CompanySettingsService.get_company_context(),
@@ -22,7 +22,7 @@ async def get_company_context(_: CurrentUser = Depends(require_admin)):
 @router.put("")
 async def set_company_context(
     payload: CompanyContextPayload,
-    user: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(require_super_admin),
 ):
     CompanySettingsService.set("company_context", payload.value, updated_by=user.email)
     # Drop cached company-info answers so they don't serve the old context.

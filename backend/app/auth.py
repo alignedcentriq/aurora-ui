@@ -13,8 +13,8 @@ from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
 
-VALID_ROLES = {"employee", "admin", "manager", "hr", "it", "pmo", "functional manager"}
-DOMAIN_MANAGER_ROLES = {"hr", "it", "pmo", "admin"}
+VALID_ROLES = {"employee", "admin", "manager", "hr", "it", "pmo", "functional manager", "super admin"}
+DOMAIN_MANAGER_ROLES = {"hr", "it", "pmo", "admin", "super admin"}
 
 
 @dataclass
@@ -65,6 +65,13 @@ def require_it(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     """Allows it and admin roles."""
     if user.role not in {"it", "admin"}:
         raise HTTPException(status_code=403, detail="IT access required.")
+    return user
+
+
+def require_super_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows super admin role only."""
+    if user.role != "super admin":
+        raise HTTPException(status_code=403, detail="Super Admin access required.")
     return user
 
 

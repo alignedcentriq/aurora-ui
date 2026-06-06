@@ -167,6 +167,17 @@ async def startup_event():
     except Exception as e:
         print(f"Database initialization failed: {e}")
 
+    try:
+        from app.database import SessionLocal
+        from app.services.document_service import seed_default_templates
+        db = SessionLocal()
+        try:
+            await asyncio.to_thread(seed_default_templates, db)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"Document template seeding failed: {e}")
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -204,6 +215,46 @@ async def startup_event():
                 print(f"[project_update] scheduler error: {e}")
 
     asyncio.create_task(attendance_scheduler())
+
+    # Send a daily cybersecurity news digest once per day at SECURITY_NEWS_HOUR.
+    async def security_news_scheduler():
+        import datetime as _dt
+        _last_sent_date = None
+        while True:
+            await asyncio.sleep(300)  # check every 5 minutes
+            try:
+                from app.services import llm_controls_service as _llm_ctrl
+                if not _llm_ctrl.is_security_news_enabled():
+                    continue
+                recipients = [r.strip() for r in settings.SECURITY_NEWS_RECIPIENTS.split(",") if r.strip()]
+                if not recipients:
+                    continue
+                sender = (
+                    settings.SECURITY_NEWS_SENDER
+                    or settings.PARKING_REMINDER_SENDER
+                    or settings.NOTIFY_TO_EMAIL
+                )
+                if not sender:
+                    continue
+                now = _dt.datetime.now()
+                today = now.date()
+                if today == _last_sent_date or now.hour < settings.SECURITY_NEWS_HOUR:
+                    continue
+                from app.services.security_news_service import fetch_digest
+                from app.services.email_service import send_security_news_digest
+                items = await asyncio.to_thread(fetch_digest)
+                if items:
+                    date_str = today.strftime("%B %d, %Y")
+                    ok = await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
+                    if ok:
+                        _last_sent_date = today
+                        print(f"[security_news] digest sent to {recipients} ({len(items)} stories)")
+                    else:
+                        print("[security_news] send failed — check Graph token for sender mailbox")
+            except Exception as _sne:
+                print(f"[security_news] scheduler error: {_sne}")
+
+    asyncio.create_task(security_news_scheduler())
 
     get_deeplink_agent()
 
@@ -893,21 +944,59 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
     if html_stripped:
         final_message = html_stripped
 
-    # Remove stray JSON blobs — only standalone blobs that start with {"
-    # (tool output leaks), not curly braces inside natural prose
-    _JSON_BLOB_RE = re.compile(r'(?:^|\n)\s*\{\"[^}]{20,}\}', re.DOTALL)
-    cleaned = _JSON_BLOB_RE.sub('', final_message).strip()
-    if cleaned:
-        final_message = cleaned
+    # Remove stray JSON blobs — tool call leaks and LLM-echoed tool results.
+    # Handles both flat {"key":"val"} and nested {"name":"tool","parameters":{...}} forms.
+    import json as _json
+
+    def _strip_json_blobs(text: str) -> str:
+        """Remove standalone JSON objects from the start/standalone lines of the response."""
+        lines_out = []
+        i = 0
+        lines = text.split('\n')
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.lstrip()
+            if stripped.startswith('{') and '"' in stripped:
+                # Try to accumulate a balanced JSON block starting here
+                depth = 0
+                buf = []
+                j = i
+                while j < len(lines):
+                    buf.append(lines[j])
+                    depth += lines[j].count('{') - lines[j].count('}')
+                    if depth <= 0:
+                        break
+                    j += 1
+                candidate = '\n'.join(buf)
+                try:
+                    parsed = _json.loads(candidate.strip())
+                    if isinstance(parsed, dict) and len(candidate.strip()) > 20:
+                        i = j + 1
+                        continue  # skip this JSON block
+                except Exception:
+                    pass
+            lines_out.append(line)
+            i += 1
+        return '\n'.join(lines_out)
+
+    # Also catch the case where the entire message is a JSON blob
+    stripped_msg = final_message.strip()
+    if stripped_msg.startswith('{'):
+        try:
+            parsed_whole = _json.loads(stripped_msg)
+            if isinstance(parsed_whole, dict):
+                # Extract human-readable fields: message > content > description > name
+                for field in ("message", "content", "description", "detail"):
+                    if field in parsed_whole and isinstance(parsed_whole[field], str):
+                        final_message = parsed_whole[field]
+                        break
+                else:
+                    # Last resort: remove it entirely so generic fallback shows
+                    final_message = ""
+        except Exception:
+            final_message = _strip_json_blobs(final_message)
     else:
-        # The entire response was a JSON blob (LLM echoed tool result verbatim).
-        # Try to extract a human-readable "message" field from it rather than
-        # showing a generic error.
-        import json as _json
-        _msg_match = re.search(r'"message"\s*:\s*"([^"]+)"', final_message)
-        if _msg_match:
-            final_message = _msg_match.group(1)
-        # else: keep final_message as-is (non-empty raw JSON) to avoid false "error"
+        final_message = _strip_json_blobs(final_message)
 
     # Collapse excessive blank lines
     final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()

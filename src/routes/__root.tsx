@@ -16,6 +16,9 @@ import { FlyingBanner } from "../components/FlyingBanner";
 import { motion } from "framer-motion";
 import { LoadingCharacterDisplay, LoadingDots } from "../components/LoadingCharacter";
 import { useSettings } from "../lib/settings-store";
+import GreetingBot from "../components/assistant/GreetingBot";
+import { useBuddyStore } from "../lib/buddy-store";
+import { SplashOverlay } from "../components/assistant/SplashOverlay";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -324,6 +327,37 @@ function AccessDeniedView() {
 
 function AuthenticatedApp() {
   const { user, isLoading, accessDenied } = useAuth();
+  const { updateActiveTime } = useBuddyStore();
+  const [showSplash, setShowSplash] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    let lastLogged = 0;
+    const handleActivity = () => {
+      const now = Date.now();
+      // Throttle localStorage writes to once every 30 seconds
+      if (now - lastLogged > 30000) {
+        lastLogged = now;
+        updateActiveTime();
+      }
+    };
+
+    window.addEventListener("mousedown", handleActivity);
+    window.addEventListener("keydown", handleActivity);
+    window.addEventListener("scroll", handleActivity);
+    window.addEventListener("touchstart", handleActivity);
+
+    // Initial ping
+    handleActivity();
+
+    return () => {
+      window.removeEventListener("mousedown", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("scroll", handleActivity);
+      window.removeEventListener("touchstart", handleActivity);
+    };
+  }, [user, updateActiveTime]);
 
   if (isLoading) {
     return <SplashScreen />;
@@ -344,6 +378,8 @@ function AuthenticatedApp() {
       <Outlet />
       <Toaster position="top-right" expand={false} richColors />
       <FlyingBanner />
+      {!showSplash && <GreetingBot />}
+      {showSplash && <SplashOverlay onComplete={() => setShowSplash(false)} />}
     </>
   );
 }

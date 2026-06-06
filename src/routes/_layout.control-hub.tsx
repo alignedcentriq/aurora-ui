@@ -34,6 +34,7 @@ import { ConfigPage } from "@/pages/ConfigPage";
 import { UrlLibrary } from "@/pages/UrlLibrary";
 import { FormLibrary } from "@/pages/FormLibrary";
 import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
+import { LLMControlsPage } from "@/pages/LLMControlsPage";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -47,6 +48,7 @@ export const Route = createFileRoute("/_layout/control-hub")({
 type TabId =
   | "dashboard"
   | "observability"
+  | "llm-controls"
   | "admin-portal"
   | "hr-portal"
   | "it-portal"
@@ -84,8 +86,17 @@ const TABS: TabItem[] = [
     category: "System & Ops",
     icon: Activity,
     color: "#6366F1",
-    show: (role) => role === "IT",
+    show: (role) => role === "Super Admin",
     component: ObservabilityDashboard,
+  },
+  {
+    id: "llm-controls",
+    label: "LLM Model Controls",
+    category: "System & Ops",
+    icon: Shield,
+    color: "#F59E0B",
+    show: (role) => role === "Super Admin",
+    component: LLMControlsPage,
   },
   // PORTALS
   {
@@ -149,7 +160,7 @@ const TABS: TabItem[] = [
     category: "Assets & Config",
     icon: Database,
     color: "#00a29a",
-    show: (role) => ["Admin", "HR", "IT", "PMO"].includes(role),
+    show: (role) => ["Admin", "HR", "IT", "PMO", "Super Admin"].includes(role),
     component: ConfigPage,
   },
   {
@@ -158,7 +169,7 @@ const TABS: TabItem[] = [
     category: "Assets & Config",
     icon: Link2,
     color: "#00a29a",
-    show: (role) => role === "Admin",
+    show: (role) => role === "Super Admin",
     component: UrlLibrary,
   },
   {
@@ -217,7 +228,7 @@ function ControlHubPage() {
           </div>
           <h2 className="text-lg font-bold text-foreground tracking-tight">Access Restricted</h2>
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-            This Control Hub is reserved for HR, IT, PMO, Admin, and Functional Manager roles.
+            This Control Hub is reserved for HR, IT, PMO, Admin, Functional Manager, and Super Admin roles.
           </p>
         </div>
       </div>

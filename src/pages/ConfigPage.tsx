@@ -28,7 +28,6 @@ import {
   Trash2,
   Sparkles,
   Image,
-  FolderSync,
 } from "lucide-react";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
@@ -63,7 +62,7 @@ const ROLE_DOMAINS: Record<string, string[]> = {
   hr: ["hr"],
   it: ["it_support"],
   pmo: ["pmo"],
-  admin: ["hr", "admin", "it_support", "pmo", "functional_manager"],
+  admin: ["admin"],
 };
 
 const ROLE_TO_DOMAIN: Record<string, string> = {
@@ -108,7 +107,9 @@ export function ConfigPage() {
   const role = user?.role?.toLowerCase() ?? "";
   const allowed = userDomains(role);
 
-  const [tab, setTab] = useState<"prompts" | "announcements" | "company" | "sharepoint">("prompts");
+  const [tab, setTab] = useState<"prompts" | "announcements" | "company">(
+    role === "super admin" ? "company" : "prompts"
+  );
   const [activeDomain, setActiveDomain] = useState(allowed[0] ?? "hr");
   const [prompts, setPrompts] = useState<Record<string, PromptRow>>({});
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -158,9 +159,6 @@ export function ConfigPage() {
   const [editFields, setEditFields] = useState({ title: "", body: "", category: "" });
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // SharePoint sync state
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ status: string; folders: string[]; message?: string } | null>(null);
 
   const headers = {
     "Content-Type": "application/json",
@@ -235,6 +233,8 @@ export function ConfigPage() {
       fetchMyDrafts();
       fetchAnnouncements();
       if (role === "admin") fetchCompanyContext();
+    } else if (role === "super admin") {
+      fetchCompanyContext();
     }
   }, [role]);
 
@@ -506,24 +506,8 @@ export function ConfigPage() {
     }
   };
 
-  const handleSharePointSync = async () => {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const res = await fetch("/api/sharepoint/sync-policies", { method: "POST", headers });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Sync failed");
-      setSyncResult({ status: "started", folders: data.folders ?? [] });
-      toast.success("SharePoint sync started — policies will be available once ingestion completes.");
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Sync failed");
-      setSyncResult({ status: "error", folders: [], message: err instanceof Error ? err.message : "Unknown error" });
-    } finally {
-      setSyncing(false);
-    }
-  };
 
-  if (!user || allowed.length === 0) {
+  if (!user || (allowed.length === 0 && role !== "super admin")) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
@@ -585,7 +569,7 @@ export function ConfigPage() {
               >
                 Announcements
               </button>
-              {isAdmin && (
+              {role === "super admin" && (
                 <button
                   onClick={() => { setTab("company"); fetchCompanyContext(); }}
                   className={cn(
@@ -598,27 +582,14 @@ export function ConfigPage() {
                   Company
                 </button>
               )}
-              {isAdmin && (
-                <button
-                  onClick={() => setTab("sharepoint")}
-                  className={cn(
-                    "rounded-lg px-4 py-1.5 text-[13px] font-medium transition-all cursor-pointer",
-                    tab === "sharepoint"
-                      ? "bg-white dark:bg-slate-800 text-[#0f172a] dark:text-white shadow-sm font-semibold"
-                      : "text-[#64748b] dark:text-white/50 hover:text-[#334155] dark:hover:text-white/80"
-                  )}
-                >
-                  SharePoint
-                </button>
-              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Domain Sidebar — only show if admin (multiple domains) */}
-        {isAdmin && (
+        {/* Domain Sidebar — only show when the role has access to multiple domains */}
+        {visibleDomains.length > 1 && (
           <aside className="w-52 shrink-0 border-r border-[#e2e8f0] dark:border-white/[0.08] p-4 space-y-1 overflow-y-auto bg-white dark:bg-[#0a1628]">
             {visibleDomains.map((d) => (
               <button
@@ -1219,65 +1190,6 @@ export function ConfigPage() {
                   </Dialog>
                 );
               })()}
-            </div>
-          ) : tab === "sharepoint" ? (
-            /* ── SharePoint Sync Tab ─────────────────────────────────── */
-            <div className="p-8 space-y-6 max-w-3xl">
-              <div className="rounded-2xl border border-[var(--border)] bg-card p-6 space-y-5">
-                <div className="flex items-center gap-3">
-                  <FolderSync className="h-5 w-5 text-primary" />
-                  <div>
-                    <h3 className="text-[15px] font-semibold text-foreground">Sync Policies from SharePoint</h3>
-                    <p className="text-[12px] text-muted-foreground mt-0.5">
-                      Downloads documents from configured SharePoint folders, uploads them to MinIO, and re-ingests them as searchable policies.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-[var(--border)] bg-background px-4 py-3 space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Configured Folders</p>
-                  <p className="text-[12px] text-foreground/70">
-                    Folders synced are set via <code className="font-mono text-[11px] bg-muted/50 px-1 py-0.5 rounded">SHAREPOINT_POLICY_FOLDERS</code> in your
-                    server environment (default: <code className="font-mono text-[11px] bg-muted/50 px-1 py-0.5 rounded">ADMIN,IT PMO</code>).
-                    Each folder maps to a <code className="font-mono text-[11px] bg-muted/50 px-1 py-0.5 rounded">policies/&lt;folder&gt;/</code> prefix in MinIO.
-                  </p>
-                </div>
-
-                {syncResult && (
-                  <div className={cn(
-                    "rounded-xl border px-4 py-3 flex items-start gap-2",
-                    syncResult.status === "error"
-                      ? "border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/30"
-                      : "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30"
-                  )}>
-                    {syncResult.status === "error"
-                      ? <AlertCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
-                      : <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />}
-                    <div>
-                      {syncResult.status === "error"
-                        ? <p className="text-[13px] text-rose-600 dark:text-rose-400">{syncResult.message}</p>
-                        : (
-                          <p className="text-[13px] text-emerald-700 dark:text-emerald-400">
-                            Sync started for: <strong>{syncResult.folders.join(", ") || "all configured folders"}</strong>.
-                            <br />
-                            <span className="text-[12px] text-muted-foreground">Policies will appear once background ingestion completes (may take a few minutes).</span>
-                          </p>
-                        )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleSharePointSync}
-                    disabled={syncing}
-                    className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-[13px] font-semibold text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                  >
-                    {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderSync className="h-4 w-4" />}
-                    {syncing ? "Starting sync..." : "Sync Now"}
-                  </button>
-                </div>
-              </div>
             </div>
           ) : tab === "company" ? (
             /* ── Company Context Tab ──────────────────────────────────── */

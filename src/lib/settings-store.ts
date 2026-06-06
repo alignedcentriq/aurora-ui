@@ -99,6 +99,14 @@ interface SettingsState {
   /** Buddy character id */
   buddyCharId: string;
   setBuddyCharId: (id: string) => void;
+
+  /** Buddy enabled status */
+  buddyEnabled: boolean;
+  setBuddyEnabled: (enabled: boolean) => void;
+
+  /** Buddy gender preference */
+  buddyGender: "male" | "female" | "auto";
+  setBuddyGender: (gender: "male" | "female" | "auto") => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -117,6 +125,12 @@ export const useSettings = create<SettingsState>()(
 
       buddyCharId: "robot",
       setBuddyCharId: (id) => set({ buddyCharId: id }),
+
+      buddyEnabled: true,
+      setBuddyEnabled: (enabled) => set({ buddyEnabled: enabled }),
+
+      buddyGender: "auto",
+      setBuddyGender: (gender) => set({ buddyGender: gender }),
     }),
     {
       name: "aurora-settings",

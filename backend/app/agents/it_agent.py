@@ -94,17 +94,20 @@ def it_assistant(state: ITState):
         f"Employee: {user_email}. Never ask for email or justification.\n"
         f"ALWAYS respond directly in first person. NEVER write a simulated dialogue, roleplay, or conversation script.\n"
         f"NEVER use labels like 'You:', 'Me:', 'User:', or any name prefix. One direct reply only.\n\n"
+        f"Hardware problem (overheating, crashing, slow, freezing, blue screen, not starting, noisy fan, "
+        f"battery draining, screen broken, keyboard issue) → call create_it_ticket IMMEDIATELY. "
+        f"NEVER call search_it_docs for hardware problems. Use category='Hardware'.\n"
         f"How-to / setup question ('how do I…', 'how to…', connect/configure VPN, wifi, printer, email) →\n"
         f"   call search_it_docs first and answer concisely from the result. Only create a ticket if no doc\n"
         f"   answers or the user needs an action taken.\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
-        f"Specific problem described → call create_it_ticket immediately.\n"
+        f"Specific non-hardware problem described → call create_it_ticket immediately.\n"
         f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
         f"If ticket already created in this conversation, do not create another.\n"
         f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"
         f"CRITICAL: After calling search_it_docs, extract and present the steps/information DIRECTLY in your reply.\n"
         f"   Never tell the user to 'check a document', 'refer to a policy', or 'read a guide' — give them the answer inline.\n"
-        f"   If the search result contains VPN setup steps, list them clearly. If it has no relevant info, create a ticket instead.\n"
+        f"   If the search result has no relevant info, create a ticket instead.\n"
     )
     base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
     guardrail = PromptService.get_guardrail("it_support")

@@ -303,7 +303,7 @@ class PromptService:
         # through to the agent's tools. Chat-tuned models (e.g. gpt-oss) tend to emit meta
         # replies like "I'm ready to answer, go ahead and ask" instead of NO_CONTEXT, which
         # must NOT be returned as a real answer.
-        if not content or re.match(r'^\s*NO_CONTEXT[\s.,!?]*$', content, re.IGNORECASE) \
+        if not content or re.match(r'^\s*NO_CONTEXT', content, re.IGNORECASE) \
                 or _NON_ANSWER_RE.search(content):
             result = None
         else:

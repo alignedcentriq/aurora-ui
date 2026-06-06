@@ -1,11 +1,12 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
-import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap } from "lucide-react";
+import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap, Briefcase, ShieldCheck, Wrench, Calendar, Mail, Users, MessageSquare, HelpCircle, Minus, Plus, Undo, Info, Newspaper } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
+import { motion, AnimatePresence } from "framer-motion";
 
-type Tab = "tickets" | "software" | "controls";
+type Tab = "tickets" | "software";
 
 const STATUS_BADGE: Record<string, string> = {
   Open: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
@@ -38,7 +39,7 @@ export function ITPortal() {
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
   };
 
-  if (user?.role !== "IT" && user?.role !== "Admin") {
+  if (user?.role !== "IT") {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Access restricted to IT team.
@@ -61,7 +62,6 @@ export function ITPortal() {
         {[
           { id: "tickets", label: "Support Tickets", icon: Ticket },
           { id: "software", label: "Software Requests", icon: Package },
-          { id: "controls", label: "Model Controls", icon: SlidersHorizontal },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -82,7 +82,6 @@ export function ITPortal() {
       <div className="flex-1 overflow-auto px-8 py-6">
         {tab === "tickets" && <TicketsTab authHeaders={authHeaders} />}
         {tab === "software" && <SoftwareTab authHeaders={authHeaders} />}
-        {tab === "controls" && <ModelControlsTab authHeaders={authHeaders} />}
       </div>
     </div>
   );
@@ -362,6 +361,7 @@ function TableEmpty({ label }: { label: string }) {
 interface TierCfg { model: string; temperature: number; max_tokens: number | null; timeout: number | null; }
 interface LlmCfg {
   chat_enabled: boolean;
+  security_news_enabled: boolean;
   disabled_domains: string[];
   max_concurrency: number;
   max_queue: number;
@@ -379,22 +379,153 @@ interface LlmControlsResponse {
   updated_at: string | null;
 }
 
-const TIER_META: Record<string, { label: string; sub: string }> = {
-  agent: { label: "Agent", sub: "Reasoning & tool calling — HR, MS365, deep-links" },
-  service: { label: "Domain Service Agents", sub: "Tool calling — Admin, IT, PMO, Manager" },
-  router: { label: "Router", sub: "Intent-router LLM fallback" },
-  general: { label: "General", sub: "Greetings, announcements, policy Q&A" },
-  summarizer: { label: "Summarizer", sub: "Context & tool-result summaries" },
+const TIER_META: Record<string, { label: string; sub: string; icon: React.ComponentType<{ className?: string }> }> = {
+  agent: { label: "Agent", sub: "Reasoning & tool calling — HR, MS365, deep-links", icon: Zap },
+  service: { label: "Domain Service Agents", sub: "Tool calling — Admin, IT, PMO, Manager", icon: Cpu },
+  router: { label: "Router", sub: "Intent-router LLM fallback", icon: SlidersHorizontal },
+  general: { label: "General", sub: "Greetings, announcements, policy Q&A", icon: MessageSquare },
+  summarizer: { label: "Summarizer", sub: "Context & tool-result summaries", icon: Package },
 };
-// Tiers whose models MUST support tool-calling / structured output — swapping these
-// to an incompatible model breaks routing or agent actions outright.
+
+// Tiers whose models MUST support tool-calling / structured output
 const TOOLCALL_TIERS = new Set(["agent", "service", "router"]);
 const DOMAIN_LABELS: Record<string, string> = {
   hr: "HR", admin: "Admin Services", it_support: "IT Support",
   pmo: "PMO", ms365: "Microsoft 365", functional_manager: "Manager",
 };
 
-function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+const DOMAIN_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  hr: Briefcase,
+  admin: ShieldCheck,
+  it_support: Wrench,
+  pmo: Calendar,
+  ms365: Mail,
+  functional_manager: Users,
+};
+
+const DOMAIN_DESCS: Record<string, string> = {
+  hr: "Handles employee requests, leave balances, policies, and benefits Q&A.",
+  admin: "Assists with workplace amenities, visitors, parking, and logistics.",
+  it_support: "Diagnoses tech issues, checks service status, and logs tickets.",
+  pmo: "Tracks tasks, projects, schedules, and team progress.",
+  ms365: "Integrates with outlook, emails, calendar events, and document search.",
+  functional_manager: "Coordinates manager approvals, team workload, and feedback.",
+};
+
+function SecurityNewsCard({
+  cfg, setCfg, authHeaders, baseline,
+}: {
+  cfg: LlmCfg;
+  setCfg: (c: LlmCfg) => void;
+  authHeaders: Record<string, string>;
+  baseline: LlmCfg;
+}) {
+  const [sending, setSending] = useState(false);
+  const [lastSent, setLastSent] = useState<{ stories: number; at: string } | null>(null);
+
+  const sendNow = async () => {
+    setSending(true);
+    try {
+      const res = await fetch("/api/it/llm-controls/security-news/send-now", {
+        method: "POST", headers: authHeaders,
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "Send failed");
+      setLastSent({ stories: body.stories, at: new Date().toLocaleTimeString() });
+      flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length > 1 ? "s" : ""}`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to send digest");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const isChanged = cfg.security_news_enabled !== baseline.security_news_enabled;
+
+  return (
+    <Card
+      icon={<Newspaper className="h-4 w-4 text-primary" />}
+      title="Security News Digest"
+      desc="Daily cybersecurity email digest sent at the configured hour. Pulls headlines from The Hacker News, Bleeping Computer, and CISA Known Exploited Vulnerabilities. No links included — source attribution only."
+    >
+      <div className={cn(
+        "rounded-2xl border p-5 transition-all duration-300",
+        cfg.security_news_enabled
+          ? "border-emerald-500/25 bg-emerald-500/[0.04]"
+          : "border-[var(--border)]/60 bg-secondary/10",
+        isChanged && "border-amber-500/30"
+      )}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4 flex-1 min-w-0">
+            <div className={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all duration-300",
+              cfg.security_news_enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-secondary text-muted-foreground"
+            )}>
+              <Newspaper className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[14px] font-bold text-foreground">Daily Email Digest</span>
+                <span className={cn(
+                  "flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase tracking-wider",
+                  cfg.security_news_enabled
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
+                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
+                )}>
+                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.security_news_enabled ? "bg-emerald-400 animate-pulse" : "bg-zinc-500")} />
+                  {cfg.security_news_enabled ? "Active" : "Paused"}
+                </span>
+                {isChanged && (
+                  <span className="text-[10px] text-amber-500 font-semibold">Unsaved change</span>
+                )}
+              </div>
+              <p className="mt-1 text-[12px] text-muted-foreground leading-relaxed max-w-lg">
+                {cfg.security_news_enabled
+                  ? "Digest is active. Recipients in SECURITY_NEWS_RECIPIENTS will receive it daily."
+                  : "Digest is paused. No scheduled emails will go out until re-enabled."}
+              </p>
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {["The Hacker News", "Bleeping Computer", "CISA KEV"].map((src) => (
+                  <span key={src} className="rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground border border-[var(--border)]/50">
+                    {src}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+          <Toggle
+            on={cfg.security_news_enabled}
+            onChange={(v) => setCfg({ ...cfg, security_news_enabled: v })}
+          />
+        </div>
+
+        {/* Send-now test trigger */}
+        <div className="mt-4 pt-4 border-t border-[var(--border)]/30 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[11px] text-muted-foreground">
+            {lastSent ? (
+              <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                <Check className="h-3.5 w-3.5" />
+                Sent {lastSent.stories} stories at {lastSent.at}
+              </span>
+            ) : (
+              <span>Send a test digest now — bypasses the daily schedule and the enabled toggle.</span>
+            )}
+          </div>
+          <button
+            onClick={sendNow}
+            disabled={sending}
+            className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-4 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none shrink-0"
+          >
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Newspaper className="h-3.5 w-3.5" />}
+            {sending ? "Sending…" : "Send digest now"}
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [data, setData] = useState<LlmControlsResponse | null>(null);
   const [cfg, setCfg] = useState<LlmCfg | null>(null);
   const [loading, setLoading] = useState(true);
@@ -467,7 +598,6 @@ function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string>
   const changedModelTiers = data.tiers.filter((t) => cfg.tiers[t]?.model !== baseline.tiers[t]?.model);
 
   const onSaveClick = () => {
-    // Model swaps are the dangerous change — confirm them explicitly.
     if (changedModelTiers.length > 0) setConfirmModels(changedModelTiers);
     else saveNow();
   };
@@ -483,262 +613,573 @@ function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string>
         : [...cfg.disabled_domains, d],
     });
 
+  const discardEdits = () => {
+    setCfg(JSON.parse(JSON.stringify(data.effective)));
+    toast.success("Discarded unsaved changes");
+  };
+
   const disabledCount = cfg.disabled_domains.length;
   const cap = load?.max_concurrency ?? cfg.max_concurrency;
   const fillPct = load ? Math.min(100, Math.round((load.active / Math.max(1, cap)) * 100)) : 0;
 
+  // Compile list of unsaved changes
+  const pendingChanges: { label: string; details: string }[] = [];
+  if (cfg.chat_enabled !== baseline.chat_enabled) {
+    pendingChanges.push({ label: "AI Chat Status", details: cfg.chat_enabled ? "Paused → Live" : "Live → Paused" });
+  }
+  if (cfg.security_news_enabled !== baseline.security_news_enabled) {
+    pendingChanges.push({ label: "Security News Digest", details: cfg.security_news_enabled ? "Off → On" : "On → Off" });
+  }
+  if (cfg.max_concurrency !== baseline.max_concurrency) {
+    pendingChanges.push({ label: "Max Concurrency", details: `${baseline.max_concurrency} → ${cfg.max_concurrency}` });
+  }
+  if (cfg.max_queue !== baseline.max_queue) {
+    pendingChanges.push({ label: "Max Queue", details: `${baseline.max_queue} → ${cfg.max_queue}` });
+  }
+  data.tiers.forEach((tier) => {
+    const t = cfg.tiers[tier];
+    const b = baseline.tiers[tier];
+    if (t && b) {
+      if (t.model !== b.model) {
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Model`, details: `${b.model} → ${t.model}` });
+      }
+      if (t.temperature !== b.temperature) {
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Temp`, details: `${b.temperature} → ${t.temperature}` });
+      }
+      if (t.max_tokens !== b.max_tokens) {
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Max Tokens`, details: `${b.max_tokens ?? "default"} → ${t.max_tokens ?? "default"}` });
+      }
+      if (t.timeout !== b.timeout) {
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Timeout`, details: `${b.timeout ?? "default"} → ${t.timeout ?? "default"}` });
+      }
+    }
+  });
+  data.domains.forEach((d) => {
+    const offCfg = cfg.disabled_domains.includes(d);
+    const offBase = baseline.disabled_domains.includes(d);
+    if (offCfg !== offBase) {
+      pendingChanges.push({ label: `${DOMAIN_LABELS[d] ?? d} Domain`, details: offCfg ? "Enabled → Disabled" : "Disabled → Enabled" });
+    }
+  });
+
   return (
     <div className="mx-auto max-w-5xl pb-28">
       {/* ── Hero kill switch ── */}
-      <section className={cn(
-        "relative overflow-hidden rounded-3xl border p-6 mb-5 transition-colors",
-        cfg.chat_enabled
-          ? "border-emerald-500/20 bg-gradient-to-br from-emerald-500/[0.07] via-card to-card"
-          : "border-rose-500/30 bg-gradient-to-br from-rose-500/[0.12] via-card to-card"
-      )}>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className={cn(
+          "relative overflow-hidden rounded-3xl border p-6 mb-6 transition-all duration-500 shadow-md",
+          cfg.chat_enabled
+            ? "border-emerald-500/25 bg-gradient-to-br from-emerald-500/[0.08] via-card to-card"
+            : "border-rose-500/30 bg-gradient-to-br from-rose-500/[0.12] via-card to-card"
+        )}
+      >
+        {/* Futuristic glowing mesh underlay when active */}
+        {cfg.chat_enabled && (
+          <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:20px_20px] pointer-events-none opacity-40 animate-pulse-glow" />
+        )}
+        {!cfg.chat_enabled && (
+          <div className="absolute inset-0 bg-grid-white/[0.01] bg-[size:20px_20px] pointer-events-none opacity-20" />
+        )}
+
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+          <div className="flex items-start gap-4">
             <div className={cn(
-              "flex h-12 w-12 items-center justify-center rounded-2xl ring-1",
-              cfg.chat_enabled ? "bg-emerald-500/15 ring-emerald-500/30" : "bg-rose-500/15 ring-rose-500/30"
+              "flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ring-1 shadow-inner transition-all duration-500",
+              cfg.chat_enabled 
+                ? "bg-emerald-500/15 ring-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]" 
+                : "bg-rose-500/15 ring-rose-500/30 text-rose-400"
             )}>
-              <Power className={cn("h-6 w-6", cfg.chat_enabled ? "text-emerald-400" : "text-rose-400")} />
+              <Power className={cn("h-7 w-7 transition-transform duration-500", cfg.chat_enabled ? "rotate-0 scale-110" : "rotate-45 scale-100")} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-[17px] font-semibold text-foreground">AI Chat</h2>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h2 className="text-[18px] font-bold text-foreground">AI Chat Engine</h2>
                 <span className={cn(
-                  "flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium",
-                  cfg.chat_enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-rose-500/15 text-rose-400"
+                  "flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-all duration-500",
+                  cfg.chat_enabled 
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" 
+                    : "bg-rose-500/15 text-rose-400 border-rose-500/25"
                 )}>
-                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.chat_enabled ? "bg-emerald-400 animate-pulse" : "bg-rose-400")} />
-                  {cfg.chat_enabled ? "Live" : "Paused"}
+                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.chat_enabled ? "bg-emerald-400 animate-ping" : "bg-rose-400")} />
+                  <span className={cn("h-1.5 w-1.5 rounded-full absolute", cfg.chat_enabled ? "bg-emerald-400" : "bg-rose-400")} />
+                  <span className="ml-1">{cfg.chat_enabled ? "LIVE & OPERATIONAL" : "PAUSED & SHIELDED"}</span>
                 </span>
               </div>
-              <p className="text-[13px] text-muted-foreground mt-0.5 max-w-md">
+              <p className="text-[13px] text-muted-foreground mt-1 max-w-xl leading-relaxed">
                 {cfg.chat_enabled
-                  ? "Users can chat with Centriq. Toggle off to instantly pause every request."
-                  : "Every request returns a maintenance notice — zero LLM calls until you resume."}
+                  ? "Global gate is active. Employees are actively generating answers, scheduling calendar events, and querying workspace documents."
+                  : "All chat operations are halted. Users see a friendly maintenance message. No API calls or token consumption will occur."}
               </p>
             </div>
           </div>
-          <Toggle on={cfg.chat_enabled} onChange={(v) => setCfg({ ...cfg, chat_enabled: v })} />
+          <div className="flex items-center self-end sm:self-center">
+            <Toggle on={cfg.chat_enabled} onChange={(v) => setCfg({ ...cfg, chat_enabled: v })} />
+          </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* ── Load throttle + live capacity bar ── */}
-      <Card icon={<Gauge className="h-4 w-4" />} title="GPU Load Throttle"
-        desc="Caps simultaneous generations on the shared server; extras queue, then get a fast “busy” signal. Applies within ~5s — no restart.">
-        <div className="flex flex-wrap items-end gap-6">
-          <NumField label="Max concurrency" value={cfg.max_concurrency} bounds={data.bounds.max_concurrency}
-            onChange={(v) => setCfg({ ...cfg, max_concurrency: Number(v) || 1 })} />
-          <NumField label="Max queue" value={cfg.max_queue} bounds={data.bounds.max_queue}
-            onChange={(v) => setCfg({ ...cfg, max_queue: Number(v) || 0 })} />
-          <div className="ml-auto min-w-[220px]">
-            <div className="mb-1.5 flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground/60">
-              <span>Live load</span>
-              {load && <span className="text-foreground/70 normal-case tracking-normal">
-                {load.active}/{cap} active · {load.waiting} queued
-              </span>}
+      <Card
+        icon={<Gauge className="h-4 w-4 text-primary" />}
+        title="GPU Load Throttle"
+        desc="Adjust system-wide limits for parallel generations. Extra incoming requests enter a queue before receiving a busy signal. Applied instantly."
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          <div className="lg:col-span-7 flex flex-wrap gap-6">
+            <NumField
+              label="Max concurrency"
+              value={cfg.max_concurrency}
+              bounds={data.bounds.max_concurrency}
+              onChange={(v) => setCfg({ ...cfg, max_concurrency: Number(v) || 1 })}
+            />
+            <NumField
+              label="Max queue size"
+              value={cfg.max_queue}
+              bounds={data.bounds.max_queue}
+              onChange={(v) => setCfg({ ...cfg, max_queue: Number(v) || 0 })}
+            />
+          </div>
+          
+          <div className="lg:col-span-5 border-t lg:border-t-0 lg:border-l border-[var(--border)]/50 pt-4 lg:pt-0 lg:pl-6">
+            <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
+              <span className="flex items-center gap-1.5">
+                <span className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  fillPct >= 90 ? "bg-rose-500 animate-pulse" : fillPct >= 60 ? "bg-amber-400" : "bg-emerald-500"
+                )} />
+                Live GPU workload
+              </span>
+              {load && (
+                <span className="text-foreground/80 font-mono normal-case tracking-normal text-[12px]">
+                  {load.active}/{cap} Active · {load.waiting} Queued
+                </span>
+              )}
             </div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
-              <div className={cn("h-full rounded-full transition-all duration-500",
-                fillPct >= 90 ? "bg-rose-500" : fillPct >= 60 ? "bg-amber-400" : "bg-emerald-500")}
-                style={{ width: `${load ? Math.max(fillPct, load.active > 0 ? 6 : 0) : 0}%` }} />
+
+            {/* Equalizer-like segmented glow bar graph */}
+            <div className="flex gap-1.5 h-3 items-center">
+              {Array.from({ length: 12 }).map((_, i) => {
+                const stepPct = (i / 12) * 100;
+                const active = fillPct >= stepPct;
+                let colorClass = "bg-secondary dark:bg-secondary/40";
+                
+                if (active) {
+                  if (fillPct >= 90) colorClass = "bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]";
+                  else if (fillPct >= 60) colorClass = "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]";
+                  else colorClass = "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]";
+                }
+
+                return (
+                  <div
+                    key={i}
+                    className={cn(
+                      "h-3 flex-1 rounded-sm transition-all duration-300",
+                      colorClass
+                    )}
+                  />
+                );
+              })}
+            </div>
+            
+            <div className="mt-2 flex justify-between text-[9px] text-muted-foreground/45 font-mono">
+              <span>0% LOAD</span>
+              <span>100% THROTTLE</span>
             </div>
           </div>
         </div>
       </Card>
 
       {/* ── Per-tier model params ── */}
-      <Card icon={<Cpu className="h-4 w-4" />} title="Model Parameters"
-        desc="Temperature, max tokens, and timeout are safe to tune anytime. Changing a tier’s model is an advanced action — see the warning below.">
-        {/* Danger note for model swaps */}
-        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-3.5 py-2.5">
+      <Card
+        icon={<Cpu className="h-4 w-4 text-primary" />}
+        title="Model Parameters"
+        desc="Temperature, max tokens, and timeout configured for specific assistant tasks. Modify with care — router and agents require tool-calling compatibility."
+      >
+        {/* Warning callout for model swaps */}
+        <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.05] p-3.5 shadow-sm">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <p className="text-[12px] text-amber-200/90">
-            <span className="font-medium text-amber-300">Model changes are risky.</span>{" "}
-            The <span className="font-medium">Agent</span> and <span className="font-medium">Router</span> tiers need
-            a tool-calling model — picking one without it breaks routing and actions. Only models currently
-            {data.models_live ? " loaded on the server" : " in the known list"} are selectable, and a change asks for confirmation.
+          <p className="text-[12px] leading-relaxed text-amber-200/90">
+            <span className="font-bold text-amber-300">Model Swap Warning:</span> The <span className="font-semibold text-foreground">Agent</span>, <span className="font-semibold text-foreground">Domain Service Agents</span>, and <span className="font-semibold text-foreground">Router</span> tiers rely heavily on tool execution. Deploying a model that lacks native tool calling (structured JSON output) will break workspace functions immediately.
           </p>
         </div>
-        <div className="space-y-3">
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {data.tiers.map((tier) => {
             const t = cfg.tiers[tier];
             if (!t) return null;
-            const meta = TIER_META[tier] ?? { label: tier, sub: "" };
+            const meta = TIER_META[tier] ?? { label: tier, sub: "", icon: Cpu };
+            const IconComponent = meta.icon;
+            
             const modelChanged = t.model !== baseline.tiers[tier]?.model;
+            const tempChanged = t.temperature !== baseline.tiers[tier]?.temperature;
+            const tokensChanged = t.max_tokens !== baseline.tiers[tier]?.max_tokens;
+            const timeoutChanged = t.timeout !== baseline.tiers[tier]?.timeout;
+            
+            const isModified = modelChanged || tempChanged || tokensChanged || timeoutChanged;
             const modelMissing = !data.models.includes(t.model);
+
             return (
-              <div key={tier} className={cn(
-                "rounded-2xl border bg-secondary/20 p-4 transition-colors",
-                modelChanged ? "border-amber-500/30" : "border-[var(--border)]/60"
-              )}>
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-foreground">{meta.label}</span>
+              <motion.div
+                key={tier}
+                layoutId={`tier-card-${tier}`}
+                className={cn(
+                  "rounded-2xl border bg-secondary/10 p-4 transition-all duration-300 relative overflow-hidden",
+                  isModified 
+                    ? "border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.03)] bg-amber-500/[0.01]" 
+                    : "border-[var(--border)]/60 hover:border-[var(--border)]"
+                )}
+              >
+                {/* Visual indicator bar on modified card */}
+                {isModified && (
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-amber-300" />
+                )}
+
+                <div className="mb-4 flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-foreground/80">
+                      <IconComponent className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-[14px] font-bold text-foreground leading-none">{meta.label}</h4>
+                      <span className="text-[10px] text-muted-foreground/80 mt-1 block max-w-[210px] truncate" title={meta.sub}>
+                        {meta.sub}
+                      </span>
+                    </div>
+                  </div>
+                  
                   {TOOLCALL_TIERS.has(tier) && (
-                    <span className="flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                      <Zap className="h-2.5 w-2.5" /> tool-calling
+                    <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary">
+                      <Zap className="h-2.5 w-2.5 fill-primary/20" /> Tool-Calling
                     </span>
                   )}
-                  <span className="text-[12px] text-muted-foreground">— {meta.sub}</span>
                 </div>
-                <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground/60">Model</label>
-                    <select
-                      value={t.model}
-                      onChange={(e) => setTier(tier, { model: e.target.value })}
-                      className={cn(
-                        "min-w-[200px] rounded-lg border bg-card px-3 py-1.5 text-[13px] text-foreground outline-none focus:border-primary",
-                        modelChanged ? "border-amber-500/50" : "border-[var(--border)]"
-                      )}
-                    >
-                      {!data.models.includes(t.model) && <option value={t.model}>{t.model} (not on server)</option>}
-                      {data.models.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
+
+                <div className="space-y-4">
+                  {/* Model Select */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold">LLM Engine</label>
+                    <div className="relative">
+                      <select
+                        value={t.model}
+                        onChange={(e) => setTier(tier, { model: e.target.value })}
+                        className={cn(
+                          "w-full appearance-none rounded-xl border bg-card pl-3 pr-8 py-2 text-[13px] text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all",
+                          modelChanged ? "border-amber-500/50" : "border-[var(--border)]"
+                        )}
+                      >
+                        {!data.models.includes(t.model) && (
+                          <option value={t.model}>{t.model} (not on server)</option>
+                        )}
+                        {data.models.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-2.5 top-2.5 h-4 w-4 pointer-events-none text-muted-foreground/60" />
+                    </div>
+                    
                     {modelMissing && (
-                      <span className="flex items-center gap-1 text-[11px] text-rose-400">
-                        <AlertTriangle className="h-3 w-3" /> not loaded on the server
+                      <span className="flex items-center gap-1 text-[11px] text-rose-400 font-medium mt-1">
+                        <AlertTriangle className="h-3 w-3" /> Model not loaded on server
                       </span>
                     )}
                     {modelChanged && !modelMissing && (
-                      <span className="text-[11px] text-amber-400">changed — confirm on save</span>
+                      <span className="text-[10px] text-amber-500 font-medium mt-0.5">
+                        Changed: {baseline.tiers[tier]?.model} → {t.model}
+                      </span>
                     )}
                   </div>
-                  <SliderField label="Temperature" value={t.temperature} min={data.bounds.temperature[0]}
-                    max={data.bounds.temperature[1]} step={0.1}
-                    onChange={(v) => setTier(tier, { temperature: v })} />
-                  <NumField label="Max tokens" value={t.max_tokens ?? ""} placeholder="default" nullable
-                    bounds={data.bounds.max_tokens}
-                    onChange={(v) => setTier(tier, { max_tokens: numOrNull(v) })} />
-                  <NumField label="Timeout (s)" value={t.timeout ?? ""} placeholder="default" nullable
-                    bounds={data.bounds.timeout}
-                    onChange={(v) => setTier(tier, { timeout: numOrNull(v) })} />
+
+                  {/* Temperature slider */}
+                  <div className="pt-1">
+                    <SliderField
+                      label="Temperature"
+                      value={t.temperature}
+                      min={data.bounds.temperature[0]}
+                      max={data.bounds.temperature[1]}
+                      step={0.1}
+                      onChange={(v) => setTier(tier, { temperature: v })}
+                    />
+                  </div>
+
+                  {/* Limits */}
+                  <div className="grid grid-cols-2 gap-3 pt-1 border-t border-[var(--border)]/30">
+                    <NumField
+                      label="Max tokens"
+                      value={t.max_tokens ?? ""}
+                      placeholder="Default"
+                      nullable
+                      bounds={data.bounds.max_tokens}
+                      onChange={(v) => setTier(tier, { max_tokens: numOrNull(v) })}
+                    />
+                    <NumField
+                      label="Timeout (s)"
+                      value={t.timeout ?? ""}
+                      placeholder="Default"
+                      nullable
+                      bounds={data.bounds.timeout}
+                      onChange={(v) => setTier(tier, { timeout: numOrNull(v) })}
+                    />
+                  </div>
                 </div>
-              </div>
+              </motion.div>
             );
           })}
         </div>
       </Card>
 
-      {/* ── Per-domain disable ── */}
-      <Card icon={<SlidersHorizontal className="h-4 w-4" />} title="Domain Assistants"
-        desc="Switch off individual assistants while the rest keep running. Disabled domains return a “temporarily unavailable” notice instead of an LLM response."
-        badge={disabledCount > 0 ? `${disabledCount} off` : undefined}>
-        <div className="flex flex-wrap gap-2.5">
+      {/* ── Domain Assistants ── */}
+      <Card
+        icon={<SlidersHorizontal className="h-4 w-4 text-primary" />}
+        title="Domain Assistant Toggles"
+        desc="Manage individual micro-agents globally. Disabling a domain redirects users querying those tools to a placeholder message, preventing service calls."
+        badge={disabledCount > 0 ? `${disabledCount} micro-agents disabled` : undefined}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {data.domains.map((d) => {
             const off = cfg.disabled_domains.includes(d);
+            const IconComp = DOMAIN_ICONS[d] ?? HelpCircle;
+            const label = DOMAIN_LABELS[d] ?? d;
+            const desc = DOMAIN_DESCS[d] ?? "Handles specialized enterprise workflows and assistant prompts.";
+            
+            // Check if domain status has been changed in the current edits session
+            const wasOff = baseline.disabled_domains.includes(d);
+            const isChanged = off !== wasOff;
+
             return (
-              <button
+              <motion.div
                 key={d}
+                whileHover={{ scale: 1.01 }}
                 onClick={() => toggleDomain(d)}
                 className={cn(
-                  "flex items-center gap-2 rounded-xl border px-3.5 py-2 text-[13px] font-medium transition-all active:scale-95",
+                  "group relative overflow-hidden rounded-2xl border p-4 cursor-pointer transition-all duration-300 select-none flex flex-col justify-between min-h-[160px]",
                   off
-                    ? "border-rose-500/30 bg-rose-500/10 text-rose-400"
-                    : "border-emerald-500/25 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15"
+                    ? "border-rose-500/20 bg-rose-500/[0.02] hover:bg-rose-500/[0.04]"
+                    : "border-[var(--border)]/75 bg-card hover:border-emerald-500/30 hover:bg-emerald-500/[0.01]",
+                  isChanged && "border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.03)]"
                 )}
               >
-                {off ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
-                {DOMAIN_LABELS[d] ?? d}
-                <span className="text-[11px] opacity-60">{off ? "off" : "on"}</span>
-              </button>
+                {/* Subtle colored glow background indicator */}
+                {!off && (
+                  <div className="absolute -right-10 -top-10 h-20 w-20 rounded-full bg-emerald-500/5 blur-xl group-hover:bg-emerald-500/10 transition-colors" />
+                )}
+                {off && (
+                  <div className="absolute -right-10 -top-10 h-20 w-20 rounded-full bg-rose-500/5 blur-xl" />
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-300",
+                      off
+                        ? "bg-rose-500/10 text-rose-400"
+                        : "bg-emerald-500/10 text-emerald-400"
+                    )}>
+                      <IconComp className="h-4.5 w-4.5" />
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn(
+                        "h-1.5 w-1.5 rounded-full transition-all duration-300",
+                        off ? "bg-rose-400" : "bg-emerald-400 animate-pulse"
+                      )} />
+                      <span className={cn(
+                        "text-[10px] font-bold uppercase tracking-wider",
+                        off ? "text-rose-400/90" : "text-emerald-400/90"
+                      )}>
+                        {off ? "Suspended" : "Active"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <h5 className="text-[13px] font-bold text-foreground">
+                      {label}
+                    </h5>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground line-clamp-2" title={desc}>
+                      {desc}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Bottom Toggle Visual State indicator */}
+                <div className="mt-4 flex items-center justify-between border-t border-[var(--border)]/30 pt-3 text-[11px]">
+                  <span className="text-muted-foreground/60 font-medium">
+                    {isChanged && <span className="text-amber-500 font-bold">Unsaved edit · </span>}
+                    {off ? "Suspended" : "Operational"}
+                  </span>
+                  
+                  {/* Miniature slider switch */}
+                  <div className={cn(
+                    "relative h-4.5 w-8 rounded-full transition-colors",
+                    off ? "bg-zinc-600" : "bg-emerald-500"
+                  )}>
+                    <div className={cn(
+                      "absolute top-0.5 left-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-300",
+                      off ? "translate-x-0" : "translate-x-3.5"
+                    )} />
+                  </div>
+                </div>
+              </motion.div>
             );
           })}
         </div>
       </Card>
 
-      {/* ── Sticky action bar ── */}
-      <div className="sticky bottom-3 mt-5 rounded-2xl border border-[var(--border)] bg-background/85 px-5 py-3.5 shadow-lg backdrop-blur-md">
-        <div className="flex items-center justify-between gap-4">
-          <div className="text-[12px] text-muted-foreground">
-            {dirty
-              ? <span className="flex items-center gap-1.5 text-amber-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Unsaved changes
-                </span>
-              : data.updated_by
-                ? <>Last changed by <span className="text-foreground/80">{data.updated_by}</span>
-                    {data.updated_at && <> · {new Date(data.updated_at).toLocaleString()}</>}</>
-                : "Using environment defaults — no overrides set."}
-          </div>
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={reset}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3.5 py-2 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-50"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> Reset to defaults
-            </button>
-            <button
-              onClick={onSaveClick}
-              disabled={saving || !dirty}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Save changes
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* ── Security News Digest ── */}
+      <SecurityNewsCard cfg={cfg} setCfg={setCfg} authHeaders={authHeaders} baseline={baseline} />
 
-      {/* ── Model-change confirmation ── */}
-      {confirmModels && (
-        <Modal onClose={() => setConfirmModels(null)}>
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15">
-              <ShieldAlert className="h-5 w-5 text-amber-400" />
+      {/* ── Sticky action bar / control console ── */}
+      <AnimatePresence>
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="sticky bottom-4 mt-6 rounded-2xl border border-[var(--border)] bg-background/80 px-6 py-4 shadow-xl backdrop-blur-md z-40"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="text-[12px] text-muted-foreground">
+              {dirty ? (
+                <div className="flex items-center gap-2 group relative cursor-pointer select-none">
+                  <span className="flex items-center gap-1.5 text-amber-500 font-bold bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 absolute" />
+                    {pendingChanges.length} Pending change{pendingChanges.length > 1 ? "s" : ""}
+                  </span>
+                  
+                  <span className="text-muted-foreground hover:text-foreground underline flex items-center gap-0.5 text-[11px] font-medium ml-1">
+                    <Info className="h-3 w-3 inline" /> View summary
+                  </span>
+                  
+                  {/* Hover tooltip showing list of modified attributes */}
+                  <div className="absolute bottom-full left-0 mb-3 w-72 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 pointer-events-none transition-all duration-300 z-50 rounded-2xl border border-[var(--border)] bg-card p-4 shadow-2xl">
+                    <h6 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 mb-2 border-b border-[var(--border)]/30 pb-1.5">
+                      Review Pending Edits
+                    </h6>
+                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1 font-mono text-[11px] text-foreground/80 scrollbar-thin">
+                      {pendingChanges.map((change, idx) => (
+                        <div key={idx} className="flex flex-col gap-0.5 border-b border-[var(--border)]/20 pb-1.5 last:border-0 last:pb-0">
+                          <span className="font-semibold text-muted-foreground text-[10px]">{change.label}</span>
+                          <span className="text-amber-500 break-all">{change.details}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : data.updated_by ? (
+                <span className="flex items-center gap-1.5 text-muted-foreground/90 font-medium">
+                  Last updated by <span className="text-foreground font-semibold">{data.updated_by}</span>
+                  {data.updated_at && <> on {new Date(data.updated_at).toLocaleString()}</>}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/60 font-medium">Using default environment configuration.</span>
+              )}
             </div>
-            <div>
-              <h3 className="text-[15px] font-semibold text-foreground">Confirm model change</h3>
-              <p className="mt-1 text-[13px] text-muted-foreground">
-                You’re switching the model for {confirmModels.length} tier{confirmModels.length > 1 ? "s" : ""}.
-                This affects live chat immediately.
-              </p>
+
+            <div className="flex items-center gap-3">
+              {dirty && (
+                <button
+                  onClick={discardEdits}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-4 py-2 text-[13px] font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Undo className="h-4 w-4" /> Discard
+                </button>
+              )}
+
+              <button
+                onClick={reset}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-50"
+              >
+                <RotateCcw className="h-4 w-4" /> Reset defaults
+              </button>
+
+              <button
+                onClick={onSaveClick}
+                disabled={saving || !dirty}
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-[13px] font-bold text-primary-foreground hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none shadow-[0_4px_12px_rgba(59,143,232,0.15)]"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Apply changes
+              </button>
             </div>
           </div>
-          <ul className="my-4 space-y-2">
-            {confirmModels.map((tier) => (
-              <li key={tier} className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-secondary/30 px-3 py-2 text-[13px]">
-                <span className="flex items-center gap-2 font-medium text-foreground">
-                  {TIER_META[tier]?.label ?? tier}
-                  {TOOLCALL_TIERS.has(tier) && (
-                    <span className="flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                      <Zap className="h-2.5 w-2.5" /> needs tool-calling
+        </motion.div>
+      </AnimatePresence>
+
+      {/* ── Model-change confirmation Modal ── */}
+      <AnimatePresence>
+        {confirmModels && (
+          <Modal onClose={() => setConfirmModels(null)}>
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-inner">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-extrabold text-foreground">Confirm Model Swap</h3>
+                <p className="mt-1 text-[13px] text-muted-foreground leading-relaxed">
+                  You are changing the LLM engine overrides for {confirmModels.length} active service tier{confirmModels.length > 1 ? "s" : ""}. This will take effect immediately for all live conversations.
+                </p>
+              </div>
+            </div>
+
+            <ul className="my-5 space-y-2.5 max-h-48 overflow-y-auto pr-1">
+              {confirmModels.map((tier) => (
+                <li key={tier} className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-secondary/20 p-3 text-[13px]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-foreground">
+                      {TIER_META[tier]?.label ?? tier}
                     </span>
-                  )}
-                </span>
-                <span className="font-mono text-[12px] text-muted-foreground">
-                  {baseline.tiers[tier]?.model} <span className="text-foreground/40">→</span>{" "}
-                  <span className="text-foreground">{cfg.tiers[tier]?.model}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-          {confirmModels.some((t) => TOOLCALL_TIERS.has(t)) && (
-            <p className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-[12px] text-amber-200/90">
-              A tool-calling tier is changing. If the new model can’t call tools, routing or agent actions will fail.
-            </p>
-          )}
-          <div className="flex justify-end gap-2.5">
-            <button
-              onClick={() => setConfirmModels(null)}
-              className="rounded-lg border border-[var(--border)] px-4 py-2 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={saveNow}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-[13px] font-medium text-black hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              Apply change
-            </button>
-          </div>
-        </Modal>
-      )}
+                    {TOOLCALL_TIERS.has(tier) && (
+                      <span className="flex items-center gap-1 rounded bg-primary/10 border border-primary/20 px-1.5 py-0.5 text-[9px] font-semibold text-primary uppercase">
+                        Requires Tool Calling
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground/80 mt-1">
+                    <span className="bg-secondary px-2 py-0.5 rounded truncate max-w-[140px]" title={baseline.tiers[tier]?.model}>
+                      {baseline.tiers[tier]?.model}
+                    </span>
+                    <span className="text-foreground/40 font-sans font-bold">→</span>
+                    <span className="bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/20 truncate max-w-[140px]" title={cfg.tiers[tier]?.model}>
+                      {cfg.tiers[tier]?.model}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {confirmModels.some((t) => TOOLCALL_TIERS.has(t)) && (
+              <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3 text-[12px] text-amber-200/90 leading-relaxed">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                <p>
+                  <span className="font-bold text-amber-300">Caution:</span> One or more tool-calling tiers are changing. Verify that the new models natively support structure output parsing to avoid router failures.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 border-t border-[var(--border)]/30 pt-4">
+              <button
+                onClick={() => setConfirmModels(null)}
+                className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground transition-all active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveNow}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-5 py-2 text-[13px] font-bold text-black hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Check className="h-4.5 w-4.5" />}
+                Confirm swap
+              </button>
+            </div>
+          </Modal>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -747,17 +1188,23 @@ function Card({ icon, title, desc, badge, children }: {
   icon: ReactNode; title: string; desc: string; badge?: string; children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-card p-5 mb-5">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-muted-foreground">{icon}</div>
+    <section className="rounded-3xl border border-[var(--border)] bg-card p-6 mb-6 shadow-sm hover:shadow transition-shadow duration-300">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary text-foreground">
+            {icon}
+          </div>
           <div>
-            <h3 className="text-[14px] font-semibold text-foreground">{title}</h3>
+            <h3 className="text-[15px] font-bold text-foreground">{title}</h3>
           </div>
         </div>
-        {badge && <span className="rounded-full bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-medium text-rose-400">{badge}</span>}
+        {badge && (
+          <span className="rounded-full bg-rose-500/10 border border-rose-500/20 px-3 py-0.5 text-[11px] font-bold text-rose-400">
+            {badge}
+          </span>
+        )}
       </div>
-      <p className="text-[12px] text-muted-foreground mb-4 leading-relaxed">{desc}</p>
+      <p className="text-[12px] text-muted-foreground mb-5 leading-relaxed">{desc}</p>
       {children}
     </section>
   );
@@ -768,14 +1215,15 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
     <button
       onClick={() => onChange(!on)}
       className={cn(
-        "relative h-7 w-[52px] shrink-0 rounded-full transition-colors",
+        "relative h-8 w-[58px] shrink-0 rounded-full transition-colors outline-none focus:ring-2 focus:ring-emerald-500/40 focus:ring-offset-2 dark:focus:ring-offset-background",
         on ? "bg-emerald-500" : "bg-zinc-600"
       )}
     >
-      <span className={cn(
-        "absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform",
-        on ? "translate-x-[24px]" : "translate-x-0.5"
-      )} />
+      <motion.span
+        animate={{ x: on ? 26 : 0 }}
+        transition={{ type: "spring", stiffness: 450, damping: 25 }}
+        className="absolute top-1 left-1 h-6 w-6 rounded-full bg-white shadow-md block"
+      />
     </button>
   );
 }
@@ -783,23 +1231,39 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 function SliderField({ label, value, onChange, min, max, step }: {
   label: string; value: number; onChange: (v: number) => void; min: number; max: number; step: number;
 }) {
+  const percentage = ((value - min) / (max - min)) * 100;
   return (
-    <div className="flex flex-col gap-1">
-      <label className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wider text-muted-foreground/60">
+    <div className="flex flex-col gap-1.5 w-full">
+      <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
         <span>{label}</span>
-        <span className="text-foreground/80 tabular-nums normal-case">{value}</span>
-      </label>
-      <input
-        type="range"
-        min={min} max={max} step={step} value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="h-1.5 w-40 cursor-pointer appearance-none rounded-full bg-secondary accent-primary"
-      />
+        <span className="font-mono text-[11px] font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
+          {value.toFixed(1)}
+        </span>
+      </div>
+      <div className="relative flex items-center h-6 w-full">
+        {/* Background track */}
+        <div className="absolute h-1.5 w-full rounded-full bg-secondary" />
+        {/* Active colored temperature gradient underlay */}
+        <div 
+          className="absolute h-1.5 rounded-full bg-gradient-to-r from-clarity to-accent-amber" 
+          style={{ width: `${percentage}%` }}
+        />
+        <input
+          type="range"
+          min={min} max={max} step={step} value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="relative z-10 h-6 w-full cursor-pointer appearance-none bg-transparent opacity-100 outline-none [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4.5 [&::-webkit-slider-thumb]:w-4.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-primary [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110"
+        />
+      </div>
+      <div className="flex justify-between text-[9px] text-muted-foreground/45 font-semibold px-0.5 uppercase tracking-wide">
+        <span>Deterministic</span>
+        <span>Creative</span>
+      </div>
     </div>
   );
 }
 
-function NumField({ label, value, onChange, bounds, step, placeholder, nullable }: {
+function NumField({ label, value, onChange, bounds, step = 1, placeholder, nullable }: {
   label: string;
   value: number | string;
   onChange: (v: string) => void;
@@ -808,31 +1272,73 @@ function NumField({ label, value, onChange, bounds, step, placeholder, nullable 
   placeholder?: string;
   nullable?: boolean;
 }) {
+  const currentVal = value === "" ? 0 : Number(value);
+  const handleDecrement = () => {
+    let newVal = currentVal - step;
+    if (bounds) newVal = Math.max(bounds[0], newVal);
+    onChange(String(newVal));
+  };
+  const handleIncrement = () => {
+    let newVal = currentVal + step;
+    if (bounds) newVal = Math.min(bounds[1], newVal);
+    onChange(String(newVal));
+  };
+
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] uppercase tracking-wider text-muted-foreground/60">
-        {label}{bounds && <span className="ml-1 opacity-50">({bounds[0]}–{bounds[1]}{nullable ? " / blank" : ""})</span>}
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
+        {label}
       </label>
-      <input
-        type="number"
-        value={value}
-        step={step}
-        min={bounds?.[0]}
-        max={bounds?.[1]}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-28 rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[13px] text-foreground focus:border-primary outline-none"
-      />
+      <div className="flex items-center rounded-xl border border-[var(--border)] bg-card overflow-hidden focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 transition-all h-9">
+        <button
+          type="button"
+          onClick={handleDecrement}
+          disabled={bounds ? currentVal <= bounds[0] : false}
+          className="flex h-full w-9 items-center justify-center border-r border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Minus className="h-3 w-3" />
+        </button>
+        <input
+          type="number"
+          value={value}
+          step={step}
+          min={bounds?.[0]}
+          max={bounds?.[1]}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-20 bg-transparent py-1.5 text-center text-[13px] text-foreground focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-bold font-mono"
+        />
+        <button
+          type="button"
+          onClick={handleIncrement}
+          disabled={bounds ? currentVal >= bounds[1] : false}
+          className="flex h-full w-9 items-center justify-center border-l border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+        >
+          <Plus className="h-3 w-3" />
+        </button>
+      </div>
+      {bounds && (
+        <span className="text-[9px] text-muted-foreground/45 font-semibold text-center uppercase tracking-wider">
+          Limit: {bounds[0]}–{bounds[1]} {nullable && "/ blank"}
+        </span>
+      )}
     </div>
   );
 }
 
 function Modal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-card p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+        transition={{ type: "spring", duration: 0.35 }}
+        className="w-full max-w-md rounded-3xl border border-[var(--border)] bg-card p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {children}
-      </div>
+      </motion.div>
     </div>
   );
 }

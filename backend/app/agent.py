@@ -1246,10 +1246,14 @@ _KW_ADMIN_PARKING = re.compile(
 )
 
 _KW_ADMIN_FACILITY = re.compile(
-    r'\b(ac\s+(not|isn\'?t|is\s+not)|air\s+condition\w*\s+(not|broken|issue)|'
+    r'\b(ac\s+(not|isn\'?t|is\s+not)|'
+    r'ac\b.{0,40}\b(not\s+working|broken|issue|problem)|'
+    r'air\s+condition\w*(\s+.{0,30})?\s*(not|broken|issue)|'
     r'lights?\s+(not|broken|flickering)|plumbing\s+(issue|leak|broken)|'
     r'washroom\s+(dirty|issue|problem)|electrical\s+(issue|problem)|'
-    r'housekeeping|facility\s+complaint|furniture\s+(broken|damaged)|'
+    r'housekeeping|facility\s+(complaint|issue|problem|ticket)|'
+    r'file\s+(a\s+)?(facility|maintenance|ac|hvac)\s+(complaint|ticket|issue)|'
+    r'furniture\s+(broken|damaged)|'
     r'lift\s+(not|broken|stuck)|elevator\s+(not|broken))\b', re.I
 )
 
@@ -2197,7 +2201,22 @@ async def feedback_lookup(state: AgentState) -> dict:
 def hr_agent(state: AgentState):
     """HR Agent — handles leave and policies."""
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    sub_intent = state.get("sub_intent") or ""
     messages = state["messages"]
+
+    # Pre-fetch policy for policy_query sub_intent — avoids a slow LLM tool-calling
+    # round-trip (saves one full inference pass on ml01 and eliminates timeout risk).
+    _hr_policy_context = ""
+    if sub_intent == "policy_query":
+        _user_q = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+        if _user_q:
+            try:
+                _policy_result = HRService.search_policies(str(_user_q), limit=3)
+                if _policy_result and "No policies found" not in _policy_result:
+                    _hr_policy_context = f"\n[PRE-SEARCHED HR POLICY]\n{_policy_result}\n[END POLICY]\n"
+            except Exception:
+                pass
+
     if not any(isinstance(m, SystemMessage) for m in messages):
         role_instruction = _get_role_instruction(state)
         _loc = state.get("user_location")
@@ -2225,10 +2244,12 @@ def hr_agent(state: AgentState):
             f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
             f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
-            f"Never answer from training knowledge — use tools only.\n",
+            f"Never answer from training knowledge — use tools only.\n"
+            + (f"If [PRE-SEARCHED HR POLICY] is present in context, answer from it directly "
+               f"without calling search_hr_policies.\n" if _hr_policy_context else ""),
         )
         guardrail = PromptService.get_guardrail("hr")
-        feedback_ctx = state.get("feedback_context") or ""
+        feedback_ctx = (state.get("feedback_context") or "") + _hr_policy_context
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
 
     user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
@@ -2261,12 +2282,23 @@ def hr_agent(state: AgentState):
                 return {"messages": [AIMessage(content=result.strip())]}
     # ────────────────────────────────────────────────────────────────────────────
 
-    try:
-        context_answer = PromptService.check_context_relevance("hr", user_question)
-        if context_answer:
-            return {"messages": [AIMessage(content=context_answer)]}
-    except Exception:
-        pass  # non-fatal — fall through to normal agent
+    # Skip context gate for action-oriented requests — they need tools, not cached answers.
+    _action_sub = state.get("sub_intent") or ""
+    _action_text_re = re.compile(
+        r'\b(generate|create|make|give|get me|issue|draft|submit|apply|file)\b'
+        r'.{0,40}\b(certificate|letter|noc|document|pdf|report|grievance|complaint|leave)\b', re.I
+    )
+    _skip_ctx = (_action_sub in {"document_request", "grievance", "onboarding", "offboarding",
+                                  "apply_leave", "timesheet", "attendance", "appraisal",
+                                  "training", "alchemy_my_skills", "alchemy_skills_overview"}
+                 or bool(_action_text_re.search(user_question)))
+    if not _skip_ctx:
+        try:
+            context_answer = PromptService.check_context_relevance("hr", user_question)
+            if context_answer:
+                return {"messages": [AIMessage(content=context_answer)]}
+        except Exception:
+            pass  # non-fatal — fall through to normal agent
 
     try:
         response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
@@ -2400,13 +2432,13 @@ async def admin_agent_node(state: AgentState):
         )
         policy_result = HRService.search_policies(str(topic), limit=2)
         if policy_result and "No policies found" not in policy_result:
-            feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
+            # Return policy text directly — zero LLM, eliminates tool-call JSON leak
+            return {"messages": [AIMessage(content=policy_result)]}
         else:
-            feedback_ctx = (
-                f"[POLICY SEARCH RESULT]\nNo policy found for: '{topic}'. "
-                f"Tell the user no policy was found and suggest contacting the Admin team "
-                f"or raising it via Zoho (expense.zoho@alignedautomation.com).\n[END]\n\n{feedback_ctx}"
-            )
+            return {"messages": [AIMessage(
+                content=f"No policy found for '{topic}'. "
+                        f"Please contact the Admin team or email expense.zoho@alignedautomation.com."
+            )]}
     elif sub_intent == "followup":
         # For follow-up questions, re-inject raw policy text if prior conversation was policy-related.
         # The parent graph only persists the last AIMessage per turn, so the LLM only sees a
@@ -2457,6 +2489,15 @@ async def it_agent_node(state: AgentState):
     if sub_intent == "software_install_cancel":
         PENDING_IT_EMAIL_DRAFTS.pop(draft_key, None)
         return {"messages": [AIMessage(content="No problem. I discarded the pending IT email draft and did not send anything.")]}
+
+    if sub_intent == "hardware_issue":
+        # Deterministic path — create a hardware ticket directly without LLM to avoid
+        # the model hallucinating wrong content (e.g. VPN steps for overheating).
+        _hw_msg = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+        _hw_result = ITService.create_ticket(
+            user_email, "Hardware", _hw_msg[:120], _hw_msg, "Medium"
+        )
+        return {"messages": [AIMessage(content=_hw_result)]}
 
     if sub_intent == "software_install":
         software_name = (
@@ -2686,6 +2727,9 @@ _PASSTHROUGH_TOOLS = {
     "get_open_positions", "get_candidate_status",
     "get_my_alchemy_skills", "get_alchemy_skills_overview",
     "search_alchemy_skill_experts", "get_employee_availability",
+    # Document generation results are already formatted with the download tag — returning
+    # them through the summarizer causes the LLM to misread the tag as a policy excerpt.
+    "generate_hr_document",
 }
 
 

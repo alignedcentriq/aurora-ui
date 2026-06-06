@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 
-export type Role = "Employee" | "HR" | "IT" | "PMO" | "Admin" | "Functional Manager";
+export type Role = "Employee" | "HR" | "IT" | "PMO" | "Admin" | "Functional Manager" | "Super Admin";
 
 export interface TeamMember {
   id: string;

@@ -23,11 +23,12 @@ import {
   Sparkles,
   Activity,
   BookOpen,
-  Library as LibraryIcon,
   FileText,
   GraduationCap,
   Link2,
   Megaphone,
+  SlidersHorizontal,
+  Crown,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -36,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/chat-store";
 import { motion, AnimatePresence } from "framer-motion";
+import { SittingBuddy } from "./assistant/GreetingBot";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,13 +57,13 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
   PMO:               { icon: ClipboardList,color: "text-[#4F6FEF]",  label: "Project Management",cKey: "Capacity"      },
   Admin:             { icon: Shield,       color: "text-[#3B8FE8]",  label: "Administrator",     cKey: "Clarity"       },
   "Functional Manager": { icon: UserCog,   color: "text-[#22C55E]",  label: "Functional Manager",cKey: "Collaboration" },
+  "Super Admin":     { icon: Crown,        color: "text-[#F59E0B]",  label: "Super Admin",       cKey: "Capacity"      },
 };
 
 /** 4C Nav item accent colors for icons */
 const NAV_COLORS: Record<string, string> = {
   "/":              "var(--clarity)",
   "/documents":     "var(--connectivity)",
-  "/project-update": "var(--capacity)",
   "/control-hub":   "var(--clarity)",
   "/settings":      "var(--capacity)",
 };
@@ -88,7 +90,14 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     label: "AI Observability",
     category: "System & Ops",
     icon: Activity,
-    show: (role) => role === "IT",
+    show: (role) => role === "Super Admin",
+  },
+  {
+    id: "llm-controls",
+    label: "LLM Model Controls",
+    category: "System & Ops",
+    icon: SlidersHorizontal,
+    show: (role) => role === "Super Admin",
   },
   // PORTALS
   {
@@ -139,14 +148,14 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     label: "AI Prompt Config",
     category: "Assets & Config",
     icon: Database,
-    show: (role) => ["Admin", "HR", "IT", "PMO"].includes(role),
+    show: (role) => ["Admin", "HR", "IT", "PMO", "Super Admin"].includes(role),
   },
   {
     id: "url-library",
     label: "URL Library",
     category: "Assets & Config",
     icon: Link2,
-    show: (role) => role === "Admin",
+    show: (role) => role === "Super Admin",
   },
   {
     id: "form-library",
@@ -237,14 +246,12 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     }
   };
 
-  const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager"];
+  const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"];
 
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
     { to: "/books", icon: BookOpen, label: "Library", show: true },
-    { to: "/my-library", icon: LibraryIcon, label: "My Library", show: true },
     { to: "/documents", icon: FileText, label: "Documents", show: true },
-    { to: "/project-update", icon: ClipboardList, label: "Project Update", show: true },
     {
       to: "/control-hub",
       icon: Shield,
@@ -662,6 +669,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           )}
           ref={dropdownRef}
         >
+          <SittingBuddy />
+
           {/* Unique: 4C role indicator strip above user */}
           {showLabels && (
             <div className="flex items-center gap-1 px-2.5 pb-2">

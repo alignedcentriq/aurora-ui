@@ -165,6 +165,354 @@ DOC_TEMPLATES = {
 # reference/rollback but are NOT used by the live generate path, which now does a
 # deterministic placeholder merge over HR-managed templates.
 
+# ── Seed templates ────────────────────────────────────────────────────────────
+# Built-in HTML templates for each legacy doc type. Used by seed_default_templates()
+# to populate the DB when no templates exist (no SharePoint sync required).
+
+_AUTO = {"source": "auto"}
+_USER = {"source": "user"}
+
+
+def _af(name: str, label: str, ftype: str = "text") -> dict:
+    return {"name": name, "label": label, "type": ftype, "required": False, **_AUTO}
+
+
+def _uf(name: str, label: str, ftype: str = "text", required: bool = True) -> dict:
+    return {"name": name, "label": label, "type": ftype, "required": required, **_USER}
+
+
+_SEED_TEMPLATES = [
+    {
+        "doc_type": "no_objection_certificate",
+        "label": "No Objection Certificate",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("purpose", "Purpose", "textarea"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This is to certify that <strong>{{employee_name}}</strong> (Employee ID: {{employee_id}})"
+            " is currently employed with <strong>{{company_name}}</strong> in the <strong>{{department}}</strong>"
+            " department as <strong>{{designation}}</strong>, with effect from {{joining_date}}.</p>"
+            "<p>We wish to state that this organisation has no objection to the above-named employee"
+            " for the following purpose: <em>{{purpose}}</em>.</p>"
+            "<p>During the tenure of their employment, {{employee_name}} has maintained a commendable"
+            " record and continues to fulfil their professional responsibilities diligently. This"
+            " certificate is issued upon their request and in good faith, without prejudice to any"
+            " rights of the organisation.</p>"
+            "<p>Should you require any further information or clarification, please do not hesitate"
+            " to contact our Human Resources department.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "experience_certificate",
+        "label": "Experience Certificate",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This is to certify that <strong>{{employee_name}}</strong> (Employee ID: {{employee_id}})"
+            " has been employed with <strong>{{company_name}}</strong> in the"
+            " <strong>{{department}}</strong> department as <strong>{{designation}}</strong>"
+            " since {{joining_date}}.</p>"
+            "<p>During this period, {{employee_name}} has demonstrated a high level of professionalism,"
+            " commitment, and dedication towards their work. They have consistently met their"
+            " responsibilities and contributed positively to the functioning of the team.</p>"
+            "<p>We wish {{employee_name}} the very best in all their future endeavours and recommend"
+            " them without reservation to any organisation that may seek their services.</p>"
+            "<p>This certificate is issued upon the request of the employee for whatever purpose it"
+            " may serve.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "employment_verification",
+        "label": "Employment Verification Letter",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This letter is to verify that <strong>{{employee_name}}</strong>"
+            " (Employee ID: {{employee_id}}) is presently employed with"
+            " <strong>{{company_name}}</strong> in the <strong>{{department}}</strong>"
+            " department, holding the position of <strong>{{designation}}</strong>"
+            " since {{joining_date}}.</p>"
+            "<p>The employment is on a full-time basis and the individual is in active service"
+            " at the time of issuance of this letter. {{company_name}} is a registered organisation"
+            " operating in the technology and services sector, and {{employee_name}} is a valued"
+            " member of our team.</p>"
+            "<p>This letter is being issued upon the request of the employee for presentation to"
+            " a bank, financial institution, embassy, or any other authority requiring official"
+            " confirmation of employment.</p>"
+            "<p>For any further verification or queries, please feel free to contact the Human"
+            " Resources department.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "address_proof",
+        "label": "Address Proof Letter",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("purpose", "Purpose", "textarea"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This is to confirm that <strong>{{employee_name}}</strong>"
+            " (Employee ID: {{employee_id}}) is employed with"
+            " <strong>{{company_name}}</strong> as <strong>{{designation}}</strong>"
+            " since {{joining_date}}.</p>"
+            "<p>This letter is being issued for the following purpose: <em>{{purpose}}</em>.</p>"
+            "<p>{{company_name}} confirms its association with and responsibility for"
+            " {{employee_name}} in the capacity described above. This letter is issued in good"
+            " faith and is intended solely for the purpose stated herein.</p>"
+            "<p>Should you require any additional documentation or clarification, kindly contact"
+            " our Human Resources department at your earliest convenience.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "relieving_letter",
+        "label": "Relieving Letter",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("last_working_date", "Last Working Date", "date"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This is to certify that <strong>{{employee_name}}</strong>"
+            " (Employee ID: {{employee_id}}) was employed with"
+            " <strong>{{company_name}}</strong> in the <strong>{{department}}</strong>"
+            " department as <strong>{{designation}}</strong> from {{joining_date}}"
+            " to {{last_working_date}}.</p>"
+            "<p>{{employee_name}} has been duly relieved from all duties and responsibilities"
+            " with effect from {{last_working_date}}. All organisational formalities have been"
+            " completed satisfactorily and there are no outstanding obligations from the"
+            " company's side.</p>"
+            "<p>We sincerely appreciate the contributions made by {{employee_name}} during"
+            " their tenure with us and wish them every success in their future professional"
+            " endeavours.</p>"
+            "<p>This letter is issued upon the request of the employee as a formal record of"
+            " their service and relieving from the organisation.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "internship_certificate",
+        "label": "Internship Completion Certificate",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("internship_duration", "Internship Duration (e.g. June 2024 – August 2024)", "text"),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To Whom It May Concern,</p>"
+            "<p>This is to certify that <strong>{{employee_name}}</strong>"
+            " (ID: {{employee_id}}) has successfully completed their internship with"
+            " <strong>{{company_name}}</strong> in the <strong>{{department}}</strong>"
+            " department during the period <strong>{{internship_duration}}</strong>.</p>"
+            "<p>During the internship, {{employee_name}} demonstrated a commendable level of"
+            " enthusiasm, commitment, and willingness to learn. They contributed meaningfully"
+            " to the work of the department and conducted themselves in a professional and"
+            " responsible manner throughout the programme.</p>"
+            "<p>We are pleased to recognise their effort and dedication, and we wish them every"
+            " success in their academic pursuits and professional career ahead.</p>"
+            "<p>This certificate is issued in recognition of the completion of the internship"
+            " programme at {{company_name}}.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "recommendation_letter",
+        "label": "Recommendation Letter",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("department", "Department"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("purpose", "Purpose / what the recommendation is for", "textarea"),
+            _uf("recipient", "Recipient (leave blank for 'To Whom It May Concern')", "text", required=False),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>{{recipient}}</p>"
+            "<p>I am writing to recommend <strong>{{employee_name}}</strong>"
+            " (Employee ID: {{employee_id}}) for {{purpose}}."
+            " {{employee_name}} has been serving with <strong>{{company_name}}</strong>"
+            " in the <strong>{{department}}</strong> department as"
+            " <strong>{{designation}}</strong> since {{joining_date}}.</p>"
+            "<p>Throughout their tenure, {{employee_name}} has consistently exhibited a strong"
+            " work ethic, a collaborative spirit, and a high degree of professionalism. Their"
+            " contributions to the department have been notable and they have demonstrated a"
+            " capacity for growth and adaptability in a fast-paced professional environment.</p>"
+            "<p>On a personal level, {{employee_name}} is reliable, approachable, and maintains"
+            " a positive and constructive attitude in all their interactions. These qualities,"
+            " combined with their professional competence, make them a highly recommendable"
+            " individual.</p>"
+            "<p>I recommend {{employee_name}} without reservation and am confident that they"
+            " will be an asset to any organisation or programme. Should you require any further"
+            " information, please do not hesitate to reach out.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "travel_support_letter",
+        "label": "Travel / Visa Support Letter",
+        "requires_approval": True,
+        "fields": [
+            _af("employee_name", "Employee Name"),
+            _af("employee_id", "Employee ID"),
+            _af("designation", "Designation"),
+            _af("joining_date", "Date of Joining", "date"),
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("destination", "Destination Country / City", "text"),
+            _uf("travel_purpose", "Purpose of Travel", "textarea"),
+            _uf("travel_dates", "Travel Dates (e.g. 10 July – 20 July 2025)", "text", required=False),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p>To the Visa Officer,</p>"
+            "<p>This letter is issued in support of the visa application of"
+            " <strong>{{employee_name}}</strong> (Employee ID: {{employee_id}}),"
+            " who is currently employed with <strong>{{company_name}}</strong>"
+            " as <strong>{{designation}}</strong> since {{joining_date}}.</p>"
+            "<p>{{employee_name}} intends to travel to <strong>{{destination}}</strong>"
+            " for the following purpose: <em>{{travel_purpose}}</em>."
+            " The intended travel dates are {{travel_dates}}."
+            " This travel is undertaken with the full knowledge and support of the organisation.</p>"
+            "<p>We confirm that {{employee_name}} holds a permanent position with"
+            " {{company_name}} and is expected to return and resume their professional"
+            " responsibilities upon conclusion of the visit. Their employment, compensation,"
+            " and leave arrangement remain unchanged during this period.</p>"
+            "<p>We respectfully request that the appropriate authorities grant the necessary"
+            " visa to facilitate this travel and assure you of our full cooperation in this"
+            " matter.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+    {
+        "doc_type": "project_proposal",
+        "label": "Project Proposal",
+        "requires_approval": False,
+        "fields": [
+            _af("today_date", "Date", "date"),
+            _af("company_name", "Company Name"),
+            _uf("project_title", "Project Title", "text"),
+            _uf("client_name", "Client / Recipient Name", "text"),
+            _uf("overview", "Project Overview", "textarea"),
+            _uf("objectives", "Objectives", "textarea"),
+            _uf("timeline", "Estimated Timeline", "text", required=False),
+        ],
+        "html_template": (
+            "<p>Date: {{today_date}}</p>"
+            "<p><strong>{{client_name}}</strong></p>"
+            "<h3>Project Proposal: {{project_title}}</h3>"
+            "<h4>Overview</h4>"
+            "<p>{{overview}}</p>"
+            "<h4>Objectives</h4>"
+            "<p>{{objectives}}</p>"
+            "<h4>Proposed Approach</h4>"
+            "<p>{{company_name}} proposes to deliver this engagement through a structured,"
+            " milestone-based approach, ensuring full alignment with the client's requirements"
+            " at every stage. A dedicated project team will be assigned, with clear accountability"
+            " and regular progress reporting.</p>"
+            "<h4>Estimated Timeline</h4>"
+            "<p>{{timeline}}</p>"
+            "<h4>Next Steps</h4>"
+            "<p>We invite you to review this proposal and share your feedback at your earliest"
+            " convenience. Upon confirmation, we will proceed to formalise the engagement"
+            " agreement and initiate the project in accordance with the agreed timeline.</p>"
+            "<p>Yours faithfully,</p>"
+        ),
+    },
+]
+
+
+def seed_default_templates(db) -> None:
+    """Insert built-in enabled templates if no seed rows exist yet.
+    Safe to call on every startup — skips when seed rows are already present.
+    SharePoint-synced templates (source_key not starting with 'seed:') are unaffected."""
+    from app.models import DocumentTemplate  # avoid circular at module load
+    already = (
+        db.query(DocumentTemplate)
+        .filter(DocumentTemplate.source_key.like("seed:%"))
+        .first()
+    )
+    if already is not None:
+        return
+    now = datetime.datetime.utcnow()
+    for tpl in _SEED_TEMPLATES:
+        row = DocumentTemplate(
+            doc_type=tpl["doc_type"],
+            label=tpl["label"],
+            source_key=f"seed:{tpl['doc_type']}",
+            filename=f"{tpl['doc_type']}.html",
+            source_format="html",
+            html_template=tpl["html_template"],
+            fields=tpl["fields"],
+            enabled=True,
+            requires_approval=tpl["requires_approval"],
+            setup_status="ready",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    db.commit()
+    print(f"[documents] seeded {len(_SEED_TEMPLATES)} default templates.")
+
+
 def _public_field(f: dict) -> dict:
     out = {
         "name": f.get("name"),

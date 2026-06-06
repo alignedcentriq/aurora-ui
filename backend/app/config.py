@@ -222,7 +222,7 @@ class Config:
             "ALLOWED_EMAILS",
             "shivani.patel@alignedautomation.com,"
             "suraj.ghuge@alignedautomation.com,"
-            "priyanka.sonawane@alignedautomation.com"
+            "priyanka.sonawane@alignedautomation.com,"
             "shivam.sharma@alignedautomation.com",
         ).split(",")
         if e.strip()
@@ -243,6 +243,17 @@ class Config:
     # Nexus Library mock server — single source of truth for book inventory
     NEXUS_LIBRARY_URL = os.getenv("NEXUS_LIBRARY_URL", "http://localhost:8092")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
+
+    # ── Cybersecurity News Digest ─────────────────────────────────────────────
+    # Comma-separated recipient emails. Leave empty to disable the digest.
+    SECURITY_NEWS_RECIPIENTS = os.getenv("SECURITY_NEWS_RECIPIENTS", "")
+    # Sender mailbox (must have a connected MS365 delegated token). Falls back to
+    # PARKING_REMINDER_SENDER then NOTIFY_TO_EMAIL.
+    SECURITY_NEWS_SENDER = os.getenv("SECURITY_NEWS_SENDER", "")
+    # Hour of day (server local time, 24h) to send the digest. Default: 9 AM.
+    SECURITY_NEWS_HOUR = int(os.getenv("SECURITY_NEWS_HOUR", "9"))
+    # Master switch — set to false to pause without removing recipients.
+    SECURITY_NEWS_ENABLED = os.getenv("SECURITY_NEWS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
     # Power Automate — SharePoint/PowerApps complaint sync
     # Set this to the HTTP trigger URL from your Power Automate flow.

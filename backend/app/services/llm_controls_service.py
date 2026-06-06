@@ -141,6 +141,10 @@ def _defaults() -> dict[str, Any]:
             "general":    {"model": settings.FAST_MODEL_NAME,   "temperature": 0.7, "max_tokens": None, "timeout": None},
             "summarizer": {"model": settings.FAST_MODEL_NAME,   "temperature": 0.3, "max_tokens": None, "timeout": None},
         },
+        # Cybersecurity news digest — daily email sent to SECURITY_NEWS_RECIPIENTS.
+        # Defaults to the env value; IT can override without a restart or redeploy.
+        "security_news_enabled": settings.SECURITY_NEWS_ENABLED,
+
         # Embedding-based intent router. mode="off" is the instant kill-switch back to the
         # pure LLM router (the go-live safety net). Thresholds are IT-tunable at runtime.
         "semantic_router": {
@@ -210,6 +214,10 @@ def get_config() -> dict[str, Any]:
 # ── convenience accessors (hot path) ───────────────────────────────────────────
 def is_chat_enabled() -> bool:
     return bool(get_config().get("chat_enabled", True))
+
+
+def is_security_news_enabled() -> bool:
+    return bool(get_config().get("security_news_enabled", settings.SECURITY_NEWS_ENABLED))
 
 
 def disabled_domains() -> list[str]:
@@ -292,6 +300,9 @@ def _validate_patch(patch: dict) -> dict:
 
     if "chat_enabled" in patch:
         clean["chat_enabled"] = bool(patch["chat_enabled"])
+
+    if "security_news_enabled" in patch:
+        clean["security_news_enabled"] = bool(patch["security_news_enabled"])
 
     if "disabled_domains" in patch:
         doms = patch["disabled_domains"] or []
