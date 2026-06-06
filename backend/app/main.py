@@ -172,7 +172,9 @@ async def startup_event():
             await app_agent.checkpointer.setup()
             print("Redis checkpointer indexes ready.")
         except Exception as e:
-            print(f"Redis checkpointer setup: {e}")
+            print(f"Redis checkpointer setup failed ({e}), falling back to MemorySaver.")
+            from langgraph.checkpoint.memory import MemorySaver as _MemorySaver
+            app_agent.checkpointer = _MemorySaver()
             
     async def periodic_renew():
         while True:

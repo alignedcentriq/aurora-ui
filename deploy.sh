@@ -37,7 +37,19 @@ done
 echo "Branch: $BRANCH  |  Host: $SSH_HOST  |  Remote dir: $REMOTE_DIR"
 echo ""
 
+# ── local frontend build ──────────────────────────────────────────────────────
+# Build runs locally (not in Docker) — avoids Vinxi/workerd inter-process issues
+# that occur in the Docker build environment when wrangler.jsonc is present.
+# Requires .env to exist with VITE_MSAL_* values so they're baked into the bundle.
+echo "=== Building frontend locally ==="
+npm run build
+# TanStack Start SPA mode emits the shell as _shell.html; copy to index.html so
+# nginx's try_files and any static server find the conventional entrypoint.
+cp dist/client/_shell.html dist/client/index.html
+echo ""
+
 # ── sync to server ────────────────────────────────────────────────────────────
+# dist/ is included — the server-side Dockerfile just COPYs the pre-built bundle.
 # rsync is preferred (incremental); tar+ssh is the fallback (works in Git Bash
 # on Windows where rsync isn't bundled).
 echo "=== Syncing to $SSH_HOST:$REMOTE_DIR ==="
@@ -45,7 +57,6 @@ if command -v rsync &>/dev/null; then
     rsync -avz --progress \
         --exclude '.git' \
         --exclude 'node_modules' \
-        --exclude 'dist' \
         --exclude '__pycache__' \
         --exclude '*.pyc' \
         --exclude 'backend/venv' \
@@ -57,7 +68,6 @@ else
     tar \
         --exclude='./.git' \
         --exclude='./node_modules' \
-        --exclude='./dist' \
         --exclude='./__pycache__' \
         --exclude='./backend/venv' \
         --exclude='./backend/.venv' \

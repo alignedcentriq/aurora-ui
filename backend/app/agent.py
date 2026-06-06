@@ -2807,13 +2807,19 @@ def should_continue_hr(state: AgentState):
 
 checkpointer = MemorySaver()
 try:
+    import redis as _sync_redis
     import redis.asyncio as aioredis
     from langgraph.checkpoint.redis.aio import AsyncRedisSaver
     if not settings.USE_MEMORY_SAVER:
+        # Probe synchronously so auth failures are caught here, not inside astream_events().
+        _probe = _sync_redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+        _probe.ping()
+        _probe.close()
         redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
         checkpointer = AsyncRedisSaver(redis_client=redis_client)
+        print("[checkpointer] Using AsyncRedisSaver")
 except Exception as e:
-    print(f"Redis initialization failed: {e}. Using MemorySaver.")
+    print(f"[checkpointer] Redis unavailable ({e}), falling back to MemorySaver.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

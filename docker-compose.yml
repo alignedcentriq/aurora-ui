@@ -5,11 +5,6 @@ services:
     build:
       context: .
       dockerfile: nginx/Dockerfile
-      args:
-        - VITE_MSAL_CLIENT_ID=${VITE_MSAL_CLIENT_ID}
-        - VITE_MSAL_TENANT_ID=${VITE_MSAL_TENANT_ID}
-        - VITE_MSAL_REDIRECT_URI=${VITE_MSAL_REDIRECT_URI}
-        - VITE_MSAL_AUTHORITY=${VITE_MSAL_AUTHORITY}
     # Branch B: host nginx (port 80) forwards hackathon.alignedautomation.com → 8090.
     # Host nginx config already has: proxy_pass http://127.0.0.1:8090 — no admin action needed.
     # Branch A only (we own 80/443): change to "80:80","443:443" and run first-deploy.sh.
