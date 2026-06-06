@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, Fragment } from "react";
 import {
@@ -38,16 +37,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-
-export const Route = createFileRoute("/_layout/form-library")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "form-library" },
-    });
-  },
-  component: FormLibrary,
-});
 
 const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox"] as const;
 type FieldType = (typeof FIELD_TYPES)[number];

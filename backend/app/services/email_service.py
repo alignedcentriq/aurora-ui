@@ -1183,14 +1183,16 @@ def send_udemy_request_email(
     justification: str,
     approve_url: str,
     reject_url: str,
+    platform: str = "Udemy",
 ) -> bool:
-    """Notify the PMO team of a Udemy license request with approve/decline links."""
-    subject = f"[PMO] Udemy License Request — {employee_name}"
+    """Notify the PMO team of a training-license request with approve/decline links."""
+    subject = f"[PMO] {platform} License Request — {employee_name}"
     intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
-             f"<p><strong>{html.escape(employee_name)}</strong> has requested a Udemy license. "
+             f"<p><strong>{html.escape(employee_name)}</strong> has requested a {html.escape(platform)} license. "
              "Approve it if a license is available, or decline.</p>")
     body_html = _detail_rows([
         ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Platform", html.escape(platform)),
         ("Course", html.escape(course_name) or "—"),
         ("Justification", _nl2br(justification) or "—"),
     ])
@@ -1199,8 +1201,8 @@ def send_udemy_request_email(
         ("✗ Decline", reject_url, _C_NO),
     ])
     body_html += _note("These links expire in 24 hours. Decline opens a reason form. Submitted via Centriq AI.")
-    html_body = _email_shell("Udemy License Request", intro, body_html,
-                             preheader=f"{employee_name} · {course_name or 'Udemy license'}")
+    html_body = _email_shell(f"{platform} License Request", intro, body_html,
+                             preheader=f"{employee_name} · {course_name or f'{platform} license'}")
     return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
 
 
@@ -1211,14 +1213,16 @@ def send_udemy_decision_email(
     course_name: str,
     decision: str,
     reason: str = "",
+    platform: str = "Udemy",
 ) -> bool:
     color = _C_OK if decision == "Approved" else _C_NO
-    subject = f"[Udemy License {decision}] {course_name or 'Your request'}"
+    subject = f"[{platform} License {decision}] {course_name or 'Your request'}"
     intro = (f'<p>{_status_pill(decision, color)}</p>'
              f"<p>Hi {html.escape(employee_name)},</p>"
-             f'<p>Your Udemy license request has been '
+             f'<p>Your {html.escape(platform)} license request has been '
              f'<strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
     rows = [
+        ("Platform", html.escape(platform)),
         ("Course", html.escape(course_name) or "—"),
         ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
     ]
@@ -1228,8 +1232,8 @@ def send_udemy_decision_email(
     body_html = _detail_rows(rows) + _note(
         "Approved licenses are provided by the PMO team subject to availability. "
         "This is an automated notification from Centriq AI.")
-    html_body = _email_shell(f"Udemy License {decision}", intro, body_html,
-                             preheader=course_name or "Udemy license")
+    html_body = _email_shell(f"{platform} License {decision}", intro, body_html,
+                             preheader=course_name or f"{platform} license")
     return _send_html(user_email, employee_email, subject, html_body)
 
 

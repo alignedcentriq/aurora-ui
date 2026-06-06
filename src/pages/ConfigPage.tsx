@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -34,16 +33,6 @@ import {
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/config")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "config" },
-    });
-  },
-  component: ConfigPage,
-});
 
 interface PromptRow {
   domain: string;

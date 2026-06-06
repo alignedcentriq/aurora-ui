@@ -146,6 +146,8 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_data BYTEA',
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_file_name VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".employee_skills ADD COLUMN IF NOT EXISTS cert_content_type VARCHAR',
+                # Training-license requests: which platform (Udemy / Coursera / …)
+                f'ALTER TABLE "{SCHEMA}".udemy_license_requests ADD COLUMN IF NOT EXISTS platform VARCHAR DEFAULT \'Udemy\'',
                 # Document generation: approval-gated verification fields
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT \'draft\'',
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS verify_token VARCHAR',

@@ -748,7 +748,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                       <RIcon className={cn("h-3.5 w-3.5", meta.color)} />
                       <div className="flex flex-1 flex-col items-start">
                         <span className="font-semibold">{r}</span>
-                        <span className="text-[9px] opacity-40 font-medium">{meta.cKey}</span>
                       </div>
                       {isSelected && (
                         <Check className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--clarity)" }} />

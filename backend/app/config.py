@@ -297,6 +297,10 @@ class Config:
     # Prefix prepended to numeric employee IDs when calling the Alchemy API.
     # DB stores "1540", Alchemy expects "AASPL-1540" → prefix = "AASPL-"
     ALCHEMY_EMPLOYEE_PREFIX   = os.getenv("ALCHEMY_EMPLOYEE_PREFIX", "AASPL-")
+    # Master switch for skill-based people search ("find python developers"):
+    #   true  → query the authoritative Alchemy Skills Portal (skill name → id → users)
+    #   false → fall back to the internal DB directory (dummy/demo data)
+    ALCHEMY_SKILL_SEARCH_ENABLED = os.getenv("ALCHEMY_SKILL_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

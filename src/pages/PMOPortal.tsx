@@ -1,20 +1,9 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Loader2, RefreshCw, GraduationCap, ClipboardList, Send, Power, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
-
-export const Route = createFileRoute("/_layout/pmo-portal")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "pmo-portal" },
-    });
-  },
-  component: PMOPortal,
-});
 
 type Tab = "udemy" | "project-update";
 
@@ -28,6 +17,7 @@ interface UdemyRequest {
   id: number;
   employee_name: string;
   employee_email: string;
+  platform: string;
   course_name: string;
   justification: string;
   status: string;
@@ -55,7 +45,7 @@ export function PMOPortal() {
   }
 
   const tabs: { id: Tab; label: string; icon: typeof GraduationCap }[] = [
-    { id: "udemy", label: "Udemy Licenses", icon: GraduationCap },
+    { id: "udemy", label: "Course Licenses", icon: GraduationCap },
     { id: "project-update", label: "Project Updates", icon: ClipboardList },
   ];
 
@@ -66,7 +56,7 @@ export function PMOPortal() {
           <h1 className="text-[20px] font-semibold text-foreground">PMO Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
             {tab === "udemy"
-              ? "Review and action Udemy license requests"
+              ? "Review and action training-license requests (Udemy, Coursera)"
               : "Configure the biweekly project-update form and review submissions"}
           </p>
         </div>
@@ -111,12 +101,12 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const approve = async (id: number) => {
+  const approve = async (id: number, platform: string) => {
     setActing(id);
     try {
       const res = await fetch(`/api/portal/pmo/udemy/${id}/approve`, { method: "PUT", headers: authHeaders });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      flyBanner("Udemy license approved");
+      flyBanner(`${platform || "Udemy"} license approved`);
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -163,12 +153,12 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       {loading ? (
         <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : items.length === 0 ? (
-        <div className="flex h-40 items-center justify-center text-[13px] text-muted-foreground">No Udemy license requests found</div>
+        <div className="flex h-40 items-center justify-center text-[13px] text-muted-foreground">No license requests found</div>
       ) : (
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b border-[var(--border)]">
-              {["Employee", "Course", "Justification", "Status", "Actions"].map((h) => (
+              {["Employee", "Platform", "Course", "Justification", "Status", "Actions"].map((h) => (
                 <th key={h} className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">{h}</th>
               ))}
             </tr>
@@ -180,6 +170,11 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                   <div className="font-medium text-foreground">{r.employee_name}</div>
                   <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
                 </td>
+                <td className="py-3.5 pr-4">
+                  <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">
+                    {r.platform || "Udemy"}
+                  </span>
+                </td>
                 <td className="py-3.5 pr-4 text-foreground/90">{r.course_name || "—"}</td>
                 <td className="py-3.5 pr-4 text-foreground/70 max-w-[300px]">{r.justification || r.decision_reason || "—"}</td>
                 <td className="py-3.5 pr-4">
@@ -190,7 +185,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 <td className="py-3.5">
                   {r.status === "Pending" ? (
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => approve(r.id)} disabled={acting === r.id}
+                      <button onClick={() => approve(r.id, r.platform)} disabled={acting === r.id}
                         className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">
                         {acting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                         Approve

@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useCallback, useEffect } from "react";
 import {
@@ -25,16 +24,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/people")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "people" },
-    });
-  },
-  component: PeoplePage,
-});
 
 const SEARCH_ROLES = new Set(["HR", "PMO", "Admin", "Functional Manager"]);
 

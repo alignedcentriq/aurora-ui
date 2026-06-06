@@ -1,19 +1,8 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Clock, CalendarDays, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-export const Route = createFileRoute("/_layout/hr-portal")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "hr-portal" },
-    });
-  },
-  component: HRPortal,
-});
 
 type LeaveStatus = "All" | "Pending" | "Approved" | "Rejected";
 

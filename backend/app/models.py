@@ -17,6 +17,9 @@ class Employee(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(String, unique=True, index=True)
+    # Stable mapping to the Alchemy Skills Portal ID (numeric part of AASPL-####).
+    # Decoupled from employee_id, which gets overwritten by Zoho CSV re-imports.
+    alchemy_employee_id = Column(String, nullable=True, index=True)
     name = Column(String)
     email = Column(String, unique=True, index=True)
     department = Column(String)
@@ -1139,12 +1142,14 @@ class EmployeeSkill(Base):
 
 
 class UdemyLicenseRequest(Base):
-    """Employee request for a Udemy license, managed by the PMO team (subject to availability)."""
+    """Employee request for a training-platform license (Udemy, Coursera, …),
+    managed by the PMO team (granted subject to availability)."""
     __tablename__ = "udemy_license_requests"
     __table_args__ = {"schema": SCHEMA}
 
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    platform = Column(String, default="Udemy")        # Udemy, Coursera, …
     course_name = Column(String, nullable=True)
     justification = Column(Text, nullable=True)
     status = Column(String, default="Pending")       # Pending, Approved, Rejected

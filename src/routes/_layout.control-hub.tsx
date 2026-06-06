@@ -22,18 +22,18 @@ import {
   Menu,
 } from "lucide-react";
 
-// Import components from their route files
-import { AdminDashboard } from "./_layout.admin";
-import { AdminPortal } from "./_layout.admin-portal";
-import { HRPortal } from "./_layout.hr-portal";
-import { ITPortal } from "./_layout.it-portal";
-import { PMOPortal } from "./_layout.pmo-portal";
-import { ManagerPortal } from "./_layout.manager-portal";
-import { PeoplePage } from "./_layout.people";
-import { ConfigPage } from "./_layout.config";
-import { UrlLibrary } from "./_layout.url-library";
-import { FormLibrary } from "./_layout.form-library";
-import { ObservabilityDashboard } from "./_layout.observability";
+// Page components live outside the routes folder so they are code-split
+import { AdminDashboard } from "@/pages/AdminDashboard";
+import { AdminPortal } from "@/pages/AdminPortal";
+import { HRPortal } from "@/pages/HRPortal";
+import { ITPortal } from "@/pages/ITPortal";
+import { PMOPortal } from "@/pages/PMOPortal";
+import { ManagerPortal } from "@/pages/ManagerPortal";
+import { PeoplePage } from "@/pages/PeoplePage";
+import { ConfigPage } from "@/pages/ConfigPage";
+import { UrlLibrary } from "@/pages/UrlLibrary";
+import { FormLibrary } from "@/pages/FormLibrary";
+import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),

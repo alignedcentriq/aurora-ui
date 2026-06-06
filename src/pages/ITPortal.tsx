@@ -1,20 +1,9 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
-
-export const Route = createFileRoute("/_layout/it-portal")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "it-portal" },
-    });
-  },
-  component: ITPortal,
-});
 
 type Tab = "tickets" | "software" | "controls";
 

@@ -15,6 +15,7 @@ Architecture:
 import os
 import json
 import re
+import logging
 from typing import TypedDict, Annotated, List, Optional
 
 from langgraph.graph import StateGraph, END
@@ -45,6 +46,8 @@ from app.services.announcement_service import AnnouncementService
 from app.services.people_service import PeopleService
 from app.services.prompt_service import PromptService
 from app.services.feedback_service import FeedbackService
+
+log = logging.getLogger("aurora-logger")
 
 
 DOWNLOAD_TAG_PATTERN = re.compile(r"\[DOWNLOAD_PDF:[^\]]+\]")
@@ -311,7 +314,7 @@ def apply_leave(
 def search_hr_policies(query: str):
     """Search HR policy documents. Call for any policy question. Answer from the result only.
     State policy name once. Never include metadata (author, version, review dates)."""
-    return HRService.search_policies(query, limit=6)
+    return HRService.search_policies(query, limit=6, char_budget=6000)
 
 
 @tool
@@ -863,12 +866,26 @@ def _alchemy_token_or_none(email: str) -> str | None:
 def get_my_alchemy_skills(state: Annotated[dict, InjectedState] = None) -> str:
     """Get my skills from the Alchemy skills portal."""
     email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    if not settings.ALCHEMY_SKILL_SEARCH_ENABLED:
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            skills = EmployeeService._real_skills(db, email)
+            if not skills:
+                return "No skills found in your profile."
+            lines = ["**Your Skills (Internal Profile)**"]
+            for s in skills.split(","):
+                lines.append(f"- {s.strip()}")
+            return "\n".join(lines)
+        finally:
+            db.close()
+
     token = _alchemy_token_or_none(email)
     if not token:
         return _ALCHEMY_CONNECT_MSG
     try:
-        from app.services.alchemy_service import get_my_skills, get_employee_id
-        emp_id = get_employee_id(email)
+        from app.services.alchemy_service import get_my_skills, resolve_employee_id
+        emp_id = resolve_employee_id(token, email)
         if not emp_id:
             return "Could not find your employee ID. Please contact IT support."
         data = get_my_skills(token, emp_id)
@@ -891,6 +908,34 @@ def get_my_alchemy_skills(state: Annotated[dict, InjectedState] = None) -> str:
 def get_alchemy_skills_overview(state: Annotated[dict, InjectedState] = None) -> str:
     """Get org-wide skills summary and top skills by interest from Alchemy."""
     email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    if not settings.ALCHEMY_SKILL_SEARCH_ENABLED:
+        from app.database import SessionLocal
+        from app.models import EmployeeSkill
+        from sqlalchemy import func
+        db = SessionLocal()
+        try:
+            top_skills = (
+                db.query(EmployeeSkill.skill, func.count(EmployeeSkill.id))
+                .group_by(EmployeeSkill.skill)
+                .order_by(func.count(EmployeeSkill.id).desc())
+                .limit(10)
+                .all()
+            )
+            total_declared = db.query(EmployeeSkill.id).count()
+            unique_skills = db.query(EmployeeSkill.skill).distinct().count()
+
+            lines = ["**Org Skills Overview (Internal DB)**"]
+            lines.append(f"- Total Skill Declarations: {total_declared}")
+            lines.append(f"- Unique Declared Skills: {unique_skills}")
+
+            if top_skills:
+                lines.append("\n**Top Declared Skills**")
+                for name, count in top_skills:
+                    lines.append(f"- {name} ({count} employees)")
+            return "\n".join(lines)
+        finally:
+            db.close()
+
     token = _alchemy_token_or_none(email)
     if not token:
         return _ALCHEMY_CONNECT_MSG
@@ -918,6 +963,118 @@ def get_alchemy_skills_overview(state: Annotated[dict, InjectedState] = None) ->
         return f"Error fetching skills overview: {exc}"
 
 
+@tool
+def search_alchemy_skill_experts(skill: str, state: Annotated[dict, InjectedState] = None) -> str:
+    """Find employees who have a specific technology or skill (e.g. Python, React, AWS, SAP).
+
+    PREFER THIS over the internal directory for any skill/technology people search —
+    "find python developers", "who knows React", "people skilled in AWS". It queries the
+    authoritative Alchemy Skills Portal (the org's system of record for skills).
+    For name / manager / department lookups, use the internal directory tools instead.
+    """
+    # Feature flag: when off, use the internal DB directory (dummy/demo data) instead.
+    if not settings.ALCHEMY_SKILL_SEARCH_ENABLED:
+        return EmployeeService.find_skills_expert(skill)
+
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    token = _alchemy_token_or_none(email)
+    if not token:
+        return _ALCHEMY_CONNECT_MSG
+    try:
+        from app.services.alchemy_service import resolve_skill_id, get_skill_details
+        skill_id, canonical = resolve_skill_id(token, skill)
+        if not skill_id:
+            return (f"'{skill}' isn't a recognised skill in the Alchemy Skills Portal. "
+                    f"Try a more specific technology name (e.g. Python, React, SAP).")
+        data = get_skill_details(token, skill_id)
+        total = data.get("total_employees")
+        experts = data.get("experts") or []
+        certified = data.get("certified") or []
+        everyone = data.get("employees") or []
+
+        # Order: experts first, then certified, then the rest — de-duped by id/name.
+        seen, ordered = set(), []
+        for bucket in (experts, certified, everyone):
+            for e in bucket:
+                key = e.get("employee_id") or e.get("name")
+                if key and key not in seen:
+                    seen.add(key)
+                    ordered.append(e)
+
+        if not ordered:
+            return f"No employees found with the **{canonical}** skill in Alchemy."
+
+        cap = 25
+        header = (f"**{canonical}** — {total if total is not None else len(ordered)} employee(s) "
+                  f"in Alchemy ({len(experts)} expert, {len(certified)} certified):")
+        lines = [header, ""]
+        for e in ordered[:cap]:
+            name = e.get("name") or e.get("employee_id") or "Unknown"
+            comp = e.get("competency")
+            exp = e.get("experience")
+            extra = " | ".join(x for x in [
+                comp,
+                (f"{exp} yrs" if exp not in (None, "", "0", "0.00") else None),
+            ] if x)
+            lines.append(f"- {name}" + (f" — {extra}" if extra else ""))
+        if len(ordered) > cap:
+            lines.append(f"\n…and {len(ordered) - cap} more. Ask to narrow by competency or experience.")
+        return "\n".join(lines)
+    except PermissionError:
+        return _ALCHEMY_CONNECT_MSG
+    except Exception as exc:
+        # Graceful degradation — fall back to the internal directory.
+        log.warning("[alchemy] skill search for %r failed, falling back to DB: %s", skill, exc)
+        return EmployeeService.find_skills_expert(skill)
+
+
+@tool
+def get_employee_availability(name_or_email: str) -> str:
+    """Check whether an employee is available for work (free to be staffed on a project).
+
+    Availability is based on project allocation: an employee is AVAILABLE only when they
+    have NO active allocation (fully unallocated). Anyone currently on an Active project
+    counts as unavailable/busy. Use this for 'are they available for work?' follow-ups.
+    """
+    from app.database import SessionLocal
+    from app.models import EmployeeAllocation
+    from sqlalchemy import or_, func
+
+    term = (name_or_email or "").strip()
+    if not term:
+        return "Please specify an employee name to check availability."
+    db = SessionLocal()
+    try:
+        allocs = db.query(EmployeeAllocation).filter(
+            or_(
+                EmployeeAllocation.employee_name.ilike(f"%{term}%"),
+                func.lower(EmployeeAllocation.employee_id) == term.lower(),
+            )
+        ).order_by(EmployeeAllocation.allocation_date.desc()).all()
+
+        if not allocs:
+            return (f"**{term}** — ✅ Available for work (no project allocation on record).")
+
+        def _is_active(a) -> bool:
+            return (a.status or "").strip().lower() == "active" or \
+                   (a.completion_status or "").strip().lower() == "active"
+
+        active = [a for a in allocs if _is_active(a)]
+        display_name = allocs[0].employee_name or term
+        if not active:
+            return f"**{display_name}** — ✅ Available for work (no active allocation)."
+
+        lines = [f"**{display_name}** — ❌ Not available (currently allocated):"]
+        for a in active[:5]:
+            end = a.expected_end_date.isoformat() if a.expected_end_date else "no end date"
+            eff = f"{a.efforts_percent}% efforts" if a.efforts_percent is not None else ""
+            detail = " | ".join(x for x in [a.project_name or "Project", eff, f"ends {end}"] if x)
+            lines.append(f"- {detail}")
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
 hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
@@ -935,6 +1092,7 @@ hr_tools = [
     get_my_expense_reports, get_my_reimbursement_status,
     get_open_positions, get_candidate_status,
     get_my_alchemy_skills, get_alchemy_skills_overview,
+    search_alchemy_skill_experts, get_employee_availability,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -1029,6 +1187,50 @@ _KW_HR_PEOPLE_ROLE = re.compile(
     # ...or an explicit "who knows X" / "someone who knows X" skill lookup.
     r'|\b(?:who|someone|somebody|anyone)\s+knows?\s+\w+', re.I
 )
+
+# Availability / staffing follow-up — "are they available for work", "who is free
+# for a project", "check their availability". Intent: project-allocation lookup.
+_KW_HR_AVAILABILITY = re.compile(
+    r'\b(available\s+for\s+(work|a?\s*project|allocation|staffing)|'
+    r'are\s+(they|he|she)\s+available|who\s+is\s+(free|available)|'
+    r'(their|his|her)\s+availability|free\s+for\s+a?\s*project|'
+    r'currently\s+(allocated|available|free)|bench\s+(strength|status))\b', re.I
+)
+
+# Words to strip when extracting the SKILL term from a people-search query. Whatever
+# remains after removing verbs, role nouns, and filler is treated as the skill to look
+# up in Alchemy (e.g. "find senior python developers" -> "python"). Role-only queries
+# ("find QA engineers") reduce to empty -> no Alchemy lookup, fall through to the agent.
+_SKILL_SEARCH_STOPWORDS = frozenset({
+    "find", "show", "list", "search", "get", "who", "whom", "knows", "know", "are",
+    "is", "am", "looking", "look", "for", "any", "anyone", "someone", "somebody", "me",
+    "all", "our", "us", "the", "a", "an", "with", "of", "in", "on", "and", "or", "to",
+    "do", "does", "have", "has", "having", "that", "which", "needs", "need", "want",
+    "wanted", "require", "required", "people", "person", "persons", "employee",
+    "employees", "colleague", "colleagues", "staff", "member", "members", "team",
+    "teams", "resource", "resources", "folks", "skilled", "skill", "skills", "skillset",
+    "expertise", "expert", "experts", "experienced", "experience", "proficient",
+    "proficiency", "good", "strong", "specialist", "specialists", "developer",
+    "developers", "engineer", "engineers", "programmer", "programmers", "coder",
+    "coders", "designer", "designers", "tester", "testers", "qa", "analyst", "analysts",
+    "architect", "architects", "consultant", "consultants", "scientist", "scientists",
+    "devops", "sre", "sres", "senior", "junior", "lead", "leads", "sr", "jr", "associate",
+})
+
+
+def _extract_skill_term(query: str) -> str:
+    """Pull the skill phrase out of a people-search query (best-effort, lowercase)."""
+    tokens = re.findall(r"[a-zA-Z0-9.+#]+", (query or "").lower())
+    return " ".join(t for t in tokens if t not in _SKILL_SEARCH_STOPWORDS).strip()
+
+
+# Explicit "by skill" phrasings that don't carry a role noun (so _KW_HR_PEOPLE_ROLE
+# misses them): "people skilled in AWS", "who has python expertise", "good at React".
+_KW_SKILL_PHRASING = re.compile(
+    r'\b(skilled|proficient|proficiency|expertise|experienced|hands[- ]on|'
+    r'good\s+at|strong\s+in|worked\s+(with|on)|knows?)\b', re.I
+)
+
 
 _KW_ADMIN_REIMB = re.compile(
     r'\b(reimburs\w*|expense\s+(policy|claim|process|limit)|'
@@ -1156,14 +1358,15 @@ _KW_IT_LICENSE = re.compile(
     r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
 )
 
-_KW_PMO_UDEMY = re.compile(
-    r'\budemy\b|\btraining\s+license\b', re.I
+# Training-license request — any supported platform (Udemy, Coursera, …).
+_KW_PMO_TRAINING = re.compile(
+    r'\budemy\b|\bcoursera\b|\b(training|course|online[\s-]?learning)\s+license\b', re.I
 )
 
 _KW_PMO = re.compile(
     r'\b(project\s+(status|report|list|summary)|list\s+(all\s+)?projects|'
     r'active\s+projects|company\s+projects|our\s+projects|'
-    r'udemy\s+(license|seat|access)|training\s+license)\b', re.I
+    r'(udemy|coursera)\s+(license|seat|access)|training\s+license)\b', re.I
 )
 
 _KW_MANAGER = re.compile(
@@ -1304,6 +1507,14 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.95,
                 "reasoning": "Keyword: HR grievance",
                 "sub_intent": "grievance", "entities": {}}
+
+    # HR — availability / staffing (project-allocation lookup). Checked before the
+    # generic people search so "are they available for work" reaches the HR agent
+    # (which calls get_employee_availability) rather than a fresh directory search.
+    if _KW_HR_AVAILABILITY.search(text):
+        return {"domain": "hr", "confidence": 0.9,
+                "reasoning": "Keyword: employee availability / allocation",
+                "sub_intent": "employee_search", "entities": {}}
 
     # HR — people search
     if _KW_HR_PEOPLE.search(text) or _KW_HR_PEOPLE_ROLE.search(text):
@@ -1514,11 +1725,12 @@ def _try_keyword_route(message: str) -> dict | None:
                     "sub_intent": "software_install",
                     "entities": {"software_name": sw}}
 
-    # PMO — Udemy / training license request (must precede the generic PMO project route)
-    if _KW_PMO_UDEMY.search(text):
+    # PMO — Udemy / Coursera / training license request (must precede the generic PMO project route)
+    if _KW_PMO_TRAINING.search(text):
+        platform = "Coursera" if re.search(r'\bcoursera\b', text, re.I) else "Udemy"
         return {"domain": "pmo", "confidence": 0.95,
-                "reasoning": "Keyword: Udemy / training license request",
-                "sub_intent": "udemy_license", "entities": {}}
+                "reasoning": f"Keyword: {platform} / training license request",
+                "sub_intent": "udemy_license", "entities": {"platform": platform}}
 
     # PMO — projects / training licenses
     if _KW_PMO.search(text):
@@ -1598,6 +1810,48 @@ def _extract_entities(message: str, domain: str, sub_intent: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _STICKY_DOMAINS = {"hr", "admin", "it_support", "pmo", "functional_manager", "ms365"}
+
+# ── Continuation detection (sticky-domain gate) ────────────────────────────────
+# A message keeps the conversation's sticky domain ONLY when it depends on prior context
+# (a genuine follow-up). The signal is *content*, never *length*: "wifi not working" is short
+# but is a brand-new request, while "any update on that?" is a follow-up. Length-based
+# stickiness was the rogue rule that pinned an IT question to a stale HR thread.
+_CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "above", "any", "about",
+                 "one", "ones"}
+# Terse acknowledgements / option-picks that only make sense as a reply to the prior turn.
+_CONTINUATION_WORDS = {"yes", "y", "no", "n", "ok", "okay", "correct", "sure", "right",
+                       "yep", "yeah", "nope", "thanks", "thank"}
+_QUESTION_PHRASES = {
+    "could you", "can you", "please provide", "please share", "let me know",
+    "what is", "which floor", "which area", "what type", "please tell",
+    "kindly", "may i know", "please mention", "please specify",
+}
+
+
+def _ai_asked_question(last_ai: str) -> bool:
+    """True when the last assistant turn posed a question the user is likely answering."""
+    low = (last_ai or "").lower()
+    return "?" in (last_ai or "") or any(p in low for p in _QUESTION_PHRASES)
+
+
+def _is_continuation(last_human: str, last_ai: str) -> bool:
+    """True when the message depends on prior context (a real follow-up) rather than being a
+    self-standing new request. Deliberately length-agnostic — see _CONTEXT_REFS note.
+
+    A confident new-domain semantic/keyword signal is handled *before* this is consulted (the
+    overrides + topic-switch release), so a follow-up that happens to carry a reference token
+    but clearly switches domains is still released, not trapped here."""
+    text = (last_human or "").strip().lower()
+    if not text:
+        return True  # nothing substantive → don't break stickiness
+    if _ai_asked_question(last_ai):
+        return True
+    if "what about" in text or "how about" in text:
+        return True
+    if re.match(r"^\s*(option|choice)\s*\d+\b", text) or re.fullmatch(r"\d{1,2}", text):
+        return True
+    words = set(re.findall(r"[a-z0-9']+", text))
+    return bool(words & _CONTEXT_REFS or words & _CONTINUATION_WORDS)
 
 
 def _last_ai_message(messages: list) -> str:
@@ -1684,25 +1938,27 @@ async def intent_router(state: AgentState):
         (exact is not None and exact.domain != existing_domain)
         or (decision is not None and decision.tier == "high" and decision.domain != existing_domain)
     )
+    # Topic-switch release (closes the ambiguous-tier "dead zone"): the fresh message has a real
+    # semantic signal (>= ambiguity floor → tier high/ambiguous) whose top-k candidate domains do
+    # NOT include the sticky domain at all. That is a new subject, not a follow-up — release even
+    # when the top-1 only reaches the ambiguous tier. Generalises beyond exact/high without regex.
+    topic_switch = bool(
+        decision is not None
+        and decision.tier in ("high", "ambiguous")
+        and existing_domain not in (decision.candidate_domains or [])
+    )
     if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky and not semantic_overrides_sticky:
         last_ai = _last_ai_message(state.get("messages", []))
-        msg_len = len(last_human.strip())
-        _CONTEXT_REFS = {"it", "that", "this", "those", "these", "same", "the", "about", "any"}
-        _QUESTION_PHRASES = {
-            "could you", "can you", "please provide", "please share", "let me know",
-            "what is", "which floor", "which area", "what type", "please tell",
-            "kindly", "may i know", "please mention", "please specify",
-        }
-        last_ai_lower = last_ai.lower()
-        words = set(last_human.lower().split())
-        ai_asked = "?" in last_ai or any(p in last_ai_lower for p in _QUESTION_PHRASES)
-        is_agent_question_reply = ai_asked and msg_len < 120
-        is_context_followup = bool(words & _CONTEXT_REFS) and msg_len < 200 and len(last_ai) > 30
-        # Very short messages (<60 chars) after any substantive AI response are almost always follow-ups
-        is_very_short_followup = msg_len < 60 and len(last_ai) > 30
-        if is_agent_question_reply or is_context_followup or is_very_short_followup:
-            reason = "follow-up to agent question" if is_agent_question_reply else "short/context follow-up"
-            print(f"[Router] Sticky domain: {existing_domain} ({reason})")
+        # Priority 1 — a fresh signal pointing to a different domain is a topic switch: never sticky.
+        # Priority 2 — a genuine follow-up (references prior context / terse ack / AI just asked):
+        #   stay in the sticky domain. Length is NOT a factor.
+        # Otherwise — a self-standing new request with no usable away-signal (tier low/unavailable):
+        #   fall through to normal classification. This is the key fix: when the classifier could
+        #   not even look (tier == "unavailable", e.g. ml01 saturated) a substantive message is no
+        #   longer pinned to the stale domain — the router stops getting *more* confident as it
+        #   knows *less*. Only true continuations stay sticky through an outage.
+        if not topic_switch and _is_continuation(last_human, last_ai):
+            print(f"[Router] Sticky domain: {existing_domain} (continuation of prior turn)")
             return {
                 "domain": existing_domain,
                 "route_confidence": 0.95,
@@ -1710,6 +1966,11 @@ async def intent_router(state: AgentState):
                 "sub_intent": "followup",
                 "entities": {},
             }
+        if topic_switch:
+            print(
+                f"[Router] Topic switch off {existing_domain}: candidates="
+                f"{decision.candidate_domains} (tier={decision.tier}) — releasing stickiness"
+            )
 
     # Fast-path: bypass LLM entirely for unambiguous leave requests
     leave_params = _try_extract_leave_params(last_human)
@@ -1949,7 +2210,10 @@ def hr_agent(state: AgentState):
             f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
             f"- Policy question → search_hr_policies, answer from result\n"
             f"- Who is X / single person's profile → get_employee_profile(name_or_email)\n"
-            f"- Employee search (by skill/function/multiple people) → search_employee_directory\n"
+            f"- Find people by SKILL/technology (python, react, aws...) → search_alchemy_skill_experts(skill)\n"
+            f"- Employee search by function/department/multiple people → search_employee_directory\n"
+            f"- Are they available for work? / is X free for a project → get_employee_availability(name_or_email) "
+            f"for each person in question\n"
             f"- Org chart / team → get_org_chart or get_team_roster\n"
             f"- Team absence → get_team_absence_for(manager_email='{user_email}')\n"
             f"- Document → generate_hr_document(target_email='{user_email}')\n"
@@ -1966,6 +2230,35 @@ def hr_agent(state: AgentState):
         messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
 
     user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
+
+    # ── Deterministic skill-expert search ───────────────────────────────────────
+    # "find python developers", "who knows react", "people skilled in AWS" must hit the
+    # Alchemy skills portal (honouring ALCHEMY_SKILL_SEARCH_ENABLED) and return a clean,
+    # display-ready list. We do NOT leave this to the weak agent model: it tends to pick
+    # the internal directory tool (which ignores the flag) and its list then gets mangled
+    # by the policy-framed summarizer. Only fires when a skill term actually resolves;
+    # name / role-only / department searches reduce to empty or miss and fall through.
+    # Trigger on the semantic router's decision (robust) OR the cheap keyword gate
+    # (fail-safe). Either way the skill must actually RESOLVE below, so name/department
+    # searches that slip in here simply fall through.
+    _looks_like_people = (
+        (state.get("sub_intent") == "employee_search")
+        or _KW_HR_PEOPLE_ROLE.search(user_question)
+        or _KW_SKILL_PHRASING.search(user_question)
+    ) if isinstance(user_question, str) else False
+    if _looks_like_people:
+        skill_term = _extract_skill_term(user_question)
+        if skill_term:
+            try:
+                result = search_alchemy_skill_experts.func(skill=skill_term, state=state)
+            except Exception:
+                result = ""
+            _missed = (not result) or ("isn't a recognised skill" in result) \
+                or result.startswith("No employees") or ("No employees found" in result)
+            if not _missed:
+                return {"messages": [AIMessage(content=result.strip())]}
+    # ────────────────────────────────────────────────────────────────────────────
+
     try:
         context_answer = PromptService.check_context_relevance("hr", user_question)
         if context_answer:
@@ -1976,7 +2269,7 @@ def hr_agent(state: AgentState):
     try:
         response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
     except APIConnectionError:
-        return {"messages": [AIMessage(content="I'm sorry, the HR system is currently unreachable.")]}
+        return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now — please try again in a moment.")]}
 
     return {"messages": [response]}
 
@@ -2379,6 +2672,7 @@ _PASSTHROUGH_TOOLS = {
     "get_my_training_records", "get_my_expense_reports", "get_my_reimbursement_status",
     "get_open_positions", "get_candidate_status",
     "get_my_alchemy_skills", "get_alchemy_skills_overview",
+    "search_alchemy_skill_experts", "get_employee_availability",
 }
 
 
@@ -2386,7 +2680,7 @@ _PASSTHROUGH_TOOLS = {
 _POLICY_SEARCH_TOOLS = {"search_hr_policies"}
 
 
-def summarizer(state: AgentState):
+async def summarizer(state: AgentState):
     """Converts tool results to natural language, preserving download tags.
 
     For deterministic directory/data tools (see _PASSTHROUGH_TOOLS) the result
@@ -2433,7 +2727,7 @@ RULES:
         # strong agent model, not the weak summarizer (which paraphrases and drifts). Other tool
         # results stay on the cheap summarizer tier to spare the GPU.
         _tier = "agent" if tool_name in _POLICY_SEARCH_TOOLS else "summarizer"
-        response = llm_controls.get_llm(_tier, default_timeout=30).invoke(prompt)
+        response = await llm_controls.get_llm(_tier, default_timeout=30).ainvoke(prompt)
         content = response.content.strip()
 
         # Belt-and-braces: strip a leaked meta-preamble the weak summarizer model sometimes

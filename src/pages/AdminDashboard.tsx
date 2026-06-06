@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useMemo } from "react";
 import {
@@ -20,16 +19,6 @@ import {
   Hash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/admin")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "dashboard" },
-    });
-  },
-  component: AdminDashboard,
-});
 
 interface AnnouncementItem {
   id: number;

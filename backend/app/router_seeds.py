@@ -206,6 +206,13 @@ _RAW: list[tuple[str, str, str]] = [
     ("VPN is not connecting", "it_support", "create_ticket"),
     ("reset my password", "it_support", "create_ticket"),
     ("network is down", "it_support", "create_ticket"),
+    ("wifi is not working", "it_support", "create_ticket"),
+    ("wifi not working in office", "it_support", "create_ticket"),
+    ("internet is not working", "it_support", "create_ticket"),
+    ("no internet connection", "it_support", "create_ticket"),
+    ("office wifi keeps disconnecting", "it_support", "create_ticket"),
+    ("who do I contact for wifi issues", "it_support", "it_howto"),
+    ("who should I reach out to for internet problems", "it_support", "it_howto"),
 
     # ── it_support: how-to / setup (answered from IT docs, not a ticket) ─────────
     ("how do I connect to the VPN", "it_support", "it_howto"),
@@ -234,6 +241,9 @@ _RAW: list[tuple[str, str, str]] = [
     ("generate a PDF report for project X", "pmo", "list_projects"),
     ("I need a Udemy license for a Python course", "pmo", "udemy_license"),
     ("can I get access to a Udemy course", "pmo", "udemy_license"),
+    ("I need a Coursera license", "pmo", "udemy_license"),
+    ("can I get a Coursera course subscription", "pmo", "udemy_license"),
+    ("request an online course / training license", "pmo", "udemy_license"),
     ("who has Udemy licenses", "pmo", "list_license_holders"),
 
     # ── pmo: process / how-to / governance (answered from PMO docs) ──────────────

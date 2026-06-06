@@ -38,7 +38,7 @@ def approve_udemy_request(
     res = UdemyService.approve(req_id, decided_by=user.email)
     if not res.get("ok"):
         raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
-    return {"message": "Udemy license request approved."}
+    return {"message": f"{res.get('platform', 'Udemy')} license request approved."}
 
 
 @router.put("/udemy/{req_id}/reject")
@@ -53,7 +53,7 @@ def reject_udemy_request(
     res = UdemyService.reject(req_id, decided_by=user.email, reason=reason)
     if not res.get("ok"):
         raise HTTPException(status_code=404, detail=res.get("error", "Request not found."))
-    return {"message": "Udemy license request declined."}
+    return {"message": f"{res.get('platform', 'Udemy')} license request declined."}
 
 
 # ── Biweekly Project-Update form ───────────────────────────────────────────────

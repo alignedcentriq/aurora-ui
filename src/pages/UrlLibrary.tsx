@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Pencil, Trash2, Loader2, RefreshCw, ExternalLink, Link2, Sparkles } from "lucide-react";
@@ -25,16 +24,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
-export const Route = createFileRoute("/_layout/url-library")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "url-library" },
-    });
-  },
-  component: UrlLibrary,
-});
 
 interface AppLink {
   id: number;

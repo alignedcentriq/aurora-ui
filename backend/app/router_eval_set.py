@@ -66,6 +66,7 @@ EVAL_SET: list[tuple[str, str, str | None]] = [
     ("list every active company project", "pmo", "list_projects"),
     ("give me a status report on our initiatives", "pmo", "list_projects"),
     ("I'd like a udemy course license", "pmo", "udemy_license"),
+    ("can I get a coursera license for a course", "pmo", "udemy_license"),
     ("who currently holds udemy access", "pmo", "list_license_holders"),
 
     # ── general: company-project knowledge base (vs pmo status/tracking) ─────────

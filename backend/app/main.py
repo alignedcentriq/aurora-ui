@@ -68,29 +68,7 @@ from app.graph_sync import renew_subscriptions
 app = FastAPI(title="Centriq AI Backend")
 
 
-# ── LLM Reachability (VPN check) ─────────────────────────────────────────────
 
-def _llm_host_port() -> tuple[str, int]:
-    parsed = urlparse(settings.ROUTER_BASE_URL)
-    return (parsed.hostname or ALIGNED_LLM_HOST), (parsed.port or 11434)
-
-
-_llm_reachable_cache: dict = {"result": True, "ts": 0.0}
-_LLM_REACHABLE_TTL = 30.0  # seconds — cache VPN check result
-
-
-def _check_llm_reachable() -> bool:
-    now = time.time()
-    if now - _llm_reachable_cache["ts"] < _LLM_REACHABLE_TTL:
-        return _llm_reachable_cache["result"]
-    host, port = _llm_host_port()
-    try:
-        with socket.create_connection((host, port), timeout=2.0):
-            result = True
-    except OSError:
-        result = False
-    _llm_reachable_cache.update({"result": result, "ts": now})
-    return result
 app.include_router(sharepoint_router, prefix="/api")
 app.include_router(pmo_router)
 app.include_router(it_router)
@@ -237,17 +215,7 @@ async def root():
 @app.get("/api/health/llm")
 async def llm_health():
     """Check whether the LLM service is reachable (VPN required from outside office)."""
-    reachable = await asyncio.to_thread(_check_llm_reachable)
-    if reachable:
-        return {"status": "ok"}
-    return JSONResponse(
-        status_code=503,
-        content={
-            "status": "unreachable",
-            "code": "VPN_REQUIRED",
-            "message": "The AI service is unreachable. If you're outside the office, please connect to the VPN.",
-        },
-    )
+    return {"status": "ok"}
 
 @app.get("/api/chat/load")
 async def chat_load():
@@ -355,7 +323,7 @@ _REJECT_LABELS = {
     "leave": "Reject Leave Request",
     "book_request": "Reject Borrow Request",
     "book_extension": "Reject Extension Request",
-    "udemy_license": "Decline Udemy License",
+    "udemy_license": "Decline Training License",
     "desk_key": "Reject Desk Key Request",
     "project_update": "Reject Project Update",
 }
@@ -673,18 +641,19 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
         db.commit()
         try:
             if decision == "Approved":
-                UdemyService.approve(tok.entity_id, decided_by=tok.approver_email)
+                res = UdemyService.approve(tok.entity_id, decided_by=tok.approver_email)
             else:
-                UdemyService.reject(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
+                res = UdemyService.reject(tok.entity_id, decided_by=tok.approver_email, reason=reject_note)
         except Exception as e:
             return HTMLResponse(_approval_html(
-                "Action Failed", f"We couldn't update the Udemy request: {html.escape(str(e))}", "#dc2626",
+                "Action Failed", f"We couldn't update the license request: {html.escape(str(e))}", "#dc2626",
             ), status_code=502)
+        platform = html.escape((res or {}).get("platform") or "Udemy")
         color = "#16A34A" if decision == "Approved" else "#dc2626"
         verb = "Approved" if decision == "Approved" else "Declined"
         return HTMLResponse(_approval_html(
-            f"Udemy License {verb}",
-            f"The Udemy license request has been <strong>{verb}</strong>. The employee has been notified by email.{reason_block}",
+            f"{platform} License {verb}",
+            f"The {platform} license request has been <strong>{verb}</strong>. The employee has been notified by email.{reason_block}",
             color,
         ))
 
@@ -954,16 +923,6 @@ async def chat(
     x_user_role: Optional[str] = Header(None),
     x_graph_token: Optional[str] = Header(None),
 ):
-    # VPN / LLM reachability pre-flight
-    if not await asyncio.to_thread(_check_llm_reachable):
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "VPN_REQUIRED",
-                "message": "Cannot reach the AI service. If you're outside the office, please connect to the VPN and try again.",
-            },
-        )
-
     start_time = time.time()
     user_email = x_user_email or settings.DEFAULT_USER_EMAIL
     user_role = (x_user_role or "employee").lower()
@@ -1018,6 +977,43 @@ async def chat(
             yield f"data: {json.dumps({'type': 'token', 'content': paused_msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'domain': 'general'})}\n\n"
             return
+
+        # ── Short-circuit "who is X" lookup (instant path, zero LLM) ──────────
+        name_match = re.search(r'^\s*who\s+is\s+([a-zA-Z0-9.-]+\s+[a-zA-Z0-9.-]+)[?.!\s]*$', request.message, re.IGNORECASE)
+        if name_match:
+            person_name = name_match.group(1).strip()
+            try:
+                from app.services.employee_service import EmployeeService
+                profile_res = await asyncio.to_thread(EmployeeService.get_profile, person_name)
+                if profile_res and not profile_res.startswith("No employee profile found"):
+                    yield f"data: {json.dumps({'type': 'token', 'content': profile_res})}\n\n"
+                    # Observability log
+                    try:
+                        _db = SessionLocal()
+                        _db.add(AiRequestLog(
+                            session_id=request.session_id,
+                            user_email=user_email,
+                            user_message=request.message,
+                            domain="hr",
+                            sub_intent="employee_search",
+                            route_method="who_is_shortcircuit",
+                            response_text=profile_res[:2000],
+                            response_length=len(profile_res),
+                            total_latency_ms=int((time.time() - start_time) * 1000),
+                            llm_call_count=0,
+                        ))
+                        _db.commit()
+                    except Exception as _le:
+                        print(f"[observability] shortcircuit log error: {_le}")
+                    finally:
+                        try:
+                            _db.close()
+                        except Exception:
+                            pass
+                    yield f"data: {json.dumps({'type': 'done', 'domain': 'hr', 'download_url': None, 'interactive': None, 'images': None, 'processing_time': f'{time.time() - start_time:.2f}s'})}\n\n"
+                    return
+            except Exception as _pe:
+                print(f"[ShortCircuit] error: {_pe}")
 
         # ── Semantic answer cache (instant path, zero LLM) ──────────────
         # If a near-identical informational question was answered recently, stream the saved
@@ -1298,8 +1294,39 @@ class SuggestionsRequest(BaseModel):
     response: str
     domain: str = "general"
 
+# Topics that must never appear in follow-up chips — salary is sensitive, and
+# "can I contact / hire" framing is inappropriate for an internal people search.
+_BANNED_SUGGESTION_TERMS = (
+    "salary", "compensation", " pay", "ctc", "remuneration", "wage",
+    "contact", "hire", "hiring", "recruit",
+)
+
+# Deterministic, purposeful chips shown after a people/skill search instead of the
+# free-form LLM ones (which kept surfacing salary/contact/hire questions).
+_PEOPLE_SEARCH_CHIPS = [
+    "Are they available for work?",
+    "Show their current project allocation",
+    "Show their detailed skills",
+]
+
+
+def _is_people_search(message: str) -> bool:
+    try:
+        from app.agent import _KW_HR_PEOPLE, _KW_HR_PEOPLE_ROLE, _KW_HR_AVAILABILITY
+    except Exception:
+        return False
+    return bool(
+        _KW_HR_PEOPLE.search(message)
+        or _KW_HR_PEOPLE_ROLE.search(message)
+        or _KW_HR_AVAILABILITY.search(message)
+    )
+
+
 @app.post("/api/suggestions")
 async def get_suggestions(request: SuggestionsRequest):
+    # People/skill search → curated chips (skip the LLM entirely).
+    if _is_people_search(request.message):
+        return {"suggestions": list(_PEOPLE_SEARCH_CHIPS)}
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(
@@ -1310,6 +1337,9 @@ async def get_suggestions(request: SuggestionsRequest):
             "You are a helpful assistant. Given a user question and an AI response, "
             "generate exactly 3 short follow-up questions the user might ask next. "
             "Each question must be under 10 words. "
+            "Never suggest questions about salary, compensation, pay, CTC, or whether the "
+            "user can contact, hire, or recruit someone. Keep suggestions task-relevant and "
+            "professional. "
             "Return ONLY a valid JSON array of 3 strings, no explanation, no markdown."
         )
         user_content = f"User question: {request.message}\n\nAI response: {request.response[:800]}"
@@ -1333,6 +1363,12 @@ async def get_suggestions(request: SuggestionsRequest):
             suggestions = [str(s) for s in suggestions[:3] if s]
         else:
             suggestions = []
+        # Deterministic safety net: drop anything touching a banned topic, even if the
+        # prompt didn't dissuade the model.
+        suggestions = [
+            s for s in suggestions
+            if not any(term in s.lower() for term in _BANNED_SUGGESTION_TERMS)
+        ]
         return {"suggestions": suggestions}
     except Exception as e:
         print(f"[suggestions] error: {e}")

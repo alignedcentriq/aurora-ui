@@ -199,24 +199,39 @@ class EmployeeService:
 
             skills = EmployeeService._real_skills(db, email if email != "N/A" else "")
 
-            lines = [
-                f"**Employee Profile — {name}**",
-                f"• **Email:** {email}",
-                f"• **Designation:** {pick(ms.job_title if ms else None, profile.designation if profile else None)}",
-                f"• **Department / Function:** {pick(ms.department if ms else None, profile.function if profile else None)}",
-                f"• **Office Location:** {office}",
-                f"• **Reporting Manager:** {pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)}",
-                f"• **Skills:** {skills or 'None on file'}",
+            lines = []
+            lines.append(f"### 👤 Employee Profile: **{name}**\n")
+
+            table_rows = [
+                ["Email", email],
+                ["Designation", pick(ms.job_title if ms else None, profile.designation if profile else None)],
+                ["Department / Function", pick(ms.department if ms else None, profile.function if profile else None)],
+                ["Office Location", office],
+                ["Reporting Manager", pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)],
             ]
-            # Supplementary detail from the Zoho profile, only where present.
+
             if profile:
-                lines.extend([
-                    f"• **Level / Grade:** {profile.level or 'N/A'} / {profile.grade or 'N/A'}",
-                    f"• **Employment Type:** {pick(profile.employment_type, ms.employee_type if ms else None)}",
-                    f"• **Total Experience:** {profile.total_experience or 'N/A'}",
-                    f"• **Expertise / Ask Me About:** {profile.expertise or 'N/A'}",
-                    f"• **Languages Known:** {profile.language_known or 'N/A'}",
+                table_rows.extend([
+                    ["Level / Grade", f"{profile.level or 'N/A'} / {profile.grade or 'N/A'}"],
+                    ["Employment Type", pick(profile.employment_type, ms.employee_type if ms else None)],
+                    ["Total Experience", f"{profile.total_experience} years" if profile.total_experience else "N/A"],
+                    ["Languages Known", profile.language_known or "N/A"]
                 ])
+
+            lines.append(_employee_table(["Field", "Detail"], table_rows))
+            lines.append("")
+
+            if profile and profile.expertise:
+                lines.append(f"**Expertise / Ask Me About:**\n{profile.expertise}\n")
+
+            lines.append("**Skills & Certifications:**")
+            if skills:
+                skill_items = [s.strip() for s in skills.split(",") if s.strip()]
+                for s in skill_items:
+                    lines.append(f"- {s}")
+            else:
+                lines.append("- None on file")
+
             return "\n".join(lines)
         finally:
             db.close()

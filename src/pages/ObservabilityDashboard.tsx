@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { getApiToken } from "@/lib/api-token";
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -41,16 +40,6 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/observability")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "observability" },
-    });
-  },
-  component: ObservabilityDashboard,
-});
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {

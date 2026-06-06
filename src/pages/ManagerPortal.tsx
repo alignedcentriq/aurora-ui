@@ -1,4 +1,3 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
@@ -8,16 +7,6 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
-
-export const Route = createFileRoute("/_layout/manager-portal")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "manager-portal" },
-    });
-  },
-  component: ManagerPortal,
-});
 
 interface Member {
   employee: string; email: string; department: string; designation: string;

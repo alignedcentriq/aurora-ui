@@ -177,6 +177,22 @@ def _safe_title(title: str) -> str:
 
 _MIN_IMAGE_BYTES = 20_000  # 20 KB — filters logos, headers, icons; keeps charts/diagrams/tables
 
+# Phrases that mark a chunk as carrying exclusion / "not covered" language. When a
+# char_budget trims retrieval, any chunk matching one of these is kept IN FULL and never
+# budget-dropped — the answering LLM's "exclusions override coverage" rule depends on
+# seeing the exclusion text, so silently trimming it would flip a correct "not covered"
+# answer into a wrong "covered" one.
+_EXCLUSION_KEYWORDS = (
+    "exclusion", "not covered", "not payable",
+    "shall not", "is not eligible", "are excluded",
+)
+
+
+def _has_exclusion(t: str) -> bool:
+    """True if the text carries exclusion language that must survive any budget trim."""
+    low = (t or "").lower()
+    return any(k in low for k in _EXCLUSION_KEYWORDS)
+
 
 def _extract_images_from_pdf_bytes(data: bytes) -> list:
     """
@@ -714,9 +730,15 @@ class PolicyService:
         return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
 
     @staticmethod
-    def search_policies(query: str, limit: int = 4) -> str:
-        """Hybrid search over policy documents (excludes company-project content)."""
-        return PolicyService._hybrid_search(query, limit, category_not_in=[PROJECT_CATEGORY])
+    def search_policies(query: str, limit: int = 4, char_budget: int | None = None) -> str:
+        """Hybrid search over policy documents (excludes company-project content).
+
+        `char_budget` (opt-in) caps the total characters of the joined non-exclusion
+        excerpts to bound the context fed to the answering LLM; chunks containing
+        exclusion language are always kept in full (see `_has_exclusion`)."""
+        return PolicyService._hybrid_search(
+            query, limit, category_not_in=[PROJECT_CATEGORY], char_budget=char_budget
+        )
 
     @staticmethod
     def search_projects(query: str, limit: int = 6) -> str:
@@ -747,6 +769,7 @@ class PolicyService:
         limit: int = 4,
         category_in: list | None = None,
         category_not_in: list | None = None,
+        char_budget: int | None = None,
     ) -> str:
         """
         Hybrid BM25 + pgvector search with Reciprocal Rank Fusion.
@@ -869,9 +892,14 @@ class PolicyService:
                         seen_policies.add(c.policy_id)
                         seen_titles.add(norm)
                         clean_text = PolicyService._strip_metadata_lines(c.text)
-                        results.append(
-                            f"**{policy.title}** ({policy.category}):\n{clean_text}"
-                        )
+                        piece = f"**{policy.title}** ({policy.category}):\n{clean_text}"
+                        if char_budget is not None and not _has_exclusion(clean_text):
+                            remaining = char_budget - sum(len(r) for r in results)
+                            if remaining <= 0:
+                                continue
+                            if len(piece) > remaining:
+                                piece = piece[:remaining].rsplit("\n\n", 1)[0]
+                        results.append(piece)  # exclusion chunks always kept in full
                         if c.image_urls:
                             all_image_keys.extend(c.image_urls)
 
@@ -918,9 +946,14 @@ class PolicyService:
                             seen_policies.add(c.policy_id)
                             seen_titles.add(norm)
                             clean_text = PolicyService._strip_metadata_lines(c.text)
-                            results.append(
-                                f"**{policy.title}** ({policy.category}):\n{clean_text}"
-                            )
+                            piece = f"**{policy.title}** ({policy.category}):\n{clean_text}"
+                            if char_budget is not None and not _has_exclusion(clean_text):
+                                remaining = char_budget - sum(len(r) for r in results)
+                                if remaining <= 0:
+                                    continue
+                                if len(piece) > remaining:
+                                    piece = piece[:remaining].rsplit("\n\n", 1)[0]
+                            results.append(piece)  # exclusion chunks always kept in full
                             if c.image_urls:
                                 all_image_keys.extend(c.image_urls)
 

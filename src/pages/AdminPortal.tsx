@@ -1,20 +1,9 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
-
-export const Route = createFileRoute("/_layout/admin-portal")({
-  beforeLoad: () => {
-    throw redirect({
-      to: "/control-hub",
-      search: { tab: "admin-portal" },
-    });
-  },
-  component: AdminPortal,
-});
 
 type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
 
