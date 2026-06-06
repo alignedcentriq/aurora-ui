@@ -48,7 +48,7 @@ export function LoadingCharacterDisplay({ charId = "centriq", customChar = "", s
         />
         {/* Logo inside */}
         <img
-          src="/logo.png"
+          src={`${import.meta.env.BASE_URL}logo.png`}
           alt="Centriq"
           className="relative z-10 object-contain"
           style={{ width: s * 0.55, height: s * 0.55 }}
