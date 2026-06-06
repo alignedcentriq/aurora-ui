@@ -1,4 +1,3 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { getApiToken } from "@/lib/api-token";
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -41,10 +40,6 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_layout/observability")({
-  component: ObservabilityDashboard,
-});
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {
@@ -200,7 +195,7 @@ function DomainBadge({ domain }: { domain: string }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
-function ObservabilityDashboard() {
+export function ObservabilityDashboard() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"logs" | "charts">("logs");
 

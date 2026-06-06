@@ -74,6 +74,21 @@ OUTPUT:
 """
 
 
+# Conversational/meta replies that mean the model did NOT actually answer from context.
+# Chat-tuned models (gpt-oss, and sometimes the small instruct models) emit these instead
+# of the required NO_CONTEXT token; we must treat them as "not covered" so the request
+# falls through to the agent's tools rather than returning the filler as an answer.
+_NON_ANSWER_RE = re.compile(
+    r"(go ahead and ask|please (go ahead|provide|ask|share|specify|tell me|let me know)|"
+    r"\bi'?m ready\b|\bi am ready\b|ready to (answer|help|assist)|"
+    r"what(?:'s| is| would)? your question|how (can|may) i (help|assist)|"
+    r"feel free to ask|ask (me )?(your|any|the) question|"
+    r"i (don'?t|do not) have (enough|any|sufficient) (context|information|details)|"
+    r"happy to (help|answer|assist))",
+    re.I,
+)
+
+
 def _keyword_pre_filter(query: str, configs: list[dict]) -> bool:
     """Return True if the query has keyword overlap with any context config (LLM check needed).
     Returns False when there is clearly no match — caller can skip the LLM entirely.
@@ -264,17 +279,29 @@ class PromptService:
         )
         resp = llm.invoke([
             SM(content=(
+                "You are a strict classifier, NOT a chat assistant. Never greet, never ask the "
+                "user anything, never add preamble.\n\n"
                 "You have the following context:\n\n"
                 f"{ctx_text}\n\n"
                 "Rules:\n"
-                "1. If the question is directly answered by the context, reply with the answer only.\n"
-                "2. If the question is NOT covered by the context, reply with the single word: NO_CONTEXT\n"
+                "1. If the question is directly answered by the context above, output ONLY the "
+                "answer text (no preamble).\n"
+                "2. Otherwise output ONLY this exact token: NO_CONTEXT\n"
                 "Do not explain. Do not say 'NO_CONTEXT' if you can answer."
             )),
             HM(content=user_question),
         ])
-        content = resp.content.strip()
-        result = None if re.match(r'^\s*NO_CONTEXT[\s.,!?]*$', content, re.IGNORECASE) else content
+        content = (resp.content or "").strip()
+        # Fail-open: treat an explicit NO_CONTEXT, an empty reply, OR conversational filler
+        # (a non-answer that doesn't use the context) as "not covered" so the request falls
+        # through to the agent's tools. Chat-tuned models (e.g. gpt-oss) tend to emit meta
+        # replies like "I'm ready to answer, go ahead and ask" instead of NO_CONTEXT, which
+        # must NOT be returned as a real answer.
+        if not content or re.match(r'^\s*NO_CONTEXT[\s.,!?]*$', content, re.IGNORECASE) \
+                or _NON_ANSWER_RE.search(content):
+            result = None
+        else:
+            result = content
 
         # Store in Redis (or in-memory fallback)
         if _r:

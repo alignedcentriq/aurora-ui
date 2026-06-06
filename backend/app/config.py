@@ -91,6 +91,15 @@ class Config:
     AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
+    # ── Service-agent Model (tool-calling for Admin / IT / PMO / Manager) ──
+    # These agents do real tool-calling. llama3.2:3b is too weak — it refuses
+    # ("outside my area") instead of calling the tool. gpt-oss is reliable but too
+    # heavy on the shared ml01 box (cold-reloads of the ~20B model time out >120s
+    # under contention). llama3.1:8b is the sweet spot: a capable tool-caller that
+    # stays fast on the shared server. Override via SERVICE_MODEL_NAME (e.g. gpt-oss
+    # if ml01 gets dedicated capacity).
+    SERVICE_MODEL_NAME = os.getenv("SERVICE_MODEL_NAME", "llama3.1:8b")
+
     # ── General Model (greetings, small talk) ──
     GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "llama3.2:3b")
 
@@ -128,6 +137,20 @@ class Config:
     ANSWER_CACHE_SIM_THRESHOLD = float(os.getenv("ANSWER_CACHE_SIM_THRESHOLD", "0.93"))
     # Safety net: never serve a cached answer older than this, even if not explicitly invalidated.
     ANSWER_CACHE_MAX_AGE_DAYS = int(os.getenv("ANSWER_CACHE_MAX_AGE_DAYS", "7"))
+
+    # ── URL Library (admin-curated app directory, semantically matched to user queries) ──
+    # Broad recall for the find_apps tool: the agent asked for matches, so surface anything
+    # plausibly relevant and let the LLM decide. Lower than the answer cache on purpose.
+    APP_DIRECTORY_SIM_THRESHOLD = float(os.getenv("APP_DIRECTORY_SIM_THRESHOLD", "0.45"))
+    # Stricter gate for the proactive mid-conversation nudge — only volunteer an app link when
+    # the match is confident, so unrelated chats aren't peppered with link suggestions.
+    APP_DIRECTORY_NUDGE_THRESHOLD = float(os.getenv("APP_DIRECTORY_NUDGE_THRESHOLD", "0.62"))
+
+    # ── Form Library (admin-defined fillable forms, semantically matched to user queries) ──
+    # A form match short-circuits the router and renders the form inline, suppressing normal
+    # agent handling — so the gate is deliberately high: only a confident match should trigger a
+    # form, otherwise a vaguely-similar message falls through to normal routing untouched.
+    FORM_MATCH_SIM_THRESHOLD = float(os.getenv("FORM_MATCH_SIM_THRESHOLD", "0.62"))
 
     # ── Semantic Intent Router (embedding nearest-neighbour domain classification) ──
     # Closed-set routing: the message is matched against labeled seed utterances by cosine
@@ -197,6 +220,9 @@ class Config:
     # Mailbox used as the SENDER for unattended/background emails (parking reminders).
     # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
     PARKING_REMINDER_SENDER = os.getenv("PARKING_REMINDER_SENDER", "")
+    # Mailbox used as the SENDER for the unattended biweekly project-update form email.
+    # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
+    PROJECT_UPDATE_SENDER = os.getenv("PROJECT_UPDATE_SENDER", "")
     # Bookshelf Buddy — book request notifications go to this admin
     BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     # Nexus Library mock server — single source of truth for book inventory
@@ -271,6 +297,10 @@ class Config:
     # Prefix prepended to numeric employee IDs when calling the Alchemy API.
     # DB stores "1540", Alchemy expects "AASPL-1540" → prefix = "AASPL-"
     ALCHEMY_EMPLOYEE_PREFIX   = os.getenv("ALCHEMY_EMPLOYEE_PREFIX", "AASPL-")
+    # Master switch for skill-based people search ("find python developers"):
+    #   true  → query the authoritative Alchemy Skills Portal (skill name → id → users)
+    #   false → fall back to the internal DB directory (dummy/demo data)
+    ALCHEMY_SKILL_SEARCH_ENABLED = os.getenv("ALCHEMY_SKILL_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

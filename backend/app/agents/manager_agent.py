@@ -51,7 +51,7 @@ def manager_assistant(state: ManagerState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("router", default_timeout=30).bind_tools(tools)
+    llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(tools)
     return {"messages": [llm.invoke(messages)]}
 
 

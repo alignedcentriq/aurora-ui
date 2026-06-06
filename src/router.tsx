@@ -57,7 +57,8 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
 export const getRouter = () => {
   const router = createRouter({
     routeTree,
-
+    // App is mounted under /centriq behind nginx — keep client routing/links in sync.
+    basepath: "/centriq",
     context: {},
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,

@@ -1,13 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
 import { Check, X, Clock, CalendarDays, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-
-export const Route = createFileRoute("/_layout/hr-portal")({
-  component: HRPortal,
-});
 
 type LeaveStatus = "All" | "Pending" | "Approved" | "Rejected";
 
@@ -31,7 +26,7 @@ const STATUS_BADGE: Record<string, string> = {
   Cancelled: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
 };
 
-function HRPortal() {
+export function HRPortal() {
   const { user } = useAuth();
   const [filter, setFilter] = useState<LeaveStatus>("Pending");
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);

@@ -4,7 +4,15 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [tanstackStart(), react(), tailwindcss()],
+  // Served under the /centriq subpath behind nginx — emit asset URLs prefixed accordingly.
+  base: "/centriq/",
+  plugins: [
+    // SPA mode: build a static client bundle + prerendered index.html shell (no SSR server).
+    // nginx serves the static output directly; the app is a client-auth MSAL SPA.
+    tanstackStart({ spa: { enabled: true } }),
+    react(),
+    tailwindcss(),
+  ],
   server: {
     port: 3000,
     strictPort: true,

@@ -49,6 +49,25 @@ export interface VisitorPassPrefill {
   visitorCompany?: string;
 }
 
+// One configurable field in an admin-defined Form Library form.
+export interface DynamicFormField {
+  name: string;
+  label: string;
+  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox";
+  required?: boolean;
+  options?: string[];
+  placeholder?: string;
+}
+
+// Schema the backend sends for an admin-defined form matched in chat.
+export interface DynamicFormData {
+  template_id: number;
+  name: string;
+  description?: string;
+  fields: DynamicFormField[];
+  submit_endpoint: string;
+}
+
 export interface InteractivePayload {
   type:
     | "email_draft"
@@ -61,8 +80,9 @@ export interface InteractivePayload {
     | "my_schedule"
     | "skills_editor"
     | "team_attendance"
-    | "attendance_schedule";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill;
+    | "attendance_schedule"
+    | "dynamic_form";
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData;
 }
 
 export interface Turn {

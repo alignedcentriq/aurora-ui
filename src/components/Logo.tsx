@@ -37,7 +37,7 @@ export function Logo({ className, size = "md" }: LogoProps) {
       />
       {/* Logo image */}
       <img
-        src="/logo.png"
+        src={`${import.meta.env.BASE_URL}logo.png`}
         alt="Centriq AI Logo"
         className="relative h-full w-full object-cover rounded-xl"
         style={{ padding: "2px" }}
