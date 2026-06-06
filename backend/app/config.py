@@ -213,6 +213,21 @@ class Config:
     PORT = int(os.getenv("PORT", "8080"))
     HOST = os.getenv("HOST", "0.0.0.0")
 
+    # ── Access allowlist ──────────────────────────────────────────────────────
+    # Only these emails may use the app. Override via ALLOWED_EMAILS env var
+    # (comma-separated) to avoid a rebuild when the list changes.
+    ALLOWED_EMAILS: set = {
+        e.strip().lower()
+        for e in os.getenv(
+            "ALLOWED_EMAILS",
+            "shivani.patel@alignedautomation.com,"
+            "suraj.ghuge@alignedautomation.com,"
+            "priyanka.sonawane@alignedautomation.com"
+            "shivam.sharma@alignedautomation.com",
+        ).split(",")
+        if e.strip()
+    }
+
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")

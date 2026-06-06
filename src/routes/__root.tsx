@@ -110,10 +110,10 @@ function LoginView() {
   const { loadingCharId = "centriq", loadingCharCustom = "" } = (typeof useSettings === "function" ? useSettings() : {}) as { loadingCharId?: string; loadingCharCustom?: string };
 
   const FOUR_C = [
-    { key: "C", label: "Clarity",       color: "var(--clarity)" },
-    { key: "C", label: "Connectivity",  color: "var(--connectivity)" },
+    { key: "C", label: "Clarity", color: "var(--clarity)" },
+    { key: "C", label: "Connectivity", color: "var(--connectivity)" },
     { key: "C", label: "Collaboration", color: "var(--collaboration)" },
-    { key: "C", label: "Capacity",      color: "var(--capacity)" },
+    { key: "C", label: "Capacity", color: "var(--capacity)" },
   ] as const;
 
   return (
@@ -299,11 +299,38 @@ function LoginView() {
 
 import { ThemeManager } from "@/lib/ThemeManager";
 
+function AccessDeniedView() {
+  const { logout } = useAuth();
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background relative overflow-hidden">
+      <AnimatedBackground />
+      <div className="relative z-10 text-center space-y-4 p-8 max-w-sm">
+        <div className="text-5xl">🔒</div>
+        <h1 className="text-2xl font-black tracking-tight">Access Denied</h1>
+        <p className="text-sm text-muted-foreground">
+          Your account is not authorized to use this application. Contact your administrator to request access.
+        </p>
+        <button
+          onClick={logout}
+          className="mt-4 px-5 py-2 rounded-xl text-sm font-semibold text-white"
+          style={{ background: "var(--gradient-primary)" }}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AuthenticatedApp() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, accessDenied } = useAuth();
 
   if (isLoading) {
     return <SplashScreen />;
+  }
+
+  if (accessDenied) {
+    return <AccessDeniedView />;
   }
 
   if (!user) {

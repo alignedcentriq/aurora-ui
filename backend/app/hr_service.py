@@ -436,11 +436,11 @@ class HRService:
             db.close()
 
     @staticmethod
-    def search_policies(query: str, limit: int = 3):
+    def search_policies(query: str, limit: int = 3, char_budget: int | None = None):
         """Search policies using the enhanced PolicyService (real documents)."""
         try:
             from app.services.policy_service import PolicyService
-            return PolicyService.search_policies(query, limit=limit)
+            return PolicyService.search_policies(query, limit=limit, char_budget=char_budget)
         except Exception as e:
             # Fallback to basic search if PolicyService fails
             db = SessionLocal()

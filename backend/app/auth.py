@@ -32,6 +32,8 @@ def get_current_user(
     Falls back to DEFAULT_USER_EMAIL in dev when headers are absent.
     """
     email = (x_user_email or "").strip().lower() or settings.DEFAULT_USER_EMAIL
+    if settings.ALLOWED_EMAILS and email not in settings.ALLOWED_EMAILS:
+        raise HTTPException(status_code=403, detail="Access denied.")
     role = (x_user_role or "employee").strip().lower()
     if role not in VALID_ROLES:
         role = "employee"

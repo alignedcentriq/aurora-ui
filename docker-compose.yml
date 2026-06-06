@@ -26,6 +26,8 @@ services:
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LANGFUSE_HOST=http://langfuse-server:3000
+    extra_hosts:
+      - "ml01:${ML01_IP}"
     networks:
       - centriq-network
     depends_on:

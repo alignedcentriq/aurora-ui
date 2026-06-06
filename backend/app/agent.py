@@ -1350,7 +1350,9 @@ _KW_IT_INSTALL_NEED = re.compile(
     r'\s+(?:installed|installation|set\s*up)\b', re.I
 )
 _KW_IT_VPN = re.compile(
-    r'\b(vpn\s+(not|issue|problem|access|connect)|'
+    r'\b(vpn|'
+    r'(connect|setup|set\s+up|configure|use|access|install)\s+\w*\s*vpn|'
+    r'vpn\s+(not|issue|problem|access|connect|setup|config\w*)|'
     r'password\s+reset|network\s+(issue|problem|not|down|slow))\b', re.I
 )
 _KW_IT_LICENSE = re.compile(
@@ -2635,6 +2637,17 @@ def general_agent(state: AgentState):
         response = llm_controls.get_llm("general", default_timeout=20).bind_tools(general_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
+
+    # If the model returned empty text with no tool calls, surface the last tool result directly.
+    # This prevents the "unable to generate a text summary" fallback on weak models.
+    if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
+        last_tool = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, ToolMessage) and m.content),
+            None,
+        )
+        if last_tool:
+            response = AIMessage(content=last_tool.content)
+
     return {"messages": [response]}
 
 

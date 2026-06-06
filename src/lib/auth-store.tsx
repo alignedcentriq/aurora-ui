@@ -25,6 +25,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isInteracting: boolean;
+  accessDenied: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   setRole: (role: Role) => void;
@@ -43,7 +44,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { instance, accounts, inProgress } = useMsal();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  
+  const [accessDenied, setAccessDenied] = useState(false);
+
   const isInteracting = inProgress !== InteractionStatus.None;
   const hasAutoRedirected = React.useRef(false);
 
@@ -55,15 +57,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const account = accounts[0];
           const idTokenClaims = account.idTokenClaims as any;
           const role = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
+          const email = account.username;
 
           console.log("✅ MSAL Authentication Successful!");
           console.log("👤 User Account Details:", account);
           console.log("🔑 ID Token Claims:", idTokenClaims);
 
+          // Verify the user is on the backend allowlist before granting access.
+          try {
+            const res = await fetch("/api/me", {
+              headers: { "x-user-email": email, "x-user-role": role.toLowerCase() },
+            });
+            if (res.status === 403) {
+              setAccessDenied(true);
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            // Network error — allow through; backend will enforce on actual calls.
+          }
+
           setUser({
             id: account.localAccountId,
             name: account.name || account.username || "User",
-            email: account.username,
+            email,
             role: role as Role,
             avatarUrl: undefined,
             team: [
@@ -105,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             account: accounts[0],
           };
           const response = await instance.acquireTokenSilent(request);
-          
+
           const photoResponse = await fetch("https://graph.microsoft.com/v1.0/me/photo/$value", {
             headers: {
               Authorization: `Bearer ${response.accessToken}`,
@@ -154,7 +171,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isInteracting, login, logout, setRole }}>
+    <AuthContext.Provider value={{ user, isLoading, isInteracting, accessDenied, login, logout, setRole }}>
       {children}
     </AuthContext.Provider>
   );

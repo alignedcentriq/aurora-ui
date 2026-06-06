@@ -214,6 +214,12 @@ async def root():
     return {"status": "online", "message": "Centriq AI Backend is running"}
 
 
+@app.get("/api/me")
+async def me(user: CurrentUser = Depends(get_current_user)):
+    """Returns the authenticated user's identity. Fails with 403 if not on the allowlist."""
+    return {"email": user.email, "role": user.role}
+
+
 @app.get("/api/health/llm")
 async def llm_health():
     """Check whether the LLM service is reachable (VPN required from outside office)."""
@@ -1197,6 +1203,16 @@ async def chat(
         if not accumulated_text and final_messages:
             last = final_messages[-1]
             accumulated_text = last.content if hasattr(last, "content") and isinstance(last.content, str) else ""
+            # If the last AI message was empty, fall back to the most recent ToolMessage result.
+            if not accumulated_text:
+                from langchain_core.messages import ToolMessage as _ToolMessage
+                last_tool = next(
+                    (m for m in reversed(final_messages)
+                     if isinstance(m, _ToolMessage) and isinstance(m.content, str) and m.content.strip()),
+                    None,
+                )
+                if last_tool:
+                    accumulated_text = last_tool.content
             # Send as token so frontend creates the AI turn (no LLM = no stream events)
             if accumulated_text:
                 yield f"data: {json.dumps({'type': 'token', 'content': accumulated_text})}\n\n"
