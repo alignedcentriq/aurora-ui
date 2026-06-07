@@ -454,7 +454,7 @@ export function Composer({
                 handleSubmit();
               }
             }}
-            placeholder="Message Centriq AI..."
+            placeholder="Message Centriq AI... (type / for forms & links)"
             disabled={disabled}
             className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
           />

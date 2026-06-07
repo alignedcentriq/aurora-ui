@@ -68,6 +68,7 @@ interface FormTemplate {
   category: string;
   fields: FormField[];
   enabled: boolean;
+  trigger_keywords: string;
   notify_email: string;
   notify_domain: string;
   created_by: string | null;
@@ -102,6 +103,7 @@ type MetaState = {
   name: string;
   description: string;
   category: string;
+  trigger_keywords: string;
   notify_email: string;
   notify_domain: string;
 };
@@ -109,6 +111,7 @@ const EMPTY_META: MetaState = {
   name: "",
   description: "",
   category: "",
+  trigger_keywords: "",
   notify_email: "",
   notify_domain: "",
 };
@@ -216,6 +219,7 @@ export function FormLibrary() {
       name: f.name,
       description: f.description,
       category: f.category || "",
+      trigger_keywords: f.trigger_keywords || "",
       notify_email: f.notify_email || "",
       notify_domain: f.notify_domain || "",
     });
@@ -281,6 +285,7 @@ export function FormLibrary() {
             name: meta.name.trim(),
             description: meta.description.trim(),
             category: meta.category.trim(),
+            trigger_keywords: meta.trigger_keywords.trim(),
             notify_email: meta.notify_email.trim(),
             notify_domain: meta.notify_domain.trim(),
             fields: payloadFields,
@@ -684,6 +689,20 @@ export function FormLibrary() {
                 placeholder="What is this form for? Include phrasings users might say, e.g. 'register a visitor, guest gate pass'."
                 className="mt-1 min-h-[64px]"
               />
+            </div>
+            <div>
+              <label className="text-[12px] font-medium text-muted-foreground">
+                Chat trigger keywords <span className="opacity-60">(optional)</span>
+              </label>
+              <Input
+                value={meta.trigger_keywords}
+                onChange={(e) => setMeta({ ...meta, trigger_keywords: e.target.value })}
+                placeholder="e.g. visitor pass, visitor, guest entry"
+                className="mt-1"
+              />
+              <p className="text-[11px] text-muted-foreground/70 mt-1">
+                Comma-separated. When a user's message contains any of these words, this form opens inline in chat automatically.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

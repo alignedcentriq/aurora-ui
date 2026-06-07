@@ -124,6 +124,7 @@ class FormLibraryService:
             "description": r.description,
             "category": r.category or "",
             "fields": r.fields or [],
+            "trigger_keywords": r.trigger_keywords or "",
             "enabled": r.enabled,
             "notify_email": r.notify_email or "",
             "notify_domain": r.notify_domain or "",
@@ -138,10 +139,12 @@ class FormLibraryService:
     # ── CRUD ────────────────────────────────────────────────────────────────────
     @staticmethod
     def create(name: str, description: str, fields: list, category: str = "",
-               notify_email: str = "", notify_domain: str = "", created_by: str = "") -> dict:
+               trigger_keywords: str = "", notify_email: str = "", notify_domain: str = "",
+               created_by: str = "") -> dict:
         name = (name or "").strip()
         description = (description or "").strip()
         category = (category or "").strip()
+        trigger_keywords = (trigger_keywords or "").strip()
         if not name or not description:
             return {"status": "error", "message": "name and description are required."}
         ok, err = FormLibraryService._validate_fields(fields)
@@ -158,6 +161,7 @@ class FormLibraryService:
                 description=description,
                 category=category or None,
                 fields=norm,
+                trigger_keywords=trigger_keywords or None,
                 embedding=FormLibraryService._embed_text(name, description, category, norm),
                 notify_email=(notify_email or "").strip() or None,
                 notify_domain=(notify_domain or "").strip() or None,
@@ -175,8 +179,8 @@ class FormLibraryService:
 
     @staticmethod
     def update(form_id: int, name: str = None, description: str = None, fields: list = None,
-               category: str = None, enabled: bool = None, notify_email: str = None,
-               notify_domain: str = None) -> dict:
+               category: str = None, trigger_keywords: str = None, enabled: bool = None,
+               notify_email: str = None, notify_domain: str = None) -> dict:
         db = SessionLocal()
         try:
             row = db.query(FormTemplate).filter(FormTemplate.id == form_id).first()
@@ -195,6 +199,8 @@ class FormLibraryService:
                 row.description = description.strip()
             if category is not None:
                 row.category = category.strip() or None
+            if trigger_keywords is not None:
+                row.trigger_keywords = trigger_keywords.strip() or None
             if fields is not None:
                 ok, err = FormLibraryService._validate_fields(fields)
                 if not ok:

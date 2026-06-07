@@ -19,7 +19,10 @@ public_router = APIRouter(prefix="/api/links", tags=["url-library"])
 
 @public_router.get("")
 async def list_active_links(_: CurrentUser = Depends(get_current_user)):
-    return [{"name": r["name"], "url": r["url"]} for r in AppDirectoryService.list_all(include_inactive=False)]
+    return [
+        {"name": r["name"], "url": r["url"], "purpose": r.get("purpose", ""), "trigger_keywords": r.get("trigger_keywords", "")}
+        for r in AppDirectoryService.list_all(include_inactive=False)
+    ]
 
 
 class AppLinkPayload(BaseModel):
@@ -27,6 +30,7 @@ class AppLinkPayload(BaseModel):
     url: str
     purpose: str
     capabilities: str = ""
+    trigger_keywords: str = ""
 
 
 class AppLinkUpdatePayload(BaseModel):
@@ -34,6 +38,7 @@ class AppLinkUpdatePayload(BaseModel):
     url: str | None = None
     purpose: str | None = None
     capabilities: str | None = None
+    trigger_keywords: str | None = None
     is_active: bool | None = None
 
 
@@ -49,6 +54,7 @@ async def create_app(payload: AppLinkPayload, user: CurrentUser = Depends(requir
         url=payload.url,
         purpose=payload.purpose,
         capabilities=payload.capabilities,
+        trigger_keywords=payload.trigger_keywords,
         created_by=user.email,
     )
     if res.get("status") != "ok":
@@ -65,6 +71,7 @@ async def update_app(app_id: int, payload: AppLinkUpdatePayload,
         url=payload.url,
         purpose=payload.purpose,
         capabilities=payload.capabilities,
+        trigger_keywords=payload.trigger_keywords,
         is_active=payload.is_active,
     )
     if res.get("status") != "ok":

@@ -43,11 +43,12 @@ class AppDirectoryService:
     # ── CRUD ────────────────────────────────────────────────────────────────────
     @staticmethod
     def create(name: str, url: str, purpose: str, capabilities: str = "",
-               created_by: str = "") -> dict:
+               trigger_keywords: str = "", created_by: str = "") -> dict:
         name = (name or "").strip()
         url = (url or "").strip()
         purpose = (purpose or "").strip()
         capabilities = (capabilities or "").strip()
+        trigger_keywords = (trigger_keywords or "").strip()
         if not name or not url or not purpose:
             return {"status": "error", "message": "name, url and purpose are required."}
 
@@ -60,6 +61,7 @@ class AppDirectoryService:
                 url=url,
                 purpose=purpose,
                 capabilities=capabilities or None,
+                trigger_keywords=trigger_keywords or None,
                 embedding=AppDirectoryService._embed_text(name, purpose, capabilities),
                 created_by=created_by or None,
             )
@@ -76,7 +78,8 @@ class AppDirectoryService:
 
     @staticmethod
     def update(app_id: int, name: str = None, url: str = None, purpose: str = None,
-               capabilities: str = None, is_active: bool = None) -> dict:
+               capabilities: str = None, trigger_keywords: str = None,
+               is_active: bool = None) -> dict:
         db = SessionLocal()
         try:
             row = db.query(AppLink).filter(AppLink.id == app_id).first()
@@ -90,6 +93,8 @@ class AppDirectoryService:
                 row.purpose = purpose.strip()
             if capabilities is not None:
                 row.capabilities = capabilities.strip() or None
+            if trigger_keywords is not None:
+                row.trigger_keywords = trigger_keywords.strip() or None
             if is_active is not None:
                 row.is_active = is_active
             # Re-embed from the (possibly) updated descriptive text.
@@ -135,6 +140,7 @@ class AppDirectoryService:
                     "url": r.url,
                     "purpose": r.purpose,
                     "capabilities": r.capabilities or "",
+                    "trigger_keywords": r.trigger_keywords or "",
                     "is_active": r.is_active,
                     "created_by": r.created_by,
                     "created_at": r.created_at.isoformat() if r.created_at else None,

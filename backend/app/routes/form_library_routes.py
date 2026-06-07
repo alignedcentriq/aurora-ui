@@ -21,6 +21,7 @@ class FormTemplatePayload(BaseModel):
     description: str
     fields: list[dict[str, Any]]
     category: str = ""
+    trigger_keywords: str = ""
     notify_email: str = ""
     notify_domain: str = ""
 
@@ -30,6 +31,7 @@ class FormTemplateUpdatePayload(BaseModel):
     description: Optional[str] = None
     fields: Optional[list[dict[str, Any]]] = None
     category: Optional[str] = None
+    trigger_keywords: Optional[str] = None
     enabled: Optional[bool] = None
     notify_email: Optional[str] = None
     notify_domain: Optional[str] = None
@@ -53,6 +55,7 @@ async def create_form(payload: FormTemplatePayload, user: CurrentUser = Depends(
         description=payload.description,
         fields=payload.fields,
         category=payload.category,
+        trigger_keywords=payload.trigger_keywords,
         notify_email=payload.notify_email,
         notify_domain=payload.notify_domain,
         created_by=user.email,
@@ -95,6 +98,7 @@ async def update_form(form_id: int, payload: FormTemplateUpdatePayload,
         description=payload.description,
         fields=payload.fields,
         category=payload.category,
+        trigger_keywords=payload.trigger_keywords,
         enabled=payload.enabled,
         notify_email=payload.notify_email,
         notify_domain=payload.notify_domain,

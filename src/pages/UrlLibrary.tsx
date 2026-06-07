@@ -31,6 +31,7 @@ interface AppLink {
   url: string;
   purpose: string;
   capabilities: string;
+  trigger_keywords: string;
   is_active: boolean;
   created_by: string | null;
   created_at: string | null;
@@ -59,8 +60,8 @@ const SUGGESTIONS = [
   },
 ];
 
-type FormState = { name: string; url: string; purpose: string; capabilities: string };
-const EMPTY_FORM: FormState = { name: "", url: "", purpose: "", capabilities: "" };
+type FormState = { name: string; url: string; purpose: string; capabilities: string; trigger_keywords: string };
+const EMPTY_FORM: FormState = { name: "", url: "", purpose: "", capabilities: "", trigger_keywords: "" };
 
 export function UrlLibrary() {
   const { user } = useAuth();
@@ -136,6 +137,7 @@ export function UrlLibrary() {
       url: app.url,
       purpose: app.purpose,
       capabilities: app.capabilities || "",
+      trigger_keywords: app.trigger_keywords || "",
     });
     setDialogOpen(true);
   };
@@ -166,6 +168,7 @@ export function UrlLibrary() {
             url: form.url.trim(),
             purpose: form.purpose.trim(),
             capabilities: form.capabilities.trim(),
+            trigger_keywords: form.trigger_keywords.trim(),
           }),
         },
       );
@@ -452,6 +455,20 @@ export function UrlLibrary() {
                 placeholder="e.g. create expense reports, upload receipts, track approval status, export to PDF"
                 className="mt-1 min-h-[70px]"
               />
+            </div>
+            <div>
+              <label className="text-[12px] font-medium text-muted-foreground">
+                Chat trigger keywords <span className="opacity-60">(optional)</span>
+              </label>
+              <Input
+                value={form.trigger_keywords}
+                onChange={(e) => setForm({ ...form, trigger_keywords: e.target.value })}
+                placeholder="e.g. payslip, salary, pay slip, my pay"
+                className="mt-1"
+              />
+              <p className="text-[11px] text-muted-foreground/70 mt-1">
+                Comma-separated. When a user's message contains any of these words, the assistant will offer to open this portal directly.
+              </p>
             </div>
           </div>
           <DialogFooter>

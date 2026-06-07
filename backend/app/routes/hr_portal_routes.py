@@ -6,37 +6,9 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_hr
 from app.database import get_db
-from app.models import Leave, Employee, Grievance, HRQuery, LeaveBalance, LeaveType
+from app.models import Employee, Grievance, HRQuery, LeaveBalance, LeaveType
 
 router = APIRouter(prefix="/api/portal/hr", tags=["HR Portal"])
-
-
-@router.get("/leaves")
-def list_leaves(
-    status: Optional[str] = None,
-    _: CurrentUser = Depends(require_hr),
-    db: Session = Depends(get_db),
-):
-    q = db.query(Leave, Employee).join(Employee, Leave.employee_id == Employee.id)
-    if status:
-        q = q.filter(Leave.status == status)
-    rows = q.order_by(Leave.created_at.desc()).all()
-    return [
-        {
-            "id": leave.id,
-            "employee_name": emp.name,
-            "employee_email": emp.email,
-            "leave_type": leave.leave_type,
-            "start_date": leave.start_date.isoformat(),
-            "end_date": leave.end_date.isoformat(),
-            "days": (leave.end_date - leave.start_date).days + 1,
-            "status": leave.status,
-            "reason": leave.reason,
-            "created_at": leave.created_at.isoformat(),
-        }
-        for leave, emp in rows
-    ]
-
 
 
 # ── Grievances ────────────────────────────────────────────────────────────────

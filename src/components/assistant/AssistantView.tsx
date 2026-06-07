@@ -123,7 +123,8 @@ export function AssistantView() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   // URL Library links — pre-fetched once so the leave intercept can resolve a Zoho URL synchronously.
-  const urlLinksRef = useRef<{ name: string; url: string }[]>([]);
+  const urlLinksRef = useRef<{ name: string; url: string; purpose?: string; trigger_keywords?: string }[]>([]);
+  const formsRef = useRef<{ id: number; name: string; description: string; fields: unknown[]; trigger_keywords?: string }[]>([]);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
@@ -158,15 +159,17 @@ export function AssistantView() {
     if (!serverBusy) setLoadBannerDismissed(false);
   }, [serverBusy]);
 
-  // Pre-fetch URL Library links once (fail-soft) so the leave intercept can pick
-  // the admin-configured Zoho People URL without needing an async lookup at intercept time.
+  // Pre-fetch URL Library links and Forms once (fail-soft) for chat intercepts.
   useEffect(() => {
     if (!user?.email) return;
-    fetch("/api/links", {
-      headers: { "x-user-email": user.email, "x-user-role": (user.role || "employee").toLowerCase() },
-    })
+    const headers = { "x-user-email": user.email, "x-user-role": (user.role || "employee").toLowerCase() };
+    fetch("/api/links", { headers })
       .then((r) => r.ok ? r.json() : [])
       .then((data) => { if (Array.isArray(data)) urlLinksRef.current = data; })
+      .catch(() => {});
+    fetch("/api/forms/list", { headers })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => { if (Array.isArray(data)) formsRef.current = data; })
       .catch(() => {});
   }, [user?.email]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -528,12 +531,12 @@ export function AssistantView() {
           /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(text)
         );
       if (isLeaveApplication) {
-        const zohoLink =
-          urlLinksRef.current.find((l) => /zoho/i.test(l.name) || /leave/i.test(l.name))?.url ??
-          "https://people.zoho.com";
-        const zohoName =
-          urlLinksRef.current.find((l) => /zoho/i.test(l.name) || /leave/i.test(l.name))?.name ??
-          "Zoho People";
+        const zohoPeopleLink =
+          urlLinksRef.current.find((l) => /leave|people/i.test(l.purpose ?? "")) ??
+          urlLinksRef.current.find((l) => /people/i.test(l.name) || /leave/i.test(l.name)) ??
+          urlLinksRef.current.find((l) => /zoho/i.test(l.name) && !/expense/i.test(l.name));
+        const zohoLink = zohoPeopleLink?.url ?? "https://people.zoho.com";
+        const zohoName = zohoPeopleLink?.name ?? "Zoho People";
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
@@ -561,6 +564,81 @@ export function AssistantView() {
         });
         setInput("");
         return;
+      }
+
+      // Generic URL Library intercept — fire for any active link with matching trigger_keywords.
+      // Skipped when the user chose "Let the assistant handle it" (suffix guard).
+      if (!text.includes("via the assistant")) {
+        const lowerText = text.toLowerCase();
+        const triggeredLink = urlLinksRef.current.find((l) => {
+          if (!l.trigger_keywords) return false;
+          return l.trigger_keywords
+            .split(",")
+            .map((k) => k.trim().toLowerCase())
+            .filter(Boolean)
+            .some((kw) => lowerText.includes(kw));
+        });
+        if (triggeredLink) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: `How would you like to access ${triggeredLink.name}?`,
+            interactive: {
+              type: "quick_choice",
+              data: {
+                question: `How would you like to access ${triggeredLink.name}?`,
+                options: [
+                  {
+                    label: `Open ${triggeredLink.name}`,
+                    action: "link",
+                    value: triggeredLink.url,
+                    icon: "external-link",
+                  },
+                  {
+                    label: "Let the assistant handle it",
+                    action: "message",
+                    value: `${text} via the assistant`,
+                    icon: "sparkles",
+                  },
+                ],
+              },
+            },
+          });
+          setInput("");
+          return;
+        }
+      }
+
+      // Form Library intercept — open the matched form inline without going through the LLM.
+      if (!text.includes("via the assistant")) {
+        const lowerText = text.toLowerCase();
+        const triggeredForm = formsRef.current.find((f) => {
+          if (!f.trigger_keywords) return false;
+          return f.trigger_keywords
+            .split(",")
+            .map((k) => k.trim().toLowerCase())
+            .filter(Boolean)
+            .some((kw) => lowerText.includes(kw));
+        });
+        if (triggeredForm) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: triggeredForm.description || `Here is the ${triggeredForm.name} form:`,
+            interactive: {
+              type: "dynamic_form",
+              data: {
+                template_id: triggeredForm.id,
+                name: triggeredForm.name,
+                description: triggeredForm.description,
+                fields: triggeredForm.fields,
+                submit_endpoint: `/api/forms/${triggeredForm.id}/submit`,
+              },
+            },
+          });
+          setInput("");
+          return;
+        }
       }
 
       // Pin the originating thread so the streaming closure writes to the chat that

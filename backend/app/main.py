@@ -628,14 +628,15 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                     print(f"[Approval] Balance deduction error (non-fatal): {e}")
 
             db.commit()
-            # Notify employee
+            # Notify employee — use employee's Graph token as sender since the manager
+            # clicks the approval link without a connected MS365 session in our app.
             try:
                 from app.services.email_service import send_leave_decision_notification
                 from app.models import Employee
                 emp = db.query(Employee).filter(Employee.id == leave.employee_id).first()
                 if emp:
                     send_leave_decision_notification(
-                        user_email=tok.approver_email,
+                        user_email=tok.employee_email,
                         employee_email=emp.email,
                         employee_name=emp.name,
                         leave_type=leave.leave_type,
@@ -664,7 +665,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                 try:
                     from app.services.email_service import send_notification_event
                     send_notification_event(
-                        user_email=tok.approver_email,
+                        user_email=tok.employee_email,
                         event_type="leave_approved",
                         subject_suffix=f"{tok.employee_email} — {leave.leave_type} {leave.start_date} to {leave.end_date}",
                         data={
@@ -1952,7 +1953,14 @@ async def list_enabled_forms():
     from app.services.form_library_service import FormLibraryService
     forms = FormLibraryService.list_all(include_disabled=False)
     return [
-        {"id": f["id"], "name": f["name"], "description": f.get("description", ""), "category": f.get("category", "")}
+        {
+            "id": f["id"],
+            "name": f["name"],
+            "description": f.get("description", ""),
+            "category": f.get("category", ""),
+            "trigger_keywords": f.get("trigger_keywords", ""),
+            "fields": f.get("fields", []),
+        }
         for f in forms
     ]
 

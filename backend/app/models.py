@@ -725,6 +725,7 @@ class AppLink(Base):
     url = Column(String, nullable=False)
     purpose = Column(Text, nullable=False)                   # what it's for
     capabilities = Column(Text, nullable=True)               # what it can do (free text)
+    trigger_keywords = Column(Text, nullable=True)           # comma-separated; chat intercept fires when any keyword matches user message
     embedding = Column(Vector(768), nullable=True)           # of name + purpose + capabilities
     is_active = Column(Boolean, default=True, index=True)
     created_by = Column(String, nullable=True)
@@ -1044,6 +1045,7 @@ class FormTemplate(Base):
     description = Column(Text, nullable=False)               # what it's for — also matched against queries
     category = Column(String, nullable=True)                 # free-text grouping (HR, Admin, Facilities…)
     fields = Column(JSON, nullable=True)                     # [{name,label,type,required,options?,placeholder?}]
+    trigger_keywords = Column(Text, nullable=True)           # comma-separated; chat intercept opens form inline when any keyword matches
     embedding = Column(Vector(768), nullable=True)           # of name + description + category + field labels
     enabled = Column(Boolean, default=True, index=True)      # disable to pull a form out of chat without deleting
     notify_email = Column(String, nullable=True)             # explicit recipient for new submissions

@@ -191,6 +191,9 @@ def init_db():
                 # Welcome system: unique indexes on token columns
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_welcome_logs_send_token ON "{SCHEMA}".welcome_logs(send_token)',
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_welcome_logs_skip_token ON "{SCHEMA}".welcome_logs(skip_token)',
+                # URL Library + Form Library: chat intercept keywords
+                f'ALTER TABLE "{SCHEMA}".app_links ADD COLUMN IF NOT EXISTS trigger_keywords TEXT',
+                f'ALTER TABLE "{SCHEMA}".form_templates ADD COLUMN IF NOT EXISTS trigger_keywords TEXT',
             ]:
                 try:
                     conn.execute(text(stmt))
