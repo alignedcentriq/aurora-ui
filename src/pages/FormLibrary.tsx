@@ -12,6 +12,8 @@ import {
   ArrowDown,
   ChevronDown,
   ChevronRight,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -38,7 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox"] as const;
+const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox", "user"] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
 interface BuilderField {
@@ -125,6 +127,7 @@ export function FormLibrary() {
   const [meta, setMeta] = useState<MetaState>(EMPTY_META);
   const [fields, setFields] = useState<BuilderField[]>([{ ...EMPTY_FIELD }]);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [toggling, setToggling] = useState<Set<number>>(new Set());
 
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [subsLoading, setSubsLoading] = useState(false);
@@ -164,21 +167,41 @@ export function FormLibrary() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email, user?.role]);
 
+  const isAuthorized = user?.role === "Admin" || user?.role === "Super Admin";
+
   useEffect(() => {
-    if (user?.role === "Admin") load();
+    if (isAuthorized) load();
   }, [user?.role, load]);
 
   useEffect(() => {
-    if (user?.role === "Admin" && tab === "submissions") loadSubmissions();
+    if (isAuthorized && tab === "submissions") loadSubmissions();
   }, [user?.role, tab, loadSubmissions]);
 
-  if (user?.role !== "Admin") {
+  if (!isAuthorized) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Access restricted to the Admin team.
       </div>
     );
   }
+
+  const toggleEnabled = async (f: FormTemplate) => {
+    setToggling((prev) => new Set(prev).add(f.id));
+    try {
+      const res = await fetch(`/api/admin/form-library/${f.id}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ enabled: !f.enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      setForms((prev) => prev.map((t) => (t.id === f.id ? { ...t, enabled: !f.enabled } : t)));
+      toast.success(f.enabled ? "Form disabled" : "Form enabled");
+    } catch {
+      toast.error("Failed to update status");
+    } finally {
+      setToggling((prev) => { const s = new Set(prev); s.delete(f.id); return s; });
+    }
+  };
 
   const openAdd = () => {
     setEditId(null);
@@ -470,6 +493,25 @@ export function FormLibrary() {
                         </td>
                         <td className="py-3.5 px-4 align-top">
                           <div className="flex items-center gap-1 justify-end">
+                            <button
+                              onClick={() => toggleEnabled(f)}
+                              disabled={toggling.has(f.id)}
+                              className={cn(
+                                "rounded-lg p-1.5 transition-colors",
+                                f.enabled
+                                  ? "text-emerald-500 hover:bg-rose-500/10 hover:text-rose-500"
+                                  : "text-zinc-400 dark:text-zinc-600 hover:bg-emerald-500/10 hover:text-emerald-600"
+                              )}
+                              title={f.enabled ? "Disable" : "Enable"}
+                            >
+                              {toggling.has(f.id) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : f.enabled ? (
+                                <ToggleRight className="h-3.5 w-3.5" />
+                              ) : (
+                                <ToggleLeft className="h-3.5 w-3.5" />
+                              )}
+                            </button>
                             <button
                               onClick={() => openEdit(f)}
                               className="rounded-lg p-1.5 text-[#94a3b8] dark:text-white/40 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.06] hover:text-[#00a29a] dark:hover:text-[#00c4bb] transition-colors"

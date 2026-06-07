@@ -59,9 +59,9 @@ def suggest_announcement_body(
 @router.get("")
 def list_announcements(
     include_inactive: bool = False,
-    _: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user),
 ):
-    return AnnouncementService.list_all(include_inactive=include_inactive)
+    return AnnouncementService.list_all(include_inactive=include_inactive, user_role=user.role)
 
 
 @router.post("")

@@ -4,13 +4,13 @@ import { AssistantView } from "@/components/assistant/AssistantView";
 export const Route = createFileRoute("/_layout/")({
   head: () => ({
     meta: [
-      { title: "Centriq — One AI assistant for HR, IT, Admin & Org" },
+      { title: "Centriq AI" },
       {
         name: "description",
         content:
           "Centriq replaces multi-system navigation with a single conversation. Apply leave, reset VPN, fetch payslips, find policies — all in one chat.",
       },
-      { property: "og:title", content: "Centriq — Workplace AI Concierge" },
+      { property: "og:title", content: "Centriq AI" },
       {
         property: "og:description",
         content:

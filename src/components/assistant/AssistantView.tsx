@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { Download, Sparkles, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw, Activity } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
@@ -22,6 +21,7 @@ import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { VisitorPassForm } from "./VisitorPassForm";
 import { DynamicFormWidget } from "./DynamicFormWidget";
+import { ChoiceWidget } from "./ChoiceWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
@@ -39,7 +39,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { Turn } from "@/lib/chat-store";
-import { QUICK_QUERIES } from "@/lib/quickQueries";
+import { ICON_MAP } from "@/lib/quickQueries";
+import { useQuickQueries } from "@/hooks/useQuickQueries";
+import { Search } from "lucide-react";
 
 function getGreeting(name: string): { heading: string; subheading: string } {
   const firstName = name.split(" ")[0];
@@ -120,10 +122,32 @@ export function AssistantView() {
   const [input, setInput] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // URL Library links — pre-fetched once so the leave intercept can resolve a Zoho URL synchronously.
+  const urlLinksRef = useRef<{ name: string; url: string }[]>([]);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+
+  const { queries, addQuery } = useQuickQueries();
+  const [savePromptOpen, setSavePromptOpen] = useState(false);
+  const [promptToSave, setPromptToSave] = useState("");
+  const [promptLabel, setPromptLabel] = useState("");
+  const [promptCategory, setPromptCategory] = useState<"it" | "admin" | "hr">("it");
+
+  const handleOpenSavePrompt = (text: string) => {
+    setPromptToSave(text);
+    setPromptLabel(text.slice(0, 30));
+    setPromptCategory("it");
+    setSavePromptOpen(true);
+  };
+
+  const handleSavePrompt = () => {
+    if (!promptLabel.trim() || !promptToSave.trim()) return;
+    addQuery(promptLabel.trim(), promptToSave.trim(), promptCategory);
+    setSavePromptOpen(false);
+    toast.success("Saved to your quick searches!");
+  };
   const [activity, setActivity] = useState("");
   // Proactive load awareness: warn (but never block) when the shared LLM server
   // has no free slots. `serverBusy` is independent of the per-thread `busy` above.
@@ -133,6 +157,18 @@ export function AssistantView() {
   useEffect(() => {
     if (!serverBusy) setLoadBannerDismissed(false);
   }, [serverBusy]);
+
+  // Pre-fetch URL Library links once (fail-soft) so the leave intercept can pick
+  // the admin-configured Zoho People URL without needing an async lookup at intercept time.
+  useEffect(() => {
+    if (!user?.email) return;
+    fetch("/api/links", {
+      headers: { "x-user-email": user.email, "x-user-role": (user.role || "employee").toLowerCase() },
+    })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => { if (Array.isArray(data)) urlLinksRef.current = data; })
+      .catch(() => {});
+  }, [user?.email]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [starterPage, setStarterPage] = useState(0);
 
@@ -165,7 +201,7 @@ export function AssistantView() {
 
   // Cycle starter prompts every 4s on empty state
   const STARTER_PAGE_SIZE = 3;
-  const starterTotal = Math.ceil(QUICK_QUERIES.length / STARTER_PAGE_SIZE);
+  const starterTotal = Math.ceil(queries.length / STARTER_PAGE_SIZE);
   useEffect(() => {
     const id = setInterval(() => setStarterPage((p) => (p + 1) % starterTotal), 4000);
     return () => clearInterval(id);
@@ -483,6 +519,50 @@ export function AssistantView() {
         return;
       }
 
+      // Intercept leave application intent — offer self-serve vs. assistant-handled choice.
+      // The "through the assistant" suffix on the continuation message prevents re-interception.
+      const isLeaveApplication =
+        !text.includes("through the assistant") && (
+          /\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(text) ||
+          /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
+          /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(text)
+        );
+      if (isLeaveApplication) {
+        const zohoLink =
+          urlLinksRef.current.find((l) => /zoho/i.test(l.name) || /leave/i.test(l.name))?.url ??
+          "https://people.zoho.com";
+        const zohoName =
+          urlLinksRef.current.find((l) => /zoho/i.test(l.name) || /leave/i.test(l.name))?.name ??
+          "Zoho People";
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "How would you like to apply for leave?",
+          interactive: {
+            type: "quick_choice",
+            data: {
+              question: "How would you like to apply for leave?",
+              options: [
+                {
+                  label: `I'll apply myself (${zohoName})`,
+                  action: "link",
+                  value: zohoLink,
+                  icon: "external-link",
+                },
+                {
+                  label: "Let the assistant handle it",
+                  action: "message",
+                  value: "Please apply leave for me through the assistant",
+                  icon: "sparkles",
+                },
+              ],
+            },
+          },
+        });
+        setInput("");
+        return;
+      }
+
       // Pin the originating thread so the streaming closure writes to the chat that
       // asked, even if the user switches to another chat mid-response.
       const threadId = activeId;
@@ -624,7 +704,7 @@ export function AssistantView() {
                     : errCode === "MODEL_UNAVAILABLE"
                     ? "The AI model is temporarily unavailable. Please try again in a moment."
                     : errMsg || "Something went wrong. Please try again.";
-                addTurn(threadId, { role: "ai", text: friendlyText });
+                addTurn(threadId, { role: "ai", text: friendlyText, isError: true });
                 aiTurnAdded = true;
               }
             }
@@ -647,6 +727,7 @@ export function AssistantView() {
             addTurn(threadId, {
               role: "ai",
               text: "I didn't receive a response — the server may be busy. Please try again.",
+              isError: true,
             });
           }
         })
@@ -666,6 +747,7 @@ export function AssistantView() {
             text: isTimeout
               ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
               : "I couldn't complete that request right now. Please try again in a moment.",
+            isError: true,
           });
 
           toast.error("Service unavailable", {
@@ -996,21 +1078,24 @@ export function AssistantView() {
                         transition={{ duration: 0.3 }}
                         className="flex flex-wrap justify-center gap-2.5"
                       >
-                        {QUICK_QUERIES.slice(
+                        {queries.slice(
                           starterPage * STARTER_PAGE_SIZE,
                           starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
-                        ).map((q) => (
-                          <button
-                            key={q.prompt}
-                            onClick={() => !busy && send(q.prompt)}
-                            className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-4 py-2 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
-                          >
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                              <q.icon className={`h-3 w-3 ${q.iconColor}`} />
-                            </span>
-                            {q.label}
-                          </button>
-                        ))}
+                        ).map((q) => {
+                          const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
+                          return (
+                            <button
+                              key={q.prompt}
+                              onClick={() => !busy && send(q.prompt)}
+                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-4 py-2 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                            >
+                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                <IconComponent className={`h-3 w-3 ${q.iconColor}`} />
+                              </span>
+                              {q.label}
+                            </button>
+                          );
+                        })}
                       </motion.div>
                     </AnimatePresence>
                   </div>
@@ -1055,6 +1140,8 @@ export function AssistantView() {
                       >
                         <UserMessage
                           initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                          text={t.text}
+                          onSaveQuickSearch={handleOpenSavePrompt}
                         >
                           {t.text}
                         </UserMessage>
@@ -1077,6 +1164,13 @@ export function AssistantView() {
                           domain={t.role === "ai" ? t.domain : undefined}
                           text={t.text}
                           live={t.streaming}
+                          isError={t.isError}
+                          sessionId={activeId ?? undefined}
+                          originalQuery={
+                            i > 0 && activeThread.turns[i - 1]?.role === "user"
+                              ? activeThread.turns[i - 1].text
+                              : undefined
+                          }
                         >
                           <div className="space-y-4">
                             {t.text && (() => {
@@ -1089,7 +1183,14 @@ export function AssistantView() {
                                 <>
                                   {cleaned && (
                                     <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+                                      <ReactMarkdown
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{
+                                          a: ({ href, children }) => (
+                                            <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+                                          ),
+                                        }}
+                                      >{cleaned}</ReactMarkdown>
                                       {t.streaming && (
                                         <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
                                       )}
@@ -1188,6 +1289,12 @@ export function AssistantView() {
                                 onSubmitted={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg })
                                 }
+                              />
+                            )}
+                            {t.interactive?.type === "quick_choice" && t.interactive.data && (
+                              <ChoiceWidget
+                                data={t.interactive.data as import("@/lib/chat-store").QuickChoiceData}
+                                onMessage={(text) => send(text)}
                               />
                             )}
                             {t.interactive?.type === "email_draft" && t.interactive.data && (
@@ -1373,6 +1480,53 @@ export function AssistantView() {
             </Button>
             <Button onClick={handleGenerateDoc} disabled={isGeneratingDoc || !docTitle.trim()}>
               {isGeneratingDoc ? "Generating..." : "Download PDF"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Prompt Modal */}
+      <Dialog open={savePromptOpen} onOpenChange={setSavePromptOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save to Quick Searches</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Label</label>
+              <Input
+                value={promptLabel}
+                onChange={(event) => setPromptLabel(event.target.value)}
+                placeholder="e.g. Check leave balance"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Category</label>
+              <select
+                value={promptCategory}
+                onChange={(event) => setPromptCategory(event.target.value as "it" | "admin" | "hr")}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
+              >
+                <option value="it">IT Support</option>
+                <option value="admin">Admin</option>
+                <option value="hr">HR</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Prompt Text</label>
+              <textarea
+                value={promptToSave}
+                onChange={(event) => setPromptToSave(event.target.value)}
+                className="w-full min-h-[80px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSavePromptOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSavePrompt} disabled={!promptLabel.trim() || !promptToSave.trim()}>
+              Save
             </Button>
           </DialogFooter>
         </DialogContent>

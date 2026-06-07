@@ -1,8 +1,10 @@
 """
 SharePoint → DB Document-Template Sync
 --------------------------------------
-Pulls plain PDF/DOCX templates from a SharePoint folder, converts each to HTML,
-LLM-tags the fill-in fields once, and upserts a DocumentTemplate row per file.
+Pulls Word ``.docx`` templates from a SharePoint folder, stores the raw bytes, and
+auto-discovers the ``{{ placeholder }}`` fields HR authored — NO LLM. Upserts one
+DocumentTemplate row per file. Generation later fills the .docx via docxtpl and renders
+it to PDF via Word, so the document keeps HR's exact Word layout (see template_engine).
 
 Mirrors the policy sync's cTag change-detection (DocumentTemplate.source_etag, `sp:`
 prefixed source_key) but targets its own table and PRESERVES HR configuration
@@ -28,7 +30,7 @@ _KEY_PREFIX = "sp:__templates__/"
 def _exts() -> tuple:
     return tuple(
         e.strip().lower()
-        for e in (settings.SHAREPOINT_TEMPLATES_EXTS or "pdf,docx").split(",")
+        for e in (settings.SHAREPOINT_TEMPLATES_EXTS or "docx").split(",")
         if e.strip()
     )
 
@@ -123,7 +125,7 @@ def sync_templates() -> dict:
             seen.add(sp_k)
 
             row = existing.get(sp_k)
-            if row is not None and row.source_etag == ctag and row.html_template:
+            if row is not None and row.source_etag == ctag and row.template_blob:
                 skipped += 1
                 continue
 
@@ -134,16 +136,16 @@ def sync_templates() -> dict:
                 errors.append(f"Download failed ({filename}): {e}")
                 continue
 
-            html_doc = engine.to_html(file_bytes, ext)
-            if not html_doc:
-                errors.append(f"Conversion produced no content: {filename}")
-                continue
-
+            # Prepare the template: if HR already wrote {{ placeholders }} use them as-is;
+            # otherwise the AI detects the fill-in values in their ordinary letter and inserts
+            # the placeholders automatically (formatting preserved). The (possibly rewritten)
+            # .docx becomes the stored template. A preview HTML is kept for the admin panel.
             try:
-                tagged_html, fields = engine.tag_fields(html_doc)
+                file_bytes, fields = engine.prepare_template(file_bytes)
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"[template_sync] tag_fields error for {filename}: {e}")
-                tagged_html, fields = html_doc, []
+                logger.warning(f"[template_sync] auto-tag failed for {filename}: {e}")
+                fields = engine.discover_fields(file_bytes)
+            preview_html = engine.docx_to_html(file_bytes)
 
             # Commit each template on its own so a later network/DB blip can't discard
             # templates that already processed successfully.
@@ -157,24 +159,25 @@ def sync_templates() -> dict:
                         source_etag=ctag,
                         filename=filename,
                         source_format=ext,
-                        html_template=tagged_html,
+                        html_template=preview_html,
+                        template_blob=file_bytes,
                         fields=fields,
-                        enabled=False,            # HR must opt a new template into the dropdown
+                        enabled=True,             # SharePoint is the source of truth — usable on sync
                         requires_approval=True,
-                        setup_status="needs_review",
+                        setup_status="ready",
                         created_at=now,
                         updated_at=now,
                     ))
                     db.commit()
                     new += 1
                 else:
-                    # Content changed — refresh content + re-tag, but KEEP HR config.
+                    # Content changed — refresh blob + re-discover fields, but KEEP HR config.
                     row.source_etag = ctag
                     row.filename = filename
                     row.source_format = ext
-                    row.html_template = tagged_html
+                    row.html_template = preview_html
+                    row.template_blob = file_bytes
                     row.fields = _merge_fields(row.fields, fields)
-                    row.setup_status = "needs_review"
                     row.updated_at = now
                     db.commit()
                     updated += 1

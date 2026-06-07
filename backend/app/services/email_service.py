@@ -81,36 +81,36 @@ def _email_shell(title: str, intro_html: str, body_html: str, *, preheader: str 
     )
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f0f4fa;-webkit-text-size-adjust:100%;">
+<body style="margin:0;padding:0;background:#eef2f8;-webkit-text-size-adjust:100%;">
 {pre}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4fa;">
-<tr><td align="center" style="padding:24px 12px;">
-  <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f8;">
+<tr><td align="center" style="padding:28px 12px;">
+  <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dde4f0;box-shadow:0 4px 20px rgba(13,27,46,.08);">
     <!-- header -->
-    <tr><td bgcolor="{_C_PRIMARY}" style="background:{_C_PRIMARY};background:{_GRADIENT};padding:22px 28px;">
+    <tr><td bgcolor="{_C_PRIMARY}" style="background:{_C_PRIMARY};background:{_GRADIENT};padding:24px 32px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td width="56" valign="middle" style="padding-right:14px;">
-          <img src="cid:buddy" width="48" height="48" alt="Centriq buddy" style="display:block;border:0;outline:none;">
+        <td width="60" valign="middle" style="padding-right:16px;">
+          <img src="cid:buddy" width="48" height="48" alt="Centriq buddy" style="display:block;border:0;outline:none;border-radius:50%;background:rgba(255,255,255,.12);">
         </td>
         <td valign="middle">
-          <div style="font:800 22px {_FONT};color:#ffffff;line-height:1.1;letter-spacing:.2px;">Centriq AI</div>
-          <div style="font:600 14px {_FONT};color:#e6f6f1;margin-top:3px;">{title}</div>
+          <div style="font:800 20px/1 {_FONT};color:#ffffff;letter-spacing:.3px;">Centriq AI</div>
+          <div style="font:500 13px {_FONT};color:rgba(255,255,255,.80);margin-top:5px;letter-spacing:.1px;">{title}</div>
         </td>
       </tr></table>
     </td></tr>
     <!-- body -->
-    <tr><td style="padding:26px 30px 10px;font:400 15px/1.6 {_FONT};color:#334155;">
+    <tr><td style="padding:28px 32px 14px;font:400 15px/1.65 {_FONT};color:#374151;">
       {intro_html}
       {body_html}
     </td></tr>
     <!-- footer -->
-    <tr><td style="padding:16px 30px 24px;border-top:1px solid #eef2f8;">
+    <tr><td style="padding:14px 32px 22px;border-top:1px solid #edf2f8;background:#fafbfd;">
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-        <td width="30" valign="middle" style="padding-right:10px;">
-          <img src="cid:buddy" width="22" height="22" alt="" style="display:block;border:0;opacity:0.92;">
+        <td width="28" valign="middle" style="padding-right:10px;">
+          <img src="cid:buddy" width="20" height="20" alt="" style="display:block;border:0;opacity:0.80;border-radius:50%;">
         </td>
-        <td valign="middle" style="font:600 13px {_FONT};color:#0d1b2e;">
-          Centriq AI <span style="color:#94a3b8;font-weight:400;">— Aligned Automation</span>
+        <td valign="middle" style="font:500 12px {_FONT};color:#374151;">
+          Centriq AI <span style="color:#9ca3af;font-weight:400;">· Aligned Automation</span>
         </td>
       </tr></table>
     </td></tr>
@@ -124,17 +124,17 @@ def _detail_rows(rows: "list[tuple[str, str]]") -> str:
     or trusted HTML (callers use html.escape / _nl2br)."""
     trs = "".join(
         f'<tr>'
-        f'<td style="padding:11px 16px;background:#eef3fa;font:600 13px {_FONT};color:#475569;'
-        f'border-bottom:2px solid #ffffff;width:155px;vertical-align:top;">{label}</td>'
-        f'<td style="padding:11px 16px;background:#f8fafc;font:400 14px {_FONT};color:#0d1b2e;'
-        f'border-bottom:2px solid #ffffff;vertical-align:top;">{value}</td>'
+        f'<td style="padding:10px 16px;background:#f1f5fb;font:700 11px {_FONT};color:#6b7280;'
+        f'border-bottom:1px solid #e8eef7;width:148px;vertical-align:top;letter-spacing:.5px;text-transform:uppercase;">{label}</td>'
+        f'<td style="padding:10px 16px;background:#f9fafb;font:400 14px {_FONT};color:#111827;'
+        f'border-bottom:1px solid #e8eef7;vertical-align:top;">{value}</td>'
         f'</tr>'
         for label, value in rows
     )
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;'
-        f'margin:18px 0;border:1px solid #e6edf6;">{trs}</table>'
+        f'margin:16px 0;border:1px solid #e2e8f4;">{trs}</table>'
     )
 
 
@@ -147,13 +147,13 @@ def _button_row(buttons: "list[tuple[str, str, str]]") -> str:
         cells += f"""
         <td align="center" style="padding:6px 8px;">
           <!--[if mso]>
-          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{u}" style="height:46px;v-text-anchor:middle;width:210px;" arcsize="55%" stroke="f" fillcolor="{color}">
+          <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{u}" style="height:44px;v-text-anchor:middle;width:200px;" arcsize="50%" stroke="f" fillcolor="{color}">
             <w:anchorlock/>
-            <center style="color:#ffffff;font-family:{_FONT};font-size:15px;font-weight:bold;">{label}</center>
+            <center style="color:#ffffff;font-family:{_FONT};font-size:14px;font-weight:bold;">{label}</center>
           </v:roundrect>
           <![endif]-->
           <!--[if !mso]><!-- -->
-          <a href="{u}" style="background:{color};color:#ffffff;display:inline-block;font:700 15px {_FONT};line-height:46px;height:46px;width:210px;text-align:center;text-decoration:none;border-radius:25px;box-shadow:0 2px 6px rgba(13,27,46,.18);">{label}</a>
+          <a href="{u}" style="background:{color};color:#ffffff;display:inline-block;font:600 14px {_FONT};line-height:44px;height:44px;width:200px;text-align:center;text-decoration:none;border-radius:22px;box-shadow:0 2px 8px rgba(13,27,46,.20);">{label}</a>
           <!--<![endif]-->
         </td>"""
     return (
@@ -166,8 +166,8 @@ def _status_pill(text: str, color: str) -> str:
     """Small solid status badge (e.g. Pending / Approved / Rejected)."""
     return (
         f'<span style="display:inline-block;background:{color};color:#ffffff;'
-        f'font:700 11px {_FONT};padding:5px 13px;border-radius:20px;'
-        f'letter-spacing:.5px;text-transform:uppercase;">{html.escape(text)}</span>'
+        f'font:700 11px {_FONT};padding:4px 12px;border-radius:20px;'
+        f'letter-spacing:.6px;text-transform:uppercase;">{html.escape(text)}</span>'
     )
 
 
@@ -181,7 +181,7 @@ def _section(title: str, color: str, items_html: str) -> str:
 
 def _note(text: str) -> str:
     """Muted footnote paragraph (expiry / 'submitted via' lines)."""
-    return f'<p style="margin:16px 0 4px;font:400 12px {_FONT};color:#94a3b8;">{text}</p>'
+    return f'<p style="margin:14px 0 4px;font:400 12px/1.55 {_FONT};color:#9ca3af;">{text}</p>'
 
 
 # ── Async / token plumbing (unchanged) ────────────────────────────────────────
@@ -329,6 +329,131 @@ def _send_html(
     )
 
 
+# ── Teams Chat Notifications ──────────────────────────────────────────────────
+
+_GRAPH_ME_URL   = "https://graph.microsoft.com/v1.0/me"
+_GRAPH_CHATS_URL = "https://graph.microsoft.com/v1.0/chats"
+
+
+def _send_teams_message(
+    sender_email: str,
+    recipient_email: str,
+    title: str,
+    body_html: str,
+) -> bool:
+    """Post a 1:1 Teams chat message via Microsoft Graph API using the sender's
+    own delegated token only — never another user's credentials.
+
+    For self-send (sender == recipient), looks for an existing self-chat via
+    GET /me/chats rather than creating a new oneOnOne (Graph rejects that with 400).
+    Falls back gracefully — any failure is logged and returns False without raising.
+    """
+    token = _get_graph_token(sender_email)
+    if not token:
+        logger.warning("[teams] No Graph token for %s — Teams notification skipped.", sender_email)
+        return False
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    try:
+        r = httpx.get(_GRAPH_ME_URL, headers=headers, timeout=_TIMEOUT)
+        r.raise_for_status()
+        sender_id = r.json()["id"]
+    except Exception as exc:
+        logger.warning("[teams] Cannot resolve sender id: %s", exc)
+        return False
+
+    try:
+        r = httpx.get(
+            f"https://graph.microsoft.com/v1.0/users/{recipient_email}",
+            headers=headers, timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        recipient_id = r.json()["id"]
+    except Exception as exc:
+        logger.warning("[teams] Cannot resolve recipient %s: %s", recipient_email, exc)
+        return False
+
+    # Graph rejects POST /chats with identical sender/recipient IDs (self-chat).
+    # Instead, look for an existing self-chat in the user's chat list.
+    if sender_id == recipient_id:
+        chat_id = None
+        try:
+            r = httpx.get(
+                f"{_GRAPH_CHATS_URL}?$filter=chatType eq 'oneOnOne'&$expand=members",
+                headers=headers, timeout=_TIMEOUT,
+            )
+            r.raise_for_status()
+            for chat in r.json().get("value", []):
+                member_ids = {m.get("userId") for m in chat.get("members", [])}
+                if member_ids == {sender_id}:
+                    chat_id = chat["id"]
+                    break
+        except Exception as exc:
+            logger.warning("[teams] Could not enumerate self-chats: %s", exc)
+        if not chat_id:
+            logger.warning("[teams] No self-chat found for %s — Teams self-notification skipped.", sender_email)
+            return False
+    else:
+        members = [
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": f"https://graph.microsoft.com/v1.0/users('{sender_id}')",
+            },
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": f"https://graph.microsoft.com/v1.0/users('{recipient_id}')",
+            },
+        ]
+        try:
+            r = httpx.post(
+                _GRAPH_CHATS_URL,
+                headers=headers,
+                json={"chatType": "oneOnOne", "members": members},
+                timeout=_TIMEOUT,
+            )
+            r.raise_for_status()
+            chat_id = r.json()["id"]
+        except Exception as exc:
+            logger.warning("[teams] Cannot create/retrieve chat for %s -> %s: %s", sender_email, recipient_email, exc)
+            return False
+
+    content = f"<b>{html.escape(title)}</b><br>{body_html}"
+    try:
+        r = httpx.post(
+            f"{_GRAPH_CHATS_URL}/{chat_id}/messages",
+            headers=headers,
+            json={"body": {"contentType": "html", "content": content}},
+            timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        logger.info("[teams] sent from=%s to=%s title=%s", sender_email, recipient_email, title)
+        return True
+    except httpx.HTTPStatusError as exc:
+        logger.error("[teams] send failed: %s %s", exc.response.status_code, exc.response.text[:300])
+        return False
+    except Exception as exc:
+        logger.error("[teams] send error: %s", exc)
+        return False
+
+
+def notify_teams(
+    sender_email: str,
+    recipient_email: str,
+    title: str,
+    body_html: str,
+) -> None:
+    """Fire-and-forget Teams chat notification — runs in a daemon thread."""
+    import threading
+    threading.Thread(
+        target=_send_teams_message,
+        args=(sender_email, recipient_email, title, body_html),
+        daemon=True,
+    ).start()
+
+
 # ── Software Install ──────────────────────────────────────────────────────────
 
 def send_software_install_email(
@@ -364,7 +489,7 @@ def send_it_ticket_email(
     ticket_id: str,
 ) -> bool:
     """Send IT ticket to the helpdesk Teams channel."""
-    email_subject = f"[IT Support] {category} - {subject} | {employee_id}"
+    email_subject = f"[IT Support] {category}: {subject} — {employee_id}"
     intro = f"<p>A new IT support request was raised by <strong>{html.escape(employee_name)}</strong>.</p>"
     body_html = _detail_rows([
         ("Ticket ID", html.escape(ticket_id)),
@@ -420,7 +545,7 @@ def send_visitor_pass_email(
     visitor_company: str = "",
 ) -> bool:
     """Notify the admin / reception team of a new visitor pass request."""
-    subject = f"[Admin] Visitor Pass Request — {visitor_name} | {pass_id}"
+    subject = f"[Admin] Visitor Pass — {visitor_name} · {pass_id}"
     intro = f"<p><strong>{html.escape(employee_name)}</strong> has requested a visitor pass.</p>"
     body_html = _detail_rows([
         ("Pass ID", html.escape(pass_id)),
@@ -469,7 +594,7 @@ def send_food_complaint_email(
     description: str,
     ticket_id: str,
 ) -> bool:
-    subject = f"[Admin] Food Complaint — {vendor_name} | {ticket_id}"
+    subject = f"[Admin] Food Complaint — {vendor_name} · {ticket_id}"
     intro = (f'<p>{_status_pill("Complaint", _C_NO)}</p>'
              f"<p>A food / cafeteria complaint was reported by <strong>{html.escape(employee_name)}</strong>.</p>")
     body_html = _detail_rows([
@@ -494,7 +619,7 @@ def send_facility_complaint_email(
     location: str,
     priority: str,
 ) -> bool:
-    subject = f"[Admin] Facility Complaint {ticket_id} — {category} ({priority})"
+    subject = f"[Admin] Facility Complaint — {category} ({priority}) · {ticket_id}"
     intro = (f'<p>{_status_pill("Complaint", _C_AMBER)}</p>'
              f"<p>A facility complaint was reported by <strong>{html.escape(employee_name)}</strong>.</p>")
     body_html = _detail_rows([
@@ -520,7 +645,7 @@ def send_facility_complaint_status_email(
     closure_comment: Optional[str] = None,
 ) -> bool:
     color = _C_OK if new_status == "Closed" else _C_PURPLE
-    subject = f"[Facility Complaint {ticket_id}] Status updated to {new_status}"
+    subject = f"[Facility Complaint] Status: {new_status} — {ticket_id}"
     intro = (f"<p>Hi {html.escape(employee_name)},</p>"
              f"<p>Your facility complaint has been updated to {_status_pill(new_status, color)}.</p>")
     rows = [
@@ -546,7 +671,7 @@ def send_food_complaint_status_email(
     closure_comment: Optional[str] = None,
 ) -> bool:
     color = _C_OK if new_status == "Closed" else _C_PURPLE
-    subject = f"[Food Complaint {ticket_id}] Status updated to {new_status}"
+    subject = f"[Food Complaint] Status: {new_status} — {ticket_id}"
     intro = (f"<p>Hi {html.escape(employee_name)},</p>"
              f"<p>Your food / cafeteria complaint has been updated to {_status_pill(new_status, color)}.</p>")
     rows = [
@@ -571,7 +696,7 @@ def send_reimbursement_email(
     reason: str,
     reimbursement_id: int,
 ) -> bool:
-    subject = f"[Admin] Reimbursement Request #{reimbursement_id} — {reimbursement_type}"
+    subject = f"[Admin] Reimbursement Request — {reimbursement_type} · #{reimbursement_id}"
     intro = f"<p><strong>{html.escape(employee_name)}</strong> submitted a reimbursement request.</p>"
     body_html = _detail_rows([
         ("Request ID", f"#{reimbursement_id}"),
@@ -605,7 +730,7 @@ def send_book_request_email(
     if not to:
         logger.warning("[bookshelf email] BOOKSHELF_NOTIFY_EMAIL not set — skipping notification.")
         return False
-    subject = f"[Bookshelf] Book Request — {book_title} | {ticket_id}"
+    subject = f"[Bookshelf] Book Request — {book_title} · {ticket_id}"
     rows = [
         ("Ticket ID", html.escape(ticket_id)),
         ("Requested By", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
@@ -630,7 +755,16 @@ def send_book_request_email(
         body_html += _note("Submitted via Centriq AI.")
     html_body = _email_shell("Bookshelf Buddy — Book Issue Request", intro, body_html,
                              preheader=f"{book_title} · {employee_name}")
-    return _send_html(user_email, to, subject, html_body)
+    result = _send_html(user_email, to, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)} ({html.escape(employee_email)})<br>"
+        f"<b>Book:</b> {html.escape(book_title)} — {html.escape(book_author)}<br>"
+        f"<b>Ticket:</b> {html.escape(ticket_id)}"
+        + (f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>" if approve_url and reject_url else "")
+    )
+    if to:
+        notify_teams(user_email, to, "📚 Bookshelf Request — Pending Approval", teams_body)
+    return result
 
 
 def send_book_decision_email(
@@ -665,9 +799,18 @@ def send_book_decision_email(
     if admin_remarks:
         rows.append(("Admin Note", _nl2br(admin_remarks)))
     body_html = _detail_rows(rows) + _note("View your borrows in Centriq AI → <strong>My Library</strong>.")
-    subject = f"[Bookshelf] Book Request {decision} — {book_title} | {ticket_id}"
+    subject = f"[Bookshelf] Book Request {decision} — {book_title} · {ticket_id}"
     html_body = _email_shell(title, intro, body_html, preheader=f"{book_title} · {decision}")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Book:</b> {html.escape(book_title)}<br>"
+        f"<b>Ticket:</b> {html.escape(ticket_id)}<br>"
+        f"<b>Decision:</b> {html.escape(decision)}"
+        + (f"<br><b>Return By:</b> {html.escape(due_date)}" if decision == "Approved" and due_date else "")
+        + (f"<br><b>Note:</b> {html.escape(admin_remarks)}" if admin_remarks else "")
+    )
+    notify_teams(user_email, employee_email, f"📚 Book Request {decision}", teams_body)
+    return result
 
 
 def send_book_return_confirmation(
@@ -677,7 +820,7 @@ def send_book_return_confirmation(
     book_title: str,
     ticket_id: str,
 ) -> bool:
-    subject = f"[Bookshelf] Return Confirmed — {book_title} | {ticket_id}"
+    subject = f"[Bookshelf] Book Returned — {book_title} · {ticket_id}"
     intro = (f'<p>{_status_pill("Returned", _C_OK)}</p>'
              f"<p>Hi {html.escape(employee_name) or 'there'}, we've recorded your return of "
              f"<strong>{html.escape(book_title)}</strong>. Thank you!</p>")
@@ -706,7 +849,7 @@ def send_extension_request_email(
     to = settings.BOOKSHELF_NOTIFY_EMAIL
     if not to:
         return False
-    subject = f"[Bookshelf] Extension Request — {book_title} | {ticket_id}"
+    subject = f"[Bookshelf] Extension Request — {book_title} · {ticket_id}"
     rows = [
         ("Ticket ID", html.escape(ticket_id)),
         ("Book", html.escape(book_title)),
@@ -731,7 +874,16 @@ def send_extension_request_email(
         body_html += _note("Submitted via Centriq AI.")
     html_body = _email_shell("Bookshelf Buddy — Extension Request", intro, body_html,
                              preheader=f"{book_title} · +{int(additional_days)} days")
-    return _send_html(user_email, to, subject, html_body)
+    result = _send_html(user_email, to, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Book:</b> {html.escape(book_title)} ({html.escape(ticket_id)})<br>"
+        f"<b>Current Due:</b> {html.escape(current_due_date)} · <b>Extra Days:</b> {additional_days}"
+        + (f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>" if approve_url and reject_url else "")
+    )
+    if to:
+        notify_teams(user_email, to, "📚 Bookshelf Extension — Pending Approval", teams_body)
+    return result
 
 
 def send_extension_decision_email(
@@ -759,10 +911,18 @@ def send_extension_decision_email(
     if admin_remarks:
         rows.append(("Admin Note", _nl2br(admin_remarks)))
     body_html = _detail_rows(rows) + _note("View your borrows in Centriq AI → <strong>My Library</strong>.")
-    subject = f"[Bookshelf] Extension {decision} — {book_title} | {ticket_id}"
+    subject = f"[Bookshelf] Extension {decision} — {book_title} · {ticket_id}"
     html_body = _email_shell(f"Extension {decision}", intro, body_html,
                              preheader=f"{book_title} · {decision}")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Book:</b> {html.escape(book_title)} ({html.escape(ticket_id)})<br>"
+        f"<b>Decision:</b> {html.escape(decision)}"
+        + (f"<br><b>New Due Date:</b> {html.escape(new_due_date)}" if decision == "Approved" and new_due_date else "")
+        + (f"<br><b>Note:</b> {html.escape(admin_remarks)}" if admin_remarks else "")
+    )
+    notify_teams(user_email, employee_email, f"📚 Extension {decision}", teams_body)
+    return result
 
 
 # ── Leave Notifications ───────────────────────────────────────────────────────
@@ -780,7 +940,7 @@ def send_leave_approval_request(
     manager_email: str,
     leave_id: int,
 ) -> bool:
-    subject = f"[Leave Approval Required] {employee_name} — {leave_type} | {start_date} to {end_date}"
+    subject = f"[Leave Approval] {employee_name} — {leave_type} · {start_date} to {end_date}"
     intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
              f"<p>Hi,</p>"
              f"<p><strong>{html.escape(employee_name)}</strong> has applied for leave and needs your approval.</p>")
@@ -800,7 +960,16 @@ def send_leave_approval_request(
                        "Reply to contact the employee directly.")
     html_body = _email_shell("Leave Approval Request", intro, body_html,
                              preheader=f"{employee_name} · {leave_type} · {start_date}–{end_date}")
-    return _send_html(user_email, manager_email, subject, html_body)
+    result = _send_html(user_email, manager_email, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Leave Type:</b> {html.escape(leave_type)}<br>"
+        f"<b>Period:</b> {html.escape(start_date)} → {html.escape(end_date)}<br>"
+        f"<b>Reason:</b> {html.escape(reason)}<br><br>"
+        f"<a href='{html.escape(approve_url)}'>✓ Approve Leave</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject Leave</a>"
+    )
+    notify_teams(user_email, manager_email, "🏖️ Leave Approval Request", teams_body)
+    return result
 
 
 def send_leave_decision_notification(
@@ -815,7 +984,7 @@ def send_leave_decision_notification(
     reason: str = "",
 ) -> bool:
     color = _C_OK if decision == "Approved" else _C_NO
-    subject = f"[Leave {decision}] {leave_type} | {start_date} to {end_date}"
+    subject = f"[Leave {decision}] {leave_type} — {start_date} to {end_date}"
     intro = (f'<p>{_status_pill(decision, color)}</p>'
              f"<p>Hi {html.escape(employee_name)},</p>"
              f'<p>Your leave request has been <strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
@@ -831,7 +1000,16 @@ def send_leave_decision_notification(
     body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
     html_body = _email_shell(f"Leave {decision}", intro, body_html,
                              preheader=f"{leave_type} · {start_date}–{end_date}")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Leave Type:</b> {html.escape(leave_type)}<br>"
+        f"<b>Period:</b> {html.escape(start_date)} → {html.escape(end_date)}<br>"
+        f"<b>Decision:</b> {html.escape(decision)}<br>"
+        f"<b>Actioned by:</b> {html.escape(decided_by)}"
+        + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
+    )
+    notify_teams(user_email, employee_email, f"🏖️ Leave {decision}", teams_body)
+    return result
 
 
 def send_leave_fyi_notification(
@@ -845,7 +1023,7 @@ def send_leave_fyi_notification(
     functional_manager_email: str,
 ) -> bool:
     """FYI notification to Functional Manager — no approve/reject links."""
-    subject = f"[Leave FYI] {employee_name} — {leave_type} | {start_date} to {end_date}"
+    subject = f"[Leave Notice] {employee_name} — {leave_type} · {start_date} to {end_date}"
     intro = (f'<p>{_status_pill("FYI", _C_INFO)}</p>'
              f"<p>This is to inform you that <strong>{html.escape(employee_name)}</strong> has applied "
              "for leave. This is for your information only — the reporting manager will approve or "
@@ -859,7 +1037,15 @@ def send_leave_fyi_notification(
     ]) + _note("This is an automated FYI notification from Centriq AI. No action is required from you.")
     html_body = _email_shell("Leave Notification (FYI)", intro, body_html,
                              preheader=f"{employee_name} · {leave_type}")
-    return _send_html(user_email, functional_manager_email, subject, html_body)
+    result = _send_html(user_email, functional_manager_email, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Leave Type:</b> {html.escape(leave_type)}<br>"
+        f"<b>Period:</b> {html.escape(start_date)} → {html.escape(end_date)}<br>"
+        f"<i>For your information — the reporting manager will approve or reject this.</i>"
+    )
+    notify_teams(user_email, functional_manager_email, "🏖️ Leave Notice (FYI)", teams_body)
+    return result
 
 
 # ── Biweekly Project Update ───────────────────────────────────────────────────
@@ -926,7 +1112,16 @@ def send_project_update_approval_request(
                        "These links expire in 24 hours. Submitted via Centriq AI.")
     html_body = _email_shell("Project Update Approval", intro, body_html,
                              preheader=f"{employee_name} · {activity_type} · {period}")
-    return _send_html(user_email, approver_email, subject, html_body)
+    result = _send_html(user_email, approver_email, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Period:</b> {html.escape(period)}<br>"
+        f"<b>Activity:</b> {html.escape(activity_type)}"
+        + (f"<br><b>Project:</b> {html.escape(project_name)}" if project_name else "")
+        + f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>"
+    )
+    notify_teams(user_email, approver_email, "📋 Project Update — Pending Approval", teams_body)
+    return result
 
 
 def send_project_update_decision_notification(
@@ -957,7 +1152,15 @@ def send_project_update_decision_notification(
     body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
     html_body = _email_shell(f"Project Update {decision}", intro, body_html,
                              preheader=f"{activity_type} · {decision}")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Activity:</b> {html.escape(activity_type)}"
+        + (f"<br><b>Project:</b> {html.escape(project_name)}" if project_name else "")
+        + f"<br><b>Decision:</b> {html.escape(decision)}<br><b>Actioned by:</b> {html.escape(decided_by)}"
+        + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
+    )
+    notify_teams(user_email, employee_email, f"📋 Project Update {decision}", teams_body)
+    return result
 
 
 # ── HR Notifications ──────────────────────────────────────────────────────────
@@ -972,7 +1175,7 @@ def send_hr_query_notification(
     description: str,
 ) -> bool:
     """Notify the Teams channel about a new employee HR query."""
-    email_subject = f"[HR Query] {reference_id} — {category} | {employee_name}"
+    email_subject = f"[HR Query] {category} — {employee_name} · {reference_id}"
     intro = "<p>A new HR query has been submitted and requires your attention.</p>"
     body_html = _detail_rows([
         ("Reference ID", html.escape(reference_id)),
@@ -996,7 +1199,7 @@ def send_grievance_notification(
     submitted_by: str,
 ) -> bool:
     submitter_label = "Anonymous" if is_anonymous else html.escape(submitted_by)
-    subject = f"[HR Grievance] {reference_id} — {category}"
+    subject = f"[HR Grievance] {category} — {reference_id}"
     intro = (f'<p>{_status_pill("Confidential", _C_PURPLE)}</p>'
              "<p>A new grievance has been submitted and requires your attention.</p>")
     body_html = _detail_rows([
@@ -1021,7 +1224,7 @@ def send_onboarding_checklist(
     department: str,
     designation: str,
 ) -> bool:
-    subject = f"[Onboarding] New Joiner: {employee_name} — {joining_date}"
+    subject = f"[Onboarding] New Joiner — {employee_name} · {joining_date}"
     intro = (f'<p>{_status_pill("New Joiner", _C_OK)}</p>'
              f"<p>Please complete the relevant tasks below before "
              f"<strong>{html.escape(employee_name)}</strong>'s joining date.</p>")
@@ -1069,7 +1272,7 @@ def send_offboarding_checklist(
     department: str,
     manager_email: str,
 ) -> bool:
-    subject = f"[Offboarding] {employee_name} — Last Day: {last_day}"
+    subject = f"[Offboarding] {employee_name} — Last Day {last_day}"
     intro = (f'<p>{_status_pill("Offboarding", _C_NO)}</p>'
              f"<p>Please complete all tasks below for <strong>{html.escape(employee_name)}</strong> "
              f"by {html.escape(last_day)}.</p>")
@@ -1124,7 +1327,7 @@ def send_notification_event(user_email: str, event_type: str, subject_suffix: st
     import base64 as _b64
 
     def _do_send():
-        subject = f"[AURORA] {event_type} — {subject_suffix}"
+        subject = f"[Centriq] {event_type} — {subject_suffix}"
         rows = [(html.escape(str(k)), html.escape(str(v))) for k, v in data.items()]
         json_str = json.dumps({"event": event_type, **data}, default=str)
         json_b64 = _b64.b64encode(json_str.encode()).decode()
@@ -1203,7 +1406,17 @@ def send_udemy_request_email(
     body_html += _note("These links expire in 24 hours. Decline opens a reason form. Submitted via Centriq AI.")
     html_body = _email_shell(f"{platform} License Request", intro, body_html,
                              preheader=f"{employee_name} · {course_name or f'{platform} license'}")
-    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Platform:</b> {html.escape(platform)}<br>"
+        f"<b>Course:</b> {html.escape(course_name) or '—'}<br>"
+        f"<b>Justification:</b> {html.escape(justification) or '—'}<br><br>"
+        f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Decline</a>"
+    )
+    if settings.NOTIFY_TO_EMAIL:
+        notify_teams(user_email, settings.NOTIFY_TO_EMAIL, f"🎓 {platform} License Request — Pending", teams_body)
+    return result
 
 
 def send_udemy_decision_email(
@@ -1234,7 +1447,15 @@ def send_udemy_decision_email(
         "This is an automated notification from Centriq AI.")
     html_body = _email_shell(f"{platform} License {decision}", intro, body_html,
                              preheader=course_name or f"{platform} license")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Platform:</b> {html.escape(platform)}<br>"
+        f"<b>Course:</b> {html.escape(course_name) or '—'}<br>"
+        f"<b>Decision:</b> {html.escape(decision)}"
+        + (f"<br><b>{'Reason' if decision == 'Rejected' else 'Note'}:</b> {html.escape(reason)}" if reason else "")
+    )
+    notify_teams(user_email, employee_email, f"🎓 {platform} License {decision}", teams_body)
+    return result
 
 
 # ── Admin: Desk Keys ──────────────────────────────────────────────────────────
@@ -1266,7 +1487,16 @@ def send_desk_key_request_email(
                        "These links expire in 24 hours. Submitted via Centriq AI.")
     html_body = _email_shell("Desk Key Request", intro, body_html,
                              preheader=f"{employee_name} · Desk {desk_number}")
-    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Desk:</b> {html.escape(desk_number)}<br>"
+        f"<b>Reason:</b> {html.escape(reason) or '—'}<br><br>"
+        f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>"
+    )
+    if settings.NOTIFY_TO_EMAIL:
+        notify_teams(user_email, settings.NOTIFY_TO_EMAIL, "🔑 Desk Key Request — Pending Approval", teams_body)
+    return result
 
 
 def send_desk_key_decision_email(
@@ -1292,7 +1522,14 @@ def send_desk_key_decision_email(
     body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
     html_body = _email_shell(f"Desk Key {decision}", intro, body_html,
                              preheader=f"Desk {desk_number}")
-    return _send_html(user_email, employee_email, subject, html_body)
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Desk:</b> {html.escape(desk_number)}<br>"
+        f"<b>Decision:</b> {html.escape(decision)}"
+        + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
+    )
+    notify_teams(user_email, employee_email, f"🔑 Desk Key {decision}", teams_body)
+    return result
 
 
 # ── Admin: Parking Payment Reminder ───────────────────────────────────────────
@@ -1307,7 +1544,7 @@ def send_parking_payment_reminder_email(
     monthly_cost: float,
 ) -> bool:
     """Remind an employee of outstanding parking dues. `months` is a list of (month_label, amount)."""
-    subject = f"[Parking] Payment Reminder — INR {outstanding_total:,.0f} outstanding"
+    subject = f"[Parking] Payment Reminder — INR {outstanding_total:,.0f} Due"
     intro = (f'<p>{_status_pill("Payment Due", _C_AMBER)}</p>'
              f"<p>Hi {html.escape(employee_name)},</p>"
              f"<p>This is a reminder that your parking dues are pending. Please clear the outstanding "
@@ -1386,7 +1623,7 @@ def send_security_news_digest(
     if not items:
         logger.warning("[security_news_email] no items — skipping send.")
         return False
-    subject = f"[Security Digest] Cybersecurity News — {date_str}"
+    subject = f"[Security Digest] {date_str} — Cybersecurity Roundup"
     intro = (
         f'<p>{_status_pill("Daily Digest", _C_INFO)}</p>'
         "<p>Your daily roundup of cybersecurity news and advisories from trusted public sources. "
@@ -1467,7 +1704,7 @@ def send_team_attendance_report(
         body_html,
         preheader=f"{report['headcount']} people · {report['period']}",
     )
-    subject = f"Team Attendance Report — {report['period']}"
+    subject = f"[Attendance] Team Report — {report['period']}"
     files = None
     if xlsx:
         fname, b64 = xlsx

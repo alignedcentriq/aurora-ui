@@ -1,6 +1,6 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, Loader2, RefreshCw, ExternalLink, Link2, Sparkles } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, RefreshCw, ExternalLink, Link2, Sparkles, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -71,6 +71,7 @@ export function UrlLibrary() {
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [toggling, setToggling] = useState<Set<number>>(new Set());
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -103,6 +104,24 @@ export function UrlLibrary() {
       </div>
     );
   }
+
+  const toggleActive = async (app: AppLink) => {
+    setToggling((prev) => new Set(prev).add(app.id));
+    try {
+      const res = await fetch(`/api/admin/url-library/${app.id}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ is_active: !app.is_active }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      setApps((prev) => prev.map((a) => (a.id === app.id ? { ...a, is_active: !app.is_active } : a)));
+      toast.success(app.is_active ? "App deactivated" : "App activated");
+    } catch {
+      toast.error("Failed to update status");
+    } finally {
+      setToggling((prev) => { const s = new Set(prev); s.delete(app.id); return s; });
+    }
+  };
 
   const openAdd = () => {
     setEditId(null);
@@ -223,7 +242,7 @@ export function UrlLibrary() {
             <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…
           </div>
         ) : apps.length === 0 ? (
-          <div className="space-y-10 py-6 max-w-4xl mx-auto">
+          <div className="space-y-10 py-6">
             {/* Empty State Card */}
             <div className="flex flex-col items-center justify-center border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl bg-white dark:bg-card p-10 text-center shadow-sm">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#0d9488]/10 text-[#0d9488] border border-[#0d9488]/20 mb-4">
@@ -335,6 +354,25 @@ export function UrlLibrary() {
                     </td>
                     <td className="py-3.5 px-4 align-top">
                       <div className="flex items-center gap-1 justify-end">
+                        <button
+                          onClick={() => toggleActive(app)}
+                          disabled={toggling.has(app.id)}
+                          className={cn(
+                            "rounded-lg p-1.5 transition-colors",
+                            app.is_active
+                              ? "text-emerald-500 hover:bg-rose-500/10 hover:text-rose-500"
+                              : "text-zinc-400 dark:text-zinc-600 hover:bg-emerald-500/10 hover:text-emerald-600"
+                          )}
+                          title={app.is_active ? "Deactivate" : "Activate"}
+                        >
+                          {toggling.has(app.id) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : app.is_active ? (
+                            <ToggleRight className="h-3.5 w-3.5" />
+                          ) : (
+                            <ToggleLeft className="h-3.5 w-3.5" />
+                          )}
+                        </button>
                         <button
                           onClick={() => openEdit(app)}
                           className="rounded-lg p-1.5 text-[#94a3b8] dark:text-white/40 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.06] hover:text-[#00a29a] dark:hover:text-[#00c4bb] transition-colors"

@@ -82,6 +82,119 @@ export const BUDDY_PRESETS: BuddyColorPreset[] = [
   },
 ];
 
+export type CountryCode = "US" | "UK" | "IN" | "DE" | "SG" | "AE" | "JP" | "AU" | "IE";
+
+export interface CountryDef {
+  code: CountryCode;
+  name: string;
+  flag: string;
+  office: string;
+  timezone: string;
+  holiday: {
+    name: string;
+    date: string;
+    relative: string;
+  };
+  leave: {
+    amount: number;
+    label: string;
+  };
+  helpdesk: string;
+}
+
+export const COUNTRIES: CountryDef[] = [
+  {
+    code: "US",
+    name: "United States",
+    flag: "🇺🇸",
+    office: "New York HQ",
+    timezone: "America/New_York",
+    holiday: { name: "Independence Day", date: "Jul 4", relative: "1 month away" },
+    leave: { amount: 15, label: "PTO Days" },
+    helpdesk: "ext 9111",
+  },
+  {
+    code: "UK",
+    name: "United Kingdom",
+    flag: "🇬🇧",
+    office: "London Office",
+    timezone: "Europe/London",
+    holiday: { name: "Bank Holiday", date: "Aug 31", relative: "3 months away" },
+    leave: { amount: 28, label: "Annual Leave" },
+    helpdesk: "ext 4444",
+  },
+  {
+    code: "IN",
+    name: "India",
+    flag: "🇮🇳",
+    office: "Bengaluru Hub",
+    timezone: "Asia/Kolkata",
+    holiday: { name: "Independence Day", date: "Aug 15", relative: "2 months away" },
+    leave: { amount: 18, label: "Earned Leaves" },
+    helpdesk: "ext 1000",
+  },
+  {
+    code: "DE",
+    name: "Germany",
+    flag: "🇩🇪",
+    office: "Berlin Tech Hub",
+    timezone: "Europe/Berlin",
+    holiday: { name: "Unity Day", date: "Oct 3", relative: "4 months away" },
+    leave: { amount: 30, label: "Urlaub Days" },
+    helpdesk: "ext 2200",
+  },
+  {
+    code: "SG",
+    name: "Singapore",
+    flag: "🇸🇬",
+    office: "Marina Office",
+    timezone: "Asia/Singapore",
+    holiday: { name: "National Day", date: "Aug 9", relative: "2 months away" },
+    leave: { amount: 21, label: "Vacation Days" },
+    helpdesk: "ext 8888",
+  },
+  {
+    code: "AE",
+    name: "United Arab Emirates",
+    flag: "🇦🇪",
+    office: "Dubai Internet City",
+    timezone: "Asia/Dubai",
+    holiday: { name: "National Day", date: "Dec 2", relative: "6 months away" },
+    leave: { amount: 30, label: "Annual Vacation" },
+    helpdesk: "ext 7000",
+  },
+  {
+    code: "JP",
+    name: "Japan",
+    flag: "🇯🇵",
+    office: "Tokyo Office",
+    timezone: "Asia/Tokyo",
+    holiday: { name: "Mountain Day", date: "Aug 11", relative: "2 months away" },
+    leave: { amount: 20, label: "Paid Leave" },
+    helpdesk: "ext 3300",
+  },
+  {
+    code: "AU",
+    name: "Australia",
+    flag: "🇦🇺",
+    office: "Sydney Office",
+    timezone: "Australia/Sydney",
+    holiday: { name: "Australia Day", date: "Jan 26", relative: "8 months away" },
+    leave: { amount: 20, label: "Annual Leave" },
+    helpdesk: "ext 6100",
+  },
+  {
+    code: "IE",
+    name: "Ireland",
+    flag: "🇮🇪",
+    office: "Dublin Office",
+    timezone: "Europe/Dublin",
+    holiday: { name: "St. Patrick's Day", date: "Mar 17", relative: "9 months away" },
+    leave: { amount: 20, label: "Annual Leave" },
+    helpdesk: "ext 3530",
+  },
+];
+
 interface SettingsState {
   theme: "light" | "dark" | "system";
   setTheme: (theme: "light" | "dark" | "system") => void;
@@ -107,6 +220,14 @@ interface SettingsState {
   /** Buddy gender preference */
   buddyGender: "male" | "female" | "auto";
   setBuddyGender: (gender: "male" | "female" | "auto") => void;
+
+  /** Active country context */
+  country: CountryCode;
+  setCountry: (country: CountryCode) => void;
+
+  /** Selected clocks codes */
+  clocks: CountryCode[];
+  toggleClock: (code: CountryCode) => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -131,6 +252,16 @@ export const useSettings = create<SettingsState>()(
 
       buddyGender: "auto",
       setBuddyGender: (gender) => set({ buddyGender: gender }),
+
+      country: "US",
+      setCountry: (country) => set({ country }),
+
+      clocks: ["US", "IN", "AE", "IE"],
+      toggleClock: (code) => set((state) => ({
+        clocks: state.clocks.includes(code)
+          ? state.clocks.filter((c) => c !== code)
+          : [...state.clocks, code]
+      })),
     }),
     {
       name: "aurora-settings",
@@ -143,3 +274,4 @@ export function useBuddyColors(): BuddyColorPreset {
   const id = useSettings((s) => s.buddyColorId);
   return BUDDY_PRESETS.find((p) => p.id === id) ?? BUDDY_PRESETS[0];
 }
+

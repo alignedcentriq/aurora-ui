@@ -29,10 +29,14 @@ import {
   Megaphone,
   SlidersHorizontal,
   Crown,
+  Zap,
+  Globe,
+  Search,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
 import { useAuth, Role } from "@/lib/auth-store";
+import { COUNTRIES, useSettings } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 import { useChatStore } from "@/lib/chat-store";
@@ -79,6 +83,13 @@ interface ControlHubSubItem {
 const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
   // SYSTEM & OPS
   {
+    id: "role-control",
+    label: "Access Management",
+    category: "System & Ops",
+    icon: Shield,
+    show: (role) => role === "Super Admin",
+  },
+  {
     id: "dashboard",
     label: "Announcements & Status",
     category: "System & Ops",
@@ -91,6 +102,14 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     category: "System & Ops",
     icon: Activity,
     show: (role) => role === "Super Admin",
+  },
+  {
+    id: "automation-hub",
+    label: "Email Automation Hub",
+    category: "System & Ops",
+    icon: Zap,
+    show: (role) =>
+      ["HR", "Admin", "IT", "PMO", "Functional Manager", "Super Admin"].includes(role),
   },
   {
     id: "llm-controls",
@@ -162,7 +181,7 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     label: "Form Library",
     category: "Assets & Config",
     icon: FileText,
-    show: (role) => role === "Admin",
+    show: (role) => role === "Admin" || role === "Super Admin",
   },
 ];
 
@@ -174,11 +193,15 @@ interface SidebarProps {
 export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const { threads, activeId, setActiveId, createThread, deleteThread } = useChatStore();
   const { user, logout, setRole } = useAuth();
+  const { buddyEnabled } = useSettings();
   const location = useLocation();
   const [isRoleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [avatarError, setAvatarError] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+
 
   const isControlHubActive = location.pathname.startsWith("/control-hub");
   const [isControlHubExpanded, setIsControlHubExpanded] = useState(isControlHubActive);
@@ -248,6 +271,11 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
   const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"];
 
+  const visibleControlHubItems = CONTROL_HUB_SUB_ITEMS.filter((sub) =>
+    sub.show(user.role)
+  );
+  const hasControlHubAccess = visibleControlHubItems.length > 0;
+
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
     { to: "/books", icon: BookOpen, label: "Library", show: true },
@@ -256,7 +284,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       to: "/control-hub",
       icon: Shield,
       label: "Control Hub",
-      show: user.role !== "Employee",
+      show: hasControlHubAccess,
     },
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
@@ -514,7 +542,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                           exit={{ opacity: 0, height: 0 }}
                           className="overflow-hidden pl-7 pr-1 mt-1 space-y-1"
                         >
-                          {CONTROL_HUB_SUB_ITEMS.filter((sub) => sub.show(user.role)).map((sub) => {
+                          {visibleControlHubItems.map((sub) => {
                             const SubIcon = sub.icon;
                             const isSubActive = isControlHubActive && (location.search as any).tab === sub.id;
                             return (
@@ -558,14 +586,8 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           {/* Recent Chats */}
           {showLabels && isActive("/") && (
             <>
-              <div className="px-3 pt-5 pb-2 flex items-center gap-2">
-                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
-                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--sidebar-foreground)]/25">
-                  Recent
-                </span>
-                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
-              </div>
-              <div className="space-y-0.5">
+              {/* Controls at the top of the chat area */}
+              <div className="space-y-1 mt-1 mb-2">
                 <motion.button
                   whileHover={{ x: 3, scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
@@ -585,11 +607,60 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                   <span>New Conversation</span>
                 </motion.button>
 
+                {/* Search Chat Input */}
+                <div className="px-3 py-1 relative flex items-center">
+                  <Search className="absolute left-[22px] h-3.5 w-3.5 text-[var(--sidebar-foreground)]/35 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Search chats..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.1] hover:bg-white/[0.03] focus:border-[var(--clarity)]/30 focus:bg-white/[0.05] text-[13px] text-[var(--sidebar-foreground)] placeholder-[var(--sidebar-foreground)]/35 rounded-xl pl-10 pr-8 py-2 focus:outline-none transition-all duration-200"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-5 p-0.5 rounded-md text-[var(--sidebar-foreground)]/30 hover:text-[var(--sidebar-foreground)]/70 hover:bg-white/5 transition-all"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Recent Chats Divider Header */}
+              <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--sidebar-foreground)]/25">
+                  Recent
+                </span>
+                <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
+              </div>
+
+              <div className="space-y-0.5">
+
                 <AnimatePresence mode="popLayout">
-                  {Object.values(threads)
-                    .filter((t) => t.turns.length > 0)
-                    .sort((a, b) => b.updatedAt - a.updatedAt)
-                    .map((thread) => {
+                  {(() => {
+                    const filteredThreads = Object.values(threads)
+                      .filter((t) => {
+                        if (t.turns.length === 0) return false;
+                        if (!searchQuery) return true;
+                        const query = searchQuery.toLowerCase();
+                        return t.turns.some((turn) =>
+                          turn.text.toLowerCase().includes(query)
+                        );
+                      })
+                      .sort((a, b) => b.updatedAt - a.updatedAt);
+
+                    if (filteredThreads.length === 0) {
+                      return (
+                        <div className="text-center py-6 px-3 text-[11px] text-[var(--sidebar-foreground)]/30 font-medium">
+                          {searchQuery ? "No matching chats found" : "No recent chats"}
+                        </div>
+                      );
+                    }
+
+                    return filteredThreads.map((thread) => {
                       const active = activeId === thread.id;
                       const title = thread.turns[0]?.text || "New Chat";
                       return (
@@ -653,12 +724,28 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                           </button>
                         </motion.div>
                       );
-                    })}
+                    });
+                  })()}
                 </AnimatePresence>
               </div>
             </>
           )}
         </nav>
+
+        {/* ── Buddy Companion Ledge ───────────────────── */}
+        {showLabels && buddyEnabled && (
+          <div className="relative shrink-0 border-t border-white/[0.04] bg-white/[0.01] px-4 py-2.5 flex flex-col items-center justify-end overflow-visible select-none h-[110px]">
+            {/* Ledge glass/neon horizontal line */}
+            <div 
+              className="absolute bottom-2.5 left-4 right-4 h-[2px] rounded-full opacity-65"
+              style={{
+                background: "linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent)",
+                boxShadow: "0 1px 4px rgba(0, 0, 0, 0.3)"
+              }}
+            />
+            <SittingBuddy />
+          </div>
+        )}
 
         {/* ── User Section ────────────────────────────── */}
         <div
@@ -669,7 +756,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           )}
           ref={dropdownRef}
         >
-          <SittingBuddy />
 
           {/* Unique: 4C role indicator strip above user */}
           {showLabels && (

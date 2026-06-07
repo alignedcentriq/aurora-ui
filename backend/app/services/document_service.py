@@ -481,10 +481,26 @@ _SEED_TEMPLATES = [
 
 
 def seed_default_templates(db) -> None:
-    """Insert built-in enabled templates if no seed rows exist yet.
-    Safe to call on every startup — skips when seed rows are already present.
-    SharePoint-synced templates (source_key not starting with 'seed:') are unaffected."""
+    """Insert built-in enabled templates ONLY when SharePoint is not the template source.
+
+    The built-in seeds are a fallback for deployments with no SharePoint template folder.
+    When SHAREPOINT_TEMPLATES_FOLDER is configured, SharePoint is the single source of
+    truth: we drop any existing seed rows so they can't shadow the synced templates, and
+    do not seed. Safe to call on every startup (idempotent in both branches)."""
     from app.models import DocumentTemplate  # avoid circular at module load
+
+    sharepoint_is_source = bool(settings.SHAREPOINT_SITE_URL and settings.SHAREPOINT_TEMPLATES_FOLDER)
+    if sharepoint_is_source:
+        removed = (
+            db.query(DocumentTemplate)
+            .filter(DocumentTemplate.source_key.like("seed:%"))
+            .delete(synchronize_session=False)
+        )
+        if removed:
+            db.commit()
+            print(f"[documents] SharePoint is template source — dropped {removed} built-in seed template(s).")
+        return
+
     already = (
         db.query(DocumentTemplate)
         .filter(DocumentTemplate.source_key.like("seed:%"))

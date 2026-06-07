@@ -1,11 +1,32 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 
 type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
+
+// Maps each tab to the scope required to see it
+const TAB_SCOPE_MAP: Record<Tab, string> = {
+  "reimbursements":  "reimbursements",
+  "parking":         "parking",
+  "parking-dues":    "parking",
+  "desk-keys":       "desk_keys",
+  "complaints":      "food_complaints",
+  "food-complaints": "food_complaints",
+  "bookshelf":       "bookshelf",
+};
+
+const ALL_PORTAL_TABS = [
+  { id: "reimbursements" as Tab,  label: "Reimbursements",      icon: Receipt },
+  { id: "parking" as Tab,         label: "Parking Stickers",    icon: Car },
+  { id: "parking-dues" as Tab,    label: "Parking Charges & Dues", icon: Wallet },
+  { id: "desk-keys" as Tab,       label: "Desk Keys",           icon: KeyRound },
+  { id: "complaints" as Tab,      label: "Facility Complaints", icon: AlertTriangle },
+  { id: "food-complaints" as Tab, label: "Food Complaints",     icon: UtensilsCrossed },
+  { id: "bookshelf" as Tab,       label: "Bookshelf Buddy",     icon: BookOpen },
+];
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
@@ -42,10 +63,42 @@ export function AdminPortal() {
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
   };
 
+  const scopes = user?.scopes ?? [];
+  const fullAccess = scopes.length === 0; // empty scopes = full admin access
+
+  // true if user has any access to scopeId (full scope OR any action variant)
+  const hasScopeAccess = (scopeId: string) =>
+    fullAccess || scopes.includes(scopeId) || scopes.some((s) => s.startsWith(`${scopeId}:`));
+
+  // true if user can perform a specific action within a scope
+  const hasAction = (scopeId: string, actionId: string) =>
+    fullAccess || scopes.includes(scopeId) || scopes.includes(`${scopeId}:${actionId}`);
+
+  const allowedTabs = useMemo(() =>
+    ALL_PORTAL_TABS.filter(({ id }) => hasScopeAccess(TAB_SCOPE_MAP[id])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fullAccess, scopes.join(",")]
+  );
+
+  // If current tab is no longer in scope, jump to first allowed tab
+  useEffect(() => {
+    if (allowedTabs.length > 0 && !allowedTabs.some((t) => t.id === tab)) {
+      setTab(allowedTabs[0].id);
+    }
+  }, [allowedTabs, tab]);
+
   if (user?.role !== "Admin") {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Access restricted to Admin team.
+      </div>
+    );
+  }
+
+  if (allowedTabs.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+        No portal sections are enabled for your account. Contact your Super Admin.
       </div>
     );
   }
@@ -63,21 +116,13 @@ export function AdminPortal() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — only show sections this admin is scoped to */}
       <div className="px-8 py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex">
         <div className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex flex-wrap gap-1.5 w-max max-w-full shadow-sm">
-          {[
-            { id: "reimbursements", label: "Reimbursements", icon: Receipt },
-            { id: "parking", label: "Parking Stickers", icon: Car },
-            { id: "parking-dues", label: "Parking Dues", icon: Wallet },
-            { id: "desk-keys", label: "Desk Keys", icon: KeyRound },
-            { id: "complaints", label: "Facility Complaints", icon: AlertTriangle },
-            { id: "food-complaints", label: "Food Complaints", icon: UtensilsCrossed },
-            { id: "bookshelf", label: "Bookshelf Buddy", icon: BookOpen },
-          ].map(({ id, label, icon: Icon }) => (
+          {allowedTabs.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => setTab(id as Tab)}
+              onClick={() => setTab(id)}
               className={cn(
                 "flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200",
                 tab === id
@@ -93,13 +138,13 @@ export function AdminPortal() {
       </div>
 
       <div className="flex-1 overflow-auto px-8 py-6 bg-[#f5f7fa] dark:bg-background">
-        {tab === "reimbursements" && <ReimbursementsTab authHeaders={authHeaders} />}
-        {tab === "parking" && <ParkingTab authHeaders={authHeaders} />}
-        {tab === "parking-dues" && <ParkingDuesTab authHeaders={authHeaders} />}
-        {tab === "desk-keys" && <DeskKeysTab authHeaders={authHeaders} />}
-        {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} />}
-        {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} />}
-        {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} />}
+        {tab === "reimbursements" && <ReimbursementsTab authHeaders={authHeaders} canApprove={hasAction("reimbursements", "approve")} />}
+        {tab === "parking" && <ParkingTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />}
+        {tab === "parking-dues" && <ParkingDuesTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />}
+        {tab === "desk-keys" && <DeskKeysTab authHeaders={authHeaders} canManage={hasAction("desk_keys", "manage")} />}
+        {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />}
+        {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />}
+        {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} canManage={hasAction("bookshelf", "manage")} />}
       </div>
     </div>
   );
@@ -119,7 +164,7 @@ interface Reimbursement {
   created_at: string;
 }
 
-function ReimbursementsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function ReimbursementsTab({ authHeaders, canApprove }: { authHeaders: Record<string, string>; canApprove: boolean }) {
   const [items, setItems] = useState<Reimbursement[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
@@ -178,9 +223,9 @@ function ReimbursementsTab({ authHeaders }: { authHeaders: Record<string, string
                   <td className="py-3.5 px-4"><StatusBadge status={r.status} /></td>
                   <td className="py-3.5 px-4 text-[#94a3b8] dark:text-white/40 whitespace-nowrap">{r.created_at.slice(0, 10)}</td>
                   <td className="py-3.5 px-4">
-                    {r.status === "Pending" ? (
+                    {r.status === "Pending" && canApprove ? (
                       <ActionButtons id={r.id} acting={acting} onApprove={() => act(r.id, "approve")} onReject={() => act(r.id, "reject")} />
-                    ) : <span className="text-[#94a3b8] dark:text-white/30 text-[12px]">{r.approved_by ? `by ${r.approved_by}` : "—"}</span>}
+                    ) : <span className="text-[#94a3b8] dark:text-white/30 text-[12px]">{r.approved_by ? `by ${r.approved_by}` : (r.status === "Pending" ? "View only" : "—")}</span>}
                   </td>
                 </tr>
               ))}
@@ -208,7 +253,7 @@ interface ParkingSticker {
   valid_until: string | null;
 }
 
-function ParkingTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function ParkingTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [items, setItems] = useState<ParkingSticker[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
@@ -285,7 +330,9 @@ function ParkingTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 <td className="py-3.5 pr-4 text-foreground/50">{s.valid_until || "—"}</td>
                 <td className="py-3.5 pr-4"><StatusBadge status={s.status} /></td>
                 <td className="py-3.5">
-                  {s.status === "Pending" ? (
+                  {!canManage ? (
+                    <span className="text-muted-foreground/40 text-[12px]">View only</span>
+                  ) : s.status === "Pending" ? (
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -341,7 +388,7 @@ interface Complaint {
 
 const COMPLAINT_STATUSES = ["In Progress", "Closed"];
 
-function ComplaintsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function ComplaintsTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [items, setItems] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
@@ -455,6 +502,8 @@ function ComplaintsTab({ authHeaders }: { authHeaders: Record<string, string> })
                       </div>
                     ) : c.status === "Closed" ? (
                       <span className="text-muted-foreground/40 text-[12px]">—</span>
+                    ) : !canManage ? (
+                      <span className="text-muted-foreground/40 text-[12px]">View only</span>
                     ) : (
                       <div className="relative inline-block">
                         <button
@@ -511,7 +560,7 @@ interface FoodComplaint {
 
 const FOOD_COMPLAINT_STATUSES = ["In Progress", "Closed"];
 
-function FoodComplaintsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function FoodComplaintsTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [items, setItems] = useState<FoodComplaint[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
@@ -622,6 +671,8 @@ function FoodComplaintsTab({ authHeaders }: { authHeaders: Record<string, string
                       </div>
                     ) : c.status === "Closed" ? (
                       <span className="text-muted-foreground/40 text-[12px]">—</span>
+                    ) : !canManage ? (
+                      <span className="text-muted-foreground/40 text-[12px]">View only</span>
                     ) : (
                       <div className="relative inline-block">
                         <button
@@ -780,7 +831,7 @@ const COPY_STATUS_COLORS: Record<string, string> = {
   Returned: "text-emerald-400",
 };
 
-function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function BookshelfTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [view, setView] = useState<"dashboard" | "requests" | "extensions" | "assignments" | "books">("dashboard");
   const [requests, setRequests] = useState<BookRequest[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
@@ -917,7 +968,7 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
             </button>
           ))}
         </div>
-        {view === "books" && (
+        {view === "books" && canManage && (
           <button onClick={() => setShowBookForm(true)}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
             <Plus className="h-3.5 w-3.5" /> Add Book
@@ -1152,6 +1203,8 @@ function BookshelfTab({ authHeaders }: { authHeaders: Record<string, string> }) 
                       <td className="py-3.5">
                         {acting === r.id ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        ) : !canManage ? (
+                          <span className="text-muted-foreground/40 text-[12px]">View only</span>
                         ) : r.status === "Pending" ? (
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => actOnRequest(r.id, "approve")} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors">
@@ -1315,7 +1368,7 @@ interface DeskKey {
   created_at: string | null;
 }
 
-function DeskKeysTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [items, setItems] = useState<DeskKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
@@ -1376,7 +1429,9 @@ function DeskKeysTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 <td className="py-3.5 pr-4 text-foreground/70 max-w-[260px]">{d.reason || d.decision_reason || "—"}</td>
                 <td className="py-3.5 pr-4"><StatusBadge status={d.status} /></td>
                 <td className="py-3.5">
-                  {d.status === "Pending" ? (
+                  {!canManage ? (
+                    <span className="text-muted-foreground/40 text-[12px]">View only</span>
+                  ) : d.status === "Pending" ? (
                     <ActionButtons id={d.id} acting={acting} onApprove={() => act(d.id, "approve")} onReject={() => act(d.id, "reject")} />
                   ) : d.status === "Approved" ? (
                     <button
@@ -1423,7 +1478,7 @@ interface ParkingDuesSettings {
   last_run: string;
 }
 
-function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function ParkingDuesTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [holders, setHolders] = useState<ParkingDueHolder[]>([]);
   const [settings, setSettings] = useState<ParkingDuesSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1519,7 +1574,8 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
     <div className="space-y-6">
       {/* Settings card */}
       <div className="rounded-2xl border border-[var(--border)] bg-card p-5">
-        <h3 className="text-[14px] font-semibold text-foreground mb-4">Parking Charges & Reminders</h3>
+        <h3 className="text-[14px] font-semibold text-foreground mb-1">Parking Charges & Reminders</h3>
+        <p className="text-[12px] text-muted-foreground/70 mb-4">These are the official monthly parking charges — quoted to employees when they ask the assistant, and billed automatically per active sticker on the cadence below.</p>
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">2-Wheeler / month (INR)</label>
@@ -1540,16 +1596,20 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
               <option value="quarterly">Quarterly</option>
             </select>
           </div>
-          <button onClick={saveSettings} disabled={saving}
-            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            Save
-          </button>
-          <button onClick={() => remind()} disabled={acting === "ALL"}
-            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
-            {acting === "ALL" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            Send reminders to all
-          </button>
+          {canManage && (
+            <>
+              <button onClick={saveSettings} disabled={saving}
+                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Save
+              </button>
+              <button onClick={() => remind()} disabled={acting === "ALL"}
+                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
+                {acting === "ALL" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Send reminders to all
+              </button>
+            </>
+          )}
         </div>
         {settings?.last_run && (
           <p className="text-[11px] text-muted-foreground/60 mt-3">Last reminder run: {settings.last_run}</p>
@@ -1575,7 +1635,7 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
                     <span className={cn("text-[13px] font-semibold", h.outstanding > 0 ? "text-rose-400" : "text-emerald-400")}>
                       INR {h.outstanding.toLocaleString()} {h.outstanding > 0 ? "due" : "clear"}
                     </span>
-                    {h.outstanding > 0 && (
+                    {h.outstanding > 0 && canManage && (
                       <>
                         <button onClick={() => remind(h.employee_email)} disabled={acting === h.employee_email}
                           className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors disabled:opacity-50">
@@ -1609,7 +1669,7 @@ function ParkingDuesTab({ authHeaders }: { authHeaders: Record<string, string> }
                               <td className="py-2 pr-4 text-foreground/80">INR {p.amount_due.toLocaleString()}</td>
                               <td className="py-2 pr-4"><StatusBadge status={p.status} /></td>
                               <td className="py-2">
-                                {p.status === "Due" ? (
+                                {p.status === "Due" && canManage ? (
                                   <div className="flex items-center gap-1.5">
                                     <button onClick={() => markPaid(p.id)} disabled={acting === `p${p.id}`}
                                       className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50">

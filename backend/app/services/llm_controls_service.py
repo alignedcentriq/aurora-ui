@@ -277,6 +277,10 @@ def get_llm(tier: str, *, default_timeout: Optional[float] = None,
     kwargs: dict[str, Any] = dict(
         base_url=base_url, api_key=api_key, model=model,
         temperature=temperature, max_retries=2, timeout=timeout,
+        # Ask Ollama to keep this model in VRAM for 15 min after each call.
+        # Default is 5 min; extending it 3x dramatically reduces cold-reload
+        # evictions when the shared ml01 server is under concurrent load.
+        extra_body={"keep_alive": "15m"},
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens

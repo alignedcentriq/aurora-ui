@@ -15,6 +15,7 @@ Architecture:
 import os
 import json
 import re
+import random as _random
 import logging
 from typing import TypedDict, Annotated, List, Optional
 
@@ -872,7 +873,7 @@ def get_my_alchemy_skills(state: Annotated[dict, InjectedState] = None) -> str:
         try:
             skills = EmployeeService._real_skills(db, email)
             if not skills:
-                return "No skills found in your profile."
+                return "No skills found in your profile yet. You can add skills by typing \"update my skills\" in the chat."
             lines = ["**Your Skills (Internal Profile)**"]
             for s in skills.split(","):
                 lines.append(f"- {s.strip()}")
@@ -1079,7 +1080,7 @@ hr_tools = [
     get_leave_balance, apply_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
-    search_people_directory,
+    search_people_directory, find_apps,
     create_announcement, get_announcements, deactivate_announcement,
     update_hr_prompt,
     get_team_absence, get_team_absence_for,
@@ -1139,6 +1140,15 @@ _KW_HR_POLICY = re.compile(
     r'insurance|mediclaim|group\s+health|medical\s+insurance|'
     r'esic?\b|health\s+(insurance|policy|cover(age)?)|'
     r'insurance\s+claim|claim\s+(form|process))\b', re.I
+)
+
+_KW_HR_REFERRAL = re.compile(
+    r'\b(employee\s+referral|refer\s+(someone|a\s+(person|candidate|friend|colleague|contact|peer)|people)|'
+    r'how\s+(do\s+i|can\s+i|to)\s+refer|referral\s+(program|portal|link|process|bonus)|'
+    r'refer\s+(for\s+a\s+job|to\s+the\s+company|someone\s+for|a\s+job)|'
+    r'(want|would\s+like|looking)\s+to\s+refer|submit\s+(a[n]?\s+)?referral|'
+    r'internal\s+referral|referral\s+submission|'
+    r'refer\s+(my\s+)?(friend|colleague|contact|peer|buddy))\b', re.I
 )
 
 _KW_HR_DOC = re.compile(
@@ -1245,6 +1255,14 @@ _KW_ADMIN_PARKING = re.compile(
     r'surrender\s+parking)\b', re.I
 )
 
+# Parking *charges* — a pure info question ("how much is parking?"), distinct from
+# requesting a sticker. Checked before _KW_ADMIN_PARKING. Matches "charge/cost/fee/
+# rate/price/how much/rent" within ~30 chars of "parking", in either order.
+_KW_ADMIN_PARKING_CHARGES = re.compile(
+    r'\bparking\b.{0,30}\b(charges?|costs?|fees?|rates?|prices?|pricing|how\s+much|amount|rent)\b'
+    r'|\b(charges?|costs?|fees?|rates?|prices?|pricing|how\s+much)\b.{0,30}\bparking\b', re.I
+)
+
 _KW_ADMIN_FACILITY = re.compile(
     r'\b(ac\s+(not|isn\'?t|is\s+not)|'
     r'ac\b.{0,40}\b(not\s+working|broken|issue|problem)|'
@@ -1273,6 +1291,15 @@ _KW_ADMIN_VISITOR = re.compile(
     r'\b(visitor|guest)\s+(pass|entry|registration|register)|'
     r'register\s+(a\s+|my\s+)?(visitor|guest)|'
     r'(request|need|book|get)\s+(a\s+|an\s+)?(visitor|guest)\s+pass\b', re.I
+)
+
+# Information-style queries need a stricter form-match threshold so a loosely-related
+# form (e.g. Visitor Pass) doesn't win over a genuinely matching one (e.g. a future
+# Employee Referral Form). Action-style queries ("I need a X", "request a X") keep the
+# default lower threshold.
+_INFO_QUERY_RE = re.compile(
+    r'\bhow\s+(do\s+i|can\s+i|to)\b|\bwhat\s+(is|are)\b|\btell\s+me\b|\bexplain\b',
+    re.I,
 )
 
 _KW_BOOKSHELF_RETURN = re.compile(
@@ -1435,8 +1462,9 @@ _KW_MS365_COMMUNITY_SEARCH = re.compile(
 
 _KW_COMPANY_INFO = re.compile(
     r'\b(about\s+(aligned\s*automation|the\s+company|aaspl|centriq)|'
-    r'company\s+(info|details|overview|profile)|'
-    r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company))\b', re.I
+    r'company\s+(info|details|overview|profile|value|values)|'
+    r'what\s+is\s+aligned|tell\s+me\s+about\s+(aligned|aaspl|the\s+company)|'
+    r'(4|four)\s*c[\'’]?s?|core\s+values?|company\s+values?)\b', re.I
 )
 
 # Company-project knowledge base (summaries / demo transcripts / details from the
@@ -1472,13 +1500,46 @@ _KW_ZOHO_TRAINING = re.compile(
     r'learning\s+history|upcoming\s+training|training\s+programs?)\b', re.I
 )
 _KW_ALCHEMY_MY_SKILLS = re.compile(
-    r'\b(my\s+skills?\s+(in\s+alchemy|portal|directory)?|alchemy\s+skills?|'
+    r'\b(my\s+skills?\s+(in\s+alchemy|portal|directory)|alchemy\s+skills?|'
     r'skills?\s+in\s+alchemy|what\s+skills?\s+do\s+i\s+have|my\s+skill\s+set)\b', re.I
+)
+# Matches update/add/edit/change intent for skills — these are handled by the
+# frontend SkillsEditorWidget, not the Alchemy backend route.
+_KW_SKILLS_EDIT_INTENT = re.compile(
+    r'\b(update|edit|add|change|manage|set|modify|remove|delete)\b.{0,40}\b(skill|skills|certification|cert)\b|'
+    r'\b(skill|skills|certification|cert)\b.{0,40}\b(update|edit|add|upload|manage|change)\b|'
+    r'\b(how\s+(can|do|to)\s+(i\s+)?(update|edit|add|change|manage))', re.I
 )
 _KW_ALCHEMY_ORG = re.compile(
     r'\b(org\s+(skills?|capabilities)|top\s+skills?\s+in\s+(company|org|team)|'
     r'skills?\s+(overview|summary|stats)|popular\s+skills?|trending\s+skills?|'
     r'skills?\s+by\s+interest|alchemy\s+(overview|summary|stats))\b', re.I
+)
+
+# Off-topic personal wishes — requests that are not actionable company processes.
+# Catches phrases like "I want a salary hike", "make me a manager", "promote me",
+# "I deserve a raise", "I want to be the CEO", etc.
+_KW_OFF_TOPIC = re.compile(
+    r'\b('
+    # Salary / compensation desires
+    r'(i\s+want|i\s+need|i\s+wish|give\s+me|i\s+deserve)\s+(a\s+)?'
+    r'(salary\s+(hike|raise|increase|increment|revision)|(pay\s+)?(raise|hike|increment)|'
+    r'(higher|better|more)\s+(pay|salary|compensation|package|ctc)|(more\s+)?bonus(es)?|'
+    r'stock\s+options?|equity)|'
+    r'increase\s+my\s+(salary|pay|compensation|ctc|package)|'
+    r'double\s+my\s+(salary|pay)|'
+    # Role / promotion desires
+    r'(i\s+want|i\s+need|i\s+wish|give\s+me|i\s+deserve)\s+(a\s+)?promotion\b|'
+    r'promote\s+me\b|'
+    r'(make\s+me|i\s+want\s+to\s+be|i\s+should\s+be|i\s+must\s+be)\s+((a|the)\s+)?'
+    r'(manager|director|vp|ceo|cto|coo|lead|head|team\s+lead|senior\s+\w+)\b|'
+    r'i\s+(should|must|deserve\s+to)\s+be\s+((a|the)\s+)?(manager|director|lead|vp|ceo)\b|'
+    # Quitting / resigning
+    r'i\s+want\s+(to\s+)?(quit|resign|leave\s+the\s+company|leave\s+this\s+job)\b|'
+    # Fire someone
+    r'fire\s+my\s+(manager|boss|team\s+lead)\b'
+    r')',
+    re.I,
 )
 
 
@@ -1489,6 +1550,12 @@ def _try_keyword_route(message: str) -> dict | None:
     through to the LLM router for ambiguous queries.
     """
     text = message.strip()
+
+    # Off-topic personal wishes — not actionable company processes
+    if _KW_OFF_TOPIC.search(text):
+        return {"domain": "general", "confidence": 1.0,
+                "reasoning": "Keyword: off-topic personal wish",
+                "sub_intent": "off_topic", "entities": {}}
 
     # Greetings / small talk
     if _KW_GREETING.match(text):
@@ -1501,6 +1568,12 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.95,
                 "reasoning": "Keyword: HR policy query",
                 "sub_intent": "policy_query", "entities": {}}
+
+    # HR — employee referral → quick-choice card (zero-LLM, instant)
+    if _KW_HR_REFERRAL.search(text):
+        return {"domain": "referral_choice", "confidence": 1.0,
+                "reasoning": "Keyword: employee referral",
+                "sub_intent": "referral_choice", "entities": {}}
 
     # HR — document generation
     if _KW_HR_DOC.search(text):
@@ -1553,7 +1626,8 @@ def _try_keyword_route(message: str) -> dict | None:
                 "sub_intent": "training", "entities": {}}
 
     # HR — Alchemy skills portal: my skills
-    if _KW_ALCHEMY_MY_SKILLS.search(text):
+    # Skip if it's an update/add/edit intent — those are handled by the frontend SkillsEditorWidget.
+    if _KW_ALCHEMY_MY_SKILLS.search(text) and not _KW_SKILLS_EDIT_INTENT.search(text):
         return {"domain": "hr", "confidence": 0.95,
                 "reasoning": "Keyword: alchemy my skills",
                 "sub_intent": "alchemy_my_skills", "entities": {}}
@@ -1578,6 +1652,14 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: reimbursement/expense",
                 "sub_intent": "policy_query",
                 "entities": {"policy_topic": "reimbursement"}}
+
+    # Admin — parking charges (info query) — checked before the sticker keyword so
+    # "what are the parking charges for 2-wheeler/4-wheeler" doesn't fall through to
+    # the semantic router (which used to mis-match it to a PF query).
+    if _KW_ADMIN_PARKING_CHARGES.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: parking charges",
+                "sub_intent": "parking_charges", "entities": {}}
 
     # Admin — parking
     if _KW_ADMIN_PARKING.search(text):
@@ -2004,6 +2086,19 @@ async def intent_router(state: AgentState):
             "entities": entities,
         }
 
+    # Zero-LLM keyword fast-exit (layer 4.5): keyword routes with confidence=1.0 are deterministic
+    # and must NOT be overridden by the semantic router (which can re-route them to an LLM agent
+    # and cause timeouts). Fire before the semantic high-tier check below.
+    if keyword_result and keyword_result.get("confidence", 0) >= 1.0:
+        print(f"[Router] Keyword fast-exit -> {keyword_result['domain']} ({keyword_result['sub_intent']})")
+        return {
+            "domain": keyword_result["domain"],
+            "route_confidence": 1.0,
+            "route_reasoning": keyword_result["reasoning"],
+            "sub_intent": keyword_result["sub_intent"],
+            "entities": keyword_result.get("entities", {}),
+        }
+
     # Semantic intent router (layer 5): embed the message and match it against the closed set of
     # labeled seed utterances (pgvector cosine k-NN). A strong, top-k-agreeing match routes
     # directly with 0 LLM calls and — because the output space is the stored labels — cannot
@@ -2035,7 +2130,8 @@ async def intent_router(state: AgentState):
     # Stickiness is already handled by the early-return above, so a follow-up never lands here.
     try:
         from app.services.form_library_service import FormLibraryService
-        form_match = FormLibraryService.match(last_human)
+        _form_threshold = 0.80 if _INFO_QUERY_RE.search(last_human) else None
+        form_match = FormLibraryService.match(last_human, threshold=_form_threshold)
     except Exception as e:  # noqa: BLE001
         print(f"[Router] Form match skipped ({type(e).__name__}): {e}")
         form_match = None
@@ -2243,7 +2339,11 @@ def hr_agent(state: AgentState):
             f"- Offboarding → trigger_offboarding_checklist\n"
             f"- HR query (proof letter, PF, insurance, attendance issue, resignation, etc.) → "
             f"FIRST search_hr_policies. If no policy answers it or HR action is needed, "
-            f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n\n"
+            f"ASK employee to confirm, THEN submit_hr_query(email='{user_email}', category, subject, description)\n"
+            f"- Employee referral / 'where do I refer' / 'referral portal' → "
+            f"call search_hr_policies('employee referral') AND find_apps('zoho recruit referral'); "
+            f"answer the policy then present the portal link\n"
+            f"- Where to do X / which app/portal/tool for X → find_apps(query)\n\n"
             f"Never answer from training knowledge — use tools only.\n"
             + (f"If [PRE-SEARCHED HR POLICY] is present in context, answer from it directly "
                f"without calling search_hr_policies.\n" if _hr_policy_context else ""),
@@ -2370,6 +2470,10 @@ async def deeplink_agent_node(state: AgentState):
 DYNAMIC_FORM_START = "[DYNAMIC_FORM_START]"
 DYNAMIC_FORM_END = "[DYNAMIC_FORM_END]"
 
+# Marker for zero-LLM quick-choice card widgets (e.g. referral: policy vs portal).
+QUICK_CHOICE_START = "[QUICK_CHOICE_START]"
+QUICK_CHOICE_END = "[QUICK_CHOICE_END]"
+
 
 async def dynamic_form_agent_node(state: AgentState):
     """Form Library node — terminal, 0 LLM. Loads the matched FormTemplate and emits its schema
@@ -2399,6 +2503,53 @@ async def dynamic_form_agent_node(state: AgentState):
     return {"messages": [AIMessage(content=content)]}
 
 
+async def referral_choice_agent_node(state: AgentState):
+    """Zero-LLM quick-choice card for employee referral queries.
+    Looks up the Zoho Recruit portal URL via a plain DB keyword search — no embeddings,
+    no ml01 calls — so this node is truly instant."""
+    portal_url: str | None = None
+    try:
+        from app.database import SessionLocal as _SL
+        from app.models import AppLink
+        _db = _SL()
+        try:
+            _kw = "%recruit%"
+            from sqlalchemy import or_ as _or
+            row = (
+                _db.query(AppLink)
+                .filter(
+                    AppLink.is_active.is_(True),
+                    _or(AppLink.name.ilike(_kw), AppLink.purpose.ilike(_kw)),
+                )
+                .first()
+            )
+            portal_url = row.url if row else None
+        finally:
+            _db.close()
+    except Exception:
+        portal_url = None
+
+    options: list[dict] = [
+        {
+            "label": "Read Referral Policy",
+            "action": "message",
+            "value": "Explain the employee referral program, eligibility, and bonus",
+            "icon": "book",
+        }
+    ]
+    if portal_url:
+        options.append({
+            "label": "Go to Referral Portal",
+            "action": "link",
+            "value": portal_url,
+            "icon": "external-link",
+        })
+
+    payload = {"question": "What would you like to do?", "options": options}
+    content = f"Here's what I can help with for employee referrals:\n{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+    return {"messages": [AIMessage(content=content)]}
+
+
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
     result = await pmo_agent.ainvoke({
@@ -2421,6 +2572,12 @@ async def admin_agent_node(state: AgentState):
     sub_intent = state.get("sub_intent") or ""
     entities = state.get("entities") or {}
     feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
+
+    # Parking charges — deterministic info answer from the admin-configured rates.
+    # Zero LLM: avoids the model paraphrasing/inventing numbers or routing to a policy doc.
+    if sub_intent == "parking_charges":
+        from app.services.parking_payment_service import ParkingPaymentService
+        return {"messages": [AIMessage(content=ParkingPaymentService.format_charges())]}
 
     # Execute-first for policy queries: search embeddings/chunks at Python level,
     # avoiding an unreliable LLM tool-calling round-trip.
@@ -2654,12 +2811,27 @@ def _greeting_response(state: AgentState) -> str:
     return f"{greeting} I'm Centriq, your workplace assistant. I can help you with HR policies, leave management, reimbursements, IT tickets, parking, project updates, and more. What do you need help with?"
 
 
+_OFF_TOPIC_RESPONSES = [
+    "That's a bit outside what I can help with! For things like salary revisions, promotions, or career changes, "
+    "your best path is a direct conversation with your manager or a formal request through HR.",
+    "I appreciate the ambition, but that one's above my pay grade! Salary and promotion decisions go through "
+    "your manager and HR — I'd suggest scheduling a 1:1 or raising it during your next appraisal cycle.",
+    "Ha, I wish I could help with that one! Salary increments and role changes are handled by HR and your "
+    "reporting manager. I'm happy to help you find the right HR policy or contact if that would help.",
+    "That's not something I can action directly, but I can point you in the right direction — "
+    "for compensation or role changes, speak with your manager or reach out to HR formally.",
+]
+
 def general_agent(state: AgentState):
     """General Agent — greetings, announcements, and policy Q&A."""
     # Fast-path: greetings don't need LLM — respond instantly
     sub_intent = state.get("sub_intent") or ""
     if sub_intent == "greeting":
         return {"messages": [AIMessage(content=_greeting_response(state))]}
+
+    # Fast-path: off-topic personal wishes — no LLM needed
+    if sub_intent == "off_topic":
+        return {"messages": [AIMessage(content=_random.choice(_OFF_TOPIC_RESPONSES))]}
 
     base = PromptService.get_system_prompt(
         "general",
@@ -2669,7 +2841,8 @@ def general_agent(state: AgentState):
         "search_company_projects (what projects the company has done, a project's summary/details, demos), "
         "find_apps (which internal app/tool/portal/website to use for a task, e.g. 'where do I book travel'). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
-        "Do not offer further assistance unless asked.",
+        "Do not offer further assistance unless asked.\n\n"
+        "Company fact — the 4 C's (core values): Caring, Curious, Collaborative, Courageous.",
     )
     guardrail = PromptService.get_guardrail("general")
     feedback_ctx = state.get("feedback_context") or ""
@@ -2839,6 +3012,7 @@ def route_to_agent(state: AgentState):
     if domain in llm_controls.disabled_domains():
         return "disabled_agent"
     if domain == "dynamic_form": return "dynamic_form_agent"
+    if domain == "referral_choice": return "referral_choice_agent"
     status = get_domain_status(domain)
     if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
@@ -2895,6 +3069,7 @@ workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
+workflow.add_node("referral_choice_agent", referral_choice_agent_node)
 workflow.add_node("ms365_agent", ms365_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
@@ -2921,6 +3096,7 @@ workflow.add_edge("it_agent", END)
 workflow.add_edge("manager_agent", END)
 workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("dynamic_form_agent", END)
+workflow.add_edge("referral_choice_agent", END)
 workflow.add_edge("ms365_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)

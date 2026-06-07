@@ -81,7 +81,7 @@ def force_approve_draft(draft_id: int, user: CurrentUser = Depends(require_domai
 @router.get("/{domain}")
 def get_domain_prompts(domain: str, user: CurrentUser = Depends(get_current_user)):
     allowed = ROLE_DOMAIN_MAP.get(user.role, [])
-    if domain not in allowed and user.role != "admin":
+    if domain not in allowed and user.role not in ("admin", "super admin"):
         raise HTTPException(status_code=403, detail=f"Not authorized to view the {domain} domain.")
     return PromptService.list_prompts(domain)
 
@@ -113,7 +113,7 @@ def update_prompt(
     if domain not in allowed:
         raise HTTPException(status_code=403, detail=f"Your role cannot edit the {domain} domain.")
 
-    if user.role == "admin":
+    if user.role in ("admin", "super admin"):
         result = PromptService.update_prompt(domain, prompt_key, update.value, user.email, user.role)
         if "Unauthorized" in result:
             raise HTTPException(status_code=403, detail=result)

@@ -32,6 +32,7 @@ class Employee(Base):
     insurance_plan = Column(String)
     tax_regime = Column(String) # Old, New
     shift_type = Column(String) # Day, Night
+    role = Column(String, nullable=True) # Employee, HR, IT, PMO, Admin, Functional Manager, Super Admin
 
     # Relationships
     leaves = relationship("Leave", back_populates="employee")
@@ -989,8 +990,9 @@ class GeneratedDocument(Base):
     verified_at = Column(DateTime, nullable=True)
     purpose = Column(Text, nullable=True)
     additional_info = Column(Text, nullable=True)
-    content = Column(Text, nullable=True)              # merged rendered HTML (source for /verify + PDF)
+    content = Column(Text, nullable=True)              # rendered preview HTML (source for /verify page + on-screen preview)
     field_values = Column(JSON, nullable=True)         # filled placeholder values {field: value} for audit/re-render
+    rendered_docx = Column(LargeBinary, nullable=True) # the filled .docx (immutable issued artifact; Word→PDF on download)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
 
@@ -1012,10 +1014,11 @@ class DocumentTemplate(Base):
     source_key = Column(String, unique=True, index=True)   # sp:<TemplatesFolder>/<relative_path>
     source_etag = Column(String, nullable=True)        # Graph cTag for change detection
     filename = Column(String)
-    source_format = Column(String, nullable=True)      # pdf | docx
-    html_template = Column(Text, nullable=True)        # converted HTML carrying {{field}} tokens
+    source_format = Column(String, nullable=True)      # docx (Word source authored by HR)
+    html_template = Column(Text, nullable=True)        # mammoth preview HTML of the blank template (for the admin panel)
+    template_blob = Column(LargeBinary, nullable=True) # raw .docx bytes — the source rendered by docxtpl at generation
     fields = Column(JSON, nullable=True)               # [{name,label,type,required,source,options?}]
-    enabled = Column(Boolean, default=False, index=True)   # HR must opt a new template into the dropdown
+    enabled = Column(Boolean, default=False, index=True)   # SharePoint-synced templates are enabled on sync
     requires_approval = Column(Boolean, default=True)  # approval-gated vs auto-release
     setup_status = Column(String, default="needs_review")  # needs_review | ready
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -1195,5 +1198,118 @@ class ParkingPayment(Base):
     paid_at = Column(DateTime, nullable=True)
     closed_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class UserRoleOverride(Base):
+    """Super Admin-managed role assignments that override Azure AD token claims.
+    One row per user — upserted via the Access Management page."""
+    __tablename__ = "user_role_overrides"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    role = Column(String, nullable=False)            # e.g. "admin", "hr", "it", "pmo", "functional manager"
+    scopes = Column(JSON, nullable=True)             # Optional feature-level scopes; None/[] = full role access
+    granted_by = Column(String, nullable=True)       # Super Admin's email
+    granted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+# ── Automation Hub ─────────────────────────────────────────────────────────────
+
+class Escalation(Base):
+    """User-raised escalation when the assistant couldn't resolve their query.
+
+    Created when a user clicks "Escalate" after an error or thumbs-down feedback.
+    The backend notifies the responsible department by email and records the ticket
+    here for admin review.
+    """
+    __tablename__ = "escalations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    reference_id = Column(String, unique=True, index=True, nullable=False)  # ESC-001
+    user_email = Column(String, index=True, nullable=False)
+    user_name = Column(String, nullable=True)
+    domain = Column(String, nullable=True, index=True)         # hr, admin, it_support, pmo, general
+    original_query = Column(Text, nullable=True)               # the message that failed
+    error_type = Column(String, nullable=True)                 # "error" | "no_response" | "unsatisfied"
+    description = Column(Text, nullable=True)                  # user-provided extra context
+    priority = Column(String, default="Medium")                # Low, Medium, High
+    status = Column(String, default="Open", index=True)        # Open, Acknowledged, Resolved
+    session_id = Column(String, nullable=True, index=True)
+    notified_to = Column(String, nullable=True)                # email address that was notified
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class AutomationRule(Base):
+    """A recurring email automation created by HR/Admin/PMO/IT/FM/SuperAdmin.
+
+    The startup scheduler fires any active rule whose next_run <= now (see
+    automation_service.run_due). The email is sent from the creator's mailbox
+    using their stored Microsoft OAuth delegated token.
+    """
+    __tablename__ = "automation_rules"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    created_by = Column(String, index=True, nullable=False)   # creator email (also the sender)
+    created_by_role = Column(String, nullable=False)          # role at creation time
+
+    # Schedule
+    frequency = Column(String, nullable=False)                # daily | weekly | monthly | custom
+    day_of_week = Column(Integer, nullable=True)              # 0=Mon .. 6=Sun (weekly / custom)
+    day_of_month = Column(Integer, nullable=True)             # 1..28 (monthly / custom)
+    hour = Column(Integer, default=9)                         # local hour of day, 0..23
+
+    # Email
+    email_subject = Column(String, nullable=False)
+    email_body = Column(Text, nullable=False)                 # plain text; wrapped in branded shell at send
+
+    # Recipients JSON array: [{type: "individual", email: "x@y.com", name: "..."} |
+    #                          {type: "teams_group", id: "...", name: "...", emails: [...]}]
+    recipients_json = Column(JSON, default=list)
+
+    # State
+    is_active = Column(Boolean, default=True, index=True)
+    next_run = Column(DateTime, nullable=True, index=True)
+    last_run = Column(DateTime, nullable=True)
+    last_status = Column(String, nullable=True)               # sent | failed:<reason>
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class WelcomeResource(Base):
+    """HR-editable list of resources sent in the new-employee welcome email."""
+    __tablename__ = "welcome_resources"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    url = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True)  # App Guide | HR | Policy | IT | Admin | Facilities
+    icon = Column(String, nullable=True)      # emoji
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class WelcomeLog(Base):
+    """Tracks HR confirmation emails sent for new employees."""
+    __tablename__ = "welcome_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_email = Column(String, nullable=False, index=True)
+    employee_name = Column(String, nullable=False)
+    send_token = Column(String(64), unique=True, index=True, nullable=False)
+    skip_token = Column(String(64), unique=True, index=True, nullable=False)
+    status = Column(String, default="pending_hr")  # pending_hr | welcome_sent | skipped
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    acted_at = Column(DateTime, nullable=True)
+    acted_by = Column(String, nullable=True)
 
 

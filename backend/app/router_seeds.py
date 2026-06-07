@@ -75,6 +75,16 @@ _RAW: list[tuple[str, str, str]] = [
     ("comp-off policy details", "hr", "policy_query"),
     ("holiday calendar for this year", "hr", "policy_query"),
     ("referral bonus policy", "hr", "policy_query"),
+    # employee referral — quick-choice widget (policy vs portal); keyword also catches these
+    ("how do I refer someone to the company", "referral_choice", "referral_choice"),
+    ("how to refer a candidate for a job opening", "referral_choice", "referral_choice"),
+    ("employee referral program details", "referral_choice", "referral_choice"),
+    ("I want to refer my colleague for a job opening", "referral_choice", "referral_choice"),
+    ("how to submit an employee referral", "referral_choice", "referral_choice"),
+    ("where is the employee referral portal", "referral_choice", "referral_choice"),
+    ("refer a friend to the company", "referral_choice", "referral_choice"),
+    ("I'd like to refer someone to join our company", "referral_choice", "referral_choice"),
+    ("referral process and portal link", "referral_choice", "referral_choice"),
     ("probation and confirmation policy", "hr", "policy_query"),
     ("what does my group health insurance cover", "hr", "policy_query"),
     ("how do I file a mediclaim insurance claim", "hr", "policy_query"),
@@ -141,6 +151,12 @@ _RAW: list[tuple[str, str, str]] = [
     ("register my two-wheeler for parking", "admin", "parking_sticker"),
     ("surrender my parking pass", "admin", "parking_sticker"),
     ("parking info and rules", "admin", "parking_sticker"),
+
+    # ── admin: parking charges (info, not a sticker request) ──────────────────────
+    ("what are the parking charges for 2-wheeler and 4-wheeler", "admin", "parking_charges"),
+    ("how much does parking cost per month", "admin", "parking_charges"),
+    ("parking fee for my car", "admin", "parking_charges"),
+    ("what is the monthly parking rate for a bike", "admin", "parking_charges"),
 
     # ── admin: facility ──────────────────────────────────────────────────────────
     ("the AC is not working", "admin", "facility_complaint"),

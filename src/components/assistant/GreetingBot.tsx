@@ -73,18 +73,18 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
       /* Dual drop-shadow creates a high-contrast white border overlay to stand out on dark sidebars */
       style={{ filter: `drop-shadow(0 0 1.2px rgba(255, 255, 255, 0.8)) drop-shadow(0 4px 10px ${colors.shadow})` }}
       className={`select-none pointer-events-none ${
-        isSitting
-          ? isYoga
-            ? "buddy-anim-yoga"
-            : isIndianDance
-            ? "buddy-anim-indian"
-            : isHiphopDance
-            ? "buddy-anim-hiphop"
-            : isZumbaDance
-            ? "buddy-anim-zumba"
-            : isGym
-            ? "buddy-anim-gym-body"
-            : ""
+        isYoga
+          ? "buddy-anim-yoga"
+          : isIndianDance
+          ? "buddy-anim-indian"
+          : isHiphopDance
+          ? "buddy-anim-hiphop"
+          : isZumbaDance
+          ? "buddy-anim-zumba"
+          : isGym
+          ? "buddy-anim-gym-body"
+          : isSitting
+          ? ""
           : "buddy-anim-float"
       }`}
     >
@@ -982,6 +982,10 @@ export function SittingBuddy() {
   const [rotation, setRotation] = useState(0);
   const [tooltip, setTooltip] = useState<string | null>(null);
 
+  // Track previous activity to detect standing/sitting transitions
+  const [prevActivity, setPrevActivity] = useState<typeof activity>("sitting");
+  const [isPullingChair, setIsPullingChair] = useState(false);
+
   // Helper to trigger tooltip message and clear after 4s
   const showSpeechBubble = useCallback((text: string) => {
     setTooltip(text);
@@ -991,9 +995,27 @@ export function SittingBuddy() {
     return timer;
   }, []);
 
+  // Handle standing-to-sitting transition ("pulling chair emote")
+  useEffect(() => {
+    const isPrevStanding = ["gym", "indian-dance", "hiphop-dance", "zumba-dance", "yoga"].includes(prevActivity);
+    const isNewSitting = ["sitting", "reading", "gaming", "music"].includes(activity);
+
+    if (isPrevStanding && isNewSitting) {
+      setIsPullingChair(true);
+      setTooltip("Let me pull up my chair... 🪑");
+      
+      const timer = setTimeout(() => {
+        setIsPullingChair(false);
+        setTooltip(null);
+      }, 1500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [activity, prevActivity]);
+
   // Trigger speech bubble automatically when activity changes
   useEffect(() => {
-    if (botState !== "sitting" || !buddyEnabled) return;
+    if (botState !== "sitting" || !buddyEnabled || isPullingChair) return;
     
     // Tiny delay so the transition animation can trigger
     const timer = setTimeout(() => {
@@ -1003,7 +1025,7 @@ export function SittingBuddy() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [activity, botState, buddyEnabled, showSpeechBubble]);
+  }, [activity, botState, buddyEnabled, showSpeechBubble, isPullingChair]);
 
   // Random activity cycling (every 15 to 20 seconds)
   useEffect(() => {
@@ -1011,6 +1033,7 @@ export function SittingBuddy() {
 
     const cycle = () => {
       setActivity((curr) => {
+        setPrevActivity(curr);
         const list: ("sitting" | "yoga" | "gaming" | "reading" | "music" | "indian-dance" | "hiphop-dance" | "zumba-dance" | "gym")[] = [
           "sitting", "yoga", "gaming", "reading", "music", "indian-dance", "hiphop-dance", "zumba-dance", "gym"
         ];
@@ -1123,10 +1146,12 @@ export function SittingBuddy() {
   };
 
   const isStanding = activity === "gym" || activity === "indian-dance" || activity === "hiphop-dance" || activity === "zumba-dance";
+  const isYogaState = activity === "yoga";
+  const isSittingState = !isStanding && !isYogaState;
   const resolvedGender = getBuddyGender(user?.name, buddyGender);
 
   return (
-    <div className="absolute -top-12 left-5 z-20 cursor-pointer flex flex-col items-center">
+    <div className="relative cursor-pointer flex flex-col items-center justify-end h-[90px] w-full select-none">
       {/* Motivational Tooltip on the Right */}
       <AnimatePresence>
         {tooltip && (
@@ -1134,7 +1159,7 @@ export function SittingBuddy() {
             initial={{ opacity: 0, scale: 0.8, x: -10 }}
             animate={{ opacity: 1, scale: 1, x: 0 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="absolute left-full top-[-8px] ml-3 text-[12px] leading-snug font-semibold w-52 p-2.5 rounded-2xl shadow-xl border pointer-events-none z-[100]"
+            className="absolute left-[85%] bottom-1/2 ml-3 text-[12px] leading-snug font-semibold w-52 p-2.5 rounded-2xl shadow-xl border pointer-events-none z-[100]"
             style={{
               background: "rgba(15, 23, 42, 0.95)",
               color: "#fff",
@@ -1144,8 +1169,58 @@ export function SittingBuddy() {
           >
             {tooltip}
             {/* Arrow pointing left to mini bot */}
-            <div className="absolute right-full top-4 mr-[-4px] w-2.5 h-2.5 rotate-45 bg-[#0f172a] border-l border-b border-white/10" />
+            <div className="absolute right-full top-1/2 -translate-y-1/2 mr-[-4px] w-2.5 h-2.5 rotate-45 bg-[#0f172a] border-l border-b border-white/10" />
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Swivel Chair behind character */}
+      <AnimatePresence>
+        {isSittingState && (
+          <motion.svg
+            width="32"
+            height="32"
+            viewBox="0 0 36 36"
+            fill="none"
+            initial={isPullingChair ? { x: -35, opacity: 0, scale: 0.8 } : { x: 0, opacity: 0.8, scale: 1 }}
+            animate={{ x: 0, opacity: 0.85, scale: 1 }}
+            exit={{ x: -35, opacity: 0, scale: 0.8 }}
+            transition={{ type: "spring", stiffness: 120, damping: 14 }}
+            className="absolute bottom-0.5 z-10 pointer-events-none"
+          >
+            {/* Chair Backrest */}
+            <rect x="10" y="4" width="16" height="14" rx="3.5" fill={colors.primary} opacity="0.85" stroke="rgba(255,255,255,0.2)" strokeWidth="0.8" />
+            {/* Support brackets */}
+            <path d="M 12 18 L 18 22 L 24 18" stroke="#1e293b" strokeWidth="2.5" />
+            {/* Seat cushion */}
+            <rect x="7" y="21" width="22" height="3.5" rx="1.5" fill="#334155" stroke="rgba(255,255,255,0.2)" strokeWidth="0.8" />
+            {/* Swivel cylinder */}
+            <rect x="16.5" y="24" width="3" height="6" fill="#1e293b" />
+            {/* Swivel Base */}
+            <path d="M 10 30 L 26 30" stroke="#1e293b" strokeWidth="2" strokeLinecap="round" />
+            <path d="M 14 30 L 18 32 M 22 30 L 18 32" stroke="#1e293b" strokeWidth="1.5" />
+          </motion.svg>
+        )}
+      </AnimatePresence>
+
+      {/* Yoga Mat under character */}
+      <AnimatePresence>
+        {isYogaState && (
+          <motion.svg
+            width="44"
+            height="8"
+            viewBox="0 0 44 8"
+            fill="none"
+            initial={{ scaleX: 0, opacity: 0 }}
+            animate={{ scaleX: 1, opacity: 0.95 }}
+            exit={{ scaleX: 0, opacity: 0 }}
+            transition={{ duration: 0.4 }}
+            className="absolute bottom-0.5 z-10 pointer-events-none origin-center"
+          >
+            <ellipse cx="22" cy="4" rx="20" ry="2" fill="#10b981" />
+            <path d="M 3 4 Q 5 2 5 4 Q 5 6 3 4" stroke="#047857" strokeWidth="0.8" />
+            <path d="M 41 4 Q 39 2 39 4 Q 39 6 41 4" stroke="#047857" strokeWidth="0.8" />
+          </motion.svg>
         )}
       </AnimatePresence>
 
@@ -1154,22 +1229,24 @@ export function SittingBuddy() {
         transition={{ type: "spring", stiffness: 180, damping: 22 }}
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
+        className="relative z-20"
         animate={{
-          y: isStanding ? -12 : 0
+          y: isStanding ? -6 : isYogaState ? 2 : isPullingChair ? -16 : 0,
+          scale: isPullingChair ? 1.05 : 1
         }}
         whileHover={{ 
           scale: 1.12, 
-          y: isStanding ? -14 : -2 
+          y: isStanding ? -10 : isYogaState ? 0 : -2 
         }}
       >
         <GreetingBotSVG
           colors={colors}
-          expression={expression}
-          isWaving={isWaving}
+          expression={isPullingChair ? "happy" : expression}
+          isWaving={isPullingChair || isWaving}
           size={46}
           rotation={rotation}
-          isSitting={true}
-          activity={activity}
+          isSitting={!isStanding && !isPullingChair}
+          activity={isPullingChair ? "sitting" : activity}
           gender={resolvedGender}
         />
       </motion.div>

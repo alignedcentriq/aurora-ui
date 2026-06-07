@@ -199,10 +199,10 @@ export function ObservabilityDashboard() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"logs" | "charts">("logs");
 
-  if (user?.role !== "IT" && user?.role !== "Admin") {
+  if (user?.role !== "Super Admin") {
     return (
       <div className="flex h-[60vh] items-center justify-center text-muted-foreground">
-        Access restricted to IT and Admin teams.
+        Access restricted to Super Admin.
       </div>
     );
   }
@@ -885,7 +885,7 @@ function ChartsTab() {
                 />
                 <RechartsTooltip
                   contentStyle={tooltipStyle}
-                  formatter={(value: number) => [`${(value / 1000).toFixed(2)}s`, "Avg Latency"]}
+                  formatter={(value) => [`${(Number(value) / 1000).toFixed(2)}s`, "Avg Latency"]}
                 />
                 <Line type="monotone" dataKey="avg_latency" stroke="#f59e0b" strokeWidth={2} dot={false} />
               </LineChart>
@@ -917,7 +917,7 @@ function ChartsTab() {
                   innerRadius={60}
                   outerRadius={100}
                   paddingAngle={2}
-                  label={({ domain, percent }) => `${domain} (${(percent * 100).toFixed(0)}%)`}
+                  label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                   labelLine={false}
                 >
                   {domainData.map((_, i) => (

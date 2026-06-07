@@ -30,5 +30,15 @@
   { "question": "What can you help me with?", "domain": "general" },
   { "question": "What services does this assistant offer?", "domain": "general" },
   { "question": "Who do I contact for IT support?", "domain": "general" },
-  { "question": "How do I check my leave balance?", "domain": "general" }
+  { "question": "How do I check my leave balance?", "domain": "general" },
+  {
+    "question": "What are the 4 C's?",
+    "domain": "general",
+    "direct_answer": "Our company's 4 C's are the four core values that define who we are and how we work:\n\n- **Caring** — We genuinely care about our people, our clients, and the communities we serve.\n- **Curious** — We embrace learning, ask questions, and constantly look for better ways to do things.\n- **Collaborative** — We work as one team, sharing knowledge and supporting each other to achieve shared goals.\n- **Courageous** — We speak up, take ownership, and are bold enough to challenge the status quo.\n\nThese values guide every decision we make and shape the culture we build together."
+  },
+  {
+    "question": "What are the company core values?",
+    "domain": "general",
+    "direct_answer": "Our company's 4 C's are the four core values that define who we are and how we work:\n\n- **Caring** — We genuinely care about our people, our clients, and the communities we serve.\n- **Curious** — We embrace learning, ask questions, and constantly look for better ways to do things.\n- **Collaborative** — We work as one team, sharing knowledge and supporting each other to achieve shared goals.\n- **Courageous** — We speak up, take ownership, and are bold enough to challenge the status quo.\n\nThese values guide every decision we make and shape the culture we build together."
+  }
 ]

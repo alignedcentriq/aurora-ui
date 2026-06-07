@@ -1,4 +1,4 @@
-import { Send, Plus, FileText, X, Loader2, AudioLines, Square } from "lucide-react";
+import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -37,6 +37,10 @@ interface MentionUser {
   designation: string;
 }
 
+type SlashItem =
+  | { kind: "form"; id: number; name: string; description: string; category: string }
+  | { kind: "url";  id: number; name: string; url: string; purpose: string };
+
 export function Composer({
   value,
   onChange,
@@ -67,6 +71,13 @@ export function Composer({
   const [loadingMentions, setLoadingMentions] = useState(false);
   const mentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // /slash-picker state (forms + URLs)
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashStart, setSlashStart] = useState(-1);
+  const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const slashFetchedRef = useRef(false);
+
   const RECENT_KEY = "centriq-recent-mentions";
   const getRecentMentions = (): MentionUser[] => {
     try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { return []; }
@@ -96,6 +107,52 @@ export function Composer({
       setIsFocused(false);
     }
   }, [disabled]);
+
+  const fetchSlashItems = useCallback(async () => {
+    if (slashFetchedRef.current) return;
+    slashFetchedRef.current = true;
+    try {
+      const [formsRes, urlsRes] = await Promise.all([
+        fetch("/api/forms/list"),
+        fetch("/api/urls/list"),
+      ]);
+      const forms: SlashItem[] = formsRes.ok
+        ? (await formsRes.json()).map((f: { id: number; name: string; description: string; category: string }) => ({ kind: "form" as const, ...f }))
+        : [];
+      const urls: SlashItem[] = urlsRes.ok
+        ? (await urlsRes.json()).map((u: { id: number; name: string; url: string; purpose: string }) => ({ kind: "url" as const, ...u }))
+        : [];
+      setSlashItems([...forms, ...urls]);
+    } catch { /* silent fail */ }
+  }, []);
+
+  const detectSlashCommand = useCallback((text: string, cursor: number): boolean => {
+    const before = text.slice(0, cursor);
+    const match = before.match(/(^|[\s\n])\/(\w*)$/);
+    if (match) {
+      const leadLen = (match[1] || "").length;
+      setSlashStart(cursor - match[0].length + leadLen);
+      setSlashQuery(match[2] || "");
+      setSlashIndex(0);
+      fetchSlashItems();
+      return true;
+    }
+    setSlashQuery(null);
+    return false;
+  }, [fetchSlashItems]);
+
+  const selectSlashItem = useCallback((item: SlashItem) => {
+    const cursor = ref.current?.selectionStart ?? value.length;
+    const before = value.slice(0, slashStart);
+    const after = value.slice(cursor);
+    onChange(before + after);
+    setSlashQuery(null);
+    if (item.kind === "url") {
+      window.open(item.url, "_blank", "noreferrer");
+    } else {
+      onQuickAction?.(item.name);
+    }
+  }, [value, slashStart, onChange, onQuickAction]);
 
   const fetchMentions = useCallback(async (q: string) => {
     if (q === "") {
@@ -262,6 +319,63 @@ export function Composer({
             }
           }}
         >
+          {/* /slash picker — forms + URLs */}
+          {slashQuery !== null && slashItems.length > 0 && (() => {
+            const filtered = slashItems.filter(f => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()));
+            return (
+              <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
+                <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1.5 sticky top-0 bg-card/95 backdrop-blur-xl border-b border-border/40">
+                  <Hash className="h-3 w-3" />
+                  {slashQuery ? `Results for "/${slashQuery}"` : "Forms & Apps"}
+                </div>
+                {filtered.length === 0 ? (
+                  <div className="px-4 py-3 text-[13px] text-muted-foreground">No matches for &quot;/{slashQuery}&quot;</div>
+                ) : (
+                  filtered.map((item, i) => (
+                    <button
+                      key={`${item.kind}-${item.id}`}
+                      onMouseDown={(e) => { e.preventDefault(); selectSlashItem(item); }}
+                      className={cn(
+                        "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
+                        i === slashIndex ? "bg-primary/10" : "hover:bg-secondary/50"
+                      )}
+                    >
+                      <div className={cn(
+                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                        item.kind === "form" ? "bg-primary/10 text-primary" : "bg-blue-500/10 text-blue-500"
+                      )}>
+                        {item.kind === "form"
+                          ? <FileText className="h-3.5 w-3.5" />
+                          : <ExternalLink className="h-3.5 w-3.5" />
+                        }
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[13px] font-medium text-foreground truncate">{item.name}</p>
+                          <span className={cn(
+                            "shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border",
+                            item.kind === "form"
+                              ? "text-primary border-primary/20 bg-primary/5"
+                              : "text-blue-500 border-blue-500/20 bg-blue-500/5"
+                          )}>
+                            {item.kind === "form" ? "Form" : "App"}
+                          </span>
+                        </div>
+                        {(item.kind === "form" ? (item.description || item.category) : item.purpose) && (
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {item.kind === "form"
+                              ? `${item.category ? item.category + " · " : ""}${item.description}`
+                              : item.purpose}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            );
+          })()}
+
           {/* @mention dropdown */}
           {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
             <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
@@ -306,9 +420,29 @@ export function Composer({
               const text = e.target.value;
               const cursor = e.target.selectionStart ?? text.length;
               onChange(text);
-              detectMention(text, cursor);
+              const isSlash = detectSlashCommand(text, cursor);
+              if (isSlash) {
+                setMentionQuery(null);
+                setMentionResults([]);
+              } else {
+                detectMention(text, cursor);
+              }
+            }}
+            onFocus={() => {
+              // Pre-warm heavy model tiers so a cold-reload starts before the
+              // user hits Send. Fire-and-forget — errors are silently ignored.
+              fetch("/api/warmup", { method: "POST" }).catch(() => {});
             }}
             onKeyDown={(e) => {
+              const filtered = slashQuery !== null
+                ? slashItems.filter(f => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()))
+                : [];
+              if (slashQuery !== null && filtered.length > 0) {
+                if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => Math.min(i + 1, filtered.length - 1)); return; }
+                if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => Math.max(i - 1, 0)); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(filtered[slashIndex]); return; }
+                if (e.key === "Escape") { e.preventDefault(); setSlashQuery(null); return; }
+              }
               if (mentionQuery !== null && mentionResults.length > 0) {
                 if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1)); return; }
                 if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }

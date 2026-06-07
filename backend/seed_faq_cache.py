@@ -78,7 +78,25 @@ def main():
     for entry in seeds:
         question = entry.get("question", "").strip()
         domain = entry.get("domain", "general").strip()
+        direct_answer = (entry.get("direct_answer") or "").strip()
         if not question:
+            continue
+
+        # Direct answers bypass policy lookup and LLM formatting entirely.
+        if direct_answer:
+            ok = AnswerCacheService.store(
+                query=question,
+                answer=direct_answer,
+                domain=domain,
+                sub_intent="general",
+                source_keys=None,
+                is_seed=True,
+            )
+            if ok:
+                stored += 1
+                print(f"  + cached [direct/{domain}] {question}")
+            else:
+                print(f"  - skip (store failed): {question}")
             continue
 
         policy_context = ""

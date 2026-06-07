@@ -1,17 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import {
-  Palette,
   Shield,
-  Moon,
-  Sun,
-  Monitor,
-  Link2,
-  Unlink,
-  CheckCircle2,
   Loader2,
   ExternalLink,
   Bot,
+  CheckCircle2,
+  Unlink,
+  Link2,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettings, BUDDY_PRESETS, useBuddyColors } from "@/lib/settings-store";
@@ -19,7 +16,7 @@ import { ThinkingBuddy } from "@/components/assistant/ThinkingBuddy";
 import { ListeningBuddy } from "@/components/assistant/ListeningBuddy";
 import { BUDDY_CHARACTERS } from "@/components/assistant/characters";
 import { GreetingBotSVG, getBuddyGender } from "@/components/assistant/GreetingBot";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/settings")({
@@ -53,7 +50,7 @@ function Toggle({ enabled, onToggle }: ToggleProps) {
 }
 
 interface SettingRowProps {
-  icon: typeof Bell;
+  icon: LucideIcon;
   iconColor?: string;
   title: string;
   description: string;
@@ -83,7 +80,7 @@ function SettingRow({
   );
 }
 
-const container = {
+const container: Variants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
@@ -91,7 +88,7 @@ const container = {
   },
 };
 
-const item = {
+const item: Variants = {
   hidden: { opacity: 0, y: 12 },
   show: {
     opacity: 1,
@@ -322,8 +319,6 @@ function ConnectedAccounts({ userEmail }: { userEmail: string }) {
 function SettingsPage() {
   const { user } = useAuth();
   const {
-    theme,
-    setTheme,
     buddyColorId,
     setBuddyColorId,
     buddyCharId,
@@ -337,12 +332,6 @@ function SettingsPage() {
   const buddyColors = useBuddyColors();
 
   if (!user) return null;
-
-  const themeOptions = [
-    { value: "light", icon: Sun, label: "Light" },
-    { value: "dark", icon: Moon, label: "Dark" },
-    { value: "system", icon: Monitor, label: "System" },
-  ] as const;
 
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto">
@@ -391,66 +380,14 @@ function SettingsPage() {
                     <Shield className="h-3 w-3" />
                     {user.role}
                   </span>
-                  {user.department && (
-                    <span className="text-[10px] sm:text-[11px] text-muted-foreground">{user.department}</span>
+                  {(user as any).department && (
+                    <span className="text-[10px] sm:text-[11px] text-muted-foreground">{(user as any).department}</span>
                   )}
                 </div>
               </div>
             </div>
           </motion.div>
 
-          {/* Appearance */}
-          <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-            <div className="px-4 py-3 sm:px-6 sm:py-4 border-b border-[var(--border)]">
-              <h3 className="text-[14px] sm:text-[15px] font-semibold text-foreground flex items-center gap-2">
-                <Palette className="h-4 w-4" style={{ color: "var(--clarity)" }} /> Appearance
-              </h3>
-            </div>
-            <div className="p-4 sm:p-6 space-y-2">
-              <p className="text-[12px] sm:text-[13px] font-medium text-foreground mb-3">Theme</p>
-              <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                {themeOptions.map((opt) => {
-                  const Icon = opt.icon;
-                  const isSelected = theme === opt.value;
-                  return (
-                    <motion.button
-                      key={opt.value}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => setTheme(opt.value)}
-                      className={cn(
-                        "relative flex flex-col items-center gap-1.5 sm:gap-2 rounded-xl border-2 px-2 py-3 sm:px-4 sm:py-4 transition-all duration-150",
-                        isSelected
-                          ? "border-primary bg-primary/5"
-                          : "border-[var(--border)] hover:border-[var(--border-strong)]",
-                      )}
-                    >
-                      {isSelected && (
-                        <motion.div
-                          layoutId="settings-theme"
-                          className="absolute inset-0 rounded-[10px] border-2 border-primary bg-primary/5"
-                          transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                        />
-                      )}
-                      <Icon
-                        className={cn(
-                          "relative z-10 h-4 w-4 sm:h-5 sm:w-5",
-                          isSelected ? "text-primary" : "text-muted-foreground",
-                        )}
-                      />
-                      <span
-                        className={cn(
-                          "relative z-10 text-[11px] sm:text-xs font-medium",
-                          isSelected ? "text-primary" : "text-muted-foreground",
-                        )}
-                      >
-                        {opt.label}
-                      </span>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </div>
-          </motion.div>
 
           {/* Buddy Character Customization */}
           <motion.div variants={item} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">

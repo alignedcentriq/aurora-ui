@@ -6,7 +6,7 @@ Document Generation routes (template-driven).
 - POST /api/documents/generate              → deterministic placeholder merge (no LLM); returns
                                               the document id + an HTML preview
 - GET  /api/documents/list                  → role-scoped list (HR: pending/all; others: own)
-- POST /api/documents/{id}/approve          → HR/Admin approve & release (draft → verified)
+- POST /api/documents/{id}/approve          → HR-only approve & release (draft → verified)
 - GET  /api/documents/{id}/download         → rendered PDF (envelope-id header + signature) —
                                               ONLY once verified
 - GET  /api/documents/admin/templates       → HR: manage the catalogue (all templates)
@@ -22,6 +22,7 @@ everyone else only for themselves.
 """
 
 import datetime
+import json
 import re
 import time
 import uuid
@@ -33,9 +34,9 @@ from pydantic import BaseModel
 from app.auth import CurrentUser, get_current_user, require_hr
 from app.database import SessionLocal
 from app.document_generation import template_engine as engine
-from app.document_generation.generator import generate_pdf
 from app.models import AiRequestLog, GeneratedDocument
 from app.services import document_service
+from app.services.company_settings_service import CompanySettingsService
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 # Public, unauthenticated verification page (reachable by external recipients, no MSAL).
@@ -46,6 +47,36 @@ HR_ROLES = {"hr", "admin"}
 
 def _is_hr(user: CurrentUser) -> bool:
     return user.role in HR_ROLES
+
+
+# Who may approve & release documents is configurable in Document settings. HR is always
+# allowed (and is force-included on write) so the setting can never lock everyone out;
+# Admin is opt-in. Stored as a JSON list under this key in the company_settings table.
+_APPROVER_ROLES_KEY = "document_approver_roles"
+ASSIGNABLE_APPROVER_ROLES = ["hr", "admin"]  # roles an HR can grant approval rights to
+
+
+def get_approver_roles() -> list[str]:
+    """Roles allowed to approve & release documents. Defaults to HR-only; HR is always
+    present regardless of what is stored."""
+    roles: list[str] = []
+    raw = CompanySettingsService.get(_APPROVER_ROLES_KEY)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                roles = [str(r).lower() for r in parsed if str(r).lower() in ASSIGNABLE_APPROVER_ROLES]
+        except (ValueError, TypeError):
+            roles = []
+    if "hr" not in roles:
+        roles.insert(0, "hr")
+    return roles
+
+
+def _can_release(user: CurrentUser) -> bool:
+    """Approving & releasing a document is restricted to the configured approver roles
+    (HR always; Admin opt-in via Document settings)."""
+    return user.role in get_approver_roles()
 
 
 def _fallback_employee(email: str) -> dict:
@@ -64,6 +95,18 @@ def _fallback_employee(email: str) -> dict:
 def _verify_url(token: str) -> str:
     from app.config import settings
     return f"{settings.APP_BASE_URL.rstrip('/')}/verify/{token}"
+
+
+def _docx_context(field_values: dict, token: str, released: bool) -> dict:
+    """docxtpl render context: the resolved field values plus the app-supplied system vars
+    HR can reference in the Word template ({{ envelope_id }}, {{ verify_url }}, {% if released %})."""
+    return {
+        **(field_values or {}),
+        "envelope_id": token,
+        "verify_url": _verify_url(token),
+        "released": released,
+        "status": "verified" if released else "draft",
+    }
 
 
 # ── Catalogue + lookup ────────────────────────────────────────────────────────
@@ -177,6 +220,32 @@ def admin_sync_templates(
             "folder": settings.SHAREPOINT_TEMPLATES_FOLDER}
 
 
+@router.get("/settings")
+def get_document_settings(user: CurrentUser = Depends(require_hr)):
+    """Document-wide settings (HR/Admin can view). Currently: which roles may approve & release."""
+    return {
+        "approver_roles": get_approver_roles(),
+        "assignable_roles": ASSIGNABLE_APPROVER_ROLES,
+        "can_edit": user.role in ("hr", "super admin"),
+    }
+
+
+@router.put("/settings")
+def update_document_settings(payload: dict = Body(...), user: CurrentUser = Depends(get_current_user)):
+    """Change who can approve & release documents. HR-only — prevents an Admin from
+    granting itself approval rights. HR is always retained as an approver."""
+    if user.role not in ("hr", "super admin"):
+        raise HTTPException(status_code=403, detail="Only HR can change document approval settings.")
+    roles = payload.get("approver_roles")
+    if not isinstance(roles, list):
+        raise HTTPException(status_code=400, detail="approver_roles must be a list of roles.")
+    clean = [str(r).lower() for r in roles if str(r).lower() in ASSIGNABLE_APPROVER_ROLES]
+    if "hr" not in clean:
+        clean.insert(0, "hr")
+    CompanySettingsService.set(_APPROVER_ROLES_KEY, json.dumps(clean), updated_by=user.email)
+    return {"approver_roles": clean}
+
+
 @router.get("/{document_id}")
 def get_document(document_id: int, user: CurrentUser = Depends(get_current_user)):
     """Full document incl. rendered HTML. HR/Admin: any; others: only their own."""
@@ -190,10 +259,9 @@ def get_document(document_id: int, user: CurrentUser = Depends(get_current_user)
             if email not in {(doc.subject_email or "").lower(), (doc.generated_by_email or "").lower()}:
                 raise HTTPException(status_code=403, detail="Not authorized to view this document.")
         data = _doc_summary(db, doc)
-        content = doc.content or ""
-        if (doc.status or "draft") == "verified":
-            content += engine.signature_html()
-        data["preview_html"] = content
+        # content is the preview HTML of the rendered .docx; it already reflects the
+        # draft/released state (the signature block is gated by {% if released %}).
+        data["preview_html"] = doc.content or ""
         return data
     finally:
         db.close()
@@ -215,6 +283,11 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
         tpl = document_service.get_template(db, req.doc_type)
         if tpl is None:
             raise HTTPException(status_code=400, detail="Unknown or disabled document type.")
+        if not tpl.template_blob:
+            raise HTTPException(
+                status_code=400,
+                detail="This template has no Word source. Upload a .docx template to SharePoint and re-sync.",
+            )
 
         is_hr = _is_hr(user)
 
@@ -246,12 +319,18 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
             raise HTTPException(status_code=400,
                                 detail=f"Please fill the required field(s): {', '.join(missing)}.")
 
-        merged_html = engine.merge_html(tpl.html_template or "", values)
-
         requires_approval = bool(tpl.requires_approval)
         status = "draft" if requires_approval else "verified"
+        released = not requires_approval
         title = f"{tpl.label or req.doc_type} — {employee['name']}".strip(" —")
         token = uuid.uuid4().hex
+
+        # Fill the Word template (docxtpl) and build the on-screen preview from the result.
+        try:
+            rendered = engine.render_docx(tpl.template_blob, _docx_context(values, token, released))
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Failed to fill the template: {e}")
+        preview_html = engine.docx_to_html(rendered)
 
         doc = GeneratedDocument(
             doc_type=req.doc_type,
@@ -263,7 +342,8 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
             status=status,
             verify_token=token,
             field_values=values,
-            content=merged_html,
+            content=preview_html,
+            rendered_docx=rendered,
             verified_by_email=("system" if not requires_approval else None),
             verified_at=(datetime.datetime.utcnow() if not requires_approval else None),
         )
@@ -280,9 +360,9 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
                 user_message=f"[document:{req.doc_type}] subject={employee['email']}",
                 domain="document",
                 sub_intent=req.doc_type,
-                route_method="document_template_merge",
+                route_method="document_docx_merge",
                 response_text=None,
-                response_length=len(merged_html),
+                response_length=len(preview_html or ""),
                 total_latency_ms=0,
                 llm_call_count=0,
                 total_completion_tokens=0,
@@ -294,14 +374,10 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
 
         db.commit()
 
-        preview_html = merged_html
-        if status == "verified":
-            preview_html += engine.signature_html()
-
         return {
             "document_id": document_id,
             "status": status,
-            "can_approve": is_hr and status == "draft",
+            "can_approve": _can_release(user) and status == "draft",
             "envelope_id": token,
             "title": title,
             "preview_html": preview_html,
@@ -312,15 +388,31 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
 
 @router.post("/{document_id}/approve")
 def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
-    """HR/Admin only: approve & release a draft. This is what makes it downloadable and adds
+    """HR only: approve & release a draft. This is what makes it downloadable and adds
     the signature on render."""
-    if not _is_hr(user):
-        raise HTTPException(status_code=403, detail="Only HR or Admin can approve and release documents.")
+    if not _can_release(user):
+        raise HTTPException(status_code=403, detail="Only HR can approve and release documents.")
     db = SessionLocal()
     try:
         doc = db.query(GeneratedDocument).filter(GeneratedDocument.id == document_id).first()
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found.")
+
+        # Re-render the .docx with released=True so the signature block is added and the
+        # stored artifact becomes the final, immutable issued document.
+        tpl = document_service.get_template_any(db, doc.doc_type)
+        if tpl is not None and tpl.template_blob:
+            try:
+                rendered = engine.render_docx(
+                    tpl.template_blob,
+                    _docx_context(doc.field_values or {}, doc.verify_token or "", released=True),
+                )
+                doc.rendered_docx = rendered
+                doc.content = engine.docx_to_html(rendered)
+            except Exception as e:  # noqa: BLE001
+                # Don't block release on a render hiccup — keep the draft render.
+                print(f"[documents] approve re-render notice: {e}")
+
         doc.status = "verified"
         doc.is_official = True
         doc.verified_by_email = user.email
@@ -344,7 +436,7 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
         if (doc.status or "draft") != "verified":
             raise HTTPException(
                 status_code=403,
-                detail="This document is a draft. It must be approved by HR before it can be downloaded.",
+                detail="This document is a draft. It must be approved before it can be downloaded.",
             )
 
         # Once released: HR/Admin can download any; others only their own (subject or actor).
@@ -353,29 +445,16 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
             if email not in {(doc.subject_email or "").lower(), (doc.generated_by_email or "").lower()}:
                 raise HTTPException(status_code=403, detail="Not authorized to download this document.")
 
-        tpl = document_service.get_template_any(db, doc.doc_type)
-        if tpl is not None and (doc.content or "").lstrip().startswith("<"):
-            # Template-driven document: render the merged HTML with envelope-id header + signature.
-            try:
-                pdf_bytes = engine.render_pdf(
-                    doc.content or "",
-                    envelope_id=doc.verify_token or "",
-                    include_signature=True,
-                )
-            except Exception as e:  # noqa: BLE001
-                raise HTTPException(status_code=500, detail=f"Failed to render document: {e}")
-        else:
-            # Legacy prose document → original branded reportlab PDF.
-            pdf_bytes = generate_pdf(
-                doc_type=doc.doc_type,
-                title=doc.title or "Document",
-                content=doc.content or "",
-                generated_by="Aligned Automation HR",
-                thread_id=str(doc.id),
-                watermark="",
-                qr_url=_verify_url(doc.verify_token) if doc.verify_token else "",
-                subject_name=doc.subject_name or "",
+        if not doc.rendered_docx:
+            raise HTTPException(
+                status_code=409,
+                detail="This document has no rendered Word file. Re-generate it to download.",
             )
+        # Convert the filled .docx to PDF via Word, preserving HR's exact layout.
+        try:
+            pdf_bytes = engine.docx_to_pdf(doc.rendered_docx)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Failed to render document to PDF: {e}")
 
         base = doc.doc_type or (doc.title or "document")
         safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_")[:80] or "document"
@@ -398,7 +477,7 @@ def _verify_html(doc: GeneratedDocument | None, label: str) -> str:
         body = """
           <div class="badge bad">Not a valid document</div>
           <p>This reference does not correspond to a document that has been verified and
-          released by Aligned Automation HR. If you were given a printed letter, it may be a
+          released by Aligned Automation. If you were given a printed letter, it may be a
           draft, altered, or fabricated — do not rely on it.</p>
         """
         return _verify_shell("Verification failed", body, ok=False)
@@ -407,7 +486,7 @@ def _verify_html(doc: GeneratedDocument | None, label: str) -> str:
     # doc.content is server-generated merged HTML (user values were escaped at merge time).
     content = doc.content or ""
     body = f"""
-      <div class="badge ok">✓ Verified &amp; released by HR</div>
+      <div class="badge ok">✓ Verified &amp; released by Aligned Automation</div>
       <table class="meta">
         <tr><td>Document</td><td>{html.escape(label)}</td></tr>
         <tr><td>Issued to</td><td>{html.escape(doc.subject_name or '—')}</td></tr>

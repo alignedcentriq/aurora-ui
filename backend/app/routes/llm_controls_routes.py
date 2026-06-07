@@ -78,17 +78,20 @@ async def send_security_news_now(user: CurrentUser = Depends(require_super_admin
         from app.services.email_service import send_security_news_digest
         items = fetch_digest()
         if not items:
-            return False, 0
+            return "no_news", 0
         date_str = datetime.date.today().strftime("%B %d, %Y")
         ok = send_security_news_digest(sender, recipients, items, date_str)
-        return ok, len(items)
+        return "sent" if ok else "failed", len(items)
 
     try:
-        ok, count = await asyncio.to_thread(_send)
+        status, count = await asyncio.to_thread(_send)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Send failed: {exc}")
 
-    if not ok:
+    if status == "no_news":
+        return {"status": "no_news", "stories": 0, "recipients": recipients,
+                "message": "No new cybersecurity stories in the last 24 hours — nothing to send."}
+    if status == "failed":
         raise HTTPException(
             status_code=502,
             detail="Email send failed — check that the sender mailbox has a connected MS365 token.",

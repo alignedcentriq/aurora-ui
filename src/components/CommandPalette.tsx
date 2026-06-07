@@ -7,10 +7,11 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Search } from "lucide-react";
+import { Search, Trash2 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useChatStore } from "@/lib/chat-store";
-import { QUICK_QUERIES, QUERY_CATEGORY_LABELS } from "@/lib/quickQueries";
+import { QUERY_CATEGORY_LABELS, ICON_MAP } from "@/lib/quickQueries";
+import { useQuickQueries } from "@/hooks/useQuickQueries";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -20,6 +21,7 @@ interface CommandPaletteProps {
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { createThread } = useChatStore();
+  const { queries, removeQuery } = useQuickQueries();
 
   const runQuickAction = (prompt: string) => {
     // Create a new thread and navigate to chat
@@ -45,17 +47,34 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         </CommandEmpty>
 
         {(["it", "admin", "hr"] as const).map((cat, i) => {
-          const items = QUICK_QUERIES.filter(q => q.category === cat);
+          const items = queries.filter(q => q.category === cat);
+          if (items.length === 0) return null;
           return (
             <span key={cat}>
               {i > 0 && <CommandSeparator />}
               <CommandGroup heading={QUERY_CATEGORY_LABELS[cat]}>
-                {items.map(({ label, prompt, icon: Icon, iconColor }) => (
-                  <CommandItem key={label} onSelect={() => runQuickAction(prompt)}>
-                    <Icon className={`h-4 w-4 ${iconColor}`} />
-                    <span>{label}</span>
-                  </CommandItem>
-                ))}
+                {items.map(({ label, prompt, icon, iconColor }) => {
+                  const Icon = ICON_MAP[icon] || Search;
+                  return (
+                    <CommandItem key={label} onSelect={() => runQuickAction(prompt)} className="group flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Icon className={`h-4 w-4 ${iconColor}`} />
+                        <span>{label}</span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          removeQuery(prompt);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                        title="Remove quick search"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </CommandItem>
+                  );
+                })}
               </CommandGroup>
             </span>
           );

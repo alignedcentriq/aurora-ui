@@ -52,6 +52,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   Hiring: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   Training: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
   "IT Alert": "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  Activity: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
   General: "bg-muted text-muted-foreground",
 };
 
@@ -71,7 +72,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
   };
 
   const loadAnnouncements = () => {
-    fetch("/api/announcements")
+    fetch("/api/announcements", { headers: authHeaders })
       .then((r) => r.json())
       .then((data: Announcement[]) => {
         const active = data.filter((a) => a.is_active);
@@ -100,7 +101,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
       .catch(() => {});
   };
 
-  useEffect(() => { loadAnnouncements(); }, []);
+  useEffect(() => { loadAnnouncements(); }, [user?.role, user?.email]);
 
   const dismiss = (id: number) => {
     const updated = [...dismissed, id];

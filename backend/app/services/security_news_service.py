@@ -2,13 +2,15 @@
 Cybersecurity news digest service.
 
 Fetches headlines from public RSS feeds and the CISA Known Exploited
-Vulnerabilities catalogue. All URLs are stripped before returning — only
-title, plain-text summary, publish date, and source name are surfaced.
+Vulnerabilities catalogue. Only stories published within the last 24 hours
+are returned — old news is discarded. All URLs are stripped before returning.
 
-Results are cached in-process for 30 minutes so the scheduler doesn't
-hammer external sources on every check.
+Cache is date-keyed: rolls over at midnight so stale items never bleed into
+the next day's digest.
 """
 
+import datetime
+import email.utils
 import html
 import logging
 import re
@@ -19,8 +21,9 @@ import httpx
 
 logger = logging.getLogger("aurora-logger")
 
-_CACHE: dict = {"ts": 0.0, "data": None}
-_CACHE_TTL = 1800  # 30 minutes
+# Cache is keyed to the calendar date so it automatically invalidates at midnight.
+_CACHE: dict = {"date": None, "ts": 0.0, "data": None}
+_CACHE_TTL = 1800  # 30 minutes — re-fetch within the day if stale
 
 # Public RSS feeds — no API key required
 _FEEDS = [
@@ -34,34 +37,76 @@ _CISA_KEV_URL = (
 
 _MAX_PER_SOURCE = 5
 _SUMMARY_MAX_CHARS = 380
-
 _HEADERS = {"User-Agent": "CentriqAI/1.0 (internal digest; no scraping)"}
+
+# Stories older than this are considered "old news" and discarded.
+_MAX_AGE_HOURS = 24
 
 
 def _strip_html(text: str) -> str:
-    """Remove HTML tags, decode entities, collapse whitespace."""
     text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _parse_rss_date(date_str: str) -> datetime.datetime | None:
+    """Parse an RFC 2822 RSS pubDate into a timezone-aware datetime, or None."""
+    try:
+        return email.utils.parsedate_to_datetime(date_str.strip())
+    except Exception:
+        return None
+
+
+def _is_recent(pub_dt: datetime.datetime | None) -> bool:
+    """True if the item was published within the last _MAX_AGE_HOURS hours."""
+    if pub_dt is None:
+        return False
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        # Normalise to UTC if the feed supplies an offset-aware datetime
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=datetime.timezone.utc)
+        age = now - pub_dt
+        return age.total_seconds() <= _MAX_AGE_HOURS * 3600
+    except Exception:
+        return False
+
+
+def _friendly_date(pub_dt: datetime.datetime | None, raw: str) -> str:
+    """Return a human-readable date string for display in the email."""
+    if pub_dt is None:
+        return raw
+    try:
+        local = pub_dt.astimezone()
+        return local.strftime("%b %d, %Y %H:%M %Z")
+    except Exception:
+        return raw
+
+
 def _fetch_rss(source_name: str, url: str) -> list[dict]:
+    """Fetch RSS and return only items published in the last 24 hours."""
     try:
         resp = httpx.get(url, timeout=12, follow_redirects=True, headers=_HEADERS)
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
         items = []
-        for item in root.findall(".//item")[:_MAX_PER_SOURCE]:
+        for item in root.findall(".//item"):
             title = _strip_html(item.findtext("title") or "")
+            if not title:
+                continue
+            pub_raw = item.findtext("pubDate") or ""
+            pub_dt = _parse_rss_date(pub_raw)
+            if not _is_recent(pub_dt):
+                continue
             summary = _strip_html(item.findtext("description") or "")[:_SUMMARY_MAX_CHARS]
-            pub = _strip_html(item.findtext("pubDate") or "")
-            if title:
-                items.append({
-                    "title": title,
-                    "summary": summary,
-                    "date": pub,
-                    "source": source_name,
-                })
+            items.append({
+                "title": title,
+                "summary": summary,
+                "date": _friendly_date(pub_dt, pub_raw),
+                "source": source_name,
+            })
+            if len(items) >= _MAX_PER_SOURCE:
+                break
         return items
     except Exception as exc:
         logger.warning("[security_news] RSS fetch failed (%s): %s", source_name, exc)
@@ -69,25 +114,33 @@ def _fetch_rss(source_name: str, url: str) -> list[dict]:
 
 
 def _fetch_cisa() -> list[dict]:
-    """Pull the latest entries from the CISA Known Exploited Vulnerabilities catalogue."""
+    """Return CISA KEV entries added within the last 24 hours."""
     try:
         resp = httpx.get(_CISA_KEV_URL, timeout=12, follow_redirects=True, headers=_HEADERS)
         resp.raise_for_status()
         data = resp.json()
-        vulns = list(reversed((data.get("vulnerabilities") or [])[-_MAX_PER_SOURCE:]))
+        cutoff = datetime.date.today() - datetime.timedelta(days=1)
         items = []
-        for v in vulns:
+        for v in reversed(data.get("vulnerabilities") or []):
+            raw_date = v.get("dateAdded", "")
+            try:
+                added = datetime.date.fromisoformat(raw_date)
+            except ValueError:
+                continue
+            if added < cutoff:
+                continue
             cve = v.get("cveID", "")
             name = v.get("vulnerabilityName", "")
             title = f"{cve} — {name}".strip(" —")
             summary = _strip_html(v.get("shortDescription") or "")[:_SUMMARY_MAX_CHARS]
-            date = v.get("dateAdded", "")
             items.append({
                 "title": title,
                 "summary": summary,
-                "date": date,
+                "date": added.strftime("%b %d, %Y"),
                 "source": "CISA Known Exploited Vulnerabilities",
             })
+            if len(items) >= _MAX_PER_SOURCE:
+                break
         return items
     except Exception as exc:
         logger.warning("[security_news] CISA KEV fetch failed: %s", exc)
@@ -95,12 +148,16 @@ def _fetch_cisa() -> list[dict]:
 
 
 def fetch_digest() -> list[dict]:
-    """Return cybersecurity news items cached for up to 30 minutes.
+    """Return today's cybersecurity news (last 24 h only), cached up to 30 min.
 
-    Each item has: title, summary (plain text, no URLs), date, source.
+    Returns an empty list if no new stories were published today — callers
+    must skip sending in that case.
     """
+    today = datetime.date.today()
     now = time.time()
-    if _CACHE["data"] is not None and now - _CACHE["ts"] < _CACHE_TTL:
+
+    # Cache hit: same calendar day and not stale
+    if _CACHE["data"] is not None and _CACHE["date"] == today and now - _CACHE["ts"] < _CACHE_TTL:
         return _CACHE["data"]
 
     items: list[dict] = []
@@ -108,7 +165,8 @@ def fetch_digest() -> list[dict]:
         items.extend(_fetch_rss(name, url))
     items.extend(_fetch_cisa())
 
+    _CACHE["date"] = today
     _CACHE["ts"] = now
     _CACHE["data"] = items
-    logger.info("[security_news] fetched %d items from %d sources", len(items), len(_FEEDS) + 1)
+    logger.info("[security_news] fetched %d new stories for %s", len(items), today)
     return items

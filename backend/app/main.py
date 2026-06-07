@@ -41,7 +41,7 @@ from app.routes.project_update_routes import router as project_update_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
-from app.routes.app_links_routes import router as app_links_router
+from app.routes.app_links_routes import router as app_links_router, public_router as app_links_public_router
 from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
 from app.routes.llm_controls_routes import router as llm_controls_router
@@ -51,6 +51,10 @@ from app.routes.software_catalog_routes import router as software_catalog_router
 from app.routes.ms365_routes import router as ms365_router
 from app.routes.document_routes import router as document_router, public_router as document_public_router
 from app.routes.manager_routes import router as manager_router
+from app.routes.access_routes import router as access_router
+from app.routes.automation_routes import router as automation_router
+from app.routes.escalation_routes import router as escalation_router
+from app.routes.welcome_routes import router as welcome_router, public_router as welcome_public_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -66,6 +70,58 @@ from app.sharepoint_routes import router as sharepoint_router
 from app.graph_sync import renew_subscriptions
 
 app = FastAPI(title="Centriq AI Backend")
+
+
+# ── Model warm-up helpers ──────────────────────────────────────────────────────
+
+def _ollama_root() -> str:
+    base = settings.AGENT_BASE_URL.rstrip("/")
+    return base[:-3] if base.endswith("/v1") else base
+
+
+def _ping_model(model: str) -> bool:
+    """POST a 0-token request to Ollama to keep ``model`` loaded in VRAM.
+
+    Uses num_predict=0 so the server loads weights but generates nothing —
+    the cheapest possible keep-alive.  keep_alive=15m extends the eviction
+    window to match what get_llm() requests on every real call.
+    """
+    import urllib.request, json as _json
+    url = _ollama_root() + "/api/generate"
+    payload = _json.dumps({
+        "model": model,
+        "prompt": "",
+        "keep_alive": "15m",
+        "options": {"num_predict": 0},
+    }).encode()
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as _:  # noqa: S310
+            pass
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warmup] ping {model}: {exc}")
+        return False
+
+
+async def _warmup_task() -> None:
+    """Ping every heavy model tier once — run as a fire-and-forget task."""
+    try:
+        cfg = llm_controls.get_config()
+        tiers = cfg.get("tiers", {})
+        seen: set[str] = set()
+        for tier in ("agent", "service", "summarizer"):
+            model = (tiers.get(tier) or {}).get("model", "")
+            if model and model not in seen:
+                seen.add(model)
+                ok = await asyncio.to_thread(_ping_model, model)
+                print(f"[warmup] {model}: {'ok' if ok else 'failed'}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warmup] task error: {exc}")
 
 
 
@@ -84,6 +140,7 @@ app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
 app.include_router(app_links_router)
+app.include_router(app_links_public_router)
 app.include_router(form_library_router)
 app.include_router(observability_router)
 app.include_router(llm_controls_router)
@@ -94,6 +151,11 @@ app.include_router(ms365_router)
 app.include_router(document_router)
 app.include_router(document_public_router)
 app.include_router(manager_router)
+app.include_router(access_router)
+app.include_router(automation_router)
+app.include_router(escalation_router)
+app.include_router(welcome_router)
+app.include_router(welcome_public_router)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -213,6 +275,14 @@ async def startup_event():
                 await asyncio.to_thread(project_update_service.run_due)
             except Exception as e:
                 print(f"[project_update] scheduler error: {e}")
+            # Automation Hub — custom recurring email rules created by managers/HR/IT/PMO.
+            try:
+                from app.services import automation_service as _automation_svc
+                fired_auto = await asyncio.to_thread(_automation_svc.run_due)
+                if fired_auto:
+                    print(f"[automation_hub] ran {fired_auto} due rule(s)")
+            except Exception as e:
+                print(f"[automation_hub] scheduler error: {e}")
 
     asyncio.create_task(attendance_scheduler())
 
@@ -240,6 +310,10 @@ async def startup_event():
                 today = now.date()
                 if today == _last_sent_date or now.hour < settings.SECURITY_NEWS_HOUR:
                     continue
+                # Mark today as attempted BEFORE the send so the scheduler
+                # never fires more than once per day even if the send fails.
+                # Use the "Send digest now" button in the UI for manual retries.
+                _last_sent_date = today
                 from app.services.security_news_service import fetch_digest
                 from app.services.email_service import send_security_news_digest
                 items = await asyncio.to_thread(fetch_digest)
@@ -247,14 +321,25 @@ async def startup_event():
                     date_str = today.strftime("%B %d, %Y")
                     ok = await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
                     if ok:
-                        _last_sent_date = today
                         print(f"[security_news] digest sent to {recipients} ({len(items)} stories)")
                     else:
-                        print("[security_news] send failed — check Graph token for sender mailbox")
+                        print("[security_news] send failed — use 'Send digest now' to retry")
             except Exception as _sne:
                 print(f"[security_news] scheduler error: {_sne}")
 
     asyncio.create_task(security_news_scheduler())
+
+    # ── Model keep-alive heartbeat ─────────────────────────────────────────
+    # Fires a 0-token ping at every heavy model tier every 10 minutes.
+    # Combined with the 15-min keep_alive on every real request, this ensures
+    # gpt-oss / llama3.1:8b stay loaded in VRAM even under shared-server traffic.
+    async def model_warmup_scheduler():
+        await asyncio.sleep(30)  # let startup finish first
+        while True:
+            await _warmup_task()
+            await asyncio.sleep(600)  # 10 minutes
+
+    asyncio.create_task(model_warmup_scheduler())
 
     get_deeplink_agent()
 
@@ -268,7 +353,17 @@ async def root():
 @app.get("/api/me")
 async def me(user: CurrentUser = Depends(get_current_user)):
     """Returns the authenticated user's identity. Fails with 403 if not on the allowlist."""
-    return {"email": user.email, "role": user.role}
+    role = user.role
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == user.email).first()
+        if emp and emp.role:
+            role = emp.role.strip()
+    except Exception:
+        pass
+    finally:
+        db.close()
+    return {"email": user.email, "role": role}
 
 
 @app.get("/api/health/llm")
@@ -280,6 +375,15 @@ async def llm_health():
 async def chat_load():
     """Live concurrency-gate stats — handy while load testing."""
     return await chat_gate.stats()
+
+
+@app.post("/api/warmup")
+async def warmup_models():
+    """Fire-and-forget: ping heavy model tiers so they stay warm in VRAM.
+    Called by the frontend when the chat input is focused so a cold-reload
+    starts before the user hits Send."""
+    asyncio.create_task(_warmup_task())
+    return {"status": "warming"}
 
 
 @app.post("/api/feedback")
@@ -877,6 +981,7 @@ _REFUSAL_RE = re.compile(
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
+_quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
 
 
@@ -926,6 +1031,16 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             form_data = json.loads(form_match.group(1))
             interactive = {"type": "dynamic_form", "data": form_data}
             final_message = _dynamic_form_re.sub("", final_message).strip()
+        except Exception:
+            pass
+
+    # Extract quick-choice card (zero-LLM choice widget).
+    qc_match = _quick_choice_re.search(final_message)
+    if qc_match:
+        try:
+            qc_data = json.loads(qc_match.group(1))
+            interactive = {"type": "quick_choice", "data": qc_data}
+            final_message = _quick_choice_re.sub("", final_message).strip()
         except Exception:
             pass
 
@@ -1829,6 +1944,28 @@ async def submit_dynamic_form(req: FormSubmitRequest,
     if res.get("status") != "ok":
         raise HTTPException(status_code=400, detail=res.get("message", "Submission failed."))
     return {"message": res["message"], "reference_id": res["reference_id"]}
+
+
+@app.get("/api/forms/list")
+async def list_enabled_forms():
+    """Public: minimal form stubs for the slash-command picker. No auth required."""
+    from app.services.form_library_service import FormLibraryService
+    forms = FormLibraryService.list_all(include_disabled=False)
+    return [
+        {"id": f["id"], "name": f["name"], "description": f.get("description", ""), "category": f.get("category", "")}
+        for f in forms
+    ]
+
+
+@app.get("/api/urls/list")
+async def list_active_urls():
+    """Public: minimal URL library stubs for the slash-command picker. No auth required."""
+    from app.services.app_directory_service import AppDirectoryService
+    urls = AppDirectoryService.list_all(include_inactive=False)
+    return [
+        {"id": u["id"], "name": u["name"], "url": u["url"], "purpose": u.get("purpose", "")}
+        for u in urls
+    ]
 
 
 @app.post("/api/email/send-draft")

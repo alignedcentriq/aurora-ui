@@ -53,7 +53,7 @@ export interface VisitorPassPrefill {
 export interface DynamicFormField {
   name: string;
   label: string;
-  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox";
+  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox" | "user";
   required?: boolean;
   options?: string[];
   placeholder?: string;
@@ -66,6 +66,19 @@ export interface DynamicFormData {
   description?: string;
   fields: DynamicFormField[];
   submit_endpoint: string;
+}
+
+export interface QuickChoiceOption {
+  label: string;
+  /** "message" → inject into chat; "link" → open in new tab */
+  action: "message" | "link";
+  value: string;
+  icon?: string;
+}
+
+export interface QuickChoiceData {
+  question: string;
+  options: QuickChoiceOption[];
 }
 
 export interface InteractivePayload {
@@ -81,8 +94,9 @@ export interface InteractivePayload {
     | "skills_editor"
     | "team_attendance"
     | "attendance_schedule"
-    | "dynamic_form";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData;
+    | "dynamic_form"
+    | "quick_choice";
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData;
 }
 
 export interface Turn {
@@ -95,6 +109,8 @@ export interface Turn {
   interactive?: InteractivePayload;
   images?: string[];
   streaming?: boolean;
+  /** True when this turn was generated from an error/failure, enabling the escalation prompt */
+  isError?: boolean;
 }
 
 export interface Thread {

@@ -115,6 +115,10 @@ const DOC_META: Record<string, { icon: typeof FileText; desc?: string }> = {
 function DocumentsPage() {
   const { user } = useAuth();
   const isHr = !!user && HR_ROLES.has(user.role);
+  // Which roles may approve & release is configurable in Document settings (HR always; Admin opt-in).
+  // approverRoles holds the lowercase role names returned by the backend.
+  const [approverRoles, setApproverRoles] = useState<string[]>([]);
+  const canRelease = !!user && approverRoles.includes(user.role.toLowerCase());
 
   const authHeaders = useMemo<Record<string, string>>(
     () => ({
@@ -175,6 +179,19 @@ function DocumentsPage() {
       .then((d) => setEmployee(d.results?.[0] || null))
       .catch(() => {});
   }, [isHr, authHeaders]);
+
+  // Approver-role config (only HR/Admin can read this endpoint; everyone else stays a non-approver).
+  const fetchApprovers = useCallback(() => {
+    if (!isHr) return;
+    fetch("/api/documents/settings", { headers: authHeaders })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setApproverRoles(d.approver_roles || []))
+      .catch(() => {});
+  }, [isHr, authHeaders]);
+
+  useEffect(() => {
+    fetchApprovers();
+  }, [fetchApprovers]);
 
   const refreshLists = useCallback(() => {
     if (isHr) {
@@ -276,7 +293,7 @@ function DocumentsPage() {
       if (data.status === "verified") {
         flyBanner("Document ready");
       } else if (!data.can_approve) {
-        flyBanner("Submitted for HR release");
+        flyBanner("Submitted for approval");
       }
       refreshLists();
     } catch (err) {
@@ -315,7 +332,7 @@ function DocumentsPage() {
     try {
       const res = await fetch(`/api/documents/${id}/download`, { headers: authHeaders });
       if (res.status === 403) {
-        toast.error("This document must be approved by HR before it can be downloaded.");
+        toast.error("This document must be approved before it can be downloaded.");
         return;
       }
       if (!res.ok) throw new Error("Download failed");
@@ -346,7 +363,7 @@ function DocumentsPage() {
       setDocumentId(doc.id);
       setDocStatus(doc.status);
       setEnvelopeId(doc.envelope_id ?? null);
-      setCanApprove(isHr && doc.status !== "verified");
+      setCanApprove(canRelease && doc.status !== "verified");
       setDocType(doc.doc_type);
     } catch {
       toast.error("Could not load the document.");
@@ -370,7 +387,7 @@ function DocumentsPage() {
               <p className="text-[13px] text-muted-foreground">
                 {isHr
                   ? "Generate from approved templates, review & release them, and manage the document catalogue."
-                  : "Generate a document from an approved template. It becomes downloadable once HR releases it."}
+                  : "Generate a document from an approved template. It becomes downloadable once it's approved and released."}
               </p>
             </div>
           </div>
@@ -390,7 +407,11 @@ function DocumentsPage() {
 
       <div className="flex-1 overflow-y-auto">
         {isHr && mode === "manage" ? (
-          <ManageTemplates authHeaders={authHeaders} onChanged={fetchCatalogue} />
+          <ManageTemplates
+            authHeaders={authHeaders}
+            onChanged={fetchCatalogue}
+            onApproversChanged={fetchApprovers}
+          />
         ) : (
           <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-8 py-6 lg:grid-cols-2">
             {/* ── Form ── */}
@@ -434,7 +455,7 @@ function DocumentsPage() {
                   {selected && (
                     <p className="mt-2 text-[12px] text-muted-foreground">
                       {selected.requires_approval
-                        ? "Requires HR approval before it can be downloaded."
+                        ? "Requires approval before it can be downloaded."
                         : "Released instantly — downloadable as soon as it's generated."}
                     </p>
                   )}
@@ -557,7 +578,7 @@ function DocumentsPage() {
                   {/* Employee draft: awaiting approval note */}
                   {documentId != null && docStatus === "draft" && !canApprove && (
                     <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-600 dark:text-amber-400">
-                      <Clock className="h-3.5 w-3.5" /> Sent for HR approval — downloadable once released
+                      <Clock className="h-3.5 w-3.5" /> Sent for approval — downloadable once released
                     </span>
                   )}
                 </div>
@@ -579,6 +600,7 @@ function DocumentsPage() {
                     onApprove={handleApprove}
                     onDownload={handleDownload}
                     isHr
+                    canApprove={canRelease}
                   />
                 ) : (
                   <DocList
@@ -642,8 +664,8 @@ function DocumentsPage() {
 
               <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                 {isVerified
-                  ? "Released by HR. The downloaded PDF carries the document ID on every page; recipients can confirm authenticity on the verification page."
-                  : "This is a draft preview. The signature is added only once HR approves and releases the document."}
+                  ? "Officially released. The downloaded PDF carries the document ID on every page; recipients can confirm authenticity on the verification page."
+                  : "This is a draft preview. The signature is added only once the document is approved and released."}
               </p>
             </div>
           </div>
@@ -698,15 +720,64 @@ function FieldInput({
 function ManageTemplates({
   authHeaders,
   onChanged,
+  onApproversChanged,
 }: {
   authHeaders: Record<string, string>;
   onChanged: () => void;
+  onApproversChanged?: () => void;
 }) {
   const [templates, setTemplates] = useState<DocTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [edits, setEdits] = useState<Record<number, Partial<DocTemplate>>>({});
   const [saving, setSaving] = useState<number | null>(null);
+
+  // Approver-role settings
+  const [approverRoles, setApproverRoles] = useState<string[]>([]);
+  const [assignableRoles, setAssignableRoles] = useState<string[]>([]);
+  const [canEditApprovers, setCanEditApprovers] = useState(false);
+  const [savingApprovers, setSavingApprovers] = useState(false);
+
+  const loadApprovers = useCallback(() => {
+    fetch("/api/documents/settings", { headers: authHeaders })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setApproverRoles(d.approver_roles || []);
+        setAssignableRoles(d.assignable_roles || []);
+        setCanEditApprovers(!!d.can_edit);
+      })
+      .catch(() => {});
+  }, [authHeaders]);
+
+  useEffect(() => {
+    loadApprovers();
+  }, [loadApprovers]);
+
+  const toggleApprover = (role: string) => {
+    if (!canEditApprovers || role === "hr") return; // HR is always an approver
+    setApproverRoles((rs) => (rs.includes(role) ? rs.filter((r) => r !== role) : [...rs, role]));
+  };
+
+  const saveApprovers = async () => {
+    setSavingApprovers(true);
+    try {
+      const res = await fetch("/api/documents/settings", {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ approver_roles: approverRoles }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const d = await res.json();
+      setApproverRoles(d.approver_roles || []);
+      flyBanner("Approval settings updated");
+      onApproversChanged?.();
+    } catch {
+      toast.error("Could not save approval settings.");
+    } finally {
+      setSavingApprovers(false);
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -801,6 +872,54 @@ function ManageTemplates({
         </button>
       </div>
 
+      {/* ── Who can approve & release ── */}
+      <div className="mb-6 rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4" style={{ color: "var(--connectivity)" }} />
+          <h3 className="text-[14px] font-semibold text-foreground">Who can approve &amp; release</h3>
+        </div>
+        <p className="mt-1 text-[12px] text-muted-foreground">
+          Select which roles may approve a draft and release the final document. HR is always an
+          approver. {canEditApprovers ? "" : "Only HR can change this."}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-6">
+          {assignableRoles.map((role) => {
+            const checked = approverRoles.includes(role);
+            const locked = role === "hr" || !canEditApprovers;
+            return (
+              <label
+                key={role}
+                className={cn(
+                  "flex items-center gap-2 text-[12px] capitalize text-foreground",
+                  locked ? "cursor-default opacity-90" : "cursor-pointer",
+                )}
+              >
+                <Switch
+                  checked={checked}
+                  disabled={locked}
+                  onCheckedChange={() => toggleApprover(role)}
+                />
+                {role}
+                {role === "hr" && <span className="text-[10px] text-muted-foreground">(always)</span>}
+              </label>
+            );
+          })}
+        </div>
+        {canEditApprovers && (
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={saveApprovers}
+              disabled={savingApprovers}
+              className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90"
+              style={{ background: "var(--gradient-primary)" }}
+            >
+              {savingApprovers ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save approval settings
+            </button>
+          </div>
+        )}
+      </div>
+
       {loading ? (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading templates…
@@ -845,7 +964,7 @@ function ManageTemplates({
                       checked={t.requires_approval}
                       onCheckedChange={(v) => patch(t.id, { requires_approval: v })}
                     />
-                    Requires HR approval
+                    Requires approval
                   </label>
                 </div>
 
@@ -931,6 +1050,7 @@ function DocList({
   onApprove,
   onDownload,
   isHr,
+  canApprove,
 }: {
   title: string;
   docs: DocSummary[];
@@ -939,6 +1059,7 @@ function DocList({
   onApprove?: (id: number) => void;
   onDownload: (id: number, labelHint?: string) => void;
   isHr?: boolean;
+  canApprove?: boolean;
 }) {
   return (
     <section className="pt-2">
@@ -975,7 +1096,7 @@ function DocList({
                 >
                   View
                 </button>
-                {isHr && !verified && onApprove && (
+                {canApprove && !verified && onApprove && (
                   <button
                     onClick={() => onApprove(d.id)}
                     className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700"

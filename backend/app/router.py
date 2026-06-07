@@ -181,6 +181,8 @@ EXAMPLES:
 - "does anyone know if the company hosts its own LLM models" → domain: ms365, sub_intent: community_search, entities: {{"query": "company hosted LLM models"}}
 - "I need an experience certificate" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "experience_certificate"}}
 - "generate an NOC for my visa" → domain: hr, sub_intent: document_request, entities: {{"doc_type": "noc", "purpose": "visa"}}
+- "how to refer someone to the company" → domain: hr, sub_intent: policy_query, entities: {{}}   (referral is an HR process — do NOT extract an employee_name)
+- "I want to refer my colleague for a job" → domain: hr, sub_intent: policy_query, entities: {{}}   (referral process — no employee_name needed)
 - "leave policy" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "leave"}}
 - "what does my group health insurance cover" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "group health insurance"}}
 - "how do I file a mediclaim insurance claim" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "insurance claim process"}}

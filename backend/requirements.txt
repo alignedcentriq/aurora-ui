@@ -21,6 +21,9 @@ pdfplumber
 pymupdf
 python-docx
 python-pptx
+docxtpl
+mammoth
+pywin32; platform_system == "Windows"
 markitdown
 markdown
 pandas

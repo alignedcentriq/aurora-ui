@@ -20,7 +20,7 @@ from app.models import Employee, FormSubmission, FormTemplate
 from app.services.policy_service import PolicyService
 
 # Field input types the dynamic renderer + validator understand.
-_FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox"}
+_FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user"}
 
 
 # Migration bridge: the seeded "Visitor Pass" / "Parking Request" forms are now rendered through

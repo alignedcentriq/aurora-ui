@@ -59,6 +59,30 @@ async def create_form(payload: FormTemplatePayload, user: CurrentUser = Depends(
     )
     if res.get("status") != "ok":
         raise HTTPException(status_code=400, detail=res.get("message", "Failed to create form."))
+        
+    # Trigger Activity Notification for admins
+    try:
+        from app.database import SessionLocal
+        from app.models import Employee
+        from app.services.announcement_service import AnnouncementService
+        db = SessionLocal()
+        try:
+            emp = db.query(Employee).filter(Employee.email == user.email).first()
+            user_name = emp.name if emp else user.email.split("@")[0].replace(".", " ").replace("_", " ").title()
+        finally:
+            db.close()
+        
+        AnnouncementService.create(
+            title=f"{user_name} added form",
+            body=f"The form '{payload.name}' has been added to the Form Library.",
+            category="Activity",
+            created_by=user.email,
+            created_by_domain="admin",
+            target_audience="admin",
+        )
+    except Exception as e:
+        print(f"[form-library] Activity notification failed: {e}")
+        
     return res
 
 

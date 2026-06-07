@@ -421,7 +421,7 @@ function SecurityNewsCard({
   baseline: LlmCfg;
 }) {
   const [sending, setSending] = useState(false);
-  const [lastSent, setLastSent] = useState<{ stories: number; at: string } | null>(null);
+  const [lastResult, setLastResult] = useState<{ type: "sent" | "no_news"; stories: number; at: string } | null>(null);
 
   const sendNow = async () => {
     setSending(true);
@@ -431,8 +431,13 @@ function SecurityNewsCard({
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || "Send failed");
-      setLastSent({ stories: body.stories, at: new Date().toLocaleTimeString() });
-      flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length > 1 ? "s" : ""}`);
+      if (body.status === "no_news") {
+        setLastResult({ type: "no_news", stories: 0, at: new Date().toLocaleTimeString() });
+        toast.info("No new stories in the last 24 hours — nothing to send.");
+      } else {
+        setLastResult({ type: "sent", stories: body.stories, at: new Date().toLocaleTimeString() });
+        flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length > 1 ? "s" : ""}`);
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to send digest");
     } finally {
@@ -502,13 +507,18 @@ function SecurityNewsCard({
         {/* Send-now test trigger */}
         <div className="mt-4 pt-4 border-t border-[var(--border)]/30 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-[11px] text-muted-foreground">
-            {lastSent ? (
+            {lastResult?.type === "sent" ? (
               <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
                 <Check className="h-3.5 w-3.5" />
-                Sent {lastSent.stories} stories at {lastSent.at}
+                Sent {lastResult.stories} stories at {lastResult.at}
+              </span>
+            ) : lastResult?.type === "no_news" ? (
+              <span className="flex items-center gap-1.5 text-amber-400 font-medium">
+                <Minus className="h-3.5 w-3.5" />
+                No new stories in the last 24 h — checked at {lastResult.at}
               </span>
             ) : (
-              <span>Send a test digest now — bypasses the daily schedule and the enabled toggle.</span>
+              <span>Bypasses the daily schedule. Only sends if there are new stories in the last 24 hours.</span>
             )}
           </div>
           <button
@@ -663,7 +673,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
   });
 
   return (
-    <div className="mx-auto max-w-5xl pb-28">
+    <div className="w-full pb-28">
       {/* ── Hero kill switch ── */}
       <motion.section
         initial={{ opacity: 0, y: 10 }}

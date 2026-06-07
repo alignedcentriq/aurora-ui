@@ -1,25 +1,133 @@
-import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send, Copy, Check } from "lucide-react";
+import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send, Copy, Check, Bookmark } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { motion } from "framer-motion";
+import { EscalationWidget } from "./EscalationWidget";
 
 export function UserMessage({
   name,
   initials,
   children,
+  text,
+  onSaveQuickSearch,
 }: {
   name?: string;
   initials?: string;
   children: ReactNode;
+  text?: string;
+  onSaveQuickSearch?: (text: string) => void;
 }) {
   return (
-    <div className="flex w-full justify-end gap-3">
+    <div className="flex w-full justify-end gap-3 group/user-msg relative items-center">
+      {onSaveQuickSearch && text && (
+        <motion.button
+          whileTap={{ scale: 0.85 }}
+          onClick={() => onSaveQuickSearch(text)}
+          className="opacity-0 group-hover/user-msg:opacity-100 transition-all duration-200 flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground mr-1 shrink-0 cursor-pointer"
+          title="Save Prompt"
+        >
+          <Bookmark className="h-3.5 w-3.5" />
+        </motion.button>
+      )}
       <div className="chat-bubble-user">
         <div className="text-[15px] leading-relaxed select-text cursor-text">{children}</div>
       </div>
     </div>
   );
+}
+
+// Phrases that indicate the AI couldn't answer the question.
+// When matched, a compact "Need help from a person?" escalation hint appears.
+const REFUSAL_PHRASES = [
+  // Explicit inability
+  "i'm unable to help",
+  "i am unable to help",
+  "i'm not able to help",
+  "i cannot help with",
+  "i can't help with",
+  "i'm unable to assist",
+  "i am unable to assist",
+  "i cannot assist with",
+  "i can't assist with",
+  "not able to provide",
+  "unable to provide",
+  "i cannot provide",
+  "i can't provide that",
+  "i'm afraid i can't",
+  // Scope / area
+  "outside my area",
+  "outside the scope",
+  "outside of my expertise",
+  "beyond my capabilities",
+  "beyond what i can",
+  "beyond my expertise",
+  "not within my",
+  "this is outside",
+  "that falls outside",
+  // No information found
+  "i couldn't find",
+  "i could not find",
+  "couldn't find it in the policy",
+  "couldn't find any information",
+  "no information found",
+  "not found in the policy",
+  "i don't have access to that",
+  "i do not have access to that",
+  "i don't have information about that",
+  "i don't have enough information to",
+  "unfortunately, i don't have",
+  "unfortunately i don't have",
+  "i'm not sure i can help",
+  // Explicit referrals / "please contact ..."
+  "please contact hr",
+  "please contact the hr",
+  "please contact admin",
+  "please contact it",
+  "please contact your manager",
+  "please contact the it",
+  "please contact the admin",
+  "please contact the relevant",
+  "please reach out to hr",
+  "please reach out to the hr",
+  "please reach out to it",
+  "please reach out to admin",
+  "reach out to hr",
+  "reach out to the it",
+  "reach out to admin",
+  "contact hr directly",
+  "contact the hr team",
+  "contact your hr",
+  "contact the it helpdesk",
+  "contact the it team",
+  "contact your manager",
+  "contact the admin",
+  "i recommend contacting",
+  "i suggest contacting",
+  "i recommend reaching out",
+  "you may want to contact",
+  "you should contact",
+  "you can contact",
+];
+
+const REFERRAL_PHRASES = [
+  "please contact", "please reach out", "reach out to hr", "reach out to the it",
+  "reach out to admin", "contact hr directly", "contact the hr", "contact your hr",
+  "contact the it", "contact the admin", "contact your manager", "i recommend contacting",
+  "i suggest contacting", "i recommend reaching out", "you may want to contact",
+  "you should contact", "you can contact",
+];
+
+function detectsRefusal(text?: string): boolean {
+  if (!text || text.length < 15) return false;
+  const lower = text.toLowerCase();
+  return REFUSAL_PHRASES.some((p) => lower.includes(p));
+}
+
+function detectsReferral(text?: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return REFERRAL_PHRASES.some((p) => lower.includes(p));
 }
 
 const DOMAIN_BADGE: Record<string, { label: string; classes: string; borderColor: string }> = {
@@ -39,17 +147,28 @@ export function AIMessage({
   onFeedback,
   domain,
   text,
+  isError,
+  sessionId,
+  originalQuery,
 }: {
   children: ReactNode;
   live?: boolean;
   onFeedback?: (rating: "up" | "down", feedbackText?: string) => void;
   domain?: string;
   text?: string;
+  /** Mark this as an error message so the escalation bar shows automatically */
+  isError?: boolean;
+  sessionId?: string;
+  originalQuery?: string;
 }) {
   const badge = domain ? DOMAIN_BADGE[domain] : null;
   const [feedbackState, setFeedbackState] = useState<FeedbackState>("idle");
   const [feedbackText, setFeedbackText] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Detect soft refusals / explicit referrals — show escalation hint without waiting for thumbs-down
+  const softRefusal = !isError && !live && detectsRefusal(text);
+  const isReferral = softRefusal && detectsReferral(text);
 
   const handleThumbsUp = () => {
     if (feedbackState !== "idle") return;
@@ -214,6 +333,38 @@ export function AIMessage({
                 </motion.button>
               </div>
             </motion.div>
+          )}
+
+          {/* Soft refusal / referral hint — AI said it can't help or directed user elsewhere */}
+          {softRefusal && feedbackState === "idle" && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.6 }}
+              className="flex items-center gap-2 px-1"
+            >
+              <span className="text-[11px] text-muted-foreground">
+                {isReferral ? "Contact them directly:" : "Need help from a person?"}
+              </span>
+              <EscalationWidget
+                domain={domain}
+                sessionId={sessionId}
+                originalQuery={originalQuery}
+                errorType="unsatisfied"
+                compact
+              />
+            </motion.div>
+          )}
+
+          {/* Escalation — shown after thumbs-down is submitted or on hard error messages */}
+          {!live && (feedbackState === "submitted" || isError) && (
+            <EscalationWidget
+              domain={domain}
+              sessionId={sessionId}
+              originalQuery={originalQuery}
+              errorType={isError ? "error" : "unsatisfied"}
+              compact={feedbackState === "submitted"}
+            />
           )}
         </div>
       </div>

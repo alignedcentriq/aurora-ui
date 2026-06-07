@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { FileText, CheckCircle2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { FileText, CheckCircle2, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { DynamicFormData, DynamicFormField } from "@/lib/chat-store";
 
@@ -12,6 +12,113 @@ interface Props {
 
 const inputClass =
   "w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow";
+
+interface EmployeeMatch {
+  id: number;
+  name: string;
+  email: string;
+  designation: string;
+  department: string;
+}
+
+function UserPickerField({
+  field,
+  value,
+  onChange,
+  userEmail,
+  userRole,
+}: {
+  field: DynamicFormField;
+  value: string;
+  onChange: (val: string) => void;
+  userEmail: string;
+  userRole?: string;
+}) {
+  const [query, setQuery] = useState(value || "");
+  const [results, setResults] = useState<EmployeeMatch[]>([]);
+  const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!value && query) setQuery("");
+  }, [value]);
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/employees/autocomplete?q=${encodeURIComponent(query)}&limit=8`, {
+          headers: {
+            ...(userEmail ? { "x-user-email": userEmail } : {}),
+            ...(userRole ? { "x-user-role": userRole.toLowerCase() } : {}),
+          },
+        });
+        const data = await res.json();
+        setResults(Array.isArray(data) ? data : []);
+        setOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const select = (emp: EmployeeMatch) => {
+    setQuery(emp.name);
+    onChange(emp.name);
+    setOpen(false);
+    setResults([]);
+  };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            if (!e.target.value) onChange("");
+          }}
+          placeholder={field.placeholder || "Search by name…"}
+          className={inputClass}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          autoComplete="off"
+        />
+        {searching && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground pointer-events-none" />
+        )}
+      </div>
+      {open && results.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full rounded-xl border border-border bg-background shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+          {results.map((emp) => (
+            <button
+              key={emp.id}
+              type="button"
+              className="w-full text-left px-3 py-2.5 hover:bg-muted/60 transition-colors border-b border-border/40 last:border-0 flex flex-col gap-0.5"
+              onMouseDown={() => select(emp)}
+            >
+              <span className="text-sm font-medium text-foreground">{emp.name}</span>
+              {(emp.designation || emp.email) && (
+                <span className="text-[11px] text-muted-foreground">
+                  {emp.designation ? `${emp.designation} · ` : ""}{emp.email}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Generic renderer for an admin-defined Form Library form. Renders inputs from `data.fields`,
@@ -76,6 +183,28 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
 
   const renderField = (f: DynamicFormField) => {
     const v = values[f.name];
+    if (f.type === "user") {
+      return (
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
+            {f.label}
+            {f.required ? (
+              <span className="text-destructive"> *</span>
+            ) : (
+              <span className="text-muted-foreground/60"> (optional)</span>
+            )}
+          </label>
+          <UserPickerField
+            field={f}
+            value={(v as string) || ""}
+            onChange={(val) => setField(f.name, val)}
+            userEmail={userEmail}
+            userRole={userRole}
+          />
+        </div>
+      );
+    }
+
     const labelEl = (
       <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
         {f.label}

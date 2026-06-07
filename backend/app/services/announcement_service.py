@@ -12,7 +12,7 @@ from app.models import Announcement
 logger = logging.getLogger("aurora-logger")
 
 ALLOWED_CATEGORIES = {
-    "Policy Update", "Holiday", "Events", "Hiring", "Training", "General", "IT Alert"
+    "Policy Update", "Holiday", "Events", "Hiring", "Training", "General", "IT Alert", "Activity"
 }
 
 
@@ -180,13 +180,32 @@ class AnnouncementService:
             db.close()
 
     @staticmethod
-    def list_all(include_inactive: bool = False) -> list:
+    def list_all(include_inactive: bool = False, user_role: Optional[str] = None) -> list:
         db = SessionLocal()
         try:
             q = db.query(Announcement)
             if not include_inactive:
                 q = q.filter(Announcement.is_active == True)
             results = q.order_by(Announcement.created_at.desc()).all()
+
+            role_lower = (user_role or "employee").strip().lower()
+            filtered_results = []
+            for a in results:
+                aud = (a.target_audience or "all").strip().lower()
+                if aud in ("all", ""):
+                    filtered_results.append(a)
+                elif aud == "admin":
+                    if role_lower in ("admin", "super admin"):
+                        filtered_results.append(a)
+                elif aud in ("super_admin", "super admin"):
+                    if role_lower == "super admin":
+                        filtered_results.append(a)
+                elif aud == "non-employee":
+                    if role_lower != "employee":
+                        filtered_results.append(a)
+                elif aud == role_lower:
+                    filtered_results.append(a)
+
             return [
                 {
                     "id": a.id,
@@ -201,7 +220,7 @@ class AnnouncementService:
                     "created_at": a.created_at.isoformat(),
                     "expires_at": a.expires_at.isoformat() if a.expires_at else None,
                 }
-                for a in results
+                for a in filtered_results
             ]
         finally:
             db.close()

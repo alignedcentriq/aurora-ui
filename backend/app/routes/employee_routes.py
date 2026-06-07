@@ -5,7 +5,8 @@ from typing import Optional
 from app.services.employee_service import EmployeeService
 from app.database import SessionLocal
 from app.models import Employee, EmployeeSkill, EmployeeZohoProfile
-from app.auth import CurrentUser, get_current_user
+from pydantic import BaseModel
+from app.auth import CurrentUser, get_current_user, require_non_employee
 from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
@@ -36,6 +37,7 @@ def _serialize(e: Employee, skills: list[EmployeeSkill]) -> dict:
         "department": e.department or "",
         "designation": e.designation or "",
         "location": e.location or "",
+        "role": e.role or "Employee",
         "skills": [
             {"skill": s.skill, "certification": s.certification or ""}
             for s in skills
@@ -61,6 +63,12 @@ def _get_or_create_employee(db, email: str) -> Employee:
         db.add(emp)
         db.commit()
         db.refresh(emp)
+        # Notify HR about the new employee so they can send a welcome email
+        try:
+            from app.services.welcome_service import notify_hr_new_employee
+            notify_hr_new_employee(emp.email, emp.name, db)
+        except Exception as _e:
+            print(f"[welcome] Non-fatal: HR notification failed for {email}: {_e}")
     return emp
 
 
@@ -427,6 +435,88 @@ def get_cert_file(skill_id: int, user: CurrentUser = Depends(get_current_user)):
                 "Content-Disposition": f'inline; filename="{row.cert_file_name or "certification"}"',
             },
         )
+    finally:
+        db.close()
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str
+
+
+@router.get("/roles/assigned")
+def list_assigned_roles(
+    _: CurrentUser = Depends(get_current_user),
+):
+    db = SessionLocal()
+    try:
+        # Fetch all employees who have a non-null and non-Employee role
+        rows = db.query(Employee).filter(
+            Employee.role != None,
+            Employee.role != "Employee"
+        ).order_by(Employee.name).all()
+        
+        return [
+            {
+                "id": e.id,
+                "name": e.name,
+                "email": e.email,
+                "role": e.role,
+                "designation": e.designation or "",
+                "department": e.department or "",
+            }
+            for e in rows
+        ]
+    finally:
+        db.close()
+
+
+@router.put("/{email}/role")
+def update_employee_role(
+    email: str,
+    req: UpdateRoleRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        old_role = emp.role or "Employee"
+        new_role = req.role.strip()
+        
+        valid_roles_capitalized = {
+            "employee": "Employee",
+            "hr": "HR",
+            "it": "IT",
+            "pmo": "PMO",
+            "admin": "Admin",
+            "functional manager": "Functional Manager",
+            "super admin": "Super Admin"
+        }
+        normalized_role = valid_roles_capitalized.get(new_role.lower())
+        if not normalized_role:
+            raise HTTPException(status_code=400, detail=f"Invalid role: {new_role}")
+            
+        emp.role = normalized_role
+        db.commit()
+        
+        # Get Admin name
+        admin_emp = db.query(Employee).filter(Employee.email == user.email).first()
+        admin_name = admin_emp.name if admin_emp else user.email.split("@")[0].replace(".", " ").replace("_", " ").title()
+        
+        # Create activity announcement (target_audience="non-employee")
+        from app.services.announcement_service import AnnouncementService
+        AnnouncementService.create(
+            title=f"{admin_name} added {emp.name} as {normalized_role}",
+            body=f"{emp.name} ({email}) has been assigned the role of {normalized_role} (previously {old_role}).",
+            category="Activity",
+            created_by=user.email,
+            created_by_domain="admin",
+            target_audience="non-employee",
+        )
+        
+        return {"status": "ok", "message": f"Updated role to {normalized_role}"}
     finally:
         db.close()
 

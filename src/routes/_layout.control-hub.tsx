@@ -1,8 +1,7 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { z } from "zod";
-import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Megaphone,
@@ -18,8 +17,7 @@ import {
   Activity,
   Shield,
   ShieldAlert,
-  ChevronRight,
-  Menu,
+  Zap,
 } from "lucide-react";
 
 // Page components live outside the routes folder so they are code-split
@@ -28,6 +26,7 @@ import { AdminPortal } from "@/pages/AdminPortal";
 import { HRPortal } from "@/pages/HRPortal";
 import { ITPortal } from "@/pages/ITPortal";
 import { PMOPortal } from "@/pages/PMOPortal";
+import { AutomationHub } from "@/pages/AutomationHub";
 import { ManagerPortal } from "@/pages/ManagerPortal";
 import { PeoplePage } from "@/pages/PeoplePage";
 import { ConfigPage } from "@/pages/ConfigPage";
@@ -35,6 +34,7 @@ import { UrlLibrary } from "@/pages/UrlLibrary";
 import { FormLibrary } from "@/pages/FormLibrary";
 import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
+import { AccessManagement } from "@/pages/AccessManagement";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -49,6 +49,7 @@ type TabId =
   | "dashboard"
   | "observability"
   | "llm-controls"
+  | "role-control"
   | "admin-portal"
   | "hr-portal"
   | "it-portal"
@@ -57,7 +58,8 @@ type TabId =
   | "people"
   | "config"
   | "url-library"
-  | "form-library";
+  | "form-library"
+  | "automation-hub";
 
 interface TabItem {
   id: TabId;
@@ -66,6 +68,8 @@ interface TabItem {
   icon: typeof Megaphone;
   color: string;
   show: (role: string) => boolean;
+  requireScope?: string;       // Admin must have this specific scope (or full access)
+  requireAnyScope?: string[];  // Admin must have at least one of these scopes (or full access)
   component: React.ComponentType<any>;
 }
 
@@ -78,7 +82,17 @@ const TABS: TabItem[] = [
     icon: Megaphone,
     color: "#00a29a",
     show: (role) => role === "Admin",
+    requireScope: "announcements",
     component: AdminDashboard,
+  },
+  {
+    id: "role-control",
+    label: "Access Management",
+    category: "System & Ops",
+    icon: UserCog,
+    color: "#F59E0B",
+    show: (role) => role === "Super Admin",
+    component: AccessManagement,
   },
   {
     id: "observability",
@@ -86,7 +100,8 @@ const TABS: TabItem[] = [
     category: "System & Ops",
     icon: Activity,
     color: "#6366F1",
-    show: (role) => role === "Super Admin",
+    show: (role) => role === "Super Admin" || role === "IT",
+    requireScope: "observability",
     component: ObservabilityDashboard,
   },
   {
@@ -95,8 +110,20 @@ const TABS: TabItem[] = [
     category: "System & Ops",
     icon: Shield,
     color: "#F59E0B",
-    show: (role) => role === "Super Admin",
+    show: (role) => role === "Super Admin" || role === "IT",
+    requireScope: "llm_controls",
     component: LLMControlsPage,
+  },
+  {
+    id: "automation-hub",
+    label: "Email Automation Hub",
+    category: "System & Ops",
+    icon: Zap,
+    color: "#F59E0B",
+    show: (role) =>
+      ["HR", "Admin", "IT", "PMO", "Functional Manager", "Super Admin"].includes(role),
+    requireScope: "email_automation",
+    component: AutomationHub,
   },
   // PORTALS
   {
@@ -106,6 +133,7 @@ const TABS: TabItem[] = [
     icon: Car,
     color: "#00a29a",
     show: (role) => role === "Admin",
+    requireAnyScope: ["reimbursements", "parking", "desk_keys", "food_complaints", "bookshelf"],
     component: AdminPortal,
   },
   {
@@ -115,6 +143,7 @@ const TABS: TabItem[] = [
     icon: CalendarDays,
     color: "#16A34A",
     show: (role) => role === "HR",
+    requireScope: "leave_management",
     component: HRPortal,
   },
   {
@@ -124,6 +153,7 @@ const TABS: TabItem[] = [
     icon: Ticket,
     color: "#3B82F6",
     show: (role) => role === "IT",
+    requireScope: "it_support",
     component: ITPortal,
   },
   {
@@ -133,6 +163,7 @@ const TABS: TabItem[] = [
     icon: GraduationCap,
     color: "#8B5CF6",
     show: (role) => role === "PMO",
+    requireScope: "pmo_portal",
     component: PMOPortal,
   },
   {
@@ -142,6 +173,7 @@ const TABS: TabItem[] = [
     icon: UserCog,
     color: "#16A34A",
     show: (role) => role === "Functional Manager",
+    requireScope: "attendance_reports",
     component: ManagerPortal,
   },
   // ASSETS & CONFIG
@@ -152,6 +184,7 @@ const TABS: TabItem[] = [
     icon: Users,
     color: "#00a29a",
     show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
+    requireScope: "people_directory",
     component: PeoplePage,
   },
   {
@@ -161,6 +194,7 @@ const TABS: TabItem[] = [
     icon: Database,
     color: "#00a29a",
     show: (role) => ["Admin", "HR", "IT", "PMO", "Super Admin"].includes(role),
+    requireScope: "prompt_config",
     component: ConfigPage,
   },
   {
@@ -178,7 +212,8 @@ const TABS: TabItem[] = [
     category: "Assets & Config",
     icon: FileText,
     color: "#00a29a",
-    show: (role) => role === "Admin",
+    show: (role) => role === "Admin" || role === "Super Admin",
+    requireScope: "form_library",
     component: FormLibrary,
   },
 ];
@@ -186,14 +221,30 @@ const TABS: TabItem[] = [
 function ControlHubPage() {
   const { user } = useAuth();
   const search = Route.useSearch();
-  const navigate = useNavigate();
+  const navigate = Route.useNavigate();
 
   const role = user?.role ?? "";
 
-  // Filter tabs visible to the current user's role
+  const scopes = user?.scopes ?? [];
+  const fullAccess = scopes.length === 0;
+
+  // Returns true if the user's scope list covers `scopeId` — either the exact base scope
+  // OR any `scopeId:action` granular variant (read-only still counts as "has access").
+  const hasScopeAccess = (scopeId: string) =>
+    scopes.includes(scopeId) || scopes.some((s) => s.startsWith(`${scopeId}:`));
+
+  // Filter tabs by role, then by scope (empty scopes = full role access)
   const allowedTabs = useMemo(() => {
-    return TABS.filter((t) => t.show(role));
-  }, [role]);
+    return TABS.filter((t) => {
+      if (!t.show(role)) return false;
+      if (!fullAccess) {
+        if (t.requireScope && !hasScopeAccess(t.requireScope)) return false;
+        if (t.requireAnyScope && !t.requireAnyScope.some((s) => hasScopeAccess(s))) return false;
+      }
+      return true;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, fullAccess, scopes.join(",")]);
 
   // Determine active tab
   const activeTabId = useMemo<TabId>(() => {
@@ -207,7 +258,7 @@ function ControlHubPage() {
   // Sync tab selection with router search parameter
   const handleTabChange = (tabId: TabId) => {
     navigate({
-      search: { tab: tabId },
+      search: (prev: { tab?: string }) => ({ ...prev, tab: tabId }),
     });
   };
 
@@ -219,7 +270,7 @@ function ControlHubPage() {
   }, [allowedTabs, activeTabId]);
 
   // Access check
-  if (!user || role === "Employee") {
+  if (!user) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
         <div className="text-center max-w-sm px-4">
@@ -228,7 +279,7 @@ function ControlHubPage() {
           </div>
           <h2 className="text-lg font-bold text-foreground tracking-tight">Access Restricted</h2>
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-            This Control Hub is reserved for HR, IT, PMO, Admin, Functional Manager, and Super Admin roles.
+            Please log in to access this page.
           </p>
         </div>
       </div>

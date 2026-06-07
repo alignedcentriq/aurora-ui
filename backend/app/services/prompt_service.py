@@ -51,6 +51,7 @@ ROLE_DOMAIN_MAP: dict[str, list[str]] = {
     "it": ["it_support"],
     "pmo": ["pmo"],
     "admin": ["hr", "admin", "it_support", "pmo", "functional_manager"],
+    "super admin": ["general"],
 }
 
 UNIVERSAL_GUARDRAIL = """

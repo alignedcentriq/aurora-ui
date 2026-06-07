@@ -260,7 +260,11 @@ class SemanticRouterService:
         for seed in ROUTER_SEEDS:
             norm = _norm(seed["utterance"])
             row = existing.get(norm)
-            if row is not None and row.embedding is not None:
+            # Skip only if the row is embedded AND the domain/sub_intent are already correct.
+            # If domain or sub_intent changed in the catalog, re-apply via add_example (upsert).
+            if (row is not None and row.embedding is not None
+                    and row.domain == seed["domain"]
+                    and row.sub_intent == seed["sub_intent"]):
                 skipped += 1
                 continue
             expanded, _ = _expand_query(seed["utterance"])

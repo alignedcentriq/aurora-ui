@@ -119,7 +119,7 @@ export function ManagerPortal() {
   const totals = report?.totals;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6">
+    <div className="w-full px-4 py-6">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--collaboration)]/15">

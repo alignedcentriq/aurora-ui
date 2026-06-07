@@ -31,12 +31,15 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       ...seo({
-        title: "Centriq AI | Intelligent Workplace Assistant",
+        title: "Centriq AI",
         description:
           "Centriq is your intelligent workplace concierge, helping you manage HR tasks, IT requests, and admin services with ease.",
       }),
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", type: "image/png", href: `${import.meta.env.BASE_URL}logo.png` },
+    ],
   }),
   errorComponent: (props) => (
     <RootDocument>

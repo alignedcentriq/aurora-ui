@@ -348,8 +348,9 @@ class Config:
     # under SHAREPOINT_BASE_FOLDER; set it like SHAREPOINT_PROJECTS_ROOT, e.g.
     # "General/Templates". Each file becomes a generatable document type. Blank = disabled.
     SHAREPOINT_TEMPLATES_FOLDER = os.getenv("SHAREPOINT_TEMPLATES_FOLDER", "")
-    # File extensions to ingest as templates (comma-separated, no dots).
-    SHAREPOINT_TEMPLATES_EXTS = os.getenv("SHAREPOINT_TEMPLATES_EXTS", "pdf,docx")
+    # File extensions to ingest as templates. DOCX only — HR authors letters in Word with
+    # {{ placeholder }} fields; generation fills the .docx and renders it via Word (keeps layout).
+    SHAREPOINT_TEMPLATES_EXTS = os.getenv("SHAREPOINT_TEMPLATES_EXTS", "docx")
     # Company name used for the {{company_name}} auto-field in generated documents.
     DOC_COMPANY_NAME = os.getenv("DOC_COMPANY_NAME", "Aligned Automation")
 

@@ -56,6 +56,7 @@ const ALL_DOMAINS = [
   { id: "it_support", label: "IT Support", color: "text-blue-500" },
   { id: "pmo", label: "PMO", color: "text-violet-500" },
   { id: "functional_manager", label: "Manager", color: "text-indigo-500" },
+  { id: "general", label: "General", color: "text-purple-500" },
 ];
 
 const ROLE_DOMAINS: Record<string, string[]> = {
@@ -63,6 +64,7 @@ const ROLE_DOMAINS: Record<string, string[]> = {
   it: ["it_support"],
   pmo: ["pmo"],
   admin: ["admin"],
+  "super admin": ["general"],
 };
 
 const ROLE_TO_DOMAIN: Record<string, string> = {
@@ -71,6 +73,7 @@ const ROLE_TO_DOMAIN: Record<string, string> = {
   pmo: "pmo",
   admin: "admin",
   functional_manager: "functional_manager",
+  "super admin": "general",
 };
 
 const KNOWN_PROMPT_METADATA: Record<string, { label: string; description: string }> = {
@@ -166,7 +169,7 @@ export function ConfigPage() {
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
   };
 
-  const isAdmin = role === "admin";
+  const isAdmin = role === "admin" || role === "super admin";
 
   const fetchPrompts = useCallback(async (domain: string) => {
     setLoading(true);
@@ -232,9 +235,7 @@ export function ConfigPage() {
       fetchDrafts();
       fetchMyDrafts();
       fetchAnnouncements();
-      if (role === "admin") fetchCompanyContext();
-    } else if (role === "super admin") {
-      fetchCompanyContext();
+      if (role === "admin" || role === "super admin") fetchCompanyContext();
     }
   }, [role]);
 
@@ -507,7 +508,7 @@ export function ConfigPage() {
   };
 
 
-  if (!user || (allowed.length === 0 && role !== "super admin")) {
+  if (!user || allowed.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
@@ -612,7 +613,7 @@ export function ConfigPage() {
         {/* Main Area */}
         <main className="flex-1 overflow-y-auto bg-[#f5f7fa] dark:bg-background">
           {tab === "prompts" ? (
-            <div className="p-8 space-y-6 max-w-4xl">
+            <div className="p-8 space-y-6">
               <div className="flex items-center gap-2 mb-2">
                 <span className={cn("h-2.5 w-2.5 rounded-full", activeDomainMeta?.color?.replace("text-", "bg-"))} />
                 <h2 className="text-[15px] font-semibold text-foreground">{activeDomainMeta?.label} Prompts</h2>
@@ -1193,7 +1194,7 @@ export function ConfigPage() {
             </div>
           ) : tab === "company" ? (
             /* ── Company Context Tab ──────────────────────────────────── */
-            <div className="p-8 space-y-6 max-w-3xl">
+            <div className="p-8 space-y-6">
               <div className="rounded-2xl border border-[var(--border)] bg-card p-6 space-y-4">
                 <div>
                   <h3 className="text-[15px] font-semibold text-foreground">Company Context</h3>
@@ -1240,7 +1241,7 @@ export function ConfigPage() {
             </div>
           ) : (
             /* ── Announcements Tab ──────────────────────────────────── */
-            <div className="p-8 space-y-8 max-w-3xl">
+            <div className="p-8 space-y-8">
               {/* Create announcement */}
               <div className="rounded-2xl border border-[var(--border)] bg-card p-6 space-y-4">
                 <div className="flex items-center gap-2">

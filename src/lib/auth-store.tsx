@@ -17,6 +17,7 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+  scopes: string[];       // Feature-level scopes for scoped Admin; [] = full role access
   avatarUrl?: string;
   team?: TeamMember[];
 }
@@ -30,6 +31,16 @@ interface AuthContextType {
   logout: () => Promise<void>;
   setRole: (role: Role) => void;
 }
+
+const ROLE_MAP: Record<string, Role> = {
+  "employee": "Employee",
+  "hr": "HR",
+  "it": "IT",
+  "pmo": "PMO",
+  "admin": "Admin",
+  "functional manager": "Functional Manager",
+  "super admin": "Super Admin",
+};
 
 const apiScope = import.meta.env.VITE_MSAL_API_SCOPE as string | undefined;
 const loginRequest = {
@@ -56,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (accounts.length > 0) {
           const account = accounts[0];
           const idTokenClaims = account.idTokenClaims as any;
-          const role = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
+          const msalRole = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
           const email = account.username;
 
           console.log("✅ MSAL Authentication Successful!");
@@ -66,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Verify the user is on the backend allowlist before granting access.
           try {
             const res = await fetch("/api/me", {
-              headers: { "x-user-email": email, "x-user-role": role.toLowerCase() },
+              headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
             });
             if (res.status === 403) {
               setAccessDenied(true);
@@ -77,17 +88,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Network error — allow through; backend will enforce on actual calls.
           }
 
-          setUser({
+          // Fetch DB role override + scopes from Access Management
+          let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
+          let scopes: string[] = [];
+          try {
+            const accessRes = await fetch("/api/access/me", {
+              headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
+            });
+            if (accessRes.ok) {
+              const accessData = await accessRes.json();
+              if (accessData.has_override && accessData.role) {
+                effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
+                scopes = accessData.scopes || [];
+              }
+            }
+          } catch {
+            // Fall through with MSAL role
+          }
+
+          setUser((prev) => ({
             id: account.localAccountId,
             name: account.name || account.username || "User",
             email,
-            role: role as Role,
-            avatarUrl: undefined,
+            role: effectiveRole,
+            scopes,
+            avatarUrl: prev?.avatarUrl, // preserve photo if already fetched
             team: [
               { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
               { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
             ],
-          });
+          }));
           setIsLoading(false);
         } else if (!hasAutoRedirected.current) {
           hasAutoRedirected.current = true;

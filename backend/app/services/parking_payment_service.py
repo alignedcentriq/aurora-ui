@@ -61,6 +61,23 @@ class ParkingPaymentService:
         }
 
     @staticmethod
+    def format_charges() -> str:
+        """Human-readable summary of the admin-configured monthly parking charges."""
+        two = _cost_for("2-wheeler")
+        four = _cost_for("4-wheeler")
+        if two <= 0 and four <= 0:
+            return ("Parking charges haven't been configured yet. "
+                    "Please check with the Admin team.")
+        two_line = f"INR {two:,.0f} / month" if two > 0 else "not configured yet"
+        four_line = f"INR {four:,.0f} / month" if four > 0 else "not configured yet"
+        return (
+            "**Parking Charges**\n\n"
+            f"- 🛵 **2-Wheeler:** {two_line}\n"
+            f"- 🚗 **4-Wheeler:** {four_line}\n\n"
+            "_Charges are billed per active parking sticker. Contact the Admin team for any queries._"
+        )
+
+    @staticmethod
     def set_costs(two_wheeler: float, four_wheeler: float, by: str = "") -> None:
         CompanySettingsService.set(K_COST_2W, str(float(two_wheeler)), updated_by=by)
         CompanySettingsService.set(K_COST_4W, str(float(four_wheeler)), updated_by=by)

@@ -1,6 +1,6 @@
 import { Users, Wrench, FileText, Megaphone, ArrowRight, Briefcase, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 
 type Domain = {
   key: string;
@@ -48,7 +48,7 @@ const domains: Domain[] = [
   },
 ];
 
-const container = {
+const container: Variants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
@@ -56,7 +56,7 @@ const container = {
   },
 };
 
-const item = {
+const item: Variants = {
   hidden: { opacity: 0, y: 12, scale: 0.95 },
   show: {
     opacity: 1,

@@ -86,6 +86,15 @@ def get_parking_info(state: Annotated[dict, InjectedState] = None):
     return AdminService.get_parking_info(email)
 
 @tool
+def get_parking_charges(state: Annotated[dict, InjectedState] = None):
+    """Get the monthly parking charges (fee / cost / rate / price) for 2-wheelers and
+    4-wheelers, as configured by the Admin team. Call this for ANY question about how much
+    parking costs — e.g. 'parking charges', 'parking fee', 'parking cost for my car/bike'.
+    Do NOT ask the user for anything; the rates are global."""
+    from app.services.parking_payment_service import ParkingPaymentService
+    return ParkingPaymentService.format_charges()
+
+@tool
 def request_accommodation(
     type: str,
     check_in: str,
@@ -314,7 +323,7 @@ def update_admin_prompt(new_prompt: str):
 
 tools = [
     submit_reimbursement, check_reimbursement_status, search_admin_policies,
-    request_parking_sticker, surrender_parking_sticker, get_parking_info,
+    request_parking_sticker, surrender_parking_sticker, get_parking_info, get_parking_charges,
     request_accommodation, request_visitor_pass,
     file_facility_complaint, check_complaint_status,
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
@@ -337,7 +346,8 @@ _TOOL_GROUPS: dict[str, list] = {
     "bookshelf.status":   [check_book_requests],
     "bookshelf.return":   [check_book_requests, return_my_book],
     "bookshelf.extend":   [check_book_requests, request_book_extension],
-    "parking_sticker":    [request_parking_sticker, surrender_parking_sticker, get_parking_info],
+    "parking_sticker":    [request_parking_sticker, surrender_parking_sticker, get_parking_info, get_parking_charges],
+    "parking_charges":    [get_parking_charges],
     "facility_complaint": [file_facility_complaint, check_complaint_status],
     "food_complaint":     [submit_food_complaint, submit_food_feedback, get_vendor_ratings],
     "accommodation":      [request_accommodation, search_admin_policies],
@@ -423,7 +433,7 @@ def should_continue(state: AdminState):
 # paraphrase drift). Tools that can chain (e.g. list_available_books → request_book)
 # are deliberately excluded so ReAct flows still work.
 _PASSTHROUGH_TOOLS = {
-    "check_reimbursement_status", "get_parking_info", "get_vendor_ratings",
+    "check_reimbursement_status", "get_parking_info", "get_parking_charges", "get_vendor_ratings",
     "check_complaint_status", "check_book_requests",
 }
 

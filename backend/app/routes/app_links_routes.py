@@ -7,10 +7,19 @@ embeds each app on write and invalidates the answer cache so changed links never
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.auth import CurrentUser, require_super_admin
+from app.auth import CurrentUser, require_super_admin, get_current_user
 from app.services.app_directory_service import AppDirectoryService
 
 router = APIRouter(prefix="/api/admin/url-library", tags=["url-library"])
+
+# Public (authenticated) read-only router — returns only {name, url} for active links.
+# Used by the frontend to resolve URL Library links without Super Admin access.
+public_router = APIRouter(prefix="/api/links", tags=["url-library"])
+
+
+@public_router.get("")
+async def list_active_links(_: CurrentUser = Depends(get_current_user)):
+    return [{"name": r["name"], "url": r["url"]} for r in AppDirectoryService.list_all(include_inactive=False)]
 
 
 class AppLinkPayload(BaseModel):

@@ -46,6 +46,9 @@ from app.models import (
     MS365User,
     EmployeeSkill,
     FormTemplate,
+    UserRoleOverride,
+    WelcomeResource,
+    WelcomeLog,
     SCHEMA,
 )
 from app.config import settings
@@ -97,6 +100,17 @@ def init_db():
             conn.commit()
 
     Base.metadata.create_all(bind=engine)
+
+    # Migrations for SQLite
+    if _base_engine.dialect.name == "sqlite":
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE employees ADD COLUMN role VARCHAR"))
+                conn.commit()
+                print("Added role column to SQLite employees table.")
+            except Exception:
+                # Column likely already exists
+                pass
 
     # Drop removed tables
     if _base_engine.dialect.name != "sqlite":
@@ -156,6 +170,9 @@ def init_db():
                 # Template-driven generation: filled placeholder values for audit/re-render
                 f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS field_values JSONB',
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_generated_documents_verify_token ON "{SCHEMA}".generated_documents(verify_token)',
+                # DOCX mail-merge generation: raw Word template bytes + the filled .docx of each issued document
+                f'ALTER TABLE "{SCHEMA}".document_templates ADD COLUMN IF NOT EXISTS template_blob BYTEA',
+                f'ALTER TABLE "{SCHEMA}".generated_documents ADD COLUMN IF NOT EXISTS rendered_docx BYTEA',
                 # MS365 directory: richer profile fields + manager hierarchy (require User.Read.All)
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_id VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS employee_type VARCHAR',
@@ -169,6 +186,11 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS hire_date TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_email VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".ms365_users ADD COLUMN IF NOT EXISTS manager_name VARCHAR',
+                # Super Admin role override table (Base.metadata.create_all handles new table; index is additive)
+                f'CREATE INDEX IF NOT EXISTS idx_user_role_overrides_email ON "{SCHEMA}".user_role_overrides(email)',
+                # Welcome system: unique indexes on token columns
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_welcome_logs_send_token ON "{SCHEMA}".welcome_logs(send_token)',
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_welcome_logs_skip_token ON "{SCHEMA}".welcome_logs(skip_token)',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -236,6 +258,16 @@ def init_db():
                 except Exception as e:
                     print(f"[init_db] Index notice: {e}")
 
+            # employees.role: added with the Role & Access Management feature. create_all()
+            # never adds columns to an existing table, so back-fill it idempotently here.
+            try:
+                conn.execute(text(
+                    f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS role VARCHAR'
+                ))
+                conn.commit()
+            except Exception as e:
+                print(f"[init_db] employees.role migration notice: {e}")
+
     db = SessionLocal()
 
     try:
@@ -245,6 +277,8 @@ def init_db():
             _migrate_prompt_configs(db)
         if db.query(LeaveType).count() == 0:
             _seed_leave_types(db)
+        if db.query(WelcomeResource).count() == 0:
+            _seed_welcome_resources(db)
         _ = db.query(ChatFeedback).count()
 
         # Background thread: embeds any chunks still missing vectors
@@ -439,3 +473,27 @@ def _migrate_prompt_configs(db):
 def _seed_prompt_configs(db):
     # Prompts are configured by domain managers via the Config page — no defaults seeded.
     pass
+
+
+_DEFAULT_WELCOME_RESOURCES = [
+    {"name": "Centriq AI Assistant", "url": None, "description": "Your AI-powered workplace assistant — ask it anything about HR, IT, policies, and more.", "category": "App Guide", "icon": "🤖", "sort_order": 0},
+    {"name": "Leave Management", "url": None, "description": "Apply for leave, check your balances, and track leave history through the chat.", "category": "HR", "icon": "📅", "sort_order": 1},
+    {"name": "Policy Library", "url": None, "description": "Access all company HR, admin, and IT policies instantly.", "category": "Policy", "icon": "📋", "sort_order": 2},
+    {"name": "Room Booking", "url": None, "description": "Book conference rooms and meeting spaces effortlessly.", "category": "Facilities", "icon": "🏢", "sort_order": 3},
+    {"name": "IT Support", "url": None, "description": "Request software installations and get technical help from the IT team.", "category": "IT", "icon": "💻", "sort_order": 4},
+    {"name": "Skills & Certifications", "url": None, "description": "Update your skills profile and upload your certifications.", "category": "HR", "icon": "🎓", "sort_order": 5},
+    {"name": "Expense Reimbursement", "url": None, "description": "Submit and track expense reimbursement claims via the Admin portal.", "category": "Admin", "icon": "💰", "sort_order": 6},
+    {"name": "Employee Directory", "url": None, "description": "Find colleagues, their roles, and contact information.", "category": "App Guide", "icon": "👥", "sort_order": 7},
+]
+
+
+def _seed_welcome_resources(db):
+    """Seed default welcome resources (idempotent — only runs if table is empty)."""
+    try:
+        for spec in _DEFAULT_WELCOME_RESOURCES:
+            db.add(WelcomeResource(**spec))
+        db.commit()
+        print("[init_db] Welcome resources seeded.")
+    except Exception as e:
+        db.rollback()
+        print(f"[init_db] Welcome resource seeding notice: {e}")

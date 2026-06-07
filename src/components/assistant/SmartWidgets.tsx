@@ -12,9 +12,23 @@ import {
   Plus,
   Settings2,
   Check,
+  Brain,
+  Clock,
+  Heart,
+  Smile,
+  GraduationCap,
+  Activity,
+  Server,
+  Target,
+  Flag,
+  Trophy,
+  Sparkles,
+  UserPlus,
+  CheckSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth, type Role } from "@/lib/auth-store";
+import { useSettings, COUNTRIES } from "@/lib/settings-store";
 
 const container = {
   hidden: { opacity: 0 },
@@ -81,7 +95,15 @@ type CardId =
   | "it_tickets"
   | "team_leave"
   | "open_tickets"
-  | "reimbursements";
+  | "reimbursements"
+  | "focus_mode"
+  | "up_next"
+  | "org_pulse"
+  | "skill_progress"
+  | "system_health"
+  | "project_milestones"
+  | "kudos_board"
+  | "new_hires_onboarding";
 
 interface CardDef {
   id: CardId;
@@ -96,7 +118,7 @@ const CARD_CATALOG: CardDef[] = [
     id: "leave_balance",
     label: "Leave Balance",
     description: "Your remaining leave days",
-    allowedRoles: ["Employee", "HR", "PMO", "Admin", "Functional Manager"],
+    allowedRoles: ["Employee", "HR", "PMO", "Admin", "Functional Manager", "Super Admin"],
     prompt: "How many leave days do I have left?",
   },
   {
@@ -110,7 +132,7 @@ const CARD_CATALOG: CardDef[] = [
     id: "pending_approvals",
     label: "Pending Approvals",
     description: "Items awaiting your action",
-    allowedRoles: ["HR", "IT", "PMO", "Admin", "Functional Manager"],
+    allowedRoles: ["HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"],
     prompt: (role) =>
       role === "HR" || role === "Functional Manager"
         ? "Show pending leave approvals from my reportees"
@@ -120,49 +142,114 @@ const CARD_CATALOG: CardDef[] = [
     id: "it_tickets",
     label: "IT Tickets",
     description: "Your open support tickets",
-    allowedRoles: ["IT", "Admin", "Employee"],
+    allowedRoles: ["IT", "Admin", "Super Admin", "Employee"],
     prompt: "What's the status of my IT tickets?",
   },
   {
     id: "team_leave",
     label: "Team Leave",
     description: "Leave status for your reportees",
-    allowedRoles: ["HR", "Functional Manager", "Admin", "PMO"],
+    allowedRoles: ["HR", "Functional Manager", "Admin", "PMO", "Super Admin"],
     prompt: "Show leave status for my reportees",
   },
   {
     id: "open_tickets",
     label: "Open Tickets",
     description: "All unresolved IT tickets",
-    allowedRoles: ["IT", "Admin"],
+    allowedRoles: ["IT", "Admin", "Super Admin"],
     prompt: "Show all open IT tickets",
   },
   {
     id: "reimbursements",
     label: "Reimbursements",
     description: "Your pending expense claims",
-    allowedRoles: ["Employee", "Admin"],
+    allowedRoles: ["Employee", "Admin", "Super Admin"],
     prompt: "What's the status of my reimbursement requests?",
+  },
+  {
+    id: "focus_mode",
+    label: "Focus Mode",
+    description: "Your focus time session metrics",
+    allowedRoles: ["Employee", "Admin", "PMO", "Functional Manager", "Super Admin"],
+    prompt: "Show me my focus time status and history",
+  },
+  {
+    id: "up_next",
+    label: "Up Next",
+    description: "Your next calendar meeting details",
+    allowedRoles: "all",
+    prompt: "What is my next meeting?",
+  },
+  {
+    id: "org_pulse",
+    label: "Org Pulse",
+    description: "Team feedback and mood index",
+    allowedRoles: ["HR", "Admin", "Super Admin", "Functional Manager"],
+    prompt: "What is our team engagement score and feedback trends?",
+  },
+  {
+    id: "skill_progress",
+    label: "Skill Progress",
+    description: "Mandatory employee compliance training",
+    allowedRoles: ["Employee", "Admin", "Super Admin", "Functional Manager"],
+    prompt: "Show my pending training courses and skill progress",
+  },
+  {
+    id: "system_health",
+    label: "System Health",
+    description: "IT systems operational status",
+    allowedRoles: ["IT", "Admin", "Super Admin"],
+    prompt: "Show system health dashboard status",
+  },
+  {
+    id: "project_milestones",
+    label: "Project Milestones",
+    description: "Project sprints and deadlines",
+    allowedRoles: ["PMO", "Admin", "Super Admin", "Functional Manager"],
+    prompt: "Show upcoming project milestones",
+  },
+  {
+    id: "kudos_board",
+    label: "Kudos Board",
+    description: "Team recognition and congratulations",
+    allowedRoles: ["Employee", "HR", "PMO", "Admin", "Super Admin", "Functional Manager"],
+    prompt: "Show recent kudos received by my team",
+  },
+  {
+    id: "new_hires_onboarding",
+    label: "Onboarding Track",
+    description: "Checkpoint checklist for new joiners",
+    allowedRoles: ["HR", "Admin", "Super Admin"],
+    prompt: "Who are the new hires starting next week and what is their onboarding checklist?",
   },
 ];
 
 const ROLE_DEFAULTS: Record<Role, CardId[]> = {
-  Employee: ["leave_balance", "holidays", "it_tickets"],
-  HR: ["pending_approvals", "leave_balance", "team_leave"],
-  IT: ["it_tickets", "open_tickets", "pending_approvals"],
-  PMO: ["pending_approvals", "leave_balance", "holidays"],
-  Admin: ["pending_approvals", "it_tickets", "leave_balance", "holidays"],
-  "Functional Manager": ["pending_approvals", "team_leave", "leave_balance"],
+  Employee: ["leave_balance", "up_next", "focus_mode", "it_tickets"],
+  HR: ["pending_approvals", "org_pulse", "team_leave", "new_hires_onboarding"],
+  IT: ["system_health", "it_tickets", "open_tickets", "pending_approvals"],
+  PMO: ["project_milestones", "pending_approvals", "leave_balance", "kudos_board"],
+  Admin: ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
+  "Functional Manager": ["pending_approvals", "team_leave", "project_milestones", "kudos_board"],
+  "Super Admin": ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
 };
 
 const CARD_HOVER: Record<CardId, string> = {
-  leave_balance: "hover:shadow-lg hover:shadow-primary/5 hover:border-primary/20",
+  leave_balance: "hover:shadow-lg hover:shadow-emerald-500/5 hover:border-emerald-500/20",
   holidays: "hover:shadow-lg hover:shadow-cyan-500/5 hover:border-cyan-500/20",
   pending_approvals: "hover:shadow-lg hover:shadow-amber-500/5 hover:border-amber-500/20",
   it_tickets: "hover:shadow-lg hover:shadow-violet-500/5 hover:border-violet-500/20",
   team_leave: "hover:shadow-lg hover:shadow-indigo-500/5 hover:border-indigo-500/20",
   open_tickets: "hover:shadow-lg hover:shadow-rose-500/5 hover:border-rose-500/20",
   reimbursements: "hover:shadow-lg hover:shadow-orange-500/5 hover:border-orange-500/20",
+  focus_mode: "hover:shadow-lg hover:shadow-purple-500/5 hover:border-purple-500/20",
+  up_next: "hover:shadow-lg hover:shadow-sky-500/5 hover:border-sky-500/20",
+  org_pulse: "hover:shadow-lg hover:shadow-pink-500/5 hover:border-pink-500/20",
+  skill_progress: "hover:shadow-lg hover:shadow-teal-500/5 hover:border-teal-500/20",
+  system_health: "hover:shadow-lg hover:shadow-teal-500/5 hover:border-teal-500/20",
+  project_milestones: "hover:shadow-lg hover:shadow-amber-500/5 hover:border-amber-500/20",
+  kudos_board: "hover:shadow-lg hover:shadow-yellow-500/5 hover:border-yellow-500/20",
+  new_hires_onboarding: "hover:shadow-lg hover:shadow-indigo-500/5 hover:border-indigo-500/20",
 };
 
 const CARD_LEFT_ACCENT: Record<CardId, string> = {
@@ -173,6 +260,14 @@ const CARD_LEFT_ACCENT: Record<CardId, string> = {
   team_leave: "border-l-indigo-500",
   open_tickets: "border-l-rose-500",
   reimbursements: "border-l-orange-500",
+  focus_mode: "border-l-purple-500",
+  up_next: "border-l-sky-500",
+  org_pulse: "border-l-pink-500",
+  skill_progress: "border-l-teal-500",
+  system_health: "border-l-teal-500",
+  project_milestones: "border-l-amber-500",
+  kudos_board: "border-l-yellow-500",
+  new_hires_onboarding: "border-l-indigo-500",
 };
 
 function getPrompt(card: CardDef, role: Role): string {
@@ -186,6 +281,9 @@ function isCardAllowed(card: CardDef, role: Role): boolean {
 // ── Card content ──────────────────────────────────────────────────────────────
 
 function CardContent({ id }: { id: CardId }) {
+  const { country } = useSettings();
+  const cData = COUNTRIES.find((c) => c.code === country) ?? COUNTRIES[0];
+
   switch (id) {
     case "leave_balance":
       return (
@@ -194,11 +292,11 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10">
               <CalendarDays className="h-4 w-4 text-emerald-500" />
             </div>
-            <CircularProgress value={60} size={36} strokeWidth={3} color="var(--accent-emerald)" />
+            <CircularProgress value={Math.round((12 / cData.leave.amount) * 100)} size={36} strokeWidth={3} color="#10b981" />
           </div>
           <div>
-            <p className="text-2xl font-bold tracking-tight text-foreground">12</p>
-            <p className="text-[11px] text-muted-foreground font-medium">Leaves remaining</p>
+            <p className="text-2xl font-bold tracking-tight text-foreground">12 / {cData.leave.amount}</p>
+            <p className="text-[11px] text-muted-foreground font-medium">{cData.leave.label} Left</p>
           </div>
         </>
       );
@@ -210,13 +308,14 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-500/10">
               <Palmtree className="h-4 w-4 text-cyan-500" />
             </div>
-            <span className="text-[11px] font-semibold text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded-full">
-              Soon
+            <span className="text-[11px] font-semibold text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <span>{cData.flag}</span>
+              <span>Soon</span>
             </span>
           </div>
           <div>
-            <p className="text-sm font-semibold text-foreground truncate">Independence Day</p>
-            <p className="text-[11px] text-muted-foreground font-medium">Aug 15 · 2 months away</p>
+            <p className="text-sm font-semibold text-foreground truncate">{cData.holiday.name}</p>
+            <p className="text-[11px] text-muted-foreground font-medium">{cData.holiday.date} · {cData.holiday.relative}</p>
           </div>
         </>
       );
@@ -251,6 +350,7 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/10">
               <Ticket className="h-4 w-4 text-violet-500" />
             </div>
+            <span className="text-[9px] text-muted-foreground font-semibold bg-secondary px-2 py-0.5 rounded">{cData.helpdesk}</span>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
@@ -295,7 +395,7 @@ function CardContent({ id }: { id: CardId }) {
           </div>
           <div>
             <p className="text-2xl font-bold tracking-tight text-foreground">5</p>
-            <p className="text-[11px] text-muted-foreground font-medium">Open tickets</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Open tickets ({cData.code})</p>
           </div>
         </>
       );
@@ -314,6 +414,147 @@ function CardContent({ id }: { id: CardId }) {
               <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">2 pending</span>
             </div>
             <p className="text-[11px] text-muted-foreground font-medium">Expense claims</p>
+          </div>
+        </>
+      );
+
+    case "focus_mode":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-500/10">
+              <Brain className="h-4 w-4 text-purple-500" />
+            </div>
+            <CircularProgress value={62} size={36} strokeWidth={3} color="#8b5cf6" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold tracking-tight text-foreground">2.5h</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Focus of 4h done</p>
+          </div>
+        </>
+      );
+
+    case "up_next":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-500/10">
+              <Clock className="h-4 w-4 text-sky-500" />
+            </div>
+            <span className="text-[10px] font-semibold text-sky-500 bg-sky-500/10 px-2 py-0.5 rounded-full flex items-center">
+              In 15m
+            </span>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground truncate">Weekly Sync Meeting</p>
+            <p className="text-[11px] text-muted-foreground font-medium">2:00 PM · Outlook Sync</p>
+          </div>
+        </>
+      );
+
+    case "org_pulse":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-pink-500/10">
+              <Heart className="h-4 w-4 text-pink-500" />
+            </div>
+            <span className="text-[10px] font-semibold text-pink-500 bg-pink-500/10 px-2 py-0.5 rounded-full">
+              ▲ +0.2
+            </span>
+          </div>
+          <div>
+            <p className="text-2xl font-bold tracking-tight text-foreground">8.4 / 10</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Team Pulse Index</p>
+          </div>
+        </>
+      );
+
+    case "skill_progress":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-500/10">
+              <GraduationCap className="h-4 w-4 text-teal-500" />
+            </div>
+            <span className="text-[11px] font-bold text-teal-500">78%</span>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-sm font-semibold text-foreground truncate">Security Compliance</p>
+            <div className="w-full bg-muted/60 h-1 rounded-full overflow-hidden">
+              <div className="bg-teal-500 h-full rounded-full" style={{ width: "78%" }} />
+            </div>
+          </div>
+        </>
+      );
+
+    case "system_health":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-500/10">
+              <Server className="h-4 w-4 text-teal-500" />
+            </div>
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+          </div>
+          <div>
+            <p className="text-sm font-bold text-foreground">All Systems OK</p>
+            <p className="text-[10px] text-muted-foreground font-medium">API 12ms · DB 99%</p>
+          </div>
+        </>
+      );
+
+    case "project_milestones":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10">
+              <Target className="h-4 w-4 text-amber-500" />
+            </div>
+            <span className="text-[10px] font-bold text-amber-500">Sprint 4</span>
+          </div>
+          <div>
+            <p className="text-2xl font-bold tracking-tight text-foreground">2 / 3</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Milestones due</p>
+          </div>
+        </>
+      );
+
+    case "kudos_board":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-yellow-500/10">
+              <Trophy className="h-4 w-4 text-yellow-500" />
+            </div>
+            <span className="text-[10px] font-bold text-yellow-500 flex items-center gap-0.5">
+              +3 new
+            </span>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-foreground truncate">"Great delivery!" - Alice</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Kudos Board</p>
+          </div>
+        </>
+      );
+
+    case "new_hires_onboarding":
+      return (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-500/10">
+              <UserPlus className="h-4 w-4 text-indigo-500" />
+            </div>
+            <span className="text-[10px] font-bold text-indigo-500 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+              3 / 4 completed
+            </span>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-foreground truncate">4 New Hires</p>
+            <p className="text-[11px] text-muted-foreground font-medium">Starting next week</p>
           </div>
         </>
       );
@@ -425,7 +666,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
         variants={container}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full"
+        className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full items-stretch"
       >
         <AnimatePresence mode="popLayout">
           {activeCards.map((id) => {
@@ -436,7 +677,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 variants={item}
                 layout
                 exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-                className="relative"
+                className="relative h-full"
               >
                 {/* Remove button — visible in edit mode */}
                 <AnimatePresence>
@@ -460,7 +701,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                   whileTap={editMode ? {} : { scale: 0.97 }}
                   onClick={() => !editMode && onAction?.(getPrompt(def, role))}
                   className={cn(
-                    "card-live-dot group flex flex-col gap-3 rounded-2xl glass-widget border-l-[3px] p-5 text-left w-full",
+                    "card-live-dot group flex flex-col justify-between gap-3 rounded-2xl glass-widget border-l-[3px] p-5 text-left w-full h-full min-h-[110px]",
                     CARD_LEFT_ACCENT[id],
                     editMode ? "cursor-default" : CARD_HOVER[id]
                   )}
@@ -478,12 +719,12 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
               variants={item}
               layout
               exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-              className="relative"
+              className="relative h-full"
             >
-              <div ref={addRef}>
+              <div ref={addRef} className="h-full">
                 <button
                   onClick={() => setAddOpen((o) => !o)}
-                  className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border/60 bg-card/30 p-4 w-full min-h-[100px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
+                  className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border/60 bg-card/30 p-4 w-full h-full min-h-[110px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
                 >
                   <Plus className="h-5 w-5" />
                   <span className="text-[11px] font-medium">Add card</span>
