@@ -16,29 +16,6 @@ const msalConfig: Configuration = {
   cache: {
     cacheLocation: "sessionStorage",
   },
-  system: {
-    loggerOptions: {
-      loggerCallback: (level, message, containsPii) => {
-        if (containsPii) return;
-        switch (level) {
-          case LogLevel.Error:
-            console.error(message);
-            return;
-          case LogLevel.Info:
-            console.info(message);
-            return;
-          case LogLevel.Verbose:
-            console.debug(message);
-            return;
-          case LogLevel.Warning:
-            console.warn(message);
-            return;
-          default:
-            return;
-        }
-      },
-    },
-  },
 };
 
 // Initialize only in the browser to avoid SSR window errors
@@ -49,8 +26,8 @@ export const msalInstance = isBrowser
 // Ensure MSAL processes the redirect before TanStack Router can intercept the URL hash
 if (isBrowser && msalInstance) {
   msalInstance.initialize().then(() => {
-    msalInstance.handleRedirectPromise().catch((e) => {
-      console.error("MSAL Redirect Error:", e);
+    msalInstance.handleRedirectPromise().catch(() => {
+      // redirect error handled silently
     });
   });
 }

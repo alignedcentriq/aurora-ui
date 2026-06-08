@@ -8,8 +8,6 @@ export function DefaultCatchBoundary({ error }: { error: Error }) {
   });
   const isRoot = match.id === rootRouteId;
 
-  console.error(error);
-
   return (
     <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center">
       <div className="space-y-4">

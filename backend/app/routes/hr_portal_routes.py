@@ -202,7 +202,7 @@ def respond_to_query(
             """
             _send(to=emp.email, subject=subject, html_body=html_body)
     except Exception as e:
-        print(f"[HR] Query response email error (non-fatal): {e}")
+        pass
 
     return {"message": f"Response sent for {query.reference_id}."}
 

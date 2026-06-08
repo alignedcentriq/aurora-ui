@@ -14,6 +14,7 @@ import {
   ChevronRight,
   ToggleLeft,
   ToggleRight,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox", "user"] as const;
+const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
 interface BuilderField {
@@ -71,6 +72,7 @@ interface FormTemplate {
   trigger_keywords: string;
   notify_email: string;
   notify_domain: string;
+  is_anonymous: boolean;
   created_by: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -82,7 +84,8 @@ interface Submission {
   reference_id: string;
   form_template_id: number;
   form_name: string;
-  employee_email: string;
+  is_anonymous: boolean;
+  employee_email: string | null;
   field_values: Record<string, unknown>;
   status: string;
   admin_remarks: string;
@@ -106,6 +109,7 @@ type MetaState = {
   trigger_keywords: string;
   notify_email: string;
   notify_domain: string;
+  is_anonymous: boolean;
 };
 const EMPTY_META: MetaState = {
   name: "",
@@ -114,6 +118,7 @@ const EMPTY_META: MetaState = {
   trigger_keywords: "",
   notify_email: "",
   notify_domain: "",
+  is_anonymous: false,
 };
 
 const inputClass =
@@ -222,6 +227,7 @@ export function FormLibrary() {
       trigger_keywords: f.trigger_keywords || "",
       notify_email: f.notify_email || "",
       notify_domain: f.notify_domain || "",
+      is_anonymous: f.is_anonymous ?? false,
     });
     setFields(
       (f.fields || []).map((fld) => ({
@@ -288,6 +294,7 @@ export function FormLibrary() {
             trigger_keywords: meta.trigger_keywords.trim(),
             notify_email: meta.notify_email.trim(),
             notify_domain: meta.notify_domain.trim(),
+            is_anonymous: meta.is_anonymous,
             fields: payloadFields,
           }),
         },
@@ -487,6 +494,14 @@ export function FormLibrary() {
                           >
                             {f.enabled ? "Enabled" : "Disabled"}
                           </span>
+                          {f.is_anonymous && (
+                            <span
+                              className="ml-1 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20"
+                              title="Submissions are anonymous — submitter identity is not recorded"
+                            >
+                              <EyeOff className="h-2.5 w-2.5" /> Anon
+                            </span>
+                          )}
                           {!f.has_embedding && (
                             <span
                               className="ml-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
@@ -589,7 +604,15 @@ export function FormLibrary() {
                             {s.reference_id}
                           </td>
                           <td className="py-3 px-4 font-semibold text-[#0f172a] dark:text-white">{s.form_name}</td>
-                          <td className="py-3 px-4 text-[#64748b] dark:text-white/60">{s.employee_email}</td>
+                          <td className="py-3 px-4 text-[#64748b] dark:text-white/60">
+                            {s.is_anonymous ? (
+                              <span className="inline-flex items-center gap-1 text-violet-500 dark:text-violet-400 font-medium">
+                                <EyeOff className="h-3 w-3" /> Anonymous
+                              </span>
+                            ) : (
+                              s.employee_email || "—"
+                            )}
+                          </td>
                           <td className="py-3 px-4 text-[#94a3b8] dark:text-white/40">
                             {s.submitted_at ? new Date(s.submitted_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—"}
                           </td>
@@ -726,6 +749,25 @@ export function FormLibrary() {
                   placeholder="admin / hr / it"
                   className="mt-1"
                 />
+              </div>
+            </div>
+
+            {/* Anonymous toggle */}
+            <div className="flex items-start gap-3 rounded-xl border border-violet-200 dark:border-violet-500/20 bg-violet-50 dark:bg-violet-500/5 px-4 py-3">
+              <input
+                type="checkbox"
+                id="is_anonymous"
+                checked={meta.is_anonymous}
+                onChange={(e) => setMeta({ ...meta, is_anonymous: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-border accent-violet-600"
+              />
+              <div>
+                <label htmlFor="is_anonymous" className="text-[13px] font-semibold text-violet-700 dark:text-violet-300 cursor-pointer flex items-center gap-1.5">
+                  <EyeOff className="h-3.5 w-3.5" /> Anonymous form
+                </label>
+                <p className="text-[11px] text-violet-600/70 dark:text-violet-400/70 mt-0.5">
+                  Submitter identity (name and email) will not be recorded. Admins only see the form responses.
+                </p>
               </div>
             </div>
 

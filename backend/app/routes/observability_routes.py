@@ -5,6 +5,7 @@ All endpoints require IT or Admin role.
 
 import datetime
 import hashlib
+import logging
 import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -220,17 +221,23 @@ def reveal_log_content(
     if req.domain not in user.allowed_domains:
         raise HTTPException(
             403,
-            f"Your group membership does not permit revealing '{req.domain}' conversation content.",
+            f"Access denied: your account is not authorised to reveal '{req.domain}' conversations. "
+            f"Contact your administrator to be added to the '{req.domain}' reveal group.",
         )
 
-    db.add(ContentRevealAudit(
-        request_log_id=req.id,
-        viewer_email=user.email,
-        viewer_oid=user.oid,
-        domain=req.domain,
-        reason=reason,
-    ))
-    db.commit()
+    try:
+        db.add(ContentRevealAudit(
+            request_log_id=req.id,
+            viewer_email=user.email,
+            viewer_oid=user.oid,
+            domain=req.domain,
+            reason=reason,
+        ))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logging.getLogger(__name__).error("ContentRevealAudit insert failed: %s", exc, exc_info=True)
+        raise HTTPException(500, f"Failed to record reveal audit: {exc}")
 
     return {
         "id": req.id,

@@ -23,5 +23,5 @@ export function seo({
     { name: "og:image", content: image },
   ];
 
-  return tags.filter((tag) => tag.content !== undefined);
+  return tags.filter((tag) => ("title" in tag && !!tag.title) || tag.content !== undefined);
 }

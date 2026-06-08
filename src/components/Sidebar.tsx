@@ -32,6 +32,7 @@ import {
   Zap,
   Globe,
   Search,
+  ClipboardCheck,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -68,6 +69,7 @@ const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: strin
 const NAV_COLORS: Record<string, string> = {
   "/":              "var(--clarity)",
   "/documents":     "var(--connectivity)",
+  "/my-requests":   "var(--collaboration)",
   "/control-hub":   "var(--clarity)",
   "/settings":      "var(--capacity)",
 };
@@ -82,6 +84,14 @@ interface ControlHubSubItem {
 
 const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
   // SYSTEM & OPS
+  {
+    id: "automation-hub",
+    label: "Email Automation Hub",
+    category: "System & Ops",
+    icon: Zap,
+    show: (role) =>
+      ["HR", "Admin", "IT", "PMO", "Functional Manager", "Super Admin"].includes(role),
+  },
   {
     id: "role-control",
     label: "Access Management",
@@ -104,14 +114,6 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     show: (role) => role === "Super Admin",
   },
   {
-    id: "automation-hub",
-    label: "Email Automation Hub",
-    category: "System & Ops",
-    icon: Zap,
-    show: (role) =>
-      ["HR", "Admin", "IT", "PMO", "Functional Manager", "Super Admin"].includes(role),
-  },
-  {
     id: "llm-controls",
     label: "LLM Model Controls",
     category: "System & Ops",
@@ -128,7 +130,7 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
   },
   {
     id: "hr-portal",
-    label: "HR Leave Portal",
+    label: "HR Portal",
     category: "Management Portals",
     icon: CalendarDays,
     show: (role) => role === "HR",
@@ -149,10 +151,10 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
   },
   {
     id: "manager-portal",
-    label: "Manager Attendance",
+    label: "My Team",
     category: "Management Portals",
     icon: UserCog,
-    show: (role) => role === "Functional Manager",
+    show: (role) => role === "Functional Manager" || role === "Super Admin",
   },
   // ASSETS & CONFIG
   {
@@ -205,6 +207,18 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
   const isControlHubActive = location.pathname.startsWith("/control-hub");
   const [isControlHubExpanded, setIsControlHubExpanded] = useState(isControlHubActive);
+
+  // For employees: show the automation-hub sidebar item only if they have co-owned automations
+  const [hasCoOwnedAutomations, setHasCoOwnedAutomations] = useState(false);
+  useEffect(() => {
+    if (!user || user.role.toLowerCase() !== "employee") return;
+    fetch("/api/automation/rules", {
+      headers: { "x-user-email": user.email, "x-user-role": user.role },
+    })
+      .then((r) => r.json())
+      .then((data) => setHasCoOwnedAutomations(Array.isArray(data) && data.length > 0))
+      .catch(() => {});
+  }, [user?.email, user?.role]);
 
   // Auto-expand when path changes to control-hub
   useEffect(() => {
@@ -264,22 +278,26 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     deleteThread(id);
     try {
       await fetch(`/api/chat/${id}`, { method: "DELETE" });
-    } catch (err) {
-      console.error("Failed to delete chat from backend:", err);
+    } catch {
+      // delete failed silently — local state already removed
     }
   };
 
   const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"];
 
-  const visibleControlHubItems = CONTROL_HUB_SUB_ITEMS.filter((sub) =>
-    sub.show(user.role)
-  );
+  const visibleControlHubItems = CONTROL_HUB_SUB_ITEMS.filter((sub) => {
+    if (sub.id === "automation-hub" && user.role.toLowerCase() === "employee") {
+      return hasCoOwnedAutomations;
+    }
+    return sub.show(user.role);
+  });
   const hasControlHubAccess = visibleControlHubItems.length > 0;
 
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
     { to: "/books", icon: BookOpen, label: "Library", show: true },
     { to: "/documents", icon: FileText, label: "Documents", show: true },
+    { to: "/my-requests", icon: ClipboardCheck, label: "My Requests", show: true },
     {
       to: "/control-hub",
       icon: Shield,

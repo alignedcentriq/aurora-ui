@@ -43,7 +43,7 @@ class GraphClient:
         }
         response = requests.post(url, data=payload)
         if response.status_code != 200:
-            print(f"Graph Token Error: {response.status_code} - {response.text}")
+            pass
         response.raise_for_status()
         data = response.json()
         self._access_token = data["access_token"]
@@ -89,7 +89,6 @@ class GraphClient:
             response = requests.get(url, headers=self._headers())
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 5))
-                print(f"Graph API Throttled (429). Retrying in {retry_after}s...")
                 time.sleep(retry_after)
                 continue
             if response.status_code == 410:
@@ -144,7 +143,6 @@ class GraphClient:
                 results.append(item)
 
     def get_site_id(self, site_name: str):
-        print(f"DEBUG: Using Token: {self._get_token()[:20]}...")
         # If user provides a full URL, clean it up to the format Graph expects:
         # 'hostname:/sites/sitename'
         clean_site = site_name.replace("https://", "").replace("http://", "").strip()
@@ -181,7 +179,6 @@ def process_document(file_metadata: dict, session: Session):
     Existing document processing pipeline stub.
     Integrates with the HR Policies / knowledge base logic.
     """
-    print(f"Processing document: {file_metadata.get('name')}")
     # Very basic processing: upsert as a policy
     name = file_metadata.get("name", "Unknown")
     path = file_metadata.get("path", "")

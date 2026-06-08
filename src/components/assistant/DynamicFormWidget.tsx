@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { FileText, CheckCircle2, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { FileText, CheckCircle2, Loader2, ImagePlus, X } from "lucide-react";
 import { motion } from "framer-motion";
 import type { DynamicFormData, DynamicFormField } from "@/lib/chat-store";
 
@@ -120,6 +120,107 @@ function UserPickerField({
   );
 }
 
+function ImageUploadField({
+  field,
+  value,
+  onChange,
+  userEmail,
+  userRole,
+}: {
+  field: DynamicFormField;
+  value: string;
+  onChange: (val: string) => void;
+  userEmail: string;
+  userRole?: string;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/forms/upload-image", {
+        method: "POST",
+        headers: {
+          ...(userEmail ? { "x-user-email": userEmail } : {}),
+          ...(userRole ? { "x-user-role": userRole.toLowerCase() } : {}),
+        },
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Upload failed.");
+      onChange(data.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const clear = () => {
+    onChange("");
+    setError("");
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
+        {field.label}
+        {field.required ? (
+          <span className="text-destructive"> *</span>
+        ) : (
+          <span className="text-muted-foreground/60"> (optional)</span>
+        )}
+      </label>
+      {value ? (
+        <div className="relative inline-block">
+          <img
+            src={value}
+            alt="Uploaded"
+            className="h-32 w-auto rounded-xl border border-border object-cover"
+          />
+          <button
+            type="button"
+            onClick={clear}
+            className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-white shadow"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="flex items-center gap-2 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"
+        >
+          {uploading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ImagePlus className="h-4 w-4" />
+          )}
+          {uploading ? "Uploading…" : (field.placeholder || "Choose image…")}
+        </button>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        className="hidden"
+        onChange={handleFile}
+      />
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
 /**
  * Generic renderer for an admin-defined Form Library form. Renders inputs from `data.fields`,
  * validates required fields client-side, and POSTs {form_template_id, field_values} to the
@@ -183,6 +284,17 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
 
   const renderField = (f: DynamicFormField) => {
     const v = values[f.name];
+    if (f.type === "image") {
+      return (
+        <ImageUploadField
+          field={f}
+          value={(v as string) || ""}
+          onChange={(val) => setField(f.name, val)}
+          userEmail={userEmail}
+          userRole={userRole}
+        />
+      );
+    }
     if (f.type === "user") {
       return (
         <div>

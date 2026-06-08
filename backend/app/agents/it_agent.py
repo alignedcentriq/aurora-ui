@@ -69,6 +69,19 @@ def get_my_assets(state: Annotated[dict, InjectedState]):
 
 
 @tool
+def request_asset(
+    asset_name: str,
+    state: Annotated[dict, InjectedState],
+):
+    """Request an IT hardware peripheral. Call immediately when the user asks for any of:
+    headphones, headset, mouse, monitor, keyboard, webcam, ethernet cable, LAN cable,
+    USB hub, docking station, external drive, HDMI cable, DisplayPort cable, charger.
+    asset_name must be the item name only — never a sentence. Never ask for justification."""
+    email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    return ITService.request_asset(email, asset_name)
+
+
+@tool
 def search_it_docs(query: str):
     """Search IT support documents for how-to / setup / configuration questions
     (VPN, wifi, printer, email setup, software config). Call for any 'how do I…',
@@ -78,7 +91,7 @@ def search_it_docs(query: str):
     return PolicyService.search_it_docs(query)
 
 
-tools = [request_software_install, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets, search_it_docs]
+tools = [request_software_install, request_asset, create_it_ticket, check_ticket_status, get_my_tickets, get_my_assets, search_it_docs]
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (router tier).
@@ -94,15 +107,18 @@ def it_assistant(state: ITState):
         f"Employee: {user_email}. Never ask for email or justification.\n"
         f"ALWAYS respond directly in first person. NEVER write a simulated dialogue, roleplay, or conversation script.\n"
         f"NEVER use labels like 'You:', 'Me:', 'User:', or any name prefix. One direct reply only.\n\n"
+        f"Hardware peripheral request (headphones, headset, mouse, monitor, keyboard, webcam, ethernet cable, "
+        f"USB hub, dock, external drive, HDMI cable) → call request_asset IMMEDIATELY. "
+        f"NEVER call search_it_docs or create_it_ticket for asset requests.\n"
         f"Hardware problem (overheating, crashing, slow, freezing, blue screen, not starting, noisy fan, "
-        f"battery draining, screen broken, keyboard issue) → call create_it_ticket IMMEDIATELY. "
+        f"battery draining, screen broken, keyboard not working) → call create_it_ticket IMMEDIATELY. "
         f"NEVER call search_it_docs for hardware problems. Use category='Hardware'.\n"
         f"How-to / setup question ('how do I…', 'how to…', connect/configure VPN, wifi, printer, email) →\n"
         f"   call search_it_docs first and answer concisely from the result. Only create a ticket if no doc\n"
         f"   answers or the user needs an action taken.\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
         f"Specific non-hardware problem described → call create_it_ticket immediately.\n"
-        f"Software install → call request_software_install immediately. Show result as-is (mailto link).\n"
+        f"Software install → call request_software_install immediately. Show result as-is.\n"
         f"If ticket already created in this conversation, do not create another.\n"
         f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"
         f"CRITICAL: After calling search_it_docs, extract and present the steps/information DIRECTLY in your reply.\n"

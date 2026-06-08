@@ -66,9 +66,9 @@ class FeedbackService:
                 from app.services.answer_cache_service import AnswerCacheService
                 removed = AnswerCacheService.invalidate_by_query(user_message)
                 if removed:
-                    print(f"[Feedback] thumbs-down purged {removed} cached answer(s) for: {user_message[:60]!r}")
+                    pass
             except Exception as e:
-                print(f"[Feedback] cache purge skipped ({type(e).__name__}): {e}")
+                pass
 
         return "Feedback recorded. Thank you!"
 

@@ -414,7 +414,7 @@ function SettingsPage() {
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.95 }}
                       transition={{ duration: 0.3 }}
-                      className="relative w-full max-w-sm h-56 bg-slate-950/80 border border-red-950/40 rounded-2xl overflow-hidden shadow-inner flex flex-col items-center justify-center p-4 border-dashed"
+                      className="relative z-0 w-full max-w-sm h-56 bg-slate-950/80 border border-red-950/40 rounded-2xl overflow-hidden shadow-inner flex flex-col items-center justify-center p-4 border-dashed"
                     >
                       {/* Dark grid mesh background */}
                       <div className="absolute inset-0 bg-[linear-gradient(rgba(0,0,0,0.85),rgba(0,0,0,0.85)),url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22%23020617%22/%3E%3Cpath d=%22M0 5h10M5 0v10%22 stroke=%22%231e293b%22 stroke-width=%220.5%22/%3E%3C/svg%3E')] opacity-45 pointer-events-none" />

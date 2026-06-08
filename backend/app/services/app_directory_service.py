@@ -150,7 +150,6 @@ class AppDirectoryService:
                 for r in rows
             ]
         except Exception as e:
-            print(f"[AppDirectory] list_all skipped ({type(e).__name__}): {e}")
             return []
         finally:
             db.close()
@@ -196,7 +195,6 @@ class AppDirectoryService:
                 for r, dist in rows
             ]
         except Exception as e:
-            print(f"[AppDirectory] search skipped ({type(e).__name__}): {e}")
             return []
         finally:
             db.close()
@@ -234,7 +232,6 @@ class AppDirectoryService:
             return filled
         except Exception as e:
             db.rollback()
-            print(f"[AppDirectory] backfill skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()

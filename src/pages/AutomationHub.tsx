@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth-store";
 import {
   Plus,
@@ -19,6 +19,8 @@ import {
   X,
   Search,
   UserPlus,
+  Eye,
+  UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -43,14 +45,17 @@ interface AutomationRule {
   day_of_week: number | null;
   day_of_month: number | null;
   hour: number;
+  minute: number;
   email_subject: string;
   email_body: string;
   recipients_json: Recipient[];
+  co_owners_json: string[];
   is_active: boolean;
   next_run: string | null;
   last_run: string | null;
   last_status: string | null;
   created_at: string;
+  can_manage: boolean;
 }
 
 interface TeamsGroup {
@@ -66,6 +71,7 @@ interface RuleFormState {
   day_of_week: number | null;
   day_of_month: number | null;
   hour: number;
+  minute: number;
   email_subject: string;
   email_body: string;
   recipients_json: Recipient[];
@@ -78,34 +84,33 @@ const BLANK_FORM: RuleFormState = {
   day_of_week: null,
   day_of_month: null,
   hour: 9,
+  minute: 0,
   email_subject: "",
   email_body: "",
   recipients_json: [],
 };
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const FREQ_LABELS: Record<string, string> = {
-  daily: "Daily (weekdays)",
-  weekly: "Weekly",
-  monthly: "Monthly",
-  custom: "Custom",
-};
+
+const NON_EMPLOYEE_ROLES = ["hr", "admin", "it", "pmo", "functional manager", "super admin"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function describeCadence(rule: AutomationRule): string {
-  const h = rule.hour.toString().padStart(2, "0") + ":00";
-  if (rule.frequency === "daily") return `Every weekday at ${h}`;
+  const h = rule.hour.toString().padStart(2, "0");
+  const m = (rule.minute ?? 0).toString().padStart(2, "0");
+  const t = `${h}:${m}`;
+  if (rule.frequency === "daily") return `Every weekday at ${t}`;
   if (rule.frequency === "weekly") {
     const day = DAY_NAMES[rule.day_of_week ?? 0];
-    return `Every ${day} at ${h}`;
+    return `Every ${day} at ${t}`;
   }
   if (rule.frequency === "monthly") {
     const dom = rule.day_of_month ?? 1;
     const suffix = dom === 1 ? "st" : dom === 2 ? "nd" : dom === 3 ? "rd" : "th";
-    return `${dom}${suffix} of every month at ${h}`;
+    return `${dom}${suffix} of every month at ${t}`;
   }
-  return `Custom at ${h}`;
+  return `Custom at ${t}`;
 }
 
 function formatDt(iso: string | null): string {
@@ -120,6 +125,10 @@ function recipientCount(r: Recipient[]): number {
     if (x.type === "individual") return n + 1;
     return n + (x.emails?.length ?? 1);
   }, 0);
+}
+
+function canCreate(role: string): boolean {
+  return NON_EMPLOYEE_ROLES.includes(role.toLowerCase());
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -161,7 +170,7 @@ function StatusBadge({ status }: { status: string | null }) {
 
 // ── Recipient Pill ────────────────────────────────────────────────────────────
 
-function RecipientPill({ r, onRemove }: { r: Recipient; onRemove: () => void }) {
+function RecipientPill({ r, onRemove }: { r: Recipient; onRemove?: () => void }) {
   const label =
     r.type === "individual"
       ? r.name || r.email || ""
@@ -179,10 +188,164 @@ function RecipientPill({ r, onRemove }: { r: Recipient; onRemove: () => void }) 
     >
       {r.type === "individual" ? <Mail className="h-3 w-3" /> : <Users className="h-3 w-3" />}
       {label}
-      <button type="button" onClick={onRemove} className="ml-0.5 hover:opacity-70">
-        <X className="h-3 w-3" />
-      </button>
+      {onRemove && (
+        <button type="button" onClick={onRemove} className="ml-0.5 hover:opacity-70">
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </span>
+  );
+}
+
+// ── Co-Owner Modal ─────────────────────────────────────────────────────────────
+
+function CoOwnerModal({
+  rule,
+  userEmail,
+  userRole,
+  onClose,
+  onUpdated,
+}: {
+  rule: AutomationRule;
+  userEmail: string;
+  userRole: string;
+  onClose: () => void;
+  onUpdated: (updated: AutomationRule) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function addCoOwner() {
+    const email = input.trim().toLowerCase();
+    if (!email) return;
+    if ((rule.co_owners_json ?? []).map(e => e.toLowerCase()).includes(email)) {
+      setError("Already a co-owner.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "add", email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to add co-owner");
+      onUpdated(data);
+      setInput("");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeCoOwner(email: string) {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "remove", email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Failed to remove co-owner");
+      onUpdated(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        initial={{ scale: 0.95, y: 8 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.95, y: 8 }}
+        className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-md w-full mx-4"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <UserCheck className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold text-foreground text-sm">Manage Co-owners</h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-4">
+          Co-owners can view this automation. Only the creator and Super Admins can edit or delete it.
+        </p>
+
+        {/* Add new co-owner */}
+        <div className="flex gap-2 mb-4">
+          <input
+            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder="Enter email address"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setError(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCoOwner(); } }}
+          />
+          <button
+            type="button"
+            onClick={addCoOwner}
+            disabled={saving || !input.trim()}
+            className="px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
+          >
+            <UserPlus className="h-3.5 w-3.5" /> Add
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
+            {error}
+          </div>
+        )}
+
+        {/* Current co-owners list */}
+        {(rule.co_owners_json ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">No co-owners yet.</p>
+        ) : (
+          <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+            {(rule.co_owners_json ?? []).map((email) => (
+              <li key={email} className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <UserCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                  <span className="text-sm truncate">{email}</span>
+                </div>
+                <button
+                  onClick={() => removeCoOwner(email)}
+                  disabled={saving}
+                  className="text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-50"
+                  title="Remove co-owner"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -211,6 +374,12 @@ function RuleForm({
   const [groupSearch, setGroupSearch] = useState("");
   const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [expandingGroup, setExpandingGroup] = useState<string | null>(null);
+
+  // User search (type-ahead from employee directory)
+  const [userSearch, setUserSearch] = useState("");
+  const [userResults, setUserResults] = useState<{ name: string; email: string }[]>([]);
+  const [showUserSearch, setShowUserSearch] = useState(false);
+  const userSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Individual email input
   const [emailInput, setEmailInput] = useState("");
@@ -256,6 +425,28 @@ function RuleForm({
     setEmailInput("");
   }
 
+  function handleUserSearchChange(q: string) {
+    setUserSearch(q);
+    setShowUserSearch(q.length >= 2);
+    if (userSearchRef.current) clearTimeout(userSearchRef.current);
+    if (q.length < 2) { setUserResults([]); return; }
+    userSearchRef.current = setTimeout(async () => {
+      try {
+        const res = await apiFetch(`/api/automation/ms365/users/search?q=${encodeURIComponent(q)}`, userEmail, userRole);
+        const data = await res.json();
+        setUserResults(Array.isArray(data) ? data : []);
+      } catch { setUserResults([]); }
+    }, 250);
+  }
+
+  function addUserResult(u: { name: string; email: string }) {
+    if (form.recipients_json.some((r) => r.type === "individual" && r.email === u.email)) {
+      setUserSearch(""); setUserResults([]); setShowUserSearch(false); return;
+    }
+    set("recipients_json", [...form.recipients_json, { type: "individual", email: u.email, name: u.name }]);
+    setUserSearch(""); setUserResults([]); setShowUserSearch(false);
+  }
+
   async function addTeamsGroup(group: TeamsGroup) {
     if (form.recipients_json.some((r) => r.type === "teams_group" && r.id === group.id)) {
       setShowGroupPicker(false);
@@ -280,7 +471,6 @@ function RuleForm({
       };
       set("recipients_json", [...form.recipients_json, newR]);
     } catch {
-      // Fallback: add group without expanded members
       const newR: Recipient = { type: "teams_group", id: group.id, name: group.name, emails: [] };
       set("recipients_json", [...form.recipients_json, newR]);
     } finally {
@@ -397,16 +587,27 @@ function RuleForm({
 
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Send Time</label>
-            <select
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              value={form.hour}
-              onChange={(e) => set("hour", Number(e.target.value))}
-            >
-              {Array.from({ length: 24 }, (_, h) => {
-                const label = h === 0 ? "12:00 AM" : h < 12 ? `${h}:00 AM` : h === 12 ? "12:00 PM" : `${h - 12}:00 PM`;
-                return <option key={h} value={h}>{label}</option>;
-              })}
-            </select>
+            <div className="flex gap-1.5">
+              <select
+                className="flex-1 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                value={form.hour}
+                onChange={(e) => set("hour", Number(e.target.value))}
+              >
+                {Array.from({ length: 24 }, (_, h) => {
+                  const label = h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+                  return <option key={h} value={h}>{label}</option>;
+                })}
+              </select>
+              <select
+                className="w-20 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                value={form.minute ?? 0}
+                onChange={(e) => set("minute", Number(e.target.value))}
+              >
+                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                  <option key={m} value={m}>{m.toString().padStart(2, "0")}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -450,11 +651,46 @@ function RuleForm({
           <Users className="h-3.5 w-3.5" /> Recipients
         </h4>
 
-        {/* Individual email input */}
+        {/* User search (type-ahead from employee directory) */}
+        <div className="relative">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                className="w-full pl-7 pr-3 rounded-lg border border-border bg-background py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                placeholder="Search people by name or email…"
+                value={userSearch}
+                onChange={(e) => handleUserSearchChange(e.target.value)}
+                onFocus={() => userSearch.length >= 2 && setShowUserSearch(true)}
+                onBlur={() => setTimeout(() => setShowUserSearch(false), 150)}
+              />
+            </div>
+          </div>
+          {showUserSearch && userResults.length > 0 && (
+            <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-border rounded-xl shadow-lg w-full max-h-52 overflow-y-auto">
+              {userResults.map((u) => (
+                <button
+                  key={u.email}
+                  type="button"
+                  onMouseDown={() => addUserResult(u)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left transition-colors"
+                >
+                  <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{u.name}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Manual email input for addresses not in the directory */}
         <div className="flex gap-2">
           <input
             className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder="Add email addresses (comma-separated)"
+            placeholder="Or type email address directly and press Enter"
             value={emailInput}
             onChange={(e) => setEmailInput(e.target.value)}
             onKeyDown={(e) => {
@@ -588,6 +824,7 @@ function RuleCard({
   onDelete,
   onEdit,
   onSendNow,
+  onManageCoOwners,
   currentUserEmail,
   currentUserRole,
 }: {
@@ -596,17 +833,18 @@ function RuleCard({
   onDelete: () => void;
   onEdit: () => void;
   onSendNow: () => void;
+  onManageCoOwners: () => void;
   currentUserEmail: string;
   currentUserRole: string;
 }) {
   const [sendingNow, setSendingNow] = useState(false);
-  const [sendResult, setSendResult] = useState<string | null>(null);
-  const canManage =
-    rule.created_by === currentUserEmail || currentUserRole.toLowerCase() === "super admin";
+  const canManage = rule.can_manage;
+  const isCoOwnerView = !canManage && (rule.co_owners_json ?? [])
+    .map(e => e.toLowerCase())
+    .includes(currentUserEmail.toLowerCase());
 
   async function handleSendNow() {
     setSendingNow(true);
-    setSendResult(null);
     onSendNow();
     setSendingNow(false);
   }
@@ -636,10 +874,20 @@ function RuleCard({
             <Zap className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h3 className="font-semibold text-sm text-foreground truncate">{rule.name}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-sm text-foreground truncate">{rule.name}</h3>
+              {isCoOwnerView && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5 flex-shrink-0">
+                  <Eye className="h-3 w-3" /> Shared
+                </span>
+              )}
+            </div>
             {rule.description && (
               <p className="text-xs text-muted-foreground truncate mt-0.5">{rule.description}</p>
             )}
+            <p className="text-xs text-muted-foreground mt-0.5">
+              By <span className="text-foreground">{rule.created_by}</span>
+            </p>
           </div>
         </div>
 
@@ -687,13 +935,29 @@ function RuleCard({
         </div>
       </div>
 
+      {/* Co-owners summary */}
+      {(rule.co_owners_json ?? []).length > 0 && (
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground border-t border-border/50 pt-3">
+          <UserCheck className="h-3.5 w-3.5 flex-shrink-0 text-indigo-500" />
+          <span>
+            {(rule.co_owners_json ?? []).length} co-owner{(rule.co_owners_json ?? []).length !== 1 ? "s" : ""}
+            {(rule.co_owners_json ?? []).length <= 2
+              ? `: ${(rule.co_owners_json ?? []).join(", ")}`
+              : `: ${(rule.co_owners_json ?? []).slice(0, 2).join(", ")} +${(rule.co_owners_json ?? []).length - 2} more`}
+          </span>
+        </div>
+      )}
+
       {/* Next / last run */}
-      <div className="mt-3 flex gap-4 text-xs text-muted-foreground border-t border-border/50 pt-3">
+      <div className={cn(
+        "mt-3 flex gap-4 text-xs text-muted-foreground pt-3",
+        (rule.co_owners_json ?? []).length === 0 ? "border-t border-border/50" : ""
+      )}>
         <span>Next: <span className="text-foreground">{formatDt(rule.next_run)}</span></span>
         <span>Last: <span className="text-foreground">{formatDt(rule.last_run)}</span></span>
       </div>
 
-      {/* Actions */}
+      {/* Actions — only for creator / super admin */}
       {canManage && (
         <div className="mt-3 flex gap-2 flex-wrap">
           <button
@@ -708,6 +972,12 @@ function RuleCard({
             className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-60"
           >
             <Send className="h-3 w-3" /> Send Now
+          </button>
+          <button
+            onClick={onManageCoOwners}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
+          >
+            <UserCheck className="h-3 w-3" /> Co-owners
           </button>
           <button
             onClick={onDelete}
@@ -733,12 +1003,14 @@ export function AutomationHub() {
   const [showForm, setShowForm] = useState(false);
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AutomationRule | null>(null);
+  const [coOwnerRule, setCoOwnerRule] = useState<AutomationRule | null>(null);
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   const email = user?.email ?? "";
   const role = user?.role ?? "";
+  const userCanCreate = canCreate(role);
 
   function showToast(msg: string, type: "success" | "error" = "success") {
     setToast({ msg, type });
@@ -829,6 +1101,11 @@ export function AutomationHub() {
     }
   }
 
+  function handleCoOwnerUpdated(updated: AutomationRule) {
+    setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    setCoOwnerRule(updated);
+  }
+
   function openEdit(rule: AutomationRule) {
     setEditingRule(rule);
     setShowForm(true);
@@ -847,11 +1124,20 @@ export function AutomationHub() {
         day_of_week: editingRule.day_of_week,
         day_of_month: editingRule.day_of_month,
         hour: editingRule.hour,
+        minute: editingRule.minute ?? 0,
         email_subject: editingRule.email_subject,
         email_body: editingRule.email_body,
         recipients_json: editingRule.recipients_json,
       }
     : BLANK_FORM;
+
+  // Split rules: own/managed vs shared-only
+  const managedRules = rules.filter((r) => r.can_manage);
+  const sharedRules = rules.filter(
+    (r) =>
+      !r.can_manage &&
+      (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase())
+  );
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#f5f7fa] dark:bg-background">
@@ -869,12 +1155,14 @@ export function AutomationHub() {
               </p>
             </div>
           </div>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
-          >
-            <Plus className="h-4 w-4" /> New Automation
-          </button>
+          {userCanCreate && (
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
+            >
+              <Plus className="h-4 w-4" /> New Automation
+            </button>
+          )}
         </div>
       </div>
 
@@ -930,37 +1218,94 @@ export function AutomationHub() {
             <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center mb-4">
               <Zap className="h-7 w-7 text-amber-500" />
             </div>
-            <h3 className="font-semibold text-foreground mb-1">No automations yet</h3>
+            <h3 className="font-semibold text-foreground mb-1">
+              {userCanCreate ? "No automations yet" : "No automations shared with you"}
+            </h3>
             <p className="text-sm text-muted-foreground max-w-xs">
-              Create your first automation to send scheduled emails — training reminders, weekly
-              updates, or any recurring communication.
+              {userCanCreate
+                ? "Create your first automation to send scheduled emails — training reminders, weekly updates, or any recurring communication."
+                : "Ask an automation creator to add you as a co-owner to see shared automations here."}
             </p>
-            <button
-              onClick={openCreate}
-              className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="h-4 w-4" /> Create Automation
-            </button>
+            {userCanCreate && (
+              <button
+                onClick={openCreate}
+                className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                <Plus className="h-4 w-4" /> Create Automation
+              </button>
+            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <AnimatePresence>
-              {rules.map((rule) => (
-                <RuleCard
-                  key={rule.id}
-                  rule={rule}
-                  onToggle={() => handleToggle(rule)}
-                  onDelete={() => setDeleteConfirm(rule)}
-                  onEdit={() => openEdit(rule)}
-                  onSendNow={() => handleSendNow(rule)}
-                  currentUserEmail={email}
-                  currentUserRole={role}
-                />
-              ))}
-            </AnimatePresence>
+          <div className="space-y-6">
+            {/* Managed automations (creator or super admin) */}
+            {managedRules.length > 0 && (
+              <div>
+                {sharedRules.length > 0 && (
+                  <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                    My Automations
+                  </h2>
+                )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <AnimatePresence>
+                    {managedRules.map((rule) => (
+                      <RuleCard
+                        key={rule.id}
+                        rule={rule}
+                        onToggle={() => handleToggle(rule)}
+                        onDelete={() => setDeleteConfirm(rule)}
+                        onEdit={() => openEdit(rule)}
+                        onSendNow={() => handleSendNow(rule)}
+                        onManageCoOwners={() => setCoOwnerRule(rule)}
+                        currentUserEmail={email}
+                        currentUserRole={role}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+
+            {/* Shared (co-owner) automations */}
+            {sharedRules.length > 0 && (
+              <div>
+                <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <Eye className="h-3.5 w-3.5" /> Shared with Me
+                </h2>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <AnimatePresence>
+                    {sharedRules.map((rule) => (
+                      <RuleCard
+                        key={rule.id}
+                        rule={rule}
+                        onToggle={() => {}}
+                        onDelete={() => {}}
+                        onEdit={() => {}}
+                        onSendNow={() => {}}
+                        onManageCoOwners={() => {}}
+                        currentUserEmail={email}
+                        currentUserRole={role}
+                      />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Co-owner modal */}
+      <AnimatePresence>
+        {coOwnerRule && (
+          <CoOwnerModal
+            rule={coOwnerRule}
+            userEmail={email}
+            userRole={role}
+            onClose={() => setCoOwnerRule(null)}
+            onUpdated={handleCoOwnerUpdated}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Delete confirm dialog */}
       <AnimatePresence>

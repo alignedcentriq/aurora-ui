@@ -275,3 +275,18 @@ export function useBuddyColors(): BuddyColorPreset {
   return BUDDY_PRESETS.find((p) => p.id === id) ?? BUDDY_PRESETS[0];
 }
 
+/** Infer the user's country code from their browser timezone. */
+export function detectCountryFromTimezone(): CountryCode {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (tz === "Asia/Kolkata" || tz === "Asia/Calcutta") return "IN";
+  if (tz === "Asia/Dubai") return "AE";
+  if (tz === "Europe/London") return "UK";
+  if (tz.startsWith("Europe/Berlin") || tz === "Europe/Amsterdam") return "DE";
+  if (tz === "Asia/Singapore") return "SG";
+  if (tz === "Asia/Tokyo") return "JP";
+  if (tz.startsWith("Australia/")) return "AU";
+  if (tz === "Europe/Dublin") return "IE";
+  if (tz.startsWith("America/")) return "US";
+  return "US";
+}
+

@@ -37,7 +37,6 @@ async def sharepoint_webhook(request: Request, background_tasks: BackgroundTasks
     for notification in body["value"]:
         client_state = notification.get("clientState")
         if client_state != settings.GRAPH_CLIENT_STATE:
-            print("Invalid clientState in webhook notification")
             continue
 
 

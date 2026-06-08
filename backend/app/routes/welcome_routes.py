@@ -211,3 +211,37 @@ def delete_resource(
     db.delete(r)
     db.commit()
     return {"ok": True}
+
+
+# ── HR: Welcome Message (editable intro) ──────────────────────────────────────
+
+DEFAULT_WELCOME_MESSAGE = (
+    "Welcome to the team, {name}! 🎉\n\n"
+    "We're thrilled to have you on board. Below are the tools and resources "
+    "available to you through Centriq AI — your digital workplace assistant. "
+    "Just open the app and ask anything!"
+)
+
+
+@router.get("/api/portal/hr/welcome/message")
+def get_welcome_message(_: CurrentUser = Depends(require_hr)):
+    from app.services.company_settings_service import CompanySettingsService
+    text = CompanySettingsService.get("welcome_email_intro")
+    return {"text": text or DEFAULT_WELCOME_MESSAGE}
+
+
+class WelcomeMessageBody(BaseModel):
+    text: str
+
+
+@router.put("/api/portal/hr/welcome/message")
+def update_welcome_message(
+    body: WelcomeMessageBody,
+    user: CurrentUser = Depends(require_hr),
+):
+    from app.services.company_settings_service import CompanySettingsService
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    CompanySettingsService.set("welcome_email_intro", text, updated_by=user.email)
+    return {"ok": True, "text": text}

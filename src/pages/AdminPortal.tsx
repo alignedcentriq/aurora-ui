@@ -1,11 +1,19 @@
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save } from "lucide-react";
+import { Check, X, Car, Receipt, AlertTriangle, UtensilsCrossed, Loader2, RefreshCw, ChevronDown, BookOpen, Plus, Pencil, KeyRound, Wallet, Send, Save, Plane, FileText, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
-type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf";
+type Tab = "reimbursements" | "parking" | "parking-dues" | "desk-keys" | "complaints" | "food-complaints" | "bookshelf" | "travel";
 
 // Maps each tab to the scope required to see it
 const TAB_SCOPE_MAP: Record<Tab, string> = {
@@ -16,10 +24,12 @@ const TAB_SCOPE_MAP: Record<Tab, string> = {
   "complaints":      "food_complaints",
   "food-complaints": "food_complaints",
   "bookshelf":       "bookshelf",
+  "travel":          "travel_management",
 };
 
 const ALL_PORTAL_TABS = [
   { id: "reimbursements" as Tab,  label: "Reimbursements",      icon: Receipt },
+  { id: "travel" as Tab,          label: "Travel",               icon: Plane },
   { id: "parking" as Tab,         label: "Parking Stickers",    icon: Car },
   { id: "parking-dues" as Tab,    label: "Parking Charges & Dues", icon: Wallet },
   { id: "desk-keys" as Tab,       label: "Desk Keys",           icon: KeyRound },
@@ -145,6 +155,7 @@ export function AdminPortal() {
         {tab === "complaints" && <ComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />}
         {tab === "food-complaints" && <FoodComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />}
         {tab === "bookshelf" && <BookshelfTab authHeaders={authHeaders} canManage={hasAction("bookshelf", "manage")} />}
+        {tab === "travel" && <TravelTab authHeaders={authHeaders} canApprove={hasAction("travel_management", "approve")} canSettings={hasAction("travel_management", "settings")} />}
       </div>
     </div>
   );
@@ -1374,6 +1385,10 @@ function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, s
   const [acting, setActing] = useState<number | null>(null);
   const [filter, setFilter] = useState("Pending");
 
+  const [rejectId, setRejectId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
@@ -1386,10 +1401,9 @@ function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, s
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
-  const act = async (id: number, action: "approve" | "reject" | "release") => {
+  const act = async (id: number, action: "approve" | "reject" | "release", reason?: string) => {
     let body: string | undefined;
     if (action === "reject") {
-      const reason = window.prompt("Reason for rejecting this desk key request:")?.trim();
       if (!reason) return;
       body = JSON.stringify({ reason });
     }
@@ -1401,6 +1415,7 @@ function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, s
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
       if (action === "approve") flyBanner("Desk key issued");
       else toast.success(action === "reject" ? "Request rejected" : "Desk released");
+      setRejectDialogOpen(false);
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -1432,7 +1447,7 @@ function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, s
                   {!canManage ? (
                     <span className="text-muted-foreground/40 text-[12px]">View only</span>
                   ) : d.status === "Pending" ? (
-                    <ActionButtons id={d.id} acting={acting} onApprove={() => act(d.id, "approve")} onReject={() => act(d.id, "reject")} />
+                    <ActionButtons id={d.id} acting={acting} onApprove={() => act(d.id, "approve")} onReject={() => { setRejectId(d.id); setRejectReason(""); setRejectDialogOpen(true); }} />
                   ) : d.status === "Approved" ? (
                     <button
                       onClick={() => act(d.id, "release")}
@@ -1449,6 +1464,43 @@ function DeskKeysTab({ authHeaders, canManage }: { authHeaders: Record<string, s
           </tbody>
         </table>
       )}
+
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject Desk Key Request</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="text-xs font-medium text-muted-foreground block">
+              Reason for rejecting this desk key request *
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={3}
+                placeholder="Enter reason..."
+                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </label>
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRejectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!rejectReason.trim() || acting === rejectId}
+              onClick={() => {
+                if (rejectId) {
+                  act(rejectId, "reject", rejectReason.trim());
+                }
+              }}
+            >
+              {acting === rejectId && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Reject Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1755,4 +1807,487 @@ function TableLoader() {
 
 function TableEmpty({ label }: { label: string }) {
   return <div className="flex h-40 items-center justify-center text-[13px] text-[#94a3b8] dark:text-white/40">No {label} found</div>;
+}
+
+// ── Travel Tab ─────────────────────────────────────────────────────────────────
+
+const TRAVEL_STATUS_BADGE: Record<string, string> = {
+  pending_rm:    "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  rm_approved:   "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20",
+  rm_rejected:   "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+  admin_approved:"bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  admin_rejected:"bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+  completed:     "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
+};
+
+const TRAVEL_STATUS_LABEL: Record<string, string> = {
+  pending_rm:    "Pending RM Approval",
+  rm_approved:   "RM Approved — Pending Admin",
+  rm_rejected:   "Rejected by RM",
+  admin_approved:"Approved",
+  admin_rejected:"Rejected by Admin",
+  completed:     "Completed",
+};
+
+type TravelSubTab = "requests" | "expenses" | "settings";
+
+function TravelTab({ authHeaders, canApprove, canSettings }: { authHeaders: Record<string, string>; canApprove: boolean; canSettings: boolean }) {
+  const [sub, setSub] = useState<TravelSubTab>("requests");
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 mb-4">
+        {(["requests", "expenses", "settings"] as TravelSubTab[]).map((s) => {
+          if (s === "settings" && !canSettings) return null;
+          const labels: Record<TravelSubTab, string> = { requests: "Travel Requests", expenses: "Expense Claims", settings: "Settings" };
+          const icons: Record<TravelSubTab, React.ReactElement> = {
+            requests: <Plane className="h-3.5 w-3.5" />,
+            expenses: <FileText className="h-3.5 w-3.5" />,
+            settings: <Settings2 className="h-3.5 w-3.5" />,
+          };
+          return (
+            <button key={s} onClick={() => setSub(s)}
+              className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-semibold transition-all",
+                sub === s ? "bg-[#00a29a] text-white" : "bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white")}>
+              {icons[s]}{labels[s]}
+            </button>
+          );
+        })}
+      </div>
+      {sub === "requests" && <TravelRequestsSubTab authHeaders={authHeaders} canApprove={canApprove} />}
+      {sub === "expenses" && <TravelExpensesSubTab authHeaders={authHeaders} canApprove={canApprove} />}
+      {sub === "settings" && <TravelSettingsSubTab authHeaders={authHeaders} />}
+    </div>
+  );
+}
+
+type TravelRequest = {
+  id: number; ref_id: string; employee_name: string; employee_email: string;
+  from_location: string; to_destination: string; travel_date: string; return_date?: string;
+  is_international: boolean; visa_required: boolean; mode_of_travel: string;
+  accommodation_required: boolean; estimated_cost?: number; business_reason: string;
+  notes?: string; status: string; expense_limit?: number;
+  ticket_details?: string; hotel_details?: string; visa_status?: string;
+  admin_rejection_reason?: string; rm_rejection_reason?: string; created_at: string;
+};
+
+function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record<string, string>; canApprove: boolean }) {
+  const [items, setItems] = useState<TravelRequest[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [actingId, setActingId] = useState<number | null>(null);
+  const [approveModal, setApproveModal] = useState<TravelRequest | null>(null);
+  const [rejectModal, setRejectModal] = useState<{ id: number; ref_id: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [approveForm, setApproveForm] = useState({ expense_limit: "", ticket_details: "", hotel_details: "", visa_status: "" });
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = filter !== "All" ? `?status=${filter}` : "";
+      const res = await fetch(`/api/portal/admin/travel${qs}`, { headers: authHeaders });
+      const data = await res.json();
+      setItems(Array.isArray(data) ? data : []);
+      if (!res.ok) toast.error(data?.detail || "Failed to load travel requests");
+    } catch { toast.error("Failed to load travel requests"); }
+    finally { setLoading(false); }
+  }, [filter, authHeaders]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const openApprove = (item: TravelRequest) => {
+    setApproveForm({
+      expense_limit: item.expense_limit ? String(item.expense_limit) : "",
+      ticket_details: item.ticket_details || "",
+      hotel_details: item.hotel_details || "",
+      visa_status: item.visa_status || "",
+    });
+    setApproveModal(item);
+  };
+
+  const confirmApprove = async () => {
+    if (!approveModal) return;
+    setActingId(approveModal.id);
+    try {
+      const res = await fetch(`/api/portal/admin/travel/${approveModal.id}/approve`, {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify({
+          expense_limit: approveForm.expense_limit ? parseFloat(approveForm.expense_limit) : null,
+          ticket_details: approveForm.ticket_details,
+          hotel_details: approveForm.hotel_details,
+          visa_status: approveForm.visa_status,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner("Travel request approved — employee notified with trip details");
+      setApproveModal(null);
+      fetch_();
+    } catch (e: any) { toast.error(e.message || "Failed"); }
+    finally { setActingId(null); }
+  };
+
+  const confirmReject = async () => {
+    if (!rejectModal) return;
+    setActingId(rejectModal.id);
+    try {
+      const res = await fetch(`/api/portal/admin/travel/${rejectModal.id}/reject`, {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify({ reason: rejectReason }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      toast.success("Travel request rejected");
+      setRejectModal(null);
+      setRejectReason("");
+      fetch_();
+    } catch (e: any) { toast.error(e.message || "Failed"); }
+    finally { setActingId(null); }
+  };
+
+  const filterOptions = ["All", "pending_rm", "rm_approved", "admin_approved", "rm_rejected", "admin_rejected", "completed"];
+
+  return (
+    <div>
+      <FilterBar filter={filter} setFilter={setFilter} options={filterOptions} onRefresh={fetch_} />
+      {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="travel requests" /> : (
+        <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
+          <table className="w-full min-w-[1000px] text-[13px]">
+            <thead>
+              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
+                {["Ref", "Employee", "Route", "Date", "Mode", "Est. Cost", "Status", "Actions"].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-[11px] font-bold text-[#64748b] dark:text-white/40 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-b border-[#f1f5f9] dark:border-white/[0.04] hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors">
+                  <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">{item.ref_id}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-semibold text-[#0f172a] dark:text-white">{item.employee_name}</div>
+                    <div className="text-[11px] text-[#94a3b8]">{item.employee_email}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-[#0f172a] dark:text-white">{item.from_location} → {item.to_destination}</div>
+                    {item.is_international && <span className="text-[10px] bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 px-1.5 py-0.5 rounded-full ml-0 mt-0.5 inline-block">International</span>}
+                    <div className="text-[11px] text-[#94a3b8] mt-0.5 max-w-[200px] truncate" title={item.business_reason}>{item.business_reason}</div>
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div>{item.travel_date}</div>
+                    {item.return_date && <div className="text-[11px] text-[#94a3b8]">→ {item.return_date}</div>}
+                  </td>
+                  <td className="px-4 py-3">{item.mode_of_travel || "—"}</td>
+                  <td className="px-4 py-3">
+                    {item.estimated_cost ? `INR ${item.estimated_cost.toLocaleString()}` : "—"}
+                    {item.expense_limit && <div className="text-[11px] text-emerald-600">Limit: INR {item.expense_limit.toLocaleString()}</div>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={cn("px-2 py-1 rounded-full text-[11px] font-semibold", TRAVEL_STATUS_BADGE[item.status] || "bg-zinc-100 text-zinc-500")}>
+                      {TRAVEL_STATUS_LABEL[item.status] || item.status}
+                    </span>
+                    {(item.rm_rejection_reason || item.admin_rejection_reason) && (
+                      <div className="text-[10px] text-rose-500 mt-0.5 max-w-[160px] truncate" title={item.rm_rejection_reason || item.admin_rejection_reason || ""}>
+                        {item.rm_rejection_reason || item.admin_rejection_reason}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {canApprove && item.status === "rm_approved" && (
+                      <div className="flex gap-2">
+                        <button onClick={() => openApprove(item)} disabled={actingId === item.id}
+                          className="flex items-center gap-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                          {actingId === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Approve
+                        </button>
+                        <button onClick={() => { setRejectModal({ id: item.id, ref_id: item.ref_id }); setRejectReason(""); }} disabled={actingId === item.id}
+                          className="flex items-center gap-1 bg-rose-500 hover:bg-rose-600 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                          <X className="h-3 w-3" /> Reject
+                        </button>
+                      </div>
+                    )}
+                    {canApprove && item.status === "admin_approved" && (
+                      <span className="text-[11px] text-emerald-600 font-semibold">Approved ✓</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Approve Modal */}
+      {approveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-card rounded-2xl shadow-2xl w-full max-w-lg border border-[#e2e8f0] dark:border-white/[0.08] max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-[#e2e8f0] dark:border-white/[0.08]">
+              <h3 className="text-[16px] font-bold text-[#0f172a] dark:text-white">Approve Travel Request</h3>
+              <p className="text-[12px] text-[#64748b] dark:text-white/50 mt-1">
+                {approveModal.ref_id} — {approveModal.from_location} → {approveModal.to_destination} · {approveModal.employee_name}
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Expense Limit (INR) <span className="text-[#94a3b8] font-normal">optional</span></label>
+                <input type="number" placeholder="Leave blank to use global limit"
+                  value={approveForm.expense_limit}
+                  onChange={e => setApproveForm(f => ({ ...f, expense_limit: e.target.value }))}
+                  className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+              </div>
+              <div>
+                <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Ticket Details <span className="text-[#94a3b8] font-normal">flight/train PNR, booking ref</span></label>
+                <textarea rows={3} placeholder="e.g. IndiGo 6E-431, PNR: ABC123, 08:00 Mumbai–Delhi"
+                  value={approveForm.ticket_details}
+                  onChange={e => setApproveForm(f => ({ ...f, ticket_details: e.target.value }))}
+                  className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30 resize-none" />
+              </div>
+              {approveModal.accommodation_required && (
+                <div>
+                  <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Hotel / Accommodation Details</label>
+                  <textarea rows={3} placeholder="Hotel name, address, check-in/out dates, booking ref"
+                    value={approveForm.hotel_details}
+                    onChange={e => setApproveForm(f => ({ ...f, hotel_details: e.target.value }))}
+                    className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30 resize-none" />
+                </div>
+              )}
+              {approveModal.is_international && (
+                <div>
+                  <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Visa Status / Notes</label>
+                  <textarea rows={2} placeholder="Visa applied / approved / processing, expected date"
+                    value={approveForm.visa_status}
+                    onChange={e => setApproveForm(f => ({ ...f, visa_status: e.target.value }))}
+                    className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30 resize-none" />
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-[#e2e8f0] dark:border-white/[0.08] flex gap-3 justify-end">
+              <button onClick={() => setApproveModal(null)} className="px-4 py-2 text-[13px] font-semibold text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors">Cancel</button>
+              <button onClick={confirmApprove} disabled={actingId !== null}
+                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-[13px] font-semibold transition-colors disabled:opacity-50">
+                {actingId !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve & Notify Employee
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-card rounded-2xl shadow-2xl w-full max-w-md border border-[#e2e8f0] dark:border-white/[0.08]">
+            <div className="p-6 border-b border-[#e2e8f0] dark:border-white/[0.08]">
+              <h3 className="text-[16px] font-bold text-[#0f172a] dark:text-white">Reject Travel Request</h3>
+              <p className="text-[12px] text-[#64748b] dark:text-white/50 mt-1">{rejectModal.ref_id}</p>
+            </div>
+            <div className="p-6">
+              <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Reason for Rejection <span className="text-[#94a3b8] font-normal">optional but recommended</span></label>
+              <textarea rows={3} placeholder="Please provide a reason..."
+                value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30 resize-none" />
+            </div>
+            <div className="p-6 border-t border-[#e2e8f0] dark:border-white/[0.08] flex gap-3 justify-end">
+              <button onClick={() => setRejectModal(null)} className="px-4 py-2 text-[13px] font-semibold text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors">Cancel</button>
+              <button onClick={confirmReject} disabled={actingId !== null}
+                className="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-[13px] font-semibold transition-colors disabled:opacity-50">
+                {actingId !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ExpenseClaim = {
+  id: number; ref_id: string; travel_ref: string; employee_name: string; employee_email: string;
+  from_location: string; to_destination: string; amount: number; breakdown?: string;
+  over_limit_reason?: string; expense_limit?: number; status: string;
+  approved_by?: string; rejection_reason?: string; created_at: string;
+};
+
+function TravelExpensesSubTab({ authHeaders, canApprove }: { authHeaders: Record<string, string>; canApprove: boolean }) {
+  const [items, setItems] = useState<ExpenseClaim[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [actingId, setActingId] = useState<number | null>(null);
+  const [rejectModal, setRejectModal] = useState<{ id: number; ref_id: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = filter !== "All" ? `?status=${filter}` : "";
+      const res = await fetch(`/api/portal/admin/travel/expenses${qs}`, { headers: authHeaders });
+      const data = await res.json();
+      setItems(Array.isArray(data) ? data : []);
+      if (!res.ok) toast.error(data?.detail || "Failed to load expense claims");
+    } catch { toast.error("Failed to load expense claims"); }
+    finally { setLoading(false); }
+  }, [filter, authHeaders]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const act = async (id: number, type: "approve" | "reject", reason = "") => {
+    setActingId(id);
+    try {
+      const res = await fetch(`/api/portal/admin/travel/expenses/${id}/${type}`, {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify(type === "reject" ? { reason } : {}),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      if (type === "approve") flyBanner("Expense claim approved");
+      else toast.success("Expense claim rejected");
+      if (type === "reject") { setRejectModal(null); setRejectReason(""); }
+      fetch_();
+    } catch (e: any) { toast.error(e.message || "Failed"); }
+    finally { setActingId(null); }
+  };
+
+  return (
+    <div>
+      <FilterBar filter={filter} setFilter={setFilter} options={["All", "Pending", "Approved", "Rejected"]} onRefresh={fetch_} />
+      {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="expense claims" /> : (
+        <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
+          <table className="w-full min-w-[900px] text-[13px]">
+            <thead>
+              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
+                {["Expense Ref", "Travel Ref", "Employee", "Route", "Amount vs Limit", "Breakdown", "Status", "Actions"].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-[11px] font-bold text-[#64748b] dark:text-white/40 uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const overLimit = item.expense_limit && item.amount > item.expense_limit;
+                return (
+                  <tr key={item.id} className="border-b border-[#f1f5f9] dark:border-white/[0.04] hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">{item.ref_id}</td>
+                    <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">{item.travel_ref}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-[#0f172a] dark:text-white">{item.employee_name}</div>
+                      <div className="text-[11px] text-[#94a3b8]">{item.employee_email}</div>
+                    </td>
+                    <td className="px-4 py-3 text-[#374151] dark:text-white/70">{item.from_location} → {item.to_destination}</td>
+                    <td className="px-4 py-3">
+                      <div className={cn("font-bold", overLimit ? "text-rose-600" : "text-[#0f172a] dark:text-white")}>
+                        INR {item.amount.toLocaleString()}
+                      </div>
+                      {item.expense_limit && (
+                        <div className="text-[11px] text-[#94a3b8]">Limit: INR {item.expense_limit.toLocaleString()}</div>
+                      )}
+                      {overLimit && (
+                        <div className="text-[10px] text-rose-500 font-semibold">Over by INR {(item.amount - item.expense_limit!).toLocaleString()}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 max-w-[160px]">
+                      {item.breakdown && <div className="text-[12px] truncate" title={item.breakdown}>{item.breakdown}</div>}
+                      {item.over_limit_reason && <div className="text-[11px] text-amber-600 mt-0.5 truncate" title={item.over_limit_reason}>Reason: {item.over_limit_reason}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn("px-2 py-1 rounded-full text-[11px] font-semibold", STATUS_BADGE[item.status] || "bg-zinc-100 text-zinc-500")}>
+                        {item.status}
+                      </span>
+                      {item.rejection_reason && (
+                        <div className="text-[10px] text-rose-500 mt-0.5 max-w-[120px] truncate" title={item.rejection_reason}>{item.rejection_reason}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {canApprove && item.status === "Pending" && (
+                        <div className="flex gap-2">
+                          <button onClick={() => act(item.id, "approve")} disabled={actingId === item.id}
+                            className="flex items-center gap-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                            {actingId === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Approve
+                          </button>
+                          <button onClick={() => { setRejectModal({ id: item.id, ref_id: item.ref_id }); setRejectReason(""); }} disabled={actingId === item.id}
+                            className="flex items-center gap-1 bg-rose-500 hover:bg-rose-600 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                            <X className="h-3 w-3" /> Reject
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-card rounded-2xl shadow-2xl w-full max-w-md border border-[#e2e8f0] dark:border-white/[0.08]">
+            <div className="p-6 border-b border-[#e2e8f0] dark:border-white/[0.08]">
+              <h3 className="text-[16px] font-bold text-[#0f172a] dark:text-white">Reject Expense Claim</h3>
+              <p className="text-[12px] text-[#64748b] dark:text-white/50 mt-1">{rejectModal.ref_id}</p>
+            </div>
+            <div className="p-6">
+              <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Reason for Rejection</label>
+              <textarea rows={3} placeholder="Please provide a reason..."
+                value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30 resize-none" />
+            </div>
+            <div className="p-6 border-t border-[#e2e8f0] dark:border-white/[0.08] flex gap-3 justify-end">
+              <button onClick={() => setRejectModal(null)} className="px-4 py-2 text-[13px] font-semibold text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => act(rejectModal.id, "reject", rejectReason)} disabled={actingId !== null}
+                className="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-[13px] font-semibold transition-colors disabled:opacity-50">
+                {actingId !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />} Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TravelSettingsSubTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [limit, setLimit] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/portal/admin/travel/settings", { headers: authHeaders })
+      .then(r => r.json())
+      .then(d => { setLimit(d.global_expense_limit != null ? String(d.global_expense_limit) : ""); })
+      .catch(() => {});
+  }, [authHeaders]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/portal/admin/travel/settings", {
+        method: "PUT", headers: authHeaders,
+        body: JSON.stringify({ global_expense_limit: limit ? parseFloat(limit) : null }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Travel settings saved");
+    } catch { toast.error("Failed to save settings"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="max-w-md">
+      <div className="bg-white dark:bg-card rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] p-6">
+        <h3 className="text-[15px] font-bold text-[#0f172a] dark:text-white mb-1">Travel Expense Limits</h3>
+        <p className="text-[12px] text-[#64748b] dark:text-white/50 mb-6">
+          Set a default expense limit applied to all travel requests. Admin can override this per-trip when approving.
+        </p>
+        <div className="mb-4">
+          <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">
+            Global Expense Limit (INR) <span className="text-[#94a3b8] font-normal">— leave blank for no limit</span>
+          </label>
+          <input type="number" placeholder="e.g. 25000"
+            value={limit}
+            onChange={e => setLimit(e.target.value)}
+            className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+          <p className="text-[11px] text-[#94a3b8] mt-1.5">
+            When an employee files a post-trip expense that exceeds this limit, they must provide a reason. Admin can then approve or reject the excess.
+          </p>
+        </div>
+        <button onClick={save} disabled={saving}
+          className="flex items-center gap-2 bg-[#00a29a] hover:bg-[#00918a] text-white px-4 py-2 rounded-lg text-[13px] font-semibold transition-colors disabled:opacity-50">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Settings
+        </button>
+      </div>
+    </div>
+  );
 }

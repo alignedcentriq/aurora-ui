@@ -18,8 +18,8 @@ from app.models import UserRoleOverride, MS365User, Employee
 
 router = APIRouter(prefix="/api/access", tags=["Access Management"])
 
-# Roles that Super Admin can assign (Super Admin itself is Azure AD only)
-ASSIGNABLE_ROLES = {"admin", "hr", "it", "pmo", "functional manager", "employee"}
+# Roles that Super Admin can assign (including promoting another user to Super Admin)
+ASSIGNABLE_ROLES = {"super admin", "admin", "hr", "it", "pmo", "functional manager", "employee"}
 
 # Full catalogue: scope ID → { label, description, actions[] }
 # actions define granular permissions within the scope.
@@ -38,6 +38,14 @@ SCOPE_CATALOGUE = {
         "actions": [
             {"id": "read",    "label": "View",    "description": "View all reimbursement requests"},
             {"id": "approve", "label": "Approve", "description": "Approve or reject reimbursement claims"},
+        ],
+    },
+    "travel_management": {
+        "label": "Travel Management", "description": "Business travel requests, trip approvals, and expense claims",
+        "actions": [
+            {"id": "read",    "label": "View",    "description": "View all travel requests and expense claims"},
+            {"id": "approve", "label": "Approve", "description": "Approve/reject requests and expense claims, enter trip details"},
+            {"id": "settings","label": "Settings","description": "Set global and per-trip expense limits"},
         ],
     },
     "parking": {
@@ -83,7 +91,7 @@ SCOPE_CATALOGUE = {
     },
     # ── HR portal sections ─────────────────────────────────────────────────────
     "leave_management": {
-        "label": "HR Leave Portal", "description": "Employee leave requests and approvals",
+        "label": "HR Portal", "description": "Employee leave requests and approvals",
         "actions": [
             {"id": "read",    "label": "View",    "description": "View leave requests and balances"},
             {"id": "approve", "label": "Approve", "description": "Approve or reject leave requests"},
@@ -165,6 +173,7 @@ SCOPE_CATALOGUE = {
 
 # Scopes available per role — controls what Super Admin can assign
 ROLE_SCOPES: dict[str, list[str]] = {
+    "super admin": [],  # full platform access — no scope granularity needed
     "admin": [
         "food_complaints", "reimbursements", "parking", "desk_keys", "bookshelf",
         "announcements", "email_automation", "people_directory", "prompt_config",

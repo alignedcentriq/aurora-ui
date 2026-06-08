@@ -143,7 +143,7 @@ export function UrlLibrary() {
   };
 
   const handleAddSuggestion = (sug: typeof SUGGESTIONS[0]) => {
-    setForm(sug);
+    setForm({ ...sug, trigger_keywords: "" });
     setEditId(null);
     setDialogOpen(true);
   };
@@ -301,7 +301,7 @@ export function UrlLibrary() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-card">
-                  {["App", "Purpose", "What it can do", "Status", ""].map((h) => (
+                  {["App", "Purpose", "What it can do", "Chat triggers", "Status", ""].map((h) => (
                     <th
                       key={h}
                       className="text-left py-3 px-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
@@ -334,6 +334,19 @@ export function UrlLibrary() {
                     </td>
                     <td className="py-3.5 px-4 align-top max-w-[280px] text-[#64748b] dark:text-white/50 leading-normal">
                       {app.capabilities || "—"}
+                    </td>
+                    <td className="py-3.5 px-4 align-top max-w-[220px]">
+                      {app.trigger_keywords ? (
+                        <div className="flex flex-wrap gap-1">
+                          {app.trigger_keywords.split(",").map((kw) => kw.trim()).filter(Boolean).map((kw) => (
+                            <span key={kw} className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                              {kw}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[#94a3b8] dark:text-white/30 text-[12px]">—</span>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 align-top whitespace-nowrap">
                       <span

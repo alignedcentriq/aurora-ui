@@ -1,11 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from app.auth import CurrentUser, get_current_user, require_admin, require_domain_manager
 from app.services.announcement_service import AnnouncementService
 
 router = APIRouter(prefix="/api/announcements", tags=["announcements"])
+
+_UPLOADS_DIR = Path(__file__).parent.parent.parent / "uploads" / "announcements"
+_ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class ImageAction(BaseModel):
+    type: str  # "url" | "form" | "app"
+    value: str  # URL string or form/app identifier
+    label: Optional[str] = None
 
 
 class CreateAnnouncementRequest(BaseModel):
@@ -16,6 +29,8 @@ class CreateAnnouncementRequest(BaseModel):
     target_audience: str = "all"
     expires_days: Optional[int] = None
     image_url: Optional[str] = None
+    image_action: Optional[ImageAction] = None
+    email_recipients: Optional[List[str]] = None
 
 
 class SuggestAnnouncementRequest(BaseModel):
@@ -56,6 +71,29 @@ def suggest_announcement_body(
     return {"body": response.content.strip()}
 
 
+@router.post("/upload-image")
+async def upload_announcement_image(
+    file: UploadFile = File(...),
+    _: CurrentUser = Depends(require_domain_manager),
+):
+    """Upload an image for use in an announcement body. Returns a public URL."""
+    content_type = file.content_type or ""
+    if content_type not in _ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Only JPEG, PNG, GIF, and WebP images are allowed")
+
+    data = await file.read()
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be under 10 MB")
+
+    _UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    ext = (file.filename or "img").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "png"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    dest = _UPLOADS_DIR / filename
+    dest.write_bytes(data)
+
+    return {"url": f"/uploads/announcements/{filename}"}
+
+
 @router.get("")
 def list_announcements(
     include_inactive: bool = False,
@@ -78,6 +116,8 @@ def create_announcement(
         target_audience=req.target_audience,
         expires_days=req.expires_days,
         image_url=req.image_url or None,
+        image_action=req.image_action.model_dump() if req.image_action else None,
+        email_recipients=req.email_recipients or None,
     )
     return {"message": result}
 
@@ -104,9 +144,10 @@ def update_announcement(
 @router.delete("/{announcement_id}")
 def deactivate_announcement(
     announcement_id: int,
+    recall: bool = Query(False),
     user: CurrentUser = Depends(require_domain_manager),
 ):
-    result = AnnouncementService.deactivate(announcement_id, user.email)
+    result = AnnouncementService.deactivate(announcement_id, user.email, recall=recall)
     if "not found" in result.lower():
         raise HTTPException(status_code=404, detail=result)
     return {"message": result}

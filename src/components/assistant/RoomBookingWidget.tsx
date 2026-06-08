@@ -6,6 +6,13 @@ import {
 } from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 import type { RoomBookingPrefill } from "@/lib/chat-store";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -339,16 +346,46 @@ export function RoomBookingWidget({ userEmail, userRole, prefill, onBooked }: Pr
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow" />
             },
             { label:"Start Time", content:
-              <select value={startTime} onChange={e=>{setStartTime(e.target.value);setRoomsChecked(false);setSelectedRoom(null);}}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow">
-                {TIME_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <Select
+                value={startTime}
+                onValueChange={(val) => {
+                  setStartTime(val);
+                  setRoomsChecked(false);
+                  setSelectedRoom(null);
+                }}
+              >
+                <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+                  <SelectValue placeholder="Select start time" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+                  {TIME_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             },
             { label:"Duration", content:
-              <select value={durIdx} onChange={e=>{setDurIdx(Number(e.target.value));setRoomsChecked(false);setSelectedRoom(null);}}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow">
-                {DURATION_OPTIONS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
-              </select>
+              <Select
+                value={String(durIdx)}
+                onValueChange={(val) => {
+                  setDurIdx(Number(val));
+                  setRoomsChecked(false);
+                  setSelectedRoom(null);
+                }}
+              >
+                <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+                  {DURATION_OPTIONS.map((o, i) => (
+                    <SelectItem key={i} value={String(i)}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             },
           ].map(({label,content})=>(
             <div key={label}>

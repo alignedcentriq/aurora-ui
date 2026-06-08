@@ -44,6 +44,16 @@ DISABLEABLE_DOMAINS = ["hr", "admin", "it_support", "pmo", "ms365", "functional_
 
 VALID_TIERS = ("agent", "service", "router", "general", "summarizer")
 
+# What Ollama capabilities each tier requires.  "tools" means the model must support
+# bind_tools() / with_structured_output() — without it the tier will error at runtime.
+TIER_REQUIREMENTS: dict[str, list[str]] = {
+    "agent":      ["tools"],   # HR/MS365 reasoning — bind_tools()
+    "service":    ["tools"],   # Admin/IT/PMO/Manager — bind_tools()
+    "router":     ["tools"],   # Intent routing — with_structured_output()
+    "general":    [],
+    "summarizer": [],
+}
+
 # Connection (base_url + api_key) is fixed per tier and NOT IT-editable — it points
 # at the shared Aligned server. Only model/temperature/max_tokens/timeout are tunable.
 _TIER_CONN = {
@@ -120,8 +130,50 @@ def available_models() -> Optional[list[str]]:
             _models_cache = (now, names)
             return names
     except Exception as exc:  # noqa: BLE001
-        print(f"[llm_controls] available_models: {exc} — falling back to static list")
+        pass
     return None
+
+
+def _show_url() -> str:
+    root = settings.AGENT_BASE_URL.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3]
+    return root.rstrip("/") + "/api/show"
+
+
+_cap_cache: dict[str, tuple[float, dict]] = {}
+_CAP_TTL = 300.0  # 5 minutes
+
+
+def model_capabilities(model_name: str) -> dict:
+    """Return Ollama-reported capabilities for a model via /api/show.
+
+    Result: {model, capabilities: list[str], supports_tools: bool, error: str|None}
+    Cached 5 minutes per model name.  Always returns a valid dict (never raises).
+    """
+    now = time.time()
+    cached = _cap_cache.get(model_name)
+    if cached and (now - cached[0]) < _CAP_TTL:
+        return cached[1]
+
+    result: dict = {"model": model_name, "capabilities": [], "supports_tools": False, "error": None}
+    try:
+        import urllib.request as _urlreq
+        body = json.dumps({"model": model_name}).encode()
+        req = _urlreq.Request(
+            _show_url(), data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with _urlreq.urlopen(req, timeout=6) as resp:  # noqa: S310 — internal host
+            info = json.loads(resp.read().decode("utf-8"))
+        caps = info.get("capabilities") or []
+        result["capabilities"] = caps
+        result["supports_tools"] = "tools" in caps
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)
+
+    _cap_cache[model_name] = (now, result)
+    return result
 
 
 def _defaults() -> dict[str, Any]:
@@ -141,10 +193,6 @@ def _defaults() -> dict[str, Any]:
             "general":    {"model": settings.FAST_MODEL_NAME,   "temperature": 0.7, "max_tokens": None, "timeout": None},
             "summarizer": {"model": settings.FAST_MODEL_NAME,   "temperature": 0.3, "max_tokens": None, "timeout": None},
         },
-        # Cybersecurity news digest — daily email sent to SECURITY_NEWS_RECIPIENTS.
-        # Defaults to the env value; IT can override without a restart or redeploy.
-        "security_news_enabled": settings.SECURITY_NEWS_ENABLED,
-
         # Embedding-based intent router. mode="off" is the instant kill-switch back to the
         # pure LLM router (the go-live safety net). Thresholds are IT-tunable at runtime.
         "semantic_router": {
@@ -162,6 +210,17 @@ def _defaults() -> dict[str, Any]:
 def defaults() -> dict[str, Any]:
     """Public copy of the env-derived defaults (for the GET endpoint / reset hints)."""
     return _defaults()
+
+
+# Per-tier hardcoded fallback values used by call sites when IT has set no override.
+# Exposed via the API so the UI can show "Default (45 s)" instead of a bare "Default".
+TIER_CALL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "agent":      {"max_tokens": None, "timeout": 45},
+    "service":    {"max_tokens": None, "timeout": 120},
+    "router":     {"max_tokens": 256,  "timeout": 30},
+    "general":    {"max_tokens": None, "timeout": 20},
+    "summarizer": {"max_tokens": None, "timeout": 20},
+}
 
 
 # ── cache ────────────────────────────────────────────────────────────────────
@@ -203,7 +262,7 @@ def get_config() -> dict[str, Any]:
             if isinstance(stored, dict):
                 merged = _deep_merge(merged, stored)
     except Exception as exc:  # noqa: BLE001 — never let config errors break chat
-        print(f"[llm_controls] get_config error: {exc} — using defaults")
+        pass
 
     with _lock:
         _cache = merged
@@ -215,9 +274,6 @@ def get_config() -> dict[str, Any]:
 def is_chat_enabled() -> bool:
     return bool(get_config().get("chat_enabled", True))
 
-
-def is_security_news_enabled() -> bool:
-    return bool(get_config().get("security_news_enabled", settings.SECURITY_NEWS_ENABLED))
 
 
 def disabled_domains() -> list[str]:
@@ -277,6 +333,9 @@ def get_llm(tier: str, *, default_timeout: Optional[float] = None,
     kwargs: dict[str, Any] = dict(
         base_url=base_url, api_key=api_key, model=model,
         temperature=temperature, max_retries=2, timeout=timeout,
+        # Include token usage in the final streaming chunk (stream_options.include_usage).
+        # Required for the observability token charts — without this, usage_metadata is None.
+        stream_usage=True,
         # Ask Ollama to keep this model in VRAM for 15 min after each call.
         # Default is 5 min; extending it 3x dramatically reduces cold-reload
         # evictions when the shared ml01 server is under concurrent load.
@@ -304,9 +363,6 @@ def _validate_patch(patch: dict) -> dict:
 
     if "chat_enabled" in patch:
         clean["chat_enabled"] = bool(patch["chat_enabled"])
-
-    if "security_news_enabled" in patch:
-        clean["security_news_enabled"] = bool(patch["security_news_enabled"])
 
     if "disabled_domains" in patch:
         doms = patch["disabled_domains"] or []

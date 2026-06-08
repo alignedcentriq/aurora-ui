@@ -44,6 +44,7 @@ def compute_next_run(
     day_of_month,
     hour,
     after: datetime.datetime,
+    minute: int = 0,
 ) -> datetime.datetime:
     """First scheduled run strictly after `after`, honoring the cadence fields.
 
@@ -52,6 +53,7 @@ def compute_next_run(
     """
     hour = int(hour) if hour is not None else 8
     hour = min(max(hour, 0), 23)
+    minute = max(0, min(59, int(minute or 0)))
     freq = frequency
     if freq == "custom":
         if day_of_week is not None:
@@ -62,7 +64,7 @@ def compute_next_run(
             freq = "daily"
 
     if freq == "daily":
-        cand = after.replace(hour=hour, minute=0, second=0, microsecond=0)
+        cand = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if cand <= after:
             cand += datetime.timedelta(days=1)
         while cand.weekday() >= 5:  # skip Sat/Sun — weekday morning report
@@ -72,7 +74,7 @@ def compute_next_run(
     if freq == "weekly":
         dow = int(day_of_week) if day_of_week is not None else 0
         dow = min(max(dow, 0), 6)
-        cand = after.replace(hour=hour, minute=0, second=0, microsecond=0)
+        cand = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
         cand += datetime.timedelta(days=(dow - cand.weekday()) % 7)
         if cand <= after:
             cand += datetime.timedelta(days=7)
@@ -81,7 +83,7 @@ def compute_next_run(
     # monthly
     dom = int(day_of_month) if day_of_month is not None else 1
     dom = min(max(dom, 1), 28)  # 28 keeps it valid in every month
-    cand = after.replace(day=dom, hour=hour, minute=0, second=0, microsecond=0)
+    cand = after.replace(day=dom, hour=hour, minute=minute, second=0, microsecond=0)
     if cand <= after:
         cand = _add_month(cand)
     return cand
@@ -97,6 +99,7 @@ def _to_dict(s: AttendanceSchedule) -> dict:
         "day_of_week": s.day_of_week,
         "day_of_month": s.day_of_month,
         "hour": s.hour,
+        "minute": s.minute or 0,
         "recipients": [r.strip() for r in (s.recipients or "").split(",") if r.strip()],
         "period_mode": s.period_mode,
         "active": s.active,
@@ -147,12 +150,14 @@ def create(manager_email: str, payload: dict) -> dict:
             day_of_week=payload.get("day_of_week"),
             day_of_month=payload.get("day_of_month"),
             hour=payload.get("hour", 8),
+            minute=payload.get("minute", 0),
             recipients=",".join(recipients),
             period_mode=payload.get("period_mode", "prev_period"),
             active=payload.get("active", True),
         )
         sched.next_run = compute_next_run(
-            sched.frequency, sched.day_of_week, sched.day_of_month, sched.hour, now
+            sched.frequency, sched.day_of_week, sched.day_of_month, sched.hour, now,
+            minute=sched.minute,
         )
         db.add(sched)
         db.commit()
@@ -176,7 +181,7 @@ def update(manager_email: str, schedule_id: int, payload: dict) -> dict:
         if not sched:
             return {"success": False, "error": "not_found"}
 
-        for field in ("frequency", "day_of_week", "day_of_month", "hour", "period_mode", "active"):
+        for field in ("frequency", "day_of_week", "day_of_month", "hour", "minute", "period_mode", "active"):
             if field in payload:
                 setattr(sched, field, payload[field])
         if "recipients" in payload:
@@ -189,6 +194,7 @@ def update(manager_email: str, schedule_id: int, payload: dict) -> dict:
         sched.next_run = compute_next_run(
             sched.frequency, sched.day_of_week, sched.day_of_month, sched.hour,
             datetime.datetime.now(),
+            minute=sched.minute or 0,
         )
         db.commit()
         db.refresh(sched)

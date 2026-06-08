@@ -226,7 +226,6 @@ class RedisChatGate(BaseChatGate):
         try:
             ok = await self._lease(keys=[key], args=[time.time(), ttl, limit, token])
         except Exception as exc:  # noqa: BLE001
-            print(f"[chat_gate] Redis lease error on {key}: {exc} — failing open")
             return token  # fail open
         return token if ok == 1 else None
 
@@ -256,7 +255,7 @@ class RedisChatGate(BaseChatGate):
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            print(f"[chat_gate] slot heartbeat error: {exc}")
+            pass
 
     async def release(self, slot: Optional[str]) -> None:
         if not slot:
@@ -300,15 +299,10 @@ def _build_chat_gate() -> BaseChatGate:
             probe.close()
 
             client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            print(
-                f"[chat_gate] Redis backend (cross-process cap) "
-                f"max_concurrency={args[0]} max_queue={args[1]}"
-            )
             return RedisChatGate(client, *args)
         except Exception as exc:  # noqa: BLE001
-            print(f"[chat_gate] Redis backend unavailable ({exc}); using in-process gate.")
+            pass
 
-    print(f"[chat_gate] In-process backend (per-worker cap) max_concurrency={args[0]}")
     return InProcessChatGate(*args)
 
 

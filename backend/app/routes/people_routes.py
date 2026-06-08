@@ -6,12 +6,12 @@ from app.services.people_service import PeopleService
 
 router = APIRouter(prefix="/api/people", tags=["People"])
 
-SEARCH_ROLES = {"hr", "pmo", "admin", "manager", "functional manager"}
+SEARCH_ROLES = {"hr", "pmo", "admin", "manager", "functional manager", "super admin"}
 
 
 def require_search_access(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if user.role not in SEARCH_ROLES:
-        raise HTTPException(status_code=403, detail="Search access is available for HR, PMO, Admin, and Manager roles.")
+        raise HTTPException(status_code=403, detail="Search access is available for HR, PMO, Admin, Functional Manager, and Super Admin roles.")
     return user
 
 

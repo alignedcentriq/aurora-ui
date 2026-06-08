@@ -387,8 +387,6 @@ def sync_all_sharepoint_folders() -> dict:
     for folder in folders:
         r = sync_folder(folder)
         results.append({"folder": folder, **r})
-        print(f"[SP sync] {folder}: new={r['new']} updated={r['updated']} "
-              f"skipped={r['skipped']} deleted={r['deleted']}")
 
     total_new     = sum(r["new"] for r in results)
     total_updated = sum(r["updated"] for r in results)
@@ -429,6 +427,6 @@ def sharepoint_sync_loop():
                 continue
             result = sync_all_sharepoint_folders()
             if result.get("total_new") or result.get("total_updated"):
-                print(f"[SP sync loop] {result}")
+                pass
         except Exception as e:
-            print(f"[SP sync loop] error: {e}")
+            pass

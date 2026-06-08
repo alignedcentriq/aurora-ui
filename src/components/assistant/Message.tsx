@@ -150,6 +150,7 @@ export function AIMessage({
   isError,
   sessionId,
   originalQuery,
+  isPrivate,
 }: {
   children: ReactNode;
   live?: boolean;
@@ -160,6 +161,7 @@ export function AIMessage({
   isError?: boolean;
   sessionId?: string;
   originalQuery?: string;
+  isPrivate?: boolean;
 }) {
   const badge = domain ? DOMAIN_BADGE[domain] : null;
   const [feedbackState, setFeedbackState] = useState<FeedbackState>("idle");
@@ -246,7 +248,7 @@ export function AIMessage({
                 </motion.button>
               )}
 
-              {onFeedback && feedbackState === "idle" && (
+              {onFeedback && feedbackState === "idle" && !isPrivate && (
                 <>
                   {text && <div className="w-px h-3.5 bg-border/60 mx-0.5" />}
                   <motion.button
@@ -336,7 +338,7 @@ export function AIMessage({
           )}
 
           {/* Soft refusal / referral hint — AI said it can't help or directed user elsewhere */}
-          {softRefusal && feedbackState === "idle" && (
+          {softRefusal && feedbackState === "idle" && !isPrivate && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -357,7 +359,7 @@ export function AIMessage({
           )}
 
           {/* Escalation — shown after thumbs-down is submitted or on hard error messages */}
-          {!live && (feedbackState === "submitted" || isError) && (
+          {!live && (feedbackState === "submitted" || isError) && !isPrivate && (
             <EscalationWidget
               domain={domain}
               sessionId={sessionId}

@@ -4,6 +4,7 @@ import { useBuddyColors, useSettings } from "@/lib/settings-store";
 import { useBuddyStore } from "@/lib/buddy-store";
 import { useAuth } from "@/lib/auth-store";
 import { X, Sparkles } from "lucide-react";
+import { useChatStore } from "@/lib/chat-store";
 
 interface GreetingBotSVGProps {
   colors: ReturnType<typeof useBuddyColors>;
@@ -14,6 +15,7 @@ interface GreetingBotSVGProps {
   isSitting?: boolean;
   activity?: "sitting" | "yoga" | "gaming" | "reading" | "music" | "indian-dance" | "hiphop-dance" | "zumba-dance" | "gym";
   gender?: "male" | "female";
+  isPrivate?: boolean;
 }
 
 export function getBuddyGender(userName: string | undefined, setting: "male" | "female" | "auto"): "male" | "female" {
@@ -29,7 +31,7 @@ export function getBuddyGender(userName: string | undefined, setting: "male" | "
 /**
  * Rigged Wavy-Haired or Spiky-Haired Human Buddy companion character supporting multiple activities
  */
-export function GreetingBotSVG({ colors, expression = "normal", isWaving = true, size = 64, rotation = 0, isSitting = false, activity = "sitting", gender = "female" }: GreetingBotSVGProps) {
+export function GreetingBotSVG({ colors, expression = "normal", isWaving = true, size = 64, rotation = 0, isSitting = false, activity = "sitting", gender = "female", isPrivate = false }: GreetingBotSVGProps) {
   const hairGradId = `hair-gradient-${colors.id}`;
   const hairHighlightId = `hair-highlight-${colors.id}`;
   const skinGradId = `skin-gradient-${colors.id}`;
@@ -396,7 +398,7 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
       <path d="M 64 68 C 64 68 60 62 52 64 L 52 78 L 66 78 Z" fill={`url(#${jacketGradId})`} stroke="#ffffff" strokeWidth="0.8" strokeOpacity="0.3" />
 
       {/* Left Arm (viewer's left) */}
-      {isYoga ? (
+      {isPrivate ? null : isYoga ? (
         /* Arm folded resting on left knee */
         <>
           <path d="M 16 60 Q 14 74 24 78" stroke="#ffffff" strokeWidth="7.5" strokeLinecap="round" fill="none" opacity="0.35" />
@@ -459,7 +461,7 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
       )}
 
       {/* Right Arm (viewer's right) */}
-      {isYoga ? (
+      {isPrivate ? null : isYoga ? (
         /* Arm folded resting on right knee */
         <>
           <path d="M 64 60 Q 66 74 56 78" stroke="#ffffff" strokeWidth="7.5" strokeLinecap="round" fill="none" opacity="0.35" />
@@ -571,7 +573,7 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
 
         {/* Eyes and blinking eyelids */}
         <g>
-          {activeExpression === "normal" && (
+          {!isPrivate && activeExpression === "normal" && (
             <>
               {/* Left Eye */}
               <ellipse cx="30" cy="37" rx="5" ry="6" fill="white" />
@@ -587,7 +589,7 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
             </>
           )}
 
-          {activeExpression === "wink" && (
+          {!isPrivate && activeExpression === "wink" && (
             <>
               {/* Winking Left Eye */}
               <path d="M 25 38 Q 30 32 35 38" stroke="#334155" strokeWidth="2.8" fill="none" strokeLinecap="round" />
@@ -600,14 +602,14 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
             </>
           )}
 
-          {activeExpression === "happy" && (
+          {!isPrivate && activeExpression === "happy" && (
             <>
               <path d="M 25 38 Q 30 31 35 38" stroke="#334155" strokeWidth="3" fill="none" strokeLinecap="round" />
               <path d="M 45 38 Q 50 31 55 38" stroke="#334155" strokeWidth="3" fill="none" strokeLinecap="round" />
             </>
           )}
 
-          {activeExpression === "heart" && (
+          {!isPrivate && activeExpression === "heart" && (
             <>
               <path
                 d="M 30 32 C 28.5 30 26 30 25 32 C 24 34 25 36.5 30 40 C 35 36.5 36 34 35 32 C 34 30 31.5 30 30 32 Z"
@@ -617,6 +619,14 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
                 d="M 50 32 C 48.5 30 46 30 45 32 C 44 34 45 36.5 50 40 C 55 36.5 56 34 55 32 C 54 30 51.5 30 50 32 Z"
                 fill="#ef4444"
               />
+            </>
+          )}
+
+          {isPrivate && (
+            <>
+              {/* Closed eyes lines */}
+              <path d="M 27 37 L 33 37" stroke="#475569" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M 47 37 L 53 37" stroke="#475569" strokeWidth="2.5" strokeLinecap="round" />
             </>
           )}
         </g>
@@ -697,6 +707,26 @@ export function GreetingBotSVG({ colors, expression = "normal", isWaving = true,
             <path d="M 26 20 C 26 10 54 10 54 20 Z" fill={colors.accent} stroke={colors.light} strokeWidth="0.8" />
             {/* Cap Brim */}
             <path d="M 22 20 L 58 17" stroke={colors.light} strokeWidth="3.2" strokeLinecap="round" />
+          </g>
+        )}
+
+        {isPrivate && (
+          <g>
+            {/* Left Arm covering Left Eye */}
+            <path d="M 16 60 Q 22 45 29 38" stroke="#ffffff" strokeWidth="7.5" strokeLinecap="round" fill="none" opacity="0.35" />
+            <path d="M 16 60 Q 22 45 29 38" stroke="#334155" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+            <circle cx="30" cy="37" r="7" fill={`url(#${skinGradId})`} stroke="#ffffff" strokeWidth="0.8" />
+            <line x1="28" y1="34" x2="28" y2="40" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
+            <line x1="30" y1="33" x2="30" y2="41" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
+            <line x1="32" y1="34" x2="32" y2="40" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
+
+            {/* Right Arm covering Right Eye */}
+            <path d="M 64 60 Q 58 45 51 38" stroke="#ffffff" strokeWidth="7.5" strokeLinecap="round" fill="none" opacity="0.35" />
+            <path d="M 64 60 Q 58 45 51 38" stroke="#334155" strokeWidth="5.5" strokeLinecap="round" fill="none" />
+            <circle cx="50" cy="37" r="7" fill={`url(#${skinGradId})`} stroke="#ffffff" strokeWidth="0.8" />
+            <line x1="48" y1="34" x2="48" y2="40" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
+            <line x1="50" y1="33" x2="50" y2="41" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
+            <line x1="52" y1="34" x2="52" y2="40" stroke="#475569" strokeWidth="1.2" strokeLinecap="round" />
           </g>
         )}
       </g>
@@ -976,6 +1006,11 @@ export function SittingBuddy() {
   const { botState } = useBuddyStore();
   const { user } = useAuth();
   
+  const activeId = useChatStore((s) => s.activeId);
+  const threads = useChatStore((s) => s.threads);
+  const activeThread = activeId ? threads[activeId] : null;
+  const isPrivate = activeThread?.isPrivate || false;
+
   const [activity, setActivity] = useState<"sitting" | "yoga" | "gaming" | "reading" | "music" | "indian-dance" | "hiphop-dance" | "zumba-dance" | "gym">("sitting");
   const [expression, setExpression] = useState<"normal" | "wink" | "happy">("normal");
   const [isWaving, setIsWaving] = useState(false);
@@ -1015,7 +1050,7 @@ export function SittingBuddy() {
 
   // Trigger speech bubble automatically when activity changes
   useEffect(() => {
-    if (botState !== "sitting" || !buddyEnabled || isPullingChair) return;
+    if (botState !== "sitting" || !buddyEnabled || isPullingChair || isPrivate) return;
     
     // Tiny delay so the transition animation can trigger
     const timer = setTimeout(() => {
@@ -1025,11 +1060,11 @@ export function SittingBuddy() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [activity, botState, buddyEnabled, showSpeechBubble, isPullingChair]);
+  }, [activity, botState, buddyEnabled, showSpeechBubble, isPullingChair, isPrivate]);
 
   // Random activity cycling (every 15 to 20 seconds)
   useEffect(() => {
-    if (botState !== "sitting" || !buddyEnabled) return;
+    if (botState !== "sitting" || !buddyEnabled || isPrivate) return;
 
     const cycle = () => {
       setActivity((curr) => {
@@ -1044,11 +1079,11 @@ export function SittingBuddy() {
 
     const interval = setInterval(cycle, 15000 + Math.random() * 5000);
     return () => clearInterval(interval);
-  }, [botState, buddyEnabled]);
+  }, [botState, buddyEnabled, isPrivate]);
 
   // Random idle fidgets based on active state
   useEffect(() => {
-    if (botState !== "sitting" || !buddyEnabled) return;
+    if (botState !== "sitting" || !buddyEnabled || isPrivate) return;
 
     const interval = setInterval(() => {
       const rand = Math.random();
@@ -1083,11 +1118,11 @@ export function SittingBuddy() {
     }, 4500);
 
     return () => clearInterval(interval);
-  }, [botState, activity, buddyEnabled]);
+  }, [botState, activity, buddyEnabled, isPrivate]);
 
   // Spontaneous speech bubble timer (every 22 to 32 seconds)
   useEffect(() => {
-    if (botState !== "sitting" || !buddyEnabled) return;
+    if (botState !== "sitting" || !buddyEnabled || isPrivate) return;
 
     let bubbleTimer: any;
     let scheduleTimer: any;
@@ -1108,11 +1143,17 @@ export function SittingBuddy() {
       clearTimeout(bubbleTimer);
       clearTimeout(scheduleTimer);
     };
-  }, [botState, activity, buddyEnabled, showSpeechBubble]);
+  }, [botState, activity, buddyEnabled, showSpeechBubble, isPrivate]);
 
   if (botState !== "sitting" || !buddyEnabled) return null;
 
   const handleClick = () => {
+    if (isPrivate) {
+      setExpression("happy");
+      showSpeechBubble("Strictly confidential! 🔒🤫");
+      setTimeout(() => setExpression("normal"), 2000);
+      return;
+    }
     // 360 backflip spin
     setRotation(360);
     setExpression("happy");
@@ -1134,6 +1175,10 @@ export function SittingBuddy() {
   };
 
   const handleMouseEnter = () => {
+    if (isPrivate) {
+      showSpeechBubble("Shhh... your chat is private! 🤫");
+      return;
+    }
     const hoverPhrases = [
       "Hey! Let's get to work! 🚀",
       "Need a hand? Ask me anything! 🤝",
@@ -1246,8 +1291,9 @@ export function SittingBuddy() {
           size={46}
           rotation={rotation}
           isSitting={!isStanding && !isPullingChair}
-          activity={isPullingChair ? "sitting" : activity}
+          activity={isPullingChair ? "sitting" : (isPrivate ? "sitting" : activity)}
           gender={resolvedGender}
+          isPrivate={isPrivate}
         />
       </motion.div>
     </div>

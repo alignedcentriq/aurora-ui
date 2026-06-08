@@ -24,6 +24,7 @@ class FormTemplatePayload(BaseModel):
     trigger_keywords: str = ""
     notify_email: str = ""
     notify_domain: str = ""
+    is_anonymous: bool = False
 
 
 class FormTemplateUpdatePayload(BaseModel):
@@ -35,6 +36,7 @@ class FormTemplateUpdatePayload(BaseModel):
     enabled: Optional[bool] = None
     notify_email: Optional[str] = None
     notify_domain: Optional[str] = None
+    is_anonymous: Optional[bool] = None
 
 
 class ReviewPayload(BaseModel):
@@ -58,6 +60,7 @@ async def create_form(payload: FormTemplatePayload, user: CurrentUser = Depends(
         trigger_keywords=payload.trigger_keywords,
         notify_email=payload.notify_email,
         notify_domain=payload.notify_domain,
+        is_anonymous=payload.is_anonymous,
         created_by=user.email,
     )
     if res.get("status") != "ok":
@@ -84,7 +87,7 @@ async def create_form(payload: FormTemplatePayload, user: CurrentUser = Depends(
             target_audience="admin",
         )
     except Exception as e:
-        print(f"[form-library] Activity notification failed: {e}")
+        pass
         
     return res
 
@@ -102,6 +105,7 @@ async def update_form(form_id: int, payload: FormTemplateUpdatePayload,
         enabled=payload.enabled,
         notify_email=payload.notify_email,
         notify_domain=payload.notify_domain,
+        is_anonymous=payload.is_anonymous,
     )
     if res.get("status") != "ok":
         code = 404 if res.get("message") == "Form not found." else 400

@@ -227,7 +227,7 @@ def _save_conversation_summary(thread_id: str, summary: str, domain: Optional[st
         finally:
             db.close()
     except Exception as e:
-        print(f"[context_manager] Failed to persist summary: {e}")
+        pass
 
 
 async def context_manager_node(state: AgentState) -> dict:
@@ -267,7 +267,6 @@ async def context_manager_node(state: AgentState) -> dict:
         if not summary_text:
             return {}
     except Exception as e:
-        print(f"[context_manager] Summarization failed: {e}")
         return {}
 
     session_id = state.get("session_id")
@@ -283,7 +282,6 @@ async def context_manager_node(state: AgentState) -> dict:
     updated_feedback = (
         f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{summary_text}\n\n{existing_feedback}"
     )
-    print(f"[context_manager] Summarized {len(to_summarize)} old messages ({total_tokens} tokens -> summary)")
     return {
         "conversation_summary": summary_text,
         "feedback_context": updated_feedback,
@@ -310,6 +308,56 @@ def apply_leave(
     """Submit a leave request. Infer leave_type from context (default Casual). Dates in YYYY-MM-DD.
     Do NOT ask for reason — defaults to 'Applied via AI Assistant'. Manager gets email to approve/reject."""
     return HRService.apply_leave(email, start_date, end_date, leave_type, reason)
+
+@tool
+def get_my_leaves(email: str):
+    """List the logged-in user's leave requests (id, type, dates, status, days).
+    Call before cancel_leave so the user can pick which leave to cancel."""
+    from app.database import SessionLocal
+    from app.models import Leave, Employee
+    db = SessionLocal()
+    try:
+        emp = HRService.get_employee_by_email(db, email)
+        if not emp:
+            return "Employee record not found."
+        leaves = (
+            db.query(Leave)
+            .filter(Leave.employee_id == emp.id)
+            .order_by(Leave.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        if not leaves:
+            return "No leave records found."
+        lines = []
+        for l in leaves:
+            days = ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else "?"
+            lines.append(f"ID {l.id}: {l.leave_type} | {l.start_date} to {l.end_date} | {days} day(s) | Status: {l.status}")
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+@tool
+def cancel_leave(email: str, leave_id: int):
+    """Cancel a leave by ID. If the leave was Approved, the balance is automatically restored.
+    Call get_my_leaves first if you don't know the leave_id."""
+    import httpx
+    from app.config import settings
+    try:
+        base = getattr(settings, "APP_BASE_URL", "http://localhost:8000")
+        resp = httpx.post(
+            f"{base}/api/leave/{leave_id}/cancel",
+            headers={"x-user-email": email, "x-user-role": "employee"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("message", "Leave cancelled successfully.")
+        else:
+            detail = resp.json().get("detail", "Cancellation failed.")
+            return f"Could not cancel leave: {detail}"
+    except Exception as e:
+        return f"Error cancelling leave: {e}"
 
 @tool
 def search_hr_policies(query: str):
@@ -1077,7 +1125,7 @@ def get_employee_availability(name_or_email: str) -> str:
 
 
 hr_tools = [
-    get_leave_balance, apply_leave, search_hr_policies,
+    get_leave_balance, apply_leave, get_my_leaves, cancel_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
     get_team_roster, find_skills_expert, get_department_headcount,
     search_people_directory, find_apps,
@@ -1126,6 +1174,11 @@ _KW_GREETING = re.compile(
     r'how\s+are\s+you|what\'?s\s+up|what\s+can\s+you\s+do|'
     r'who\s+are\s+you)'
     r'[!.?\s]*$', re.I
+)
+
+_KW_LEAVE_CANCEL = re.compile(
+    r'\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time.?off)\b'
+    r'|\b(leave|time.?off)\b.{0,30}\b(cancel|withdraw|revoke|recall)\b', re.I
 )
 
 _KW_HR_POLICY = re.compile(
@@ -1249,6 +1302,27 @@ _KW_ADMIN_REIMB = re.compile(
     r'how\s+(to|can\s+i)\s+(claim|reimburse|raise\s+reimburs))\b', re.I
 )
 
+_KW_TRAVEL_REQUEST = re.compile(
+    r'\b(business\s+travel|travel\s+request|apply\s+for\s+travel|submit\s+travel|'
+    r'travel\s+approval|request\s+(a\s+)?trip|book\s+(a\s+)?business\s+trip|'
+    r'official\s+travel|work\s+trip|travelling\s+for\s+(work|business|office)|'
+    r'need\s+to\s+travel|plan\s+(a\s+)?business\s+trip|international\s+travel|'
+    r'visa\s+(for\s+travel|request|process)|travel\s+visa)\b', re.I
+)
+
+_KW_TRAVEL_EXPENSE = re.compile(
+    r'\b(travel\s+expense|trip\s+expense|post[- ]trip|after\s+(the\s+)?trip|'
+    r'submit\s+travel\s+expense|file\s+(travel\s+)?expense|'
+    r'raise\s+expense\s+(for\s+)?trip|trip\s+claim|travel\s+claim|'
+    r'expense\s+(for\s+my\s+)?trip)\b', re.I
+)
+
+_KW_TRAVEL_STATUS = re.compile(
+    r'\b(my\s+travel\s+(request|status|requests?)|'
+    r'travel\s+approval\s+status|check\s+travel|'
+    r'status\s+of\s+(my\s+)?travel)\b', re.I
+)
+
 _KW_ADMIN_PARKING = re.compile(
     r'\b(parking\s+(sticker|pass|request|info)|'
     r'register\s+(my\s+)?(vehicle|bike|car|two[- ]?wheeler|four[- ]?wheeler)|'
@@ -1286,6 +1360,15 @@ _KW_ADMIN_ACCOM = re.compile(
 )
 
 _KW_ADMIN_DESK = re.compile(r'\b(desk\s+key|key\s+for\s+desk)\b', re.I)
+
+_KW_ADMIN_CABIN = re.compile(
+    r'\b(where\s+(is|are|can\s+i\s+find)\s+(the\s+)?(hr|admin|it|pmo|human\s+resources?|it\s+support)|'
+    r'(hr|admin|it\s+support|pmo)\s+(cabin|room|floor|desk|location|office|sit|located|department)|'
+    r'cabin\s+(number|of|for|directory)|'
+    r'which\s+(cabin|room|floor)\s+(is|does)\s+(hr|admin|it|pmo)|'
+    r'where\s+to\s+(find|meet|go\s+to|reach)\s+(hr|admin|it|pmo))\b',
+    re.I,
+)
 
 _KW_ADMIN_VISITOR = re.compile(
     r'\b(visitor|guest)\s+(pass|entry|registration|register)|'
@@ -1389,6 +1472,27 @@ _KW_IT_VPN = re.compile(
 _KW_IT_LICENSE = re.compile(
     r'\b(need|want|request|get)\s+(a\s+)?(claude|copilot|github\s+copilot|'
     r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
+)
+
+# IT hardware peripheral requests ("I need headphones", "want a mouse").
+# Excludes damage/issue reports and how-to questions.
+_KW_IT_ASSET_REQUEST = re.compile(
+    r'\b(?:need|want|require|request|get\s+me|give\s+me|provide|order|procure|arrange)\b'
+    r'.{0,30}'
+    r'\b(?:headphones?|headset|mouse|mice|monitor|external\s+monitor|'
+    r'keyboard|webcam|web\s+cam|ethernet(?:\s+cable)?|lan\s+cable|network\s+cable|'
+    r'usb\s+hub|docking\s+station|dock|external\s+(?:drive|disk|ssd|hdd)|'
+    r'hdmi(?:\s+cable)?|displayport\s+cable|vga\s+cable)\b',
+    re.I,
+)
+
+# Admin office supply requests ("I need pens", "want markers", "need a notebook").
+_KW_ADMIN_SUPPLY_REQUEST = re.compile(
+    r'\b(?:need|want|require|request|get\s+me|give\s+me|provide|order|procure|arrange)\b'
+    r'.{0,30}'
+    r'\b(?:pens?|markers?|whiteboard\s+markers?|notebooks?|notepads?|'
+    r'stationery|sticky\s+notes?|folders?|binders?|highlighters?|staplers?|scissors)\b',
+    re.I,
 )
 
 # Training-license request — any supported platform (Udemy, Coursera, …).
@@ -1543,6 +1647,27 @@ _KW_OFF_TOPIC = re.compile(
 )
 
 
+# Salary credit / payment date — always answered with a fixed policy reply.
+_KW_SALARY_CREDIT = re.compile(
+    r'\b('
+    r'salary\s+(credit|credited|payment|paid|transfer|deposit|disburs\w*|processing)\s*(date|day|when|time)?\b|'
+    r'when\s+(is|will|does|do)\s+.{0,20}salary\b|'
+    r'(credit|payment|transfer|disburs\w*)\s+date\s+(of|for)?\s*(the\s+)?salary\b|'
+    r'salary\s+(credit\s+date|pay\s+date|payment\s+date)\b|'
+    r'(payroll|salary)\s+(processing|transfer|credit)\s+(date|day|schedule)\b|'
+    r'when\s+do\s+we\s+get\s+(paid|salary)\b|'
+    r'salary\s+(cycle|date)\b'
+    r')',
+    re.I,
+)
+
+_SALARY_CREDIT_RESPONSE = (
+    "Salaries are credited on the **last working day of every month**. "
+    "If the last day of the month falls on a weekend or public holiday, "
+    "the credit is processed on the preceding working day."
+)
+
+
 def _try_keyword_route(message: str) -> dict | None:
     """Classify intent via keyword/regex matching — 0 LLM calls, <1ms.
 
@@ -1562,6 +1687,18 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "general", "confidence": 1.0,
                 "reasoning": "Keyword: greeting/social",
                 "sub_intent": "greeting", "entities": {}}
+
+    # Fixed answer: salary credit date
+    if _KW_SALARY_CREDIT.search(text):
+        return {"domain": "general", "confidence": 1.0,
+                "reasoning": "Keyword: salary credit date — fixed answer",
+                "sub_intent": "salary_credit_date", "entities": {}}
+
+    # HR — leave cancellation (checked before policy so "cancel my leave" doesn't hit "leave policy")
+    if _KW_LEAVE_CANCEL.search(text):
+        return {"domain": "hr", "confidence": 1.0,
+                "reasoning": "Keyword: leave cancellation",
+                "sub_intent": "leave_cancel", "entities": {}}
 
     # HR — policy queries
     if _KW_HR_POLICY.search(text):
@@ -1646,6 +1783,22 @@ def _try_keyword_route(message: str) -> dict | None:
                 "sub_intent": "policy_query",
                 "entities": {"policy_topic": "medical insurance coverage"}}
 
+    # Admin — business travel request / status
+    if _KW_TRAVEL_STATUS.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: travel status",
+                "sub_intent": "travel_status", "entities": {}}
+
+    if _KW_TRAVEL_EXPENSE.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: travel expense claim",
+                "sub_intent": "travel_expense", "entities": {}}
+
+    if _KW_TRAVEL_REQUEST.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: business travel request",
+                "sub_intent": "travel_request", "entities": {}}
+
     # Admin — reimbursement / expense
     if _KW_ADMIN_REIMB.search(text):
         return {"domain": "admin", "confidence": 0.95,
@@ -1690,6 +1843,11 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "admin", "confidence": 0.95,
                 "reasoning": "Keyword: desk key request",
                 "sub_intent": "desk_key_request", "entities": {}}
+
+    if _KW_ADMIN_CABIN.search(text):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: cabin/room location for a department",
+                "sub_intent": "cabin_info", "entities": {}}
 
     # Admin — visitor / guest pass (must precede IT install to avoid
     # "I need to request a visitor pass" → software_install misroute)
@@ -1766,6 +1924,24 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "it_support", "confidence": 0.95,
                 "reasoning": "Keyword: hardware/device issue",
                 "sub_intent": "hardware_issue", "entities": {}}
+
+    # IT — hardware peripheral request ("I want headphones", "need a mouse")
+    if _KW_IT_ASSET_REQUEST.search(text) and not re.search(
+        r'\b(broken|not\s+working|issue|problem|repair|fix|replace|damaged|faulty|how\s+do|how\s+to|connect)\b',
+        text, re.I
+    ):
+        return {"domain": "it_support", "confidence": 0.95,
+                "reasoning": "Keyword: IT asset/peripheral request",
+                "sub_intent": "asset_request", "entities": {}}
+
+    # Admin — office supply request ("I need pens", "want markers", "need a notebook")
+    if _KW_ADMIN_SUPPLY_REQUEST.search(text) and not re.search(
+        r'\b(broken|not\s+working|issue|problem|how\s+do|how\s+to)\b',
+        text, re.I
+    ):
+        return {"domain": "admin", "confidence": 0.95,
+                "reasoning": "Keyword: office supply request",
+                "sub_intent": "office_supply_request", "entities": {}}
 
     # IT — VPN / network / password
     if _KW_IT_VPN.search(text):
@@ -1988,7 +2164,6 @@ async def intent_router(state: AgentState):
         re.IGNORECASE,
     )
     if _LB_RE.search(last_human):
-        print("[Router] Fast-path leave balance -> deeplink")
         return {
             "domain": "deeplink",
             "route_confidence": 1.0,
@@ -2046,7 +2221,6 @@ async def intent_router(state: AgentState):
         #   longer pinned to the stale domain — the router stops getting *more* confident as it
         #   knows *less*. Only true continuations stay sticky through an outage.
         if not topic_switch and _is_continuation(last_human, last_ai):
-            print(f"[Router] Sticky domain: {existing_domain} (continuation of prior turn)")
             return {
                 "domain": existing_domain,
                 "route_confidence": 0.95,
@@ -2055,15 +2229,11 @@ async def intent_router(state: AgentState):
                 "entities": {},
             }
         if topic_switch:
-            print(
-                f"[Router] Topic switch off {existing_domain}: candidates="
-                f"{decision.candidate_domains} (tier={decision.tier}) — releasing stickiness"
-            )
+            pass
 
     # Fast-path: bypass LLM entirely for unambiguous leave requests
     leave_params = _try_extract_leave_params(last_human)
     if leave_params:
-        print(f"[Router] Fast-path Zoho leave: {leave_params}")
         return {
             "domain": "deeplink",
             "route_confidence": 1.0,
@@ -2077,7 +2247,6 @@ async def intent_router(state: AgentState):
     # ml01 load, 100% precise — handles the high-frequency head and every seeded exact phrasing.
     if exact is not None:
         entities = _extract_entities(last_human, exact.domain, exact.sub_intent)
-        print(f"[Router] Exact dictionary -> {exact.domain} ({exact.sub_intent})")
         return {
             "domain": exact.domain,
             "route_confidence": 1.0,
@@ -2090,7 +2259,6 @@ async def intent_router(state: AgentState):
     # and must NOT be overridden by the semantic router (which can re-route them to an LLM agent
     # and cause timeouts). Fire before the semantic high-tier check below.
     if keyword_result and keyword_result.get("confidence", 0) >= 1.0:
-        print(f"[Router] Keyword fast-exit -> {keyword_result['domain']} ({keyword_result['sub_intent']})")
         return {
             "domain": keyword_result["domain"],
             "route_confidence": 1.0,
@@ -2109,10 +2277,6 @@ async def intent_router(state: AgentState):
         decision = SemanticRouterService.classify(last_human)
     if decision.tier == "high":
         entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
-        print(
-            f"[Router] Semantic fast-path -> {decision.domain} "
-            f"({decision.sub_intent}) sim={decision.similarity}"
-        )
         return {
             "domain": decision.domain,
             "route_confidence": decision.similarity,
@@ -2133,11 +2297,8 @@ async def intent_router(state: AgentState):
         _form_threshold = 0.80 if _INFO_QUERY_RE.search(last_human) else None
         form_match = FormLibraryService.match(last_human, threshold=_form_threshold)
     except Exception as e:  # noqa: BLE001
-        print(f"[Router] Form match skipped ({type(e).__name__}): {e}")
         form_match = None
     if form_match:
-        print(f"[Router] Form Library match -> '{form_match['name']}' "
-              f"(id={form_match['id']}, sim={form_match['similarity']})")
         return {
             "domain": "dynamic_form",
             "route_confidence": form_match["similarity"],
@@ -2150,10 +2311,6 @@ async def intent_router(state: AgentState):
     # (Computed up-front so it could override stickiness; reused here. Phased out once the
     # semantic router's accuracy is confirmed against the eval set on live traffic.)
     if keyword_result:
-        print(
-            f"[Router] Keyword fast-path -> {keyword_result['domain']} "
-            f"({keyword_result['sub_intent']})"
-        )
         return {
             "domain": keyword_result["domain"],
             "route_confidence": keyword_result["confidence"],
@@ -2168,11 +2325,6 @@ async def intent_router(state: AgentState):
     candidate_domains = decision.candidate_domains if decision.tier == "ambiguous" else None
     try:
         result = await classify_intent_async(last_human, candidate_domains=candidate_domains)
-        print(
-            f"[Router] Domain: {result['domain']} | Confidence: {result['confidence']:.2f} "
-            f"| Sub-intent: {result.get('sub_intent', '?')} | Entities: {result.get('entities', {})}"
-            f" | semantic_tier={decision.tier}"
-        )
     except APIConnectionError:
         return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
                 "sub_intent": "unknown", "entities": {}}
@@ -2325,6 +2477,8 @@ def hr_agent(state: AgentState):
             f"Tool routing — act immediately:\n"
             f"- Leave balance → get_leave_balance(email='{user_email}')\n"
             f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
+            f"- Cancel/withdraw leave → call get_my_leaves(email='{user_email}') to list leaves, "
+            f"then call cancel_leave(email='{user_email}', leave_id=<id>)\n"
             f"- Policy question → search_hr_policies, answer from result\n"
             f"- Who is X / single person's profile → get_employee_profile(name_or_email)\n"
             f"- Find people by SKILL/technology (python, react, aws...) → search_alchemy_skill_experts(skill)\n"
@@ -2436,7 +2590,7 @@ async def deeplink_agent_node(state: AgentState):
             elif result_data.get("error"):
                 return {"messages": [AIMessage(content=f"I couldn't fetch your leave balance: {result_data['error']}. Please try again.")]}
         except Exception as _lb_err:
-            print(f"[deeplink] leave_balance fast-path error: {_lb_err}")
+            pass
 
     # Fast-path: leave application params already extracted by regex — call tool directly, 0 LLM calls
     if state.get("sub_intent") == "zoho_leave_fastpath":
@@ -2451,7 +2605,7 @@ async def deeplink_agent_node(state: AgentState):
                     return {"messages": [AIMessage(content=result_data["message"])]}
                 # Session not set up or not configured — fall through to LLM agent
             except Exception as _fp_err:
-                print(f"[deeplink] fast-path error: {_fp_err}")
+                pass
 
     agent = get_deeplink_agent()
     result = await agent.ainvoke({
@@ -2485,7 +2639,6 @@ async def dynamic_form_agent_node(state: AgentState):
         from app.services.form_library_service import FormLibraryService
         tpl = FormLibraryService.get(form_id) if form_id is not None else None
     except Exception as e:  # noqa: BLE001
-        print(f"[dynamic_form] load failed ({type(e).__name__}): {e}")
         tpl = None
 
     if not tpl or not tpl.get("enabled"):
@@ -2833,6 +2986,10 @@ def general_agent(state: AgentState):
     if sub_intent == "off_topic":
         return {"messages": [AIMessage(content=_random.choice(_OFF_TOPIC_RESPONSES))]}
 
+    # Fast-path: salary credit date — fixed policy answer, no LLM needed
+    if sub_intent == "salary_credit_date":
+        return {"messages": [AIMessage(content=_SALARY_CREDIT_RESPONSE)]}
+
     base = PromptService.get_system_prompt(
         "general",
         "You are Centriq, the AI assistant for Aligned Automation. "
@@ -3048,9 +3205,8 @@ try:
         _probe.close()
         redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
         checkpointer = AsyncRedisSaver(redis_client=redis_client)
-        print("[checkpointer] Using AsyncRedisSaver")
 except Exception as e:
-    print(f"[checkpointer] Redis unavailable ({e}), falling back to MemorySaver.")
+    pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

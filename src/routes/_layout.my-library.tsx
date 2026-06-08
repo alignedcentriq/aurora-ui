@@ -4,6 +4,16 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Library, Loader2, RefreshCw, RotateCw, Clock, BookOpen, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/_layout/my-library")({
   component: MyLibrary,
@@ -75,6 +85,7 @@ function MyLibrary() {
   const [extDays, setExtDays] = useState(7);
   const [extReason, setExtReason] = useState("");
   const [extSubmitting, setExtSubmitting] = useState(false);
+  const [bookToReturn, setBookToReturn] = useState<BorrowRequest | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -101,7 +112,6 @@ function MyLibrary() {
   const history = requests.filter((r) => r.status === "Rejected" || r.status === "Returned");
 
   const returnBook = async (req: BorrowRequest) => {
-    if (!confirm(`Return "${req.book_title}"?`)) return;
     setActing(req.ticket_id);
     try {
       const res = await fetch(`/api/portal/library/requests/${encodeURIComponent(req.ticket_id)}/return`, {
@@ -227,7 +237,7 @@ function MyLibrary() {
                             <Clock className="h-3.5 w-3.5" /> Request Extension
                           </button>
                           <button
-                            onClick={() => returnBook(r)}
+                            onClick={() => setBookToReturn(r)}
                             disabled={acting === r.ticket_id}
                             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
                           >
@@ -367,6 +377,31 @@ function MyLibrary() {
           </div>
         </div>
       )}
+
+      <AlertDialog open={!!bookToReturn} onOpenChange={(open) => !open && setBookToReturn(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Return Book</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to return "{bookToReturn?.book_title}"?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (bookToReturn) {
+                  returnBook(bookToReturn);
+                  setBookToReturn(null);
+                }
+              }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              Return Book
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

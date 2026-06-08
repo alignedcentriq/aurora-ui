@@ -52,6 +52,31 @@ class UdemyService:
         db = SessionLocal()
         try:
             emp = AdminService._get_or_create_employee(db, email)
+
+            # Idempotency: block a new request if one is already open for this platform.
+            existing = (
+                db.query(UdemyLicenseRequest)
+                .filter(
+                    UdemyLicenseRequest.employee_id == emp.id,
+                    UdemyLicenseRequest.platform == platform,
+                    UdemyLicenseRequest.status.in_(["Pending", "Approved"]),
+                )
+                .order_by(UdemyLicenseRequest.created_at.desc())
+                .first()
+            )
+            if existing:
+                course_label = f" for **{existing.course_name}**" if existing.course_name else ""
+                if existing.status == "Pending":
+                    return (
+                        f"You already have a {platform} license request{course_label} (Request #{existing.id}) "
+                        f"pending PMO review. Please wait for it to be resolved before submitting a new one."
+                    )
+                else:
+                    return (
+                        f"Your {platform} license request{course_label} (Request #{existing.id}) was already **approved**. "
+                        f"Contact the PMO team if you need a different course or an additional seat."
+                    )
+
             req = UdemyLicenseRequest(
                 employee_id=emp.id,
                 platform=platform,

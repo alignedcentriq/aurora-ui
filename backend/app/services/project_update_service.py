@@ -230,7 +230,7 @@ def submit(employee_email: str, payload: dict) -> dict:
                 submission_id=sub.id,
             )
         except Exception as e:
-            print(f"[project_update] approval email error (non-fatal): {e}")
+            pass
 
         return {"success": True, "submission_id": sub.id}
     finally:
@@ -353,7 +353,6 @@ def run_due(now: datetime.datetime | None = None, force: bool = False) -> int:
 
     sender = _sender()
     if not sender:
-        print("[project_update] no sender configured (PROJECT_UPDATE_SENDER / NOTIFY_TO_EMAIL) — skipping")
         return 0
 
     _, _, label = current_period(today)
@@ -371,8 +370,7 @@ def run_due(now: datetime.datetime | None = None, force: bool = False) -> int:
             if email_service.send_project_update_form_email(sender, e.name, e.email, form_link, label):
                 sent += 1
         except Exception as ex:  # never let one bad recipient kill the run
-            print(f"[project_update] send error for {e.email}: {ex}")
+            pass
 
     CompanySettingsService.set(K_LAST_RUN, today.isoformat(), "scheduler")
-    print(f"[project_update] form sent to {sent}/{len(targets)} eligible employees")
     return sent

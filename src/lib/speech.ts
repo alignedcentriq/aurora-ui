@@ -159,3 +159,61 @@ export function cancelSpeech() {
 export function isSpeaking(): boolean {
   return ttsSupported && (window.speechSynthesis.speaking || queueLength > 0);
 }
+
+export function getVoiceByGender(gender: "male" | "female"): SpeechSynthesisVoice | null {
+  if (!ttsSupported) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return null;
+
+  // Filter English voices
+  const enVoices = voices.filter((v) => /en(-|_)/i.test(v.lang) || /^en$/i.test(v.lang));
+  if (enVoices.length === 0) return null;
+
+  if (gender === "male") {
+    // Look for typical male names or keywords
+    const maleVoice = enVoices.find((v) =>
+      /david|mark|george|alex|daniel|guy|male|james|microsoft/i.test(v.name)
+    );
+    if (maleVoice) return maleVoice;
+  } else {
+    // Look for typical female names or keywords
+    const femaleVoice = enVoices.find((v) =>
+      /samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name)
+    );
+    if (femaleVoice) return femaleVoice;
+  }
+
+  // Fallback if no specific gender match was found
+  if (gender === "male") {
+    // Avoid known female names if possible
+    const fallbackMale = enVoices.find((v) =>
+      !/samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name)
+    );
+    if (fallbackMale) return fallbackMale;
+  } else {
+    // Avoid known male names if possible
+    const fallbackFemale = enVoices.find((v) =>
+      !/david|mark|george|alex|daniel|guy|male|james/i.test(v.name)
+    );
+    if (fallbackFemale) return fallbackFemale;
+  }
+
+  return enVoices[0];
+}
+
+export function speakNotification(text: string, gender: "male" | "female") {
+  if (!ttsSupported || !text.trim()) return;
+
+  // Cancel any ongoing speech so the notification speaks immediately.
+  window.speechSynthesis.cancel();
+
+  const u = new SpeechSynthesisUtterance(text);
+  const voice = getVoiceByGender(gender);
+  if (voice) {
+    u.voice = voice;
+  }
+  u.rate = 1.0;
+  u.pitch = gender === "male" ? 0.95 : 1.05;
+
+  window.speechSynthesis.speak(u);
+}

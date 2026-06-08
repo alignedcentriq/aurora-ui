@@ -49,6 +49,9 @@ from app.models import (
     UserRoleOverride,
     WelcomeResource,
     WelcomeLog,
+    OnboardingRequest,
+    PMOTeamRequest,
+    Appreciation,
     SCHEMA,
 )
 from app.config import settings
@@ -88,7 +91,7 @@ def _background_embed_policies():
         from app.services.policy_service import PolicyService
         PolicyService.embed_all_policies()
     except Exception as e:
-        print(f"[background] Policy embedding failed: {e}")
+        pass
 
 
 
@@ -107,7 +110,6 @@ def init_db():
             try:
                 conn.execute(text("ALTER TABLE employees ADD COLUMN role VARCHAR"))
                 conn.commit()
-                print("Added role column to SQLite employees table.")
             except Exception:
                 # Column likely already exists
                 pass
@@ -131,6 +133,8 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_make VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".parking_stickers ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_url VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS image_action JSONB',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS email_recipients JSONB',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS closure_comment TEXT',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".food_complaints ADD COLUMN IF NOT EXISTS ticket_id VARCHAR',
@@ -194,13 +198,24 @@ def init_db():
                 # URL Library + Form Library: chat intercept keywords
                 f'ALTER TABLE "{SCHEMA}".app_links ADD COLUMN IF NOT EXISTS trigger_keywords TEXT',
                 f'ALTER TABLE "{SCHEMA}".form_templates ADD COLUMN IF NOT EXISTS trigger_keywords TEXT',
+                # Appreciations index
+                f'CREATE INDEX IF NOT EXISTS idx_appreciations_employee_email ON "{SCHEMA}".appreciations(employee_email)',
+                # Observability content-reveal audit trail (safety net — create_all handles it but this is idempotent)
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".content_reveal_audits ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  request_log_id INTEGER REFERENCES "{SCHEMA}".ai_request_logs(id) ON DELETE CASCADE,'
+                f'  viewer_email VARCHAR,'
+                f'  viewer_oid VARCHAR,'
+                f'  domain VARCHAR,'
+                f'  reason TEXT,'
+                f'  created_at TIMESTAMP DEFAULT NOW()'
+                f')',
             ]:
                 try:
                     conn.execute(text(stmt))
                     conn.commit()
                 except Exception as e:
                     conn.rollback()  # clear error state so the next migration can still run
-                    print(f"Migration notice: {e}")
 
     # pgvector column migrations: convert TEXT embeddings to vector(768)
     if _base_engine.dialect.name != "sqlite":
@@ -214,7 +229,6 @@ def init_db():
                 conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks DROP COLUMN embedding'))
                 conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN embedding vector(768)'))
                 conn.commit()
-                print("[init_db] Migrated policy_chunks.embedding to vector(768)")
 
             # chat_feedback.user_message_embedding: add as vector(768) or convert from TEXT
             row = conn.execute(text(
@@ -224,12 +238,10 @@ def init_db():
             if row is None:
                 conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
                 conn.commit()
-                print("[init_db] Added chat_feedback.user_message_embedding as vector(768)")
             elif row[0] == "text":
                 conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback DROP COLUMN user_message_embedding'))
                 conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
                 conn.commit()
-                print("[init_db] Migrated chat_feedback.user_message_embedding to vector(768)")
 
             # HNSW indexes for fast approximate nearest-neighbour search
             for idx_stmt in [
@@ -259,7 +271,7 @@ def init_db():
                     conn.execute(text(idx_stmt))
                     conn.commit()
                 except Exception as e:
-                    print(f"[init_db] Index notice: {e}")
+                    pass
 
             # employees.role: added with the Role & Access Management feature. create_all()
             # never adds columns to an existing table, so back-fill it idempotently here.
@@ -269,7 +281,17 @@ def init_db():
                 ))
                 conn.commit()
             except Exception as e:
-                print(f"[init_db] employees.role migration notice: {e}")
+                pass
+
+            for _col_stmt in [
+                f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
+                f'ALTER TABLE "{SCHEMA}".attendance_schedules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
+            ]:
+                try:
+                    conn.execute(text(_col_stmt))
+                    conn.commit()
+                except Exception as e:
+                    pass
 
     db = SessionLocal()
 
@@ -286,19 +308,17 @@ def init_db():
 
         # Background thread: embeds any chunks still missing vectors
         try:
-            print("[init_db] Starting background embedding pass...")
             threading.Thread(target=_background_embed_policies, daemon=True).start()
         except Exception as e:
-            print(f"[init_db] Embedding thread notice: {e}")
+            pass
 
         # Background thread: idempotently seed/back-fill the semantic intent router examples.
         # Non-blocking and self-healing — rows that failed to embed (ml01 down) back-fill next boot.
         try:
             from app.services.semantic_router_service import SemanticRouterService
-            print("[init_db] Starting semantic router seeding pass...")
             threading.Thread(target=SemanticRouterService.seed_from_catalog, daemon=True).start()
         except Exception as e:
-            print(f"[init_db] Semantic router seed thread notice: {e}")
+            pass
 
         # Background thread: back-fill embeddings for URL-library rows that failed to embed
         # (admin added an app while ml01 was down). Self-healing on next boot.
@@ -306,7 +326,7 @@ def init_db():
             from app.services.app_directory_service import AppDirectoryService
             threading.Thread(target=AppDirectoryService.backfill_embeddings, daemon=True).start()
         except Exception as e:
-            print(f"[init_db] App directory backfill thread notice: {e}")
+            pass
 
         # Background thread: seed default forms (idempotent) then back-fill any Form Library
         # rows whose embedding is NULL (admin created a form while the embed model was down).
@@ -317,7 +337,7 @@ def init_db():
                 FormLibraryService.backfill_embeddings()
             threading.Thread(target=_form_library_boot, daemon=True).start()
         except Exception as e:
-            print(f"[init_db] Form library boot thread notice: {e}")
+            pass
 
         # Background thread: polls SharePoint for new/changed policy documents
         try:
@@ -325,12 +345,11 @@ def init_db():
             if _s.SHAREPOINT_SITE_URL:
                 from app.services.sharepoint_policy_sync import sharepoint_sync_loop
                 _sp_interval = _s.SHAREPOINT_SYNC_INTERVAL
-                print(f"[init_db] Starting SharePoint policy sync loop (interval={_sp_interval}s)...")
                 threading.Thread(target=sharepoint_sync_loop, daemon=True).start()
             else:
-                print("[init_db] SharePoint sync skipped — SHAREPOINT_SITE_URL not configured.")
+                pass
         except Exception as e:
-            print(f"[init_db] SharePoint sync loop notice: {e}")
+            pass
 
         # Background thread: polls the SharePoint "Projects" tree (summaries,
         # demo transcripts, project details) into the Project Showcase category
@@ -338,15 +357,11 @@ def init_db():
             from app.config import settings as _s
             if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_PROJECTS_ROOT", ""):
                 from app.services.sharepoint_project_sync import project_sync_loop
-                print(
-                    f"[init_db] Starting SharePoint project sync loop "
-                    f"(root={_s.SHAREPOINT_PROJECTS_ROOT}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
-                )
                 threading.Thread(target=project_sync_loop, daemon=True).start()
             else:
-                print("[init_db] SharePoint project sync skipped — SHAREPOINT_PROJECTS_ROOT not configured.")
+                pass
         except Exception as e:
-            print(f"[init_db] SharePoint project sync loop notice: {e}")
+            pass
 
         # Background thread: polls the SharePoint document-template folder, converts each
         # PDF/DOCX to HTML + LLM-tags fill-in fields for the Documents generator.
@@ -354,30 +369,24 @@ def init_db():
             from app.config import settings as _s
             if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_TEMPLATES_FOLDER", ""):
                 from app.services.sharepoint_template_sync import template_sync_loop
-                print(
-                    f"[init_db] Starting SharePoint document-template sync loop "
-                    f"(folder={_s.SHAREPOINT_TEMPLATES_FOLDER}, interval={_s.SHAREPOINT_SYNC_INTERVAL}s)..."
-                )
                 threading.Thread(target=template_sync_loop, daemon=True).start()
             else:
-                print("[init_db] SharePoint template sync skipped — SHAREPOINT_TEMPLATES_FOLDER not configured.")
+                pass
         except Exception as e:
-            print(f"[init_db] SharePoint template sync loop notice: {e}")
+            pass
 
         # Background thread: accrues parking dues daily and emails reminders on the configured cadence
         try:
             from app.config import settings as _s
             if getattr(_s, "PARKING_REMINDER_SENDER", "") or _s.NOTIFY_TO_EMAIL:
                 from app.services.parking_payment_service import parking_reminder_loop
-                print("[init_db] Starting parking payment reminder loop (daily tick)...")
                 threading.Thread(target=parking_reminder_loop, daemon=True).start()
             else:
-                print("[init_db] Parking reminder loop skipped — no PARKING_REMINDER_SENDER / NOTIFY_TO_EMAIL.")
+                pass
         except Exception as e:
-            print(f"[init_db] Parking reminder loop notice: {e}")
+            pass
 
     except Exception as e:
-        print(f"Error during init_db: {e}")
         db.rollback()
         raise e
     finally:
@@ -389,7 +398,6 @@ def init_db():
 
 def _seed_leave_types(db):
     """Seed the four standard leave types."""
-    print("Seeding leave types...")
     db.add_all([
         LeaveType(name="Casual Leave", code="CL", annual_entitlement=12, is_earned=False, carry_forward=False),
         LeaveType(name="Privileged Leave", code="PL", annual_entitlement=15, is_earned=False, carry_forward=True),
@@ -397,7 +405,6 @@ def _seed_leave_types(db):
         LeaveType(name="Compensatory Off", code="CO", annual_entitlement=None, is_earned=True, carry_forward=False),
     ])
     db.commit()
-    print("Leave types seeding complete.")
 
 
 # Default forms seeded into the Form Library so the feature is demoable out-of-the-box and the
@@ -431,6 +438,45 @@ _DEFAULT_FORM_TEMPLATES = [
             {"name": "vehicle_model", "label": "Model", "type": "text", "required": False},
         ],
     },
+    {
+        "name": "Food Complaint",
+        "description": ("Report a cafeteria or food quality complaint. "
+                        "Food contamination, hygiene issue, wrong order, poor quality, service issue."),
+        "category": "Admin",
+        "trigger_keywords": "food,cafeteria,meal,lunch,canteen,contamination,hygiene,food quality,food complaint",
+        "notify_domain": "admin",
+        "fields": [
+            {"name": "time_of_incident", "label": "Time of Incident", "type": "text", "required": False,
+             "placeholder": "e.g. 1:00 PM"},
+            {"name": "location", "label": "Location", "type": "select", "required": True,
+             "options": ["Tower 2, 10th Floor", "Tower 3, 6th Floor", "Tower 3, 8th Floor", "Other"]},
+            {"name": "feedback_category", "label": "Feedback Category", "type": "select", "required": True,
+             "options": ["Food Quality", "Service Issue", "Other"]},
+            {"name": "nature_of_complaint", "label": "Nature of Complaint", "type": "select", "required": True,
+             "options": ["Contamination", "Hygiene", "Taste / Flavour", "Portion Size", "Temperature"]},
+            {"name": "description", "label": "Description", "type": "textarea", "required": True,
+             "placeholder": "Describe the issue in detail..."},
+        ],
+    },
+    {
+        "name": "Facility Complaint",
+        "description": ("Report a facility issue or maintenance complaint at the office. "
+                        "AC not working, lights flickering, lift stuck, washroom dirty, "
+                        "housekeeping complaint, broken furniture, plumbing or electrical issue."),
+        "category": "Admin",
+        "trigger_keywords": "facility,complaint,ac,housekeeping,lift,lights,washroom,maintenance,broken,plumbing,electrical",
+        "notify_domain": "admin",
+        "fields": [
+            {"name": "complaint_type", "label": "Complaint Type", "type": "select", "required": True,
+             "options": ["AC/HVAC", "Electrical", "Plumbing", "Housekeeping", "Furniture", "Lift/Elevator", "Cafeteria", "Other"]},
+            {"name": "priority", "label": "Priority", "type": "select", "required": True,
+             "options": ["Low", "Medium", "High", "Critical"]},
+            {"name": "location", "label": "Location", "type": "select", "required": True,
+             "options": ["T-2 10th Floor", "T-3 6th Floor", "T-3 8th Floor", "Indore Office", "Other"]},
+            {"name": "action_item", "label": "Action Item", "type": "textarea", "required": True,
+             "placeholder": "Describe the issue in detail..."},
+        ],
+    },
 ]
 
 
@@ -446,6 +492,8 @@ def _seed_form_templates(db):
                 description=spec["description"],
                 category=spec.get("category"),
                 fields=spec["fields"],
+                trigger_keywords=spec.get("trigger_keywords"),
+                notify_domain=spec.get("notify_domain"),
                 embedding=FormLibraryService._embed_text(
                     spec["name"], spec["description"], spec.get("category"), spec["fields"]
                 ),
@@ -455,7 +503,6 @@ def _seed_form_templates(db):
         db.commit()
     except Exception as e:
         db.rollback()
-        print(f"[init_db] Form template seeding notice: {e}")
     finally:
         db.close()
 
@@ -470,7 +517,6 @@ def _migrate_prompt_configs(db):
     if config:
         config.is_active = False
         db.commit()
-        print("Disabled DB-stored admin system_prompt — using hardcoded detailed prompt with multi-turn RULE 5/6 logic.")
 
 
 def _seed_prompt_configs(db):
@@ -496,7 +542,5 @@ def _seed_welcome_resources(db):
         for spec in _DEFAULT_WELCOME_RESOURCES:
             db.add(WelcomeResource(**spec))
         db.commit()
-        print("[init_db] Welcome resources seeded.")
     except Exception as e:
         db.rollback()
-        print(f"[init_db] Welcome resource seeding notice: {e}")

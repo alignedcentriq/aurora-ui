@@ -364,13 +364,20 @@ function LogsTab() {
         body: JSON.stringify({ reason: revealReason.trim() }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        setRevealError(err?.detail || "Unable to reveal content.");
+        let detail = `HTTP ${res.status}`;
+        try {
+          const err = await res.json();
+          if (typeof err?.detail === "string") detail = err.detail;
+          else if (Array.isArray(err?.detail)) detail = err.detail.map((d: any) => d?.msg || String(d)).join("; ");
+        } catch {
+          // non-JSON error body — keep the HTTP status as the message
+        }
+        setRevealError(detail);
         return;
       }
       setRevealed(await res.json());
-    } catch {
-      setRevealError("Unable to reveal content.");
+    } catch (err: any) {
+      setRevealError(err?.message || "Network error — could not reach the server.");
     } finally {
       setRevealLoading(false);
     }

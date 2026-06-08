@@ -38,7 +38,6 @@ def _fetch_from_api(email: str, token: str) -> list[dict]:
 
     year = datetime.datetime.utcnow().year
     url  = f"{settings.ZOHO_BASE_URL}/people/api/v2/leavetracker/reports/bookedAndBalance"
-    print(f"[leave_balance] GET {url} email={email} year={year}")
 
     resp = requests.get(
         url,
@@ -46,7 +45,6 @@ def _fetch_from_api(email: str, token: str) -> list[dict]:
         headers={"Authorization": f"Zoho-oauthtoken {token}"},
         timeout=15,
     )
-    print(f"[leave_balance] status={resp.status_code} body={resp.text[:800]}")
     resp.raise_for_status()
     data = resp.json()
 
@@ -178,7 +176,6 @@ def _persist(email: str, balances, status: str, error):
         row.last_synced_at = datetime.datetime.utcnow()
         db.commit()
     except Exception as exc:
-        print(f"[leave_balance_sync] DB persist error: {exc}")
         db.rollback()
     finally:
         db.close()

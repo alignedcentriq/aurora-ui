@@ -2,7 +2,7 @@ import datetime
 import urllib.parse
 from app.config import settings
 from app.database import SessionLocal
-from app.models import Employee, ITTicket, AssetAssignment, HITLRequest
+from app.models import Employee, ITTicket, AssetAssignment, AssetRequest, HITLRequest
 
 
 class ITService:
@@ -206,6 +206,61 @@ class ITService:
         return (
             f"Done. I sent the software installation request for **{software_name}** to IT Support "
             f"and copied **{email}**."
+        )
+
+    @staticmethod
+    def build_asset_request_email(email: str, asset_name: str):
+        subject = f"Asset / Resource Request - {asset_name}"
+        body = (
+            f"Dear IT Support Team,\n\n"
+            f"I would like to request the following asset or resource at the earliest convenience.\n\n"
+            f"Details:\n"
+            f"  Requested by: {email}\n"
+            f"  Item requested: {asset_name}\n\n"
+            f"Please let me know if any approvals or additional information are required.\n\n"
+            f"Thank you.\n\n"
+            f"Best regards"
+        )
+        return {"to": settings.HELPDESK_EMAIL, "subject": subject, "body": body}
+
+    @staticmethod
+    def request_asset(email: str, asset_name: str):
+        import json
+        normalised = (asset_name or "").strip().lower()
+
+        db = SessionLocal()
+        try:
+            emp = ITService._get_or_create_employee(db, email)
+
+            # Idempotency: block if an open request for the same asset already exists.
+            existing = (
+                db.query(AssetRequest)
+                .filter(
+                    AssetRequest.employee_id == emp.id,
+                    AssetRequest.asset_name == normalised,
+                    AssetRequest.status == "Pending",
+                )
+                .order_by(AssetRequest.created_at.desc())
+                .first()
+            )
+            if existing:
+                return (
+                    f"You already have a pending request for **{asset_name}** (Request #{existing.id}) "
+                    f"with IT. Please wait for it to be fulfilled before raising another."
+                )
+
+            rec = AssetRequest(employee_id=emp.id, asset_name=normalised, status="Pending")
+            db.add(rec)
+            db.commit()
+        finally:
+            db.close()
+
+        draft = ITService.build_asset_request_email(email, asset_name)
+        draft_json = json.dumps({"to": draft["to"], "subject": draft["subject"], "body": draft["body"]})
+        return (
+            f"I've prepared a request email for **{asset_name}**. "
+            f"Review and edit it below, then click Send.\n\n"
+            f"[EMAIL_DRAFT_START]{draft_json}[EMAIL_DRAFT_END]"
         )
 
     @staticmethod

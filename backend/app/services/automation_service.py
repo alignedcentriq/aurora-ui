@@ -5,6 +5,11 @@ Provides CRUD for AutomationRule rows and a run_due() function called every
 60 s from the startup scheduler (see main.py).  Each active rule whose
 next_run <= now is fired: the creator's Microsoft delegated token is used to
 send the email from their mailbox.
+
+Access model:
+  - Creator: full CRUD + co-owner management
+  - Super Admin: full CRUD on all rules + co-owner management
+  - Co-owner: list/view only (cannot edit/delete/toggle/send-now/create)
 """
 
 from __future__ import annotations
@@ -25,12 +30,14 @@ def compute_next_run(
     day_of_month: Optional[int],
     hour: int,
     after: Optional[datetime.datetime] = None,
+    minute: int = 0,
 ) -> datetime.datetime:
     """Return the next UTC-naïve datetime this cadence should fire."""
-    now = (after or datetime.datetime.now()).replace(minute=0, second=0, microsecond=0)
+    minute = max(0, min(59, int(minute or 0)))
+    now = (after or datetime.datetime.now()).replace(second=0, microsecond=0)
 
     if frequency == "daily":
-        candidate = now.replace(hour=hour)
+        candidate = now.replace(hour=hour, minute=minute)
         if candidate <= (after or datetime.datetime.now()):
             candidate += datetime.timedelta(days=1)
         # Skip weekends for daily automations
@@ -41,7 +48,7 @@ def compute_next_run(
     elif frequency == "weekly":
         dow = day_of_week if day_of_week is not None else 0
         days_ahead = (dow - now.weekday()) % 7
-        candidate = (now + datetime.timedelta(days=days_ahead)).replace(hour=hour)
+        candidate = (now + datetime.timedelta(days=days_ahead)).replace(hour=hour, minute=minute)
         if candidate <= (after or datetime.datetime.now()):
             candidate += datetime.timedelta(weeks=1)
         return candidate
@@ -49,9 +56,9 @@ def compute_next_run(
     elif frequency == "monthly":
         dom = min(day_of_month or 1, 28)
         try:
-            candidate = now.replace(day=dom, hour=hour)
+            candidate = now.replace(day=dom, hour=hour, minute=minute)
         except ValueError:
-            candidate = now.replace(day=28, hour=hour)
+            candidate = now.replace(day=28, hour=hour, minute=minute)
         if candidate <= (after or datetime.datetime.now()):
             month = now.month % 12 + 1
             year = now.year + (1 if now.month == 12 else 0)
@@ -62,7 +69,18 @@ def compute_next_run(
         return candidate
 
     else:  # custom — treat as daily
-        return compute_next_run("daily", None, None, hour, after)
+        return compute_next_run("daily", None, None, hour, after, minute)
+
+
+# ── Permission helpers ─────────────────────────────────────────────────────────
+
+def _can_manage(rule: AutomationRule, user_email: str, user_role: str) -> bool:
+    """True if the user may edit/delete/toggle/send-now this rule."""
+    return rule.created_by == user_email or user_role.lower() == "super admin"
+
+
+def _is_co_owner(rule: AutomationRule, user_email: str) -> bool:
+    return user_email.lower() in [e.lower() for e in (rule.co_owners_json or [])]
 
 
 # ── CRUD ───────────────────────────────────────────────────────────────────────
@@ -72,9 +90,15 @@ def list_rules(user_email: str, user_role: str) -> list[dict]:
     try:
         q = db.query(AutomationRule)
         if user_role.lower() != "super admin":
-            q = q.filter(AutomationRule.created_by == user_email)
+            rules = q.order_by(AutomationRule.created_at.desc()).all()
+            # Show own rules + rules where user is co-owner
+            rules = [
+                r for r in rules
+                if r.created_by == user_email or _is_co_owner(r, user_email)
+            ]
+            return [_rule_dict(r, user_email, user_role) for r in rules]
         rules = q.order_by(AutomationRule.created_at.desc()).all()
-        return [_rule_dict(r) for r in rules]
+        return [_rule_dict(r, user_email, user_role) for r in rules]
     finally:
         db.close()
 
@@ -91,18 +115,21 @@ def create(user_email: str, user_role: str, payload: dict) -> dict:
             day_of_week=payload.get("day_of_week"),
             day_of_month=payload.get("day_of_month"),
             hour=int(payload.get("hour") or 9),
+            minute=int(payload.get("minute") or 0),
             email_subject=payload["email_subject"],
             email_body=payload["email_body"],
             recipients_json=payload.get("recipients_json") or [],
+            co_owners_json=[],
             is_active=True,
         )
         rule.next_run = compute_next_run(
-            rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour
+            rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour,
+            minute=rule.minute,
         )
         db.add(rule)
         db.commit()
         db.refresh(rule)
-        return {"success": True, "rule": _rule_dict(rule)}
+        return {"success": True, "rule": _rule_dict(rule, user_email, user_role)}
     except Exception as e:
         db.rollback()
         return {"success": False, "error": str(e)}
@@ -116,14 +143,14 @@ def update(user_email: str, user_role: str, rule_id: int, payload: dict) -> dict
         rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
         if not rule:
             return {"success": False, "error": "not_found"}
-        if rule.created_by != user_email and user_role.lower() != "super admin":
+        if not _can_manage(rule, user_email, user_role):
             return {"success": False, "error": "forbidden"}
 
-        timing_fields = {"frequency", "day_of_week", "day_of_month", "hour"}
+        timing_fields = {"frequency", "day_of_week", "day_of_month", "hour", "minute"}
         changed_timing = False
         for field in [
             "name", "description", "frequency", "day_of_week", "day_of_month",
-            "hour", "email_subject", "email_body", "recipients_json", "is_active",
+            "hour", "minute", "email_subject", "email_body", "recipients_json", "is_active",
         ]:
             if field in payload:
                 setattr(rule, field, payload[field])
@@ -132,12 +159,13 @@ def update(user_email: str, user_role: str, rule_id: int, payload: dict) -> dict
 
         if changed_timing:
             rule.next_run = compute_next_run(
-                rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour
+                rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour,
+                minute=rule.minute,
             )
 
         db.commit()
         db.refresh(rule)
-        return {"success": True, "rule": _rule_dict(rule)}
+        return {"success": True, "rule": _rule_dict(rule, user_email, user_role)}
     except Exception as e:
         db.rollback()
         return {"success": False, "error": str(e)}
@@ -151,11 +179,53 @@ def delete(user_email: str, user_role: str, rule_id: int) -> dict:
         rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
         if not rule:
             return {"success": False, "error": "not_found"}
-        if rule.created_by != user_email and user_role.lower() != "super admin":
+        if not _can_manage(rule, user_email, user_role):
             return {"success": False, "error": "forbidden"}
         db.delete(rule)
         db.commit()
         return {"success": True}
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+# ── Co-owner management ────────────────────────────────────────────────────────
+
+def update_co_owners(
+    user_email: str,
+    user_role: str,
+    rule_id: int,
+    action: str,       # "add" | "remove"
+    co_owner_email: str,
+) -> dict:
+    """Add or remove a co-owner. Only creator or Super Admin may call this."""
+    db = SessionLocal()
+    try:
+        rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
+        if not rule:
+            return {"success": False, "error": "not_found"}
+        if not _can_manage(rule, user_email, user_role):
+            return {"success": False, "error": "forbidden"}
+
+        current: list[str] = list(rule.co_owners_json or [])
+        target = co_owner_email.lower().strip()
+
+        if action == "add":
+            if target == rule.created_by.lower():
+                return {"success": False, "error": "creator_cannot_be_coowner"}
+            if target not in [e.lower() for e in current]:
+                current.append(co_owner_email.strip())
+        elif action == "remove":
+            current = [e for e in current if e.lower() != target]
+        else:
+            return {"success": False, "error": "invalid_action"}
+
+        rule.co_owners_json = current
+        db.commit()
+        db.refresh(rule)
+        return {"success": True, "rule": _rule_dict(rule, user_email, user_role)}
     except Exception as e:
         db.rollback()
         return {"success": False, "error": str(e)}
@@ -193,14 +263,17 @@ def _build_html(subject: str, body_text: str) -> str:
     return _email_shell(subject, intro, "")
 
 
-def send_now(rule_id: int, sender_email: str) -> dict:
-    """Send an automation email immediately (test / on-demand)."""
+def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
+    """Send an automation email immediately (test / on-demand).
+    Only creator or Super Admin may trigger this."""
     from app.services.email_service import _send_html
     db = SessionLocal()
     try:
         rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
         if not rule:
             return {"success": False, "error": "not_found"}
+        if not _can_manage(rule, sender_email, user_role):
+            return {"success": False, "error": "forbidden"}
         emails = _extract_emails(rule.recipients_json)
         if not emails:
             return {"success": False, "error": "no_recipients"}
@@ -247,6 +320,7 @@ def run_due() -> int:
                 rule.next_run = compute_next_run(
                     rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour,
                     after=now + datetime.timedelta(minutes=1),
+                    minute=rule.minute or 0,
                 )
                 fired += 1
 
@@ -254,7 +328,6 @@ def run_due() -> int:
             db.commit()
         return fired
     except Exception as exc:
-        print(f"[automation_hub] run_due error: {exc}")
         return 0
     finally:
         db.close()
@@ -262,7 +335,8 @@ def run_due() -> int:
 
 # ── Serialisation ──────────────────────────────────────────────────────────────
 
-def _rule_dict(r: AutomationRule) -> dict:
+def _rule_dict(r: AutomationRule, user_email: str = "", user_role: str = "") -> dict:
+    can_manage = _can_manage(r, user_email, user_role) if user_email else False
     return {
         "id": r.id,
         "name": r.name,
@@ -273,12 +347,15 @@ def _rule_dict(r: AutomationRule) -> dict:
         "day_of_week": r.day_of_week,
         "day_of_month": r.day_of_month,
         "hour": r.hour,
+        "minute": r.minute or 0,
         "email_subject": r.email_subject,
         "email_body": r.email_body,
         "recipients_json": r.recipients_json or [],
+        "co_owners_json": r.co_owners_json or [],
         "is_active": r.is_active,
         "next_run": r.next_run.isoformat() if r.next_run else None,
         "last_run": r.last_run.isoformat() if r.last_run else None,
         "last_status": r.last_status,
         "created_at": r.created_at.isoformat() if r.created_at else None,
+        "can_manage": can_manage,
     }

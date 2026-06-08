@@ -5,6 +5,13 @@ import {
 } from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 import type { AttendanceSchedulePrefill } from "@/lib/chat-store";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Member {
   employee: string; department: string; reports_to: string;
@@ -209,43 +216,75 @@ function ScheduleMode({ auth, prefill, onDone }: {
   return (
     <Shell icon={<CalendarClock className="h-3.5 w-3.5 text-[var(--collaboration)]" />} title="Schedule Attendance Email">
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-medium text-muted-foreground">
-          Frequency
-          <select value={frequency} onChange={e => setFrequency(e.target.value)} className={field}>
-            <option value="daily">Daily (weekdays)</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <label className="text-xs font-medium text-muted-foreground">
-          Time
-          <select value={hour} onChange={e => setHour(Number(e.target.value))} className={field}>
-            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h % 12 || 12}:00 {h >= 12 ? "PM" : "AM"}</option>)}
-          </select>
-        </label>
+        <div className="flex flex-col">
+          <label className="text-xs font-semibold text-muted-foreground mb-1.5">Frequency</label>
+          <Select value={frequency} onValueChange={setFrequency}>
+            <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+              <SelectItem value="daily">Daily (weekdays)</SelectItem>
+              <SelectItem value="weekly">Weekly</SelectItem>
+              <SelectItem value="monthly">Monthly</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col">
+          <label className="text-xs font-semibold text-muted-foreground mb-1.5">Time</label>
+          <Select value={String(hour)} onValueChange={(val) => setHour(Number(val))}>
+            <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+              {Array.from({ length: 24 }, (_, h) => (
+                <SelectItem key={h} value={String(h)}>
+                  {h % 12 || 12}:00 {h >= 12 ? "PM" : "AM"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {(frequency === "weekly" || frequency === "custom") && (
-          <label className="text-xs font-medium text-muted-foreground">
-            Day of week
-            <select value={dayOfWeek} onChange={e => setDayOfWeek(Number(e.target.value))} className={field}>
-              {DOW.map((d, i) => <option key={d} value={i}>{d}</option>)}
-            </select>
-          </label>
+          <div className="flex flex-col">
+            <label className="text-xs font-semibold text-muted-foreground mb-1.5">Day of week</label>
+            <Select value={String(dayOfWeek)} onValueChange={(val) => setDayOfWeek(Number(val))}>
+              <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+                {DOW.map((d, i) => (
+                  <SelectItem key={d} value={String(i)}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
+
         {(frequency === "monthly" || frequency === "custom") && (
-          <label className="text-xs font-medium text-muted-foreground">
-            Day of month (1–28)
+          <div className="flex flex-col">
+            <label className="text-xs font-semibold text-muted-foreground mb-1.5">Day of month (1–28)</label>
             <input type="number" min={1} max={28} value={dayOfMonth}
-              onChange={e => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))} className={field} />
-          </label>
+              onChange={e => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))} className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow" />
+          </div>
         )}
-        <label className="text-xs font-medium text-muted-foreground">
-          Report period
-          <select value={periodMode} onChange={e => setPeriodMode(e.target.value)} className={field}>
-            <option value="prev_period">Previous month</option>
-            <option value="current">Current month-to-date</option>
-          </select>
-        </label>
+
+        <div className="flex flex-col">
+          <label className="text-xs font-semibold text-muted-foreground mb-1.5">Report period</label>
+          <Select value={periodMode} onValueChange={setPeriodMode}>
+            <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+              <SelectItem value="prev_period">Previous month</SelectItem>
+              <SelectItem value="current">Current month-to-date</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
           Recipients (comma-separated; blank = you)
           <input value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="you@alignedautomation.com" className={field} />

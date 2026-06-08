@@ -1,12 +1,8 @@
 """Super Admin-only endpoints for the runtime LLM controls (kill switch, load throttle,
 per-tier model params, per-domain disable). Gated by ``require_super_admin``."""
-import asyncio
-import datetime
-
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, require_super_admin
-from app.config import settings
 from app.services import llm_controls_service as llm_controls
 
 router = APIRouter(prefix="/api/it/llm-controls", tags=["llm-controls"])
@@ -21,6 +17,7 @@ async def get_llm_controls(_: CurrentUser = Depends(require_super_admin)):
     return {
         "effective": llm_controls.get_config(),
         "defaults": llm_controls.defaults(),
+        "tier_call_defaults": llm_controls.TIER_CALL_DEFAULTS,
         "bounds": {k: list(v) for k, v in llm_controls.BOUNDS.items()},
         # Authoritative list (what's actually pulled on the server) when reachable;
         # otherwise the static known list so the dropdown is never empty.
@@ -45,6 +42,24 @@ async def update_llm_controls(
     return {"status": "ok", "effective": new, **llm_controls.get_meta()}
 
 
+@router.get("/model-capabilities")
+async def get_model_capabilities(
+    model: str = Query(..., description="Model name to check"),
+    _: CurrentUser = Depends(require_super_admin),
+):
+    """Fetch Ollama-reported capabilities for a model and compare against per-tier requirements.
+    Used by the UI to warn IT before applying a model that lacks required capabilities."""
+    result = llm_controls.model_capabilities(model)
+    # Annotate which tiers this model would be incompatible with
+    incompatible = [
+        tier for tier, reqs in llm_controls.TIER_REQUIREMENTS.items()
+        if reqs and not all(c in result["capabilities"] for c in reqs)
+    ]
+    result["incompatible_tiers"] = incompatible
+    result["tier_requirements"] = llm_controls.TIER_REQUIREMENTS
+    return result
+
+
 @router.post("/reset")
 async def reset_llm_controls(user: CurrentUser = Depends(require_super_admin)):
     """Clear all overrides — revert to env defaults."""
@@ -52,48 +67,3 @@ async def reset_llm_controls(user: CurrentUser = Depends(require_super_admin)):
     return {"status": "ok", "effective": new, **llm_controls.get_meta()}
 
 
-@router.post("/security-news/send-now")
-async def send_security_news_now(user: CurrentUser = Depends(require_super_admin)):
-    """Immediately trigger the security news digest — for testing and demos.
-    Bypasses the daily schedule gate; always sends regardless of the enabled flag."""
-    recipients = [r.strip() for r in settings.SECURITY_NEWS_RECIPIENTS.split(",") if r.strip()]
-    if not recipients:
-        raise HTTPException(
-            status_code=400,
-            detail="SECURITY_NEWS_RECIPIENTS is not configured. Add it to .env.local.",
-        )
-    sender = (
-        settings.SECURITY_NEWS_SENDER
-        or settings.PARKING_REMINDER_SENDER
-        or settings.NOTIFY_TO_EMAIL
-    )
-    if not sender:
-        raise HTTPException(
-            status_code=400,
-            detail="No sender mailbox configured. Set SECURITY_NEWS_SENDER in .env.local.",
-        )
-
-    def _send():
-        from app.services.security_news_service import fetch_digest
-        from app.services.email_service import send_security_news_digest
-        items = fetch_digest()
-        if not items:
-            return "no_news", 0
-        date_str = datetime.date.today().strftime("%B %d, %Y")
-        ok = send_security_news_digest(sender, recipients, items, date_str)
-        return "sent" if ok else "failed", len(items)
-
-    try:
-        status, count = await asyncio.to_thread(_send)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Send failed: {exc}")
-
-    if status == "no_news":
-        return {"status": "no_news", "stories": 0, "recipients": recipients,
-                "message": "No new cybersecurity stories in the last 24 hours — nothing to send."}
-    if status == "failed":
-        raise HTTPException(
-            status_code=502,
-            detail="Email send failed — check that the sender mailbox has a connected MS365 token.",
-        )
-    return {"status": "sent", "stories": count, "recipients": recipients}

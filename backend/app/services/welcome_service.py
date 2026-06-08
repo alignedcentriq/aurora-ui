@@ -89,6 +89,32 @@ def _send_hr_notification(emp_email: str, emp_name: str, send_token: str, skip_t
         logger.error("[welcome] HR notification failed for %s: %s", emp_email, e)
 
 
+_DEFAULT_WELCOME_MESSAGE = (
+    "Welcome to the team, {name}! 🎉\n\n"
+    "We're thrilled to have you on board. Below are the tools and resources "
+    "available to you through Centriq AI — your digital workplace assistant. "
+    "Just open the app and ask anything!"
+)
+
+
+def _build_intro_html(emp_name: str) -> str:
+    """Build the intro HTML for the welcome email.
+    Uses HR-customised text from company settings if set, otherwise falls back to default.
+    Supports {name} as a placeholder for the employee's name.
+    Double newlines become paragraph breaks; single newlines become <br>.
+    """
+    import html as html_mod
+    from app.services.company_settings_service import CompanySettingsService
+
+    raw = CompanySettingsService.get("welcome_email_intro") or _DEFAULT_WELCOME_MESSAGE
+    escaped_name = html_mod.escape(emp_name)
+    # Replace {name} placeholder with bolded escaped name
+    text = raw.replace("{name}", f"<strong>{escaped_name}</strong>")
+    # Split on double newlines → paragraphs; single newlines → <br>
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+
+
 def send_welcome_email(emp_email: str, emp_name: str, db) -> bool:
     """Build and send the branded welcome email to the new employee."""
     try:
@@ -140,12 +166,7 @@ def send_welcome_email(emp_email: str, emp_name: str, db) -> bool:
                 items_html += f"<li>{icon} <strong>{name_html}</strong>{desc}</li>"
             sections_html += _section(cat, color, items_html)
 
-        intro = (
-            f"<p>Welcome to the team, <strong>{html_mod.escape(emp_name)}</strong>! 🎉</p>"
-            f"<p>We're thrilled to have you on board. Below are the tools and resources "
-            f"available to you through <strong>Centriq AI</strong> — your digital workplace assistant. "
-            f"Just open the app and ask anything!</p>"
-        )
+        intro = _build_intro_html(emp_name)
         html_body = _email_shell(
             "Welcome to the Team!",
             intro,
@@ -155,6 +176,11 @@ def send_welcome_email(emp_email: str, emp_name: str, db) -> bool:
         ok = _send_html(hr_email, emp_email, f"Welcome to the team, {emp_name}!", html_body)
         if ok:
             logger.info("[welcome] Welcome email sent to %s", emp_email)
+            try:
+                from app.services.email_service import send_joining_kit_email
+                send_joining_kit_email(hr_email, emp_name, emp_email)
+            except Exception as ex:
+                logger.error("[welcome] Failed to send joining kit email for %s: %s", emp_email, ex)
         else:
             logger.warning("[welcome] Welcome email delivery failed for %s", emp_email)
         return ok

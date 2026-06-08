@@ -58,8 +58,7 @@ export function RoleManagement() {
       if (!res.ok) throw new Error("Failed to fetch assigned roles");
       const data = await res.json();
       setAssignedRoles(data);
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to load assigned roles");
     } finally {
       setIsLoadingList(false);
@@ -82,8 +81,8 @@ export function RoleManagement() {
           const data = await res.json();
           setSearchResults(data);
         }
-      } catch (err) {
-        console.error(err);
+      } catch {
+        // autocomplete fetch failed
       } finally {
         setIsSearching(false);
       }
@@ -128,8 +127,7 @@ export function RoleManagement() {
       toast.success(`Assigned role ${roleToAssign} to ${email}`);
       setSelectedUser(null);
       fetchAssignedRoles();
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to assign role");
     } finally {
       setIsAssigning(false);
@@ -146,8 +144,7 @@ export function RoleManagement() {
       if (!res.ok) throw new Error("Failed to reset role");
       toast.success(`Reset ${email} to Employee role`);
       fetchAssignedRoles();
-    } catch (err) {
-      console.error(err);
+    } catch {
       toast.error("Failed to reset role");
     }
   };

@@ -222,7 +222,7 @@ async def classify_intent_async(user_message: str, candidate_domains: list[str] 
     it is woven into the prompt as a soft hint, never a hard filter."""
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        pass
 
     system = SystemMessage(content=_build_router_prompt() + _hint_suffix(candidate_domains))
     human = HumanMessage(content=expanded_message)
@@ -245,7 +245,6 @@ async def classify_intent_async(user_message: str, candidate_domains: list[str] 
         }
 
     except Exception as e:
-        print(f"[Router] Classification failed: {e}. Falling back to 'general'.")
         return {
             "domain": "general",
             "confidence": 0.3,
@@ -264,7 +263,7 @@ def classify_intent(user_message: str) -> dict:
     """
     expanded_message, did_you_mean = _expand_query(user_message)
     if expanded_message != user_message:
-        print(f"[Router] Query expanded: '{user_message}' → '{expanded_message}'")
+        pass
 
     system = SystemMessage(content=_build_router_prompt())
     human = HumanMessage(content=expanded_message)
@@ -287,7 +286,6 @@ def classify_intent(user_message: str) -> dict:
         }
 
     except Exception as e:
-        print(f"[Router] Classification failed: {e}. Falling back to 'general'.")
         return {
             "domain": "general",
             "confidence": 0.3,

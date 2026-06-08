@@ -20,7 +20,7 @@ from app.models import Employee, FormSubmission, FormTemplate
 from app.services.policy_service import PolicyService
 
 # Field input types the dynamic renderer + validator understand.
-_FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user"}
+_FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"}
 
 
 # Migration bridge: the seeded "Visitor Pass" / "Parking Request" forms are now rendered through
@@ -52,9 +52,35 @@ def _delegate_parking(email: str, v: dict) -> str:
     )
 
 
+def _delegate_facility_complaint(email: str, v: dict) -> str:
+    from app.services.admin_service import AdminService
+    return AdminService.submit_facility_complaint(
+        email,
+        v.get("complaint_type", "Other"),
+        v.get("action_item", ""),
+        v.get("location", ""),
+        v.get("priority", "Medium"),
+    )
+
+
+def _delegate_food_complaint(email: str, v: dict) -> str:
+    from app.services.admin_service import AdminService
+    category = v.get("feedback_category", "")
+    nature = v.get("nature_of_complaint", "")
+    complaint_type = f"{category}: {nature}" if category and nature else (category or nature or "Other")
+    description = v.get("description", "")
+    if v.get("time_of_incident"):
+        description = f"[Time: {v['time_of_incident']}] {description}"
+    if v.get("location"):
+        description = f"[Location: {v['location']}] {description}"
+    return AdminService.submit_food_complaint(email, "Cafeteria", complaint_type, description)
+
+
 _SUBMIT_DELEGATES = {
     "visitor pass": _delegate_visitor_pass,
     "parking request": _delegate_parking,
+    "facility complaint": _delegate_facility_complaint,
+    "food complaint": _delegate_food_complaint,
 }
 
 
@@ -128,6 +154,7 @@ class FormLibraryService:
             "enabled": r.enabled,
             "notify_email": r.notify_email or "",
             "notify_domain": r.notify_domain or "",
+            "is_anonymous": bool(r.is_anonymous),
             "created_by": r.created_by,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
@@ -140,7 +167,7 @@ class FormLibraryService:
     @staticmethod
     def create(name: str, description: str, fields: list, category: str = "",
                trigger_keywords: str = "", notify_email: str = "", notify_domain: str = "",
-               created_by: str = "") -> dict:
+               is_anonymous: bool = False, created_by: str = "") -> dict:
         name = (name or "").strip()
         description = (description or "").strip()
         category = (category or "").strip()
@@ -165,6 +192,7 @@ class FormLibraryService:
                 embedding=FormLibraryService._embed_text(name, description, category, norm),
                 notify_email=(notify_email or "").strip() or None,
                 notify_domain=(notify_domain or "").strip() or None,
+                is_anonymous=bool(is_anonymous),
                 created_by=created_by or None,
             )
             db.add(row)
@@ -180,7 +208,8 @@ class FormLibraryService:
     @staticmethod
     def update(form_id: int, name: str = None, description: str = None, fields: list = None,
                category: str = None, trigger_keywords: str = None, enabled: bool = None,
-               notify_email: str = None, notify_domain: str = None) -> dict:
+               notify_email: str = None, notify_domain: str = None,
+               is_anonymous: bool = None) -> dict:
         db = SessionLocal()
         try:
             row = db.query(FormTemplate).filter(FormTemplate.id == form_id).first()
@@ -212,6 +241,8 @@ class FormLibraryService:
                 row.notify_email = notify_email.strip() or None
             if notify_domain is not None:
                 row.notify_domain = notify_domain.strip() or None
+            if is_anonymous is not None:
+                row.is_anonymous = bool(is_anonymous)
             # Re-embed from the (possibly) updated descriptive text + labels.
             row.embedding = FormLibraryService._embed_text(
                 row.name, row.description, row.category, row.fields
@@ -250,7 +281,6 @@ class FormLibraryService:
             rows = q.order_by(FormTemplate.name).all()
             return [FormLibraryService._to_dict(r) for r in rows]
         except Exception as e:
-            print(f"[FormLibrary] list_all skipped ({type(e).__name__}): {e}")
             return []
         finally:
             db.close()
@@ -262,7 +292,6 @@ class FormLibraryService:
             row = db.query(FormTemplate).filter(FormTemplate.id == form_id).first()
             return FormLibraryService._to_dict(row) if row else None
         except Exception as e:
-            print(f"[FormLibrary] get skipped ({type(e).__name__}): {e}")
             return None
         finally:
             db.close()
@@ -305,7 +334,6 @@ class FormLibraryService:
             d["similarity"] = round(1.0 - float(dist), 4)
             return d
         except Exception as e:
-            print(f"[FormLibrary] match skipped ({type(e).__name__}): {e}")
             return None
         finally:
             db.close()
@@ -328,7 +356,6 @@ class FormLibraryService:
             return filled
         except Exception as e:
             db.rollback()
-            print(f"[FormLibrary] backfill skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()
@@ -373,13 +400,22 @@ class FormLibraryService:
                 msg = delegate(employee_email, cleaned)
                 return {"status": "ok", "reference_id": "", "message": msg}
 
-            emp = FormLibraryService._get_or_create_employee(db, employee_email)
+            anonymous = bool(tpl.is_anonymous)
+            if anonymous:
+                emp = None
+                stored_email = None
+                stored_emp_id = None
+            else:
+                emp = FormLibraryService._get_or_create_employee(db, employee_email)
+                stored_email = employee_email
+                stored_emp_id = emp.id
+
             reference_id = f"FRM-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             sub = FormSubmission(
                 reference_id=reference_id,
                 form_template_id=tpl.id,
-                employee_id=emp.id,
-                employee_email=employee_email,
+                employee_id=stored_emp_id,
+                employee_email=stored_email,
                 field_values=cleaned,
                 status="Pending",
             )
@@ -389,15 +425,15 @@ class FormLibraryService:
             # Notify (fail-soft) — explicit notify_email wins, else the default admin inbox.
             try:
                 from app.services.email_service import send_form_submission_email
-                rows = [(f.get("label") or f.get("name"), cleaned.get(f.get("name"), ""))
-                        for f in (tpl.fields or [])]
+                email_rows = [(f.get("label") or f.get("name"), cleaned.get(f.get("name"), ""))
+                              for f in (tpl.fields or [])]
                 send_form_submission_email(
-                    user_email=employee_email,
-                    employee_name=emp.name,
-                    employee_email=emp.email,
+                    user_email=employee_email if not anonymous else "anonymous@form",
+                    employee_name="Anonymous" if anonymous else (emp.name if emp else employee_email),
+                    employee_email="—" if anonymous else (emp.email if emp else employee_email),
                     form_name=tpl.name,
                     reference_id=reference_id,
-                    rows=rows,
+                    rows=email_rows,
                     to=tpl.notify_email or None,
                 )
             except Exception:
@@ -440,7 +476,7 @@ class FormLibraryService:
     def list_submissions(form_template_id: int | None = None, status: str | None = None) -> list[dict]:
         db = SessionLocal()
         try:
-            q = db.query(FormSubmission, FormTemplate.name).join(
+            q = db.query(FormSubmission, FormTemplate.name, FormTemplate.is_anonymous).join(
                 FormTemplate, FormSubmission.form_template_id == FormTemplate.id
             )
             if form_template_id is not None:
@@ -454,17 +490,17 @@ class FormLibraryService:
                     "reference_id": s.reference_id,
                     "form_template_id": s.form_template_id,
                     "form_name": form_name,
-                    "employee_email": s.employee_email,
+                    "is_anonymous": bool(is_anon),
+                    "employee_email": None if is_anon else s.employee_email,
                     "field_values": s.field_values or {},
                     "status": s.status,
                     "admin_remarks": s.admin_remarks or "",
                     "reviewed_by": s.reviewed_by,
                     "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
                 }
-                for s, form_name in rows
+                for s, form_name, is_anon in rows
             ]
         except Exception as e:
-            print(f"[FormLibrary] list_submissions skipped ({type(e).__name__}): {e}")
             return []
         finally:
             db.close()

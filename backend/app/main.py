@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, F
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -45,16 +46,21 @@ from app.routes.app_links_routes import router as app_links_router, public_route
 from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
 from app.routes.llm_controls_routes import router as llm_controls_router
+from app.routes.security_news_routes import router as security_news_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
 from app.routes.ms365_routes import router as ms365_router
 from app.routes.document_routes import router as document_router, public_router as document_public_router
+from app.routes.document_library_routes import router as document_library_router
 from app.routes.manager_routes import router as manager_router
+from app.routes.attendance_routes import router as attendance_router
 from app.routes.access_routes import router as access_router
 from app.routes.automation_routes import router as automation_router
 from app.routes.escalation_routes import router as escalation_router
 from app.routes.welcome_routes import router as welcome_router, public_router as welcome_public_router
+from app.routes.travel_routes import router as travel_router, admin_router as travel_admin_router
+from app.routes.appreciation_routes import router as appreciation_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -104,7 +110,6 @@ def _ping_model(model: str) -> bool:
             pass
         return True
     except Exception as exc:  # noqa: BLE001
-        print(f"[warmup] ping {model}: {exc}")
         return False
 
 
@@ -119,9 +124,8 @@ async def _warmup_task() -> None:
             if model and model not in seen:
                 seen.add(model)
                 ok = await asyncio.to_thread(_ping_model, model)
-                print(f"[warmup] {model}: {'ok' if ok else 'failed'}")
     except Exception as exc:  # noqa: BLE001
-        print(f"[warmup] task error: {exc}")
+        pass
 
 
 
@@ -144,18 +148,28 @@ app.include_router(app_links_public_router)
 app.include_router(form_library_router)
 app.include_router(observability_router)
 app.include_router(llm_controls_router)
+app.include_router(security_news_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
 app.include_router(ms365_router)
 app.include_router(document_router)
 app.include_router(document_public_router)
+app.include_router(document_library_router)
 app.include_router(manager_router)
+app.include_router(attendance_router)
 app.include_router(access_router)
 app.include_router(automation_router)
 app.include_router(escalation_router)
 app.include_router(welcome_router)
 app.include_router(welcome_public_router)
+app.include_router(travel_router)
+app.include_router(travel_admin_router)
+app.include_router(appreciation_router)
+
+_uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -174,6 +188,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     session_id: Optional[str] = "default_session_v2"
+    is_private: Optional[bool] = False
 
 class FeedbackRequest(BaseModel):
     rating: str                          # "up" or "down"
@@ -225,9 +240,8 @@ class SendEmailDraftRequest(BaseModel):
 async def startup_event():
     try:
         await asyncio.to_thread(init_db)
-        print("Database initialized.")
     except Exception as e:
-        print(f"Database initialization failed: {e}")
+        logging.error("init_db failed: %s", e, exc_info=True)
 
     try:
         from app.database import SessionLocal
@@ -238,14 +252,12 @@ async def startup_event():
         finally:
             db.close()
     except Exception as e:
-        print(f"Document template seeding failed: {e}")
+        pass
 
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
-            print("Redis checkpointer indexes ready.")
         except Exception as e:
-            print(f"Redis checkpointer setup failed ({e}), falling back to MemorySaver.")
             from langgraph.checkpoint.memory import MemorySaver as _MemorySaver
             app_agent.checkpointer = _MemorySaver()
             
@@ -255,7 +267,7 @@ async def startup_event():
             try:
                 await asyncio.to_thread(renew_subscriptions)
             except Exception as e:
-                print(f"Failed to renew subscriptions: {e}")
+                pass
 
     asyncio.create_task(periodic_renew())
 
@@ -267,22 +279,22 @@ async def startup_event():
             try:
                 fired = await asyncio.to_thread(attendance_schedule_service.run_due)
                 if fired:
-                    print(f"[attendance_scheduler] ran {fired} due schedule(s)")
+                    pass
             except Exception as e:
-                print(f"[attendance_scheduler] error: {e}")
+                pass
             # Biweekly project-update form — cadence gating lives inside run_due().
             try:
                 await asyncio.to_thread(project_update_service.run_due)
             except Exception as e:
-                print(f"[project_update] scheduler error: {e}")
+                pass
             # Automation Hub — custom recurring email rules created by managers/HR/IT/PMO.
             try:
                 from app.services import automation_service as _automation_svc
                 fired_auto = await asyncio.to_thread(_automation_svc.run_due)
                 if fired_auto:
-                    print(f"[automation_hub] ran {fired_auto} due rule(s)")
+                    pass
             except Exception as e:
-                print(f"[automation_hub] scheduler error: {e}")
+                pass
 
     asyncio.create_task(attendance_scheduler())
 
@@ -293,10 +305,11 @@ async def startup_event():
         while True:
             await asyncio.sleep(300)  # check every 5 minutes
             try:
-                from app.services import llm_controls_service as _llm_ctrl
-                if not _llm_ctrl.is_security_news_enabled():
+                from app.services.security_news_service import get_config, fetch_digest
+                cfg = get_config()
+                if not cfg.get("enabled", False):
                     continue
-                recipients = [r.strip() for r in settings.SECURITY_NEWS_RECIPIENTS.split(",") if r.strip()]
+                recipients = cfg.get("recipients") or []
                 if not recipients:
                     continue
                 sender = (
@@ -308,24 +321,17 @@ async def startup_event():
                     continue
                 now = _dt.datetime.now()
                 today = now.date()
-                if today == _last_sent_date or now.hour < settings.SECURITY_NEWS_HOUR:
+                send_hour = int(cfg.get("hour", settings.SECURITY_NEWS_HOUR))
+                if today == _last_sent_date or now.hour < send_hour:
                     continue
-                # Mark today as attempted BEFORE the send so the scheduler
-                # never fires more than once per day even if the send fails.
-                # Use the "Send digest now" button in the UI for manual retries.
                 _last_sent_date = today
-                from app.services.security_news_service import fetch_digest
                 from app.services.email_service import send_security_news_digest
-                items = await asyncio.to_thread(fetch_digest)
+                items = await asyncio.to_thread(fetch_digest, cfg)
                 if items:
                     date_str = today.strftime("%B %d, %Y")
-                    ok = await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
-                    if ok:
-                        print(f"[security_news] digest sent to {recipients} ({len(items)} stories)")
-                    else:
-                        print("[security_news] send failed — use 'Send digest now' to retry")
+                    await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
             except Exception as _sne:
-                print(f"[security_news] scheduler error: {_sne}")
+                pass
 
     asyncio.create_task(security_news_scheduler())
 
@@ -340,6 +346,32 @@ async def startup_event():
             await asyncio.sleep(600)  # 10 minutes
 
     asyncio.create_task(model_warmup_scheduler())
+
+    # ── Chat retention: 30-day purge ───────────────────────────────────────
+    # Deletes ConversationSummary rows (the AI's medium-term memory) that
+    # have not been updated in >30 days, matching the frontend localStorage
+    # eviction policy. Runs every 6 hours; errors are swallowed silently.
+    async def chat_retention_scheduler():
+        import datetime as _dt
+        from app.database import SessionLocal
+        from app.models import ConversationSummary
+        await asyncio.sleep(120)  # allow startup to settle first
+        while True:
+            try:
+                cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=30)
+                db = SessionLocal()
+                try:
+                    db.query(ConversationSummary).filter(
+                        ConversationSummary.updated_at < cutoff
+                    ).delete(synchronize_session=False)
+                    db.commit()
+                finally:
+                    db.close()
+            except Exception:
+                pass
+            await asyncio.sleep(6 * 3600)  # every 6 hours
+
+    asyncio.create_task(chat_retention_scheduler())
 
     get_deeplink_agent()
 
@@ -625,7 +657,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                     days = (leave.end_date - leave.start_date).days + 1
                     HRService.deduct_leave_balance(db, leave.employee_id, leave.leave_type, days)
                 except Exception as e:
-                    print(f"[Approval] Balance deduction error (non-fatal): {e}")
+                    pass
 
             db.commit()
             # Notify employee — use employee's Graph token as sender since the manager
@@ -647,7 +679,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                         reason=reject_note,
                     )
             except Exception as e:
-                print(f"[Approval] Notification email error: {e}")
+                pass
 
             if decision == "Approved":
                 try:
@@ -737,7 +769,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                 admin_remarks=reject_note,
             )
         except Exception as e:
-            print(f"[Approval] Book decision email error: {e}")
+            pass
 
         color = "#16A34A" if decision == "Approved" else "#dc2626"
         return HTMLResponse(_approval_html(
@@ -784,7 +816,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                 admin_remarks=reject_note,
             )
         except Exception as e:
-            print(f"[Approval] Extension decision email error: {e}")
+            pass
 
         color = "#16A34A" if decision == "Approved" else "#dc2626"
         return HTMLResponse(_approval_html(
@@ -893,7 +925,7 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
                 reason=reject_note,
             )
         except Exception as e:
-            print(f"[Approval] Project update notification error: {e}")
+            pass
 
         color = "#16A34A" if decision == "Approved" else "#dc2626"
         applied = " The allocation data has been updated." if decision == "Approved" else ""
@@ -953,7 +985,7 @@ _NON_CACHEABLE_SUBINTENTS = {
     "document_request", "grievance", "submit_leave", "leave_balance",
     "zoho_leave_fastpath", "powerapps_complaint", "setup_session",
     "software_install", "software_install_confirm", "license_request",
-    "asset_request", "create_ticket", "hardware_issue", "my_tickets", "my_assets",
+    "asset_request", "office_supply_request", "create_ticket", "hardware_issue", "my_tickets", "my_assets",
     "send_email", "send_teams_message", "room_availability", "book_room",
     "announcement", "prompt_config",
     # Dynamic directory / per-user data lookups: the underlying employee data
@@ -1201,43 +1233,43 @@ async def chat(
                 if profile_res and not profile_res.startswith("No employee profile found"):
                     yield f"data: {json.dumps({'type': 'token', 'content': profile_res})}\n\n"
                     # Observability log
-                    try:
-                        _db = SessionLocal()
-                        _db.add(AiRequestLog(
-                            session_id=request.session_id,
-                            user_email=user_email,
-                            user_message=request.message,
-                            domain="hr",
-                            sub_intent="employee_search",
-                            route_method="who_is_shortcircuit",
-                            response_text=profile_res[:2000],
-                            response_length=len(profile_res),
-                            total_latency_ms=int((time.time() - start_time) * 1000),
-                            llm_call_count=0,
-                        ))
-                        _db.commit()
-                    except Exception as _le:
-                        print(f"[observability] shortcircuit log error: {_le}")
-                    finally:
+                    if not request.is_private:
                         try:
-                            _db.close()
-                        except Exception:
+                            _db = SessionLocal()
+                            _db.add(AiRequestLog(
+                                session_id=request.session_id,
+                                user_email=user_email,
+                                user_message=request.message,
+                                domain="hr",
+                                sub_intent="employee_search",
+                                route_method="who_is_shortcircuit",
+                                response_text=profile_res[:2000],
+                                response_length=len(profile_res),
+                                total_latency_ms=int((time.time() - start_time) * 1000),
+                                llm_call_count=0,
+                            ))
+                            _db.commit()
+                        except Exception as _le:
                             pass
+                        finally:
+                            try:
+                                _db.close()
+                            except Exception:
+                                pass
                     yield f"data: {json.dumps({'type': 'done', 'domain': 'hr', 'download_url': None, 'interactive': None, 'images': None, 'processing_time': f'{time.time() - start_time:.2f}s'})}\n\n"
                     return
             except Exception as _pe:
-                print(f"[ShortCircuit] error: {_pe}")
+                pass
 
         # ── Semantic answer cache (instant path, zero LLM) ──────────────
         # If a near-identical informational question was answered recently, stream the saved
         # answer immediately and skip the concurrency gate + graph entirely. Guarded against
         # action phrasings so side-effecting requests never short-circuit.
-        if settings.ANSWER_CACHE_ENABLED and not _CACHE_SKIP_RE.search(request.message):
+        if settings.ANSWER_CACHE_ENABLED and not request.is_private and not _CACHE_SKIP_RE.search(request.message):
             try:
                 from app.services.answer_cache_service import AnswerCacheService
                 hit = await asyncio.to_thread(AnswerCacheService.lookup, request.message)
             except Exception as _ce:
-                print(f"[AnswerCache] lookup error: {_ce}")
                 hit = None
             if hit and hit.get("answer"):
                 cached_answer = hit["answer"]
@@ -1260,13 +1292,12 @@ async def chat(
                     ))
                     _db.commit()
                 except Exception as _le:
-                    print(f"[observability] cache-hit log error: {_le}")
+                    pass
                 finally:
                     try:
                         _db.close()
                     except Exception:
                         pass
-                print(f"[AnswerCache] HIT sim={hit.get('similarity')} domain={cached_domain} session={request.session_id}")
                 yield f"data: {json.dumps({'type': 'done', 'domain': cached_domain})}\n\n"
                 return
 
@@ -1284,6 +1315,7 @@ async def chat(
             user_id=user_email,
             metadata={"message": request.message},
             tags=["chat"],
+            is_private=bool(request.is_private),
         )
 
         # ── Concurrency gate: cap simultaneous LLM generations ──────────
@@ -1331,7 +1363,9 @@ async def chat(
                         elapsed = time.time() - call["start"]
                         output_msg = event.get("data", {}).get("output")
 
-                        # Extract token usage from LangChain AIMessage
+                        # Extract token usage from LangChain AIMessage.
+                        # Primary: usage_metadata (populated when stream_usage=True).
+                        # Fallback: response_metadata["token_usage"] from the OpenAI-compat API.
                         usage = {}
                         if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
                             um = output_msg.usage_metadata
@@ -1340,6 +1374,14 @@ async def chat(
                                 "output_tokens": getattr(um, "output_tokens", 0) or (um.get("output_tokens", 0) if isinstance(um, dict) else 0),
                                 "total_tokens": getattr(um, "total_tokens", 0) or (um.get("total_tokens", 0) if isinstance(um, dict) else 0),
                             }
+                        elif output_msg and hasattr(output_msg, "response_metadata"):
+                            tu = (output_msg.response_metadata or {}).get("token_usage") or {}
+                            if tu:
+                                usage = {
+                                    "input_tokens": tu.get("prompt_tokens", 0),
+                                    "output_tokens": tu.get("completion_tokens", 0),
+                                    "total_tokens": tu.get("total_tokens", 0),
+                                }
 
                         # Detect tool calls
                         tool_calls_list = []
@@ -1366,11 +1408,6 @@ async def chat(
                         # Langfuse generation span
                         tracing.end_generation(run_id, output_msg, usage, tool_calls_list or None)
 
-                        print(
-                            f"[LLM] node={call['node']}  model={call['model']}  "
-                            f"time={elapsed:.2f}s  tokens={usage.get('total_tokens', '?')}  "
-                            f"session={request.session_id}"
-                        )
 
                 # Stream tokens from final-response nodes only
                 elif event_type == "on_chat_model_stream":
@@ -1393,7 +1430,6 @@ async def chat(
 
         except Exception as exc:
             error_msg = str(exc)
-            print(f"[stream] error: {exc}")
             yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
         finally:
             # Stop renewing and free the slot the moment generation ends.
@@ -1437,38 +1473,39 @@ async def chat(
         tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
 
         # PostgreSQL: insert request log + LLM call logs
-        try:
-            db = SessionLocal()
-            primary_model = completed_calls[-1]["model"] if completed_calls else None
-            req_log = AiRequestLog(
-                session_id=request.session_id,
-                user_email=user_email,
-                user_message=request.message,
-                domain=routed_domain,
-                sub_intent=routed_sub_intent,
-                response_text=final_message[:2000] if final_message else None,
-                response_length=len(final_message) if final_message else 0,
-                total_latency_ms=latency_ms,
-                llm_call_count=len(completed_calls),
-                total_prompt_tokens=sum(c.get("prompt_tokens") or 0 for c in completed_calls),
-                total_completion_tokens=sum(c.get("completion_tokens") or 0 for c in completed_calls),
-                total_tokens=sum(c.get("total_tokens") or 0 for c in completed_calls),
-                model_name=primary_model,
-                error=error_msg,
-                langfuse_trace_id=tracing.trace_id,
-            )
-            db.add(req_log)
-            db.flush()
-            for call_data in completed_calls:
-                db.add(AiLlmCallLog(request_id=req_log.id, **call_data))
-            db.commit()
-        except Exception as log_err:
-            print(f"[observability] DB insert error: {log_err}")
-        finally:
+        if not request.is_private:
             try:
-                db.close()
-            except Exception:
+                db = SessionLocal()
+                primary_model = completed_calls[-1]["model"] if completed_calls else None
+                req_log = AiRequestLog(
+                    session_id=request.session_id,
+                    user_email=user_email,
+                    user_message=request.message,
+                    domain=routed_domain,
+                    sub_intent=routed_sub_intent,
+                    response_text=final_message[:2000] if final_message else None,
+                    response_length=len(final_message) if final_message else 0,
+                    total_latency_ms=latency_ms,
+                    llm_call_count=len(completed_calls),
+                    total_prompt_tokens=sum(c.get("prompt_tokens") or 0 for c in completed_calls),
+                    total_completion_tokens=sum(c.get("completion_tokens") or 0 for c in completed_calls),
+                    total_tokens=sum(c.get("total_tokens") or 0 for c in completed_calls),
+                    model_name=primary_model,
+                    error=error_msg,
+                    langfuse_trace_id=tracing.trace_id,
+                )
+                db.add(req_log)
+                db.flush()
+                for call_data in completed_calls:
+                    db.add(AiLlmCallLog(request_id=req_log.id, **call_data))
+                db.commit()
+            except Exception as log_err:
                 pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
         # ── Store informational answers in the semantic cache (store-side safety gate) ──
         # Only plain, stable, text-only answers are cached. Anything with a widget, download,
@@ -1477,6 +1514,7 @@ async def chat(
         try:
             if (
                 settings.ANSWER_CACHE_ENABLED
+                and not request.is_private
                 and not error_msg
                 and routed_domain in _CACHEABLE_DOMAINS
                 and (routed_sub_intent or "") not in _NON_CACHEABLE_SUBINTENTS
@@ -1498,7 +1536,7 @@ async def chat(
                     None,   # source_keys: domain-level invalidation handles freshness
                 )
         except Exception as _se:
-            print(f"[AnswerCache] store error: {_se}")
+            pass
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
 
@@ -1594,7 +1632,6 @@ async def get_suggestions(request: SuggestionsRequest):
         ]
         return {"suggestions": suggestions}
     except Exception as e:
-        print(f"[suggestions] error: {e}")
         return {"suggestions": []}
 
 @app.get("/api/admin/stats")
@@ -1889,9 +1926,72 @@ async def get_leaves(user: CurrentUser = Depends(get_current_user)):
         if not emp:
             return []
         return [
-            {"id": l.id, "leave_type": l.leave_type, "status": l.status}
-            for l in db.query(Leave).filter(Leave.employee_id == emp.id).all()
+            {
+                "id": l.id,
+                "leave_type": l.leave_type,
+                "status": l.status,
+                "start_date": str(l.start_date) if l.start_date else None,
+                "end_date": str(l.end_date) if l.end_date else None,
+                "reason": l.reason or "",
+                "days": ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else 1,
+            }
+            for l in db.query(Leave).filter(Leave.employee_id == emp.id).order_by(Leave.created_at.desc()).all()
         ]
+    finally:
+        db.close()
+
+
+@app.post("/api/leave/{leave_id}/cancel")
+async def cancel_leave(leave_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Cancel a leave. Restores balance if the leave was Approved."""
+    db = SessionLocal()
+    try:
+        from app.models import Employee
+        emp = HRService.get_employee_by_email(db, user.email)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found.")
+
+        leave = db.query(Leave).filter(Leave.id == leave_id).first()
+        if not leave:
+            raise HTTPException(status_code=404, detail="Leave not found.")
+
+        # Only the owner can cancel their own leave
+        if leave.employee_id != emp.id:
+            raise HTTPException(status_code=403, detail="Not authorised to cancel this leave.")
+
+        if leave.status in ("Cancelled", "Rejected"):
+            raise HTTPException(status_code=400, detail=f"Leave is already {leave.status}.")
+
+        was_approved = leave.status == "Approved"
+        leave.status = "Cancelled"
+
+        if was_approved and leave.start_date and leave.end_date:
+            try:
+                days = (leave.end_date - leave.start_date).days + 1
+                HRService.restore_leave_balance(db, leave.employee_id, leave.leave_type, days)
+            except Exception as e:
+                pass
+
+        db.commit()
+
+        # Notify manager about the cancellation
+        try:
+            from app.services.email_service import send_leave_cancellation_notification
+            send_leave_cancellation_notification(
+                user_email=user.email,
+                employee_name=emp.name,
+                employee_email=emp.email,
+                leave_type=leave.leave_type,
+                start_date=str(leave.start_date),
+                end_date=str(leave.end_date),
+                was_approved=was_approved,
+                manager_email=HRService._find_manager_email(db, emp),
+            )
+        except Exception as e:
+            pass
+
+        balance_note = " Your leave balance has been restored." if was_approved else ""
+        return {"message": f"Leave cancelled.{balance_note}", "was_approved": was_approved}
     finally:
         db.close()
 
@@ -1945,6 +2045,30 @@ async def submit_dynamic_form(req: FormSubmitRequest,
     if res.get("status") != "ok":
         raise HTTPException(status_code=400, detail=res.get("message", "Submission failed."))
     return {"message": res["message"], "reference_id": res["reference_id"]}
+
+
+@app.post("/api/forms/upload-image")
+async def upload_form_image(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Upload an image file for a form submission. Returns the URL."""
+    import uuid
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, GIF, or WebP images are allowed.")
+    ext = os.path.splitext(file.filename or "image")[1].lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+        ext = ".jpg"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    forms_dir = os.path.join(_uploads_dir, "forms")
+    os.makedirs(forms_dir, exist_ok=True)
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be under 10 MB.")
+    with open(os.path.join(forms_dir, filename), "wb") as fh:
+        fh.write(content)
+    return {"url": f"/uploads/forms/{filename}"}
 
 
 @app.get("/api/forms/list")
@@ -2012,7 +2136,7 @@ async def delete_chat(thread_id: str):
             if keys:
                 await client.delete(*keys)
     except Exception as e:
-        print(f"[delete_chat] cleanup skipped: {e}")
+        pass
     return {"status": "deleted", "thread_id": thread_id}
 
 

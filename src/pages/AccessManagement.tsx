@@ -40,6 +40,7 @@ const ASSIGNABLE_ROLES = [
   { value: "pmo", label: "PMO", color: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400" },
   { value: "admin", label: "Admin", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400" },
   { value: "functional manager", label: "Functional Manager", color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400" },
+  { value: "super admin", label: "Super Admin", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
 ];
 
 interface ScopeAction { id: string; label: string; description: string; }
@@ -72,7 +73,7 @@ const ROLE_SCOPES: Record<string, ScopeGroup[]> = {
       actions: [{ id: "manage", label: "Manage", description: "Assign and revoke roles (delegated)" }] },
   ],
   hr: [
-    { id: "leave_management",    label: "HR Leave Portal",         description: "Employee leave requests and approvals",
+    { id: "leave_management",    label: "HR Portal",         description: "Employee leave requests and approvals",
       actions: [{ id: "read", label: "View", description: "View leave requests and balances" }, { id: "approve", label: "Approve", description: "Approve or reject leave requests" }] },
     { id: "document_generation", label: "Document Generation",     description: "NOC, experience letters, and other HR documents",
       actions: [{ id: "read", label: "View", description: "View generated documents" }, { id: "generate", label: "Generate", description: "Create and release new documents" }] },
@@ -116,6 +117,7 @@ const ROLE_SCOPES: Record<string, ScopeGroup[]> = {
       actions: [{ id: "read", label: "View", description: "View automations" }, { id: "manage", label: "Manage", description: "Create and trigger automations" }] },
   ],
   employee: [],
+  "super admin": [], // full platform access — no scope granularity
 };
 
 function roleBadgeColor(role: string | null) {
@@ -396,6 +398,14 @@ export function AccessManagement() {
                   <p className="text-xs text-muted-foreground">
                     Setting to Employee overrides any Azure AD role and grants default access only.
                   </p>
+                )}
+                {editRole === "super admin" && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+                    <Shield className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      <span className="font-semibold">Highest privilege.</span> Super Admin can manage all roles, access all portals, and change LLM controls. Assign only to trusted administrators.
+                    </p>
+                  </div>
                 )}
               </div>
 

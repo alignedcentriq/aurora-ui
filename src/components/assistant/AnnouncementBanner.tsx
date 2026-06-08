@@ -4,7 +4,13 @@ import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/lib/auth-store";
 import { motion, AnimatePresence } from "framer-motion";
-import { flyBanner } from "@/lib/fly-banner";
+import { flyBanner, subscribeFlyBanner } from "@/lib/fly-banner";
+import { useSettings } from "@/lib/settings-store";
+import { getBuddyGender } from "@/components/assistant/GreetingBot";
+import { speakNotification } from "@/lib/speech";
+import { openFormById } from "@/lib/form-trigger";
+
+interface ImageAction { type: "url" | "form" | "app"; value: string; label: string }
 
 interface Announcement {
   id: number;
@@ -15,6 +21,7 @@ interface Announcement {
   target_audience: string;
   is_active: boolean;
   image_url: string | null;
+  image_action: ImageAction | null;
   expires_at: string | null;
   created_at: string;
 }
@@ -60,9 +67,11 @@ const DOMAIN_MANAGER_ROLES = new Set(["HR", "IT", "PMO", "Admin"]);
 
 export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar" | "topbar" }) {
   const { user } = useAuth();
+  const { buddyGender } = useSettings();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<number[]>(getDismissed);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [recallTarget, setRecallTarget] = useState<number | null>(null);
 
   const isDomainManager = user ? DOMAIN_MANAGER_ROLES.has(user.role) : false;
 
@@ -101,7 +110,35 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
       .catch(() => {});
   };
 
-  useEffect(() => { loadAnnouncements(); }, [user?.role, user?.email]);
+  useEffect(() => {
+    loadAnnouncements();
+    const interval = setInterval(loadAnnouncements, 10000);
+    return () => clearInterval(interval);
+  }, [user?.role, user?.email]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeFlyBanner((item) => {
+      const text = item.message.toLowerCase();
+      const resolvedGender = getBuddyGender(user?.name, buddyGender);
+      if (
+        text.includes("approved") ||
+        text.includes("released") ||
+        text.includes("issued") ||
+        text.includes("settled")
+      ) {
+        speakNotification("Your request is approved", resolvedGender);
+      } else if (
+        text.includes("request") ||
+        text.includes("ticket") ||
+        text.includes("submitted") ||
+        text.includes("added") ||
+        text.includes("new")
+      ) {
+        speakNotification("You got a new request", resolvedGender);
+      }
+    });
+    return unsubscribe;
+  }, [user?.name, buddyGender]);
 
   const dismiss = (id: number) => {
     const updated = [...dismissed, id];
@@ -109,10 +146,39 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
     saveDismissed(updated);
   };
 
-  const deleteAnnouncement = (id: number) => {
-    fetch(`/api/announcements/${id}`, { method: "DELETE", headers: authHeaders })
-      .then(() => loadAnnouncements())
+  const deleteAnnouncement = (id: number, recall: boolean) => {
+    fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers: authHeaders })
+      .then(() => { setRecallTarget(null); loadAnnouncements(); })
       .catch(() => {});
+  };
+
+  const handleImageAction = async (a: Announcement) => {
+    const action = a.image_action;
+    if (!action) return;
+    if (action.type === "url" || action.type === "app") {
+      window.open(action.value, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (action.type === "form") {
+      const formId = Number(action.value);
+      const authH = { "x-user-email": user?.email || "", "x-user-role": (user?.role || "employee").toLowerCase() };
+      try {
+        const data: { id: number; name: string; description: string; fields: object[] }[] =
+          await fetch("/api/forms/list", { headers: authH }).then((r) => r.json());
+        const form = data.find((f) => f.id === formId);
+        if (form) {
+          openFormById({
+            formId: form.id,
+            name: form.name,
+            description: form.description,
+            fields: form.fields,
+            submitEndpoint: "/api/forms/submit",
+          });
+        }
+      } catch {
+        // silently ignore
+      }
+    }
   };
 
   const visible = announcements.filter((a) => !dismissed.includes(a.id));
@@ -187,7 +253,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
                         </button>
                         {isDomainManager ? (
                           <button
-                            onClick={() => deleteAnnouncement(a.id)}
+                            onClick={() => setRecallTarget(a.id)}
                             className="flex h-6 w-6 items-center justify-center rounded text-white/40 hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
                             title="Delete for everyone"
                           >
@@ -223,7 +289,11 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
                               <img
                                 src={a.image_url}
                                 alt="Announcement"
-                                className="w-full rounded-lg object-cover max-h-36"
+                                onClick={a.image_action ? () => handleImageAction(a) : undefined}
+                                className={cn(
+                                  "w-full rounded-lg object-cover max-h-36",
+                                  a.image_action && "cursor-pointer hover:opacity-90 transition-opacity"
+                                )}
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                               />
                             )}
@@ -240,6 +310,36 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
             </AnimatePresence>
           )}
         </div>
+
+        {/* Recall confirm */}
+        {recallTarget !== null && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[#0c1222]/90 backdrop-blur-sm p-4">
+            <div className="w-full space-y-3">
+              <p className="text-[14px] font-semibold text-white">Delete Announcement</p>
+              <p className="text-[12px] text-white/60">Also recall the email sent to recipients?</p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => deleteAnnouncement(recallTarget, true)}
+                  className="w-full rounded-xl bg-rose-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-rose-700 transition-colors"
+                >
+                  Delete &amp; Recall Email
+                </button>
+                <button
+                  onClick={() => deleteAnnouncement(recallTarget, false)}
+                  className="w-full rounded-xl border border-white/[0.1] px-3 py-2 text-[12px] font-medium text-white/70 hover:bg-white/[0.06] transition-colors"
+                >
+                  Delete Only
+                </button>
+                <button
+                  onClick={() => setRecallTarget(null)}
+                  className="w-full rounded-xl px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );

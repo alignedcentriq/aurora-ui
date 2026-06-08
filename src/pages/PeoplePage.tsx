@@ -21,11 +21,14 @@ import {
   FolderOpen,
   Languages,
   BadgeInfo,
+  Trophy,
+  Building2,
+  ZoomIn,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-const SEARCH_ROLES = new Set(["HR", "PMO", "Admin", "Functional Manager"]);
+const SEARCH_ROLES = new Set(["HR", "PMO", "Admin", "Functional Manager", "Super Admin"]);
 
 interface Project {
   project: string;
@@ -39,6 +42,17 @@ interface Project {
   project_lead: string | null;
   project_type: string | null;
   billing: string | null;
+}
+
+interface Appreciation {
+  id: number;
+  title: string;
+  description: string | null;
+  client_name: string | null;
+  has_screenshot: boolean;
+  added_by_name: string | null;
+  added_by_email: string;
+  created_at: string | null;
 }
 
 interface Person {
@@ -63,6 +77,7 @@ interface Person {
   reporting_manager: string | null;
   functional_manager: string | null;
   status: string | null;
+  appreciation_count: number;
   projects: Project[];
 }
 
@@ -95,6 +110,9 @@ function SectionLabel({ icon: Icon, label }: { icon: React.ElementType; label: s
 
 function PersonCard({ person }: { person: Person }) {
   const [expanded, setExpanded] = useState(false);
+  const [appreciations, setAppreciations] = useState<Appreciation[] | null>(null);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
   const primarySkills = (person.primary_skills || person.skills)?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
   const secondarySkills = (person.secondary_skills || person.expertise)?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
   const canTeach = (person.can_teach || person.expertise)?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
@@ -103,6 +121,15 @@ function PersonCard({ person }: { person: Person }) {
     (p) => p.status && ["active", "in progress"].some(k => p.status!.toLowerCase().includes(k))
   );
   const recentProject = person.projects[0];
+
+  useEffect(() => {
+    if (expanded && appreciations === null && person.email) {
+      fetch(`/api/appreciations/employee/${encodeURIComponent(person.email)}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(setAppreciations)
+        .catch(() => setAppreciations([]));
+    }
+  }, [expanded, person.email, appreciations]);
 
   return (
     <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card overflow-hidden transition-all hover:shadow-md hover:border-[#00a29a]/20 dark:hover:border-primary/20">
@@ -127,11 +154,18 @@ function PersonCard({ person }: { person: Person }) {
                 <p className="text-[15px] font-bold text-[#0f172a] dark:text-white leading-tight">{person.name}</p>
                 <p className="text-[13px] text-[#00a29a] dark:text-primary/70 font-semibold mt-0.5">{person.designation || "—"}</p>
               </div>
-              {(person.level || person.grade) && (
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20 shrink-0">
-                  {[person.level, person.grade].filter(Boolean).join(" · ")}
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {person.appreciation_count > 0 && (
+                  <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    <Trophy className="h-3 w-3" />{person.appreciation_count}
+                  </span>
+                )}
+                {(person.level || person.grade) && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                    {[person.level, person.grade].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#64748b] dark:text-white/50">
@@ -301,6 +335,73 @@ function PersonCard({ person }: { person: Person }) {
               </div>
             </div>
           )}
+
+          {/* Appreciations */}
+          {appreciations !== null && appreciations.length > 0 && (
+            <div>
+              <SectionLabel icon={Trophy} label={`Client Appreciations (${appreciations.length})`} />
+              <div className="space-y-2">
+                {appreciations.map((a) => (
+                  <div key={a.id} className="rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5 px-4 py-3 text-[12px]">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-foreground">{a.title}</p>
+                          {a.client_name && (
+                            <span className="flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5">
+                              <Building2 className="h-2.5 w-2.5" />{a.client_name}
+                            </span>
+                          )}
+                        </div>
+                        {a.description && (
+                          <p className="mt-1 text-muted-foreground leading-relaxed">{a.description}</p>
+                        )}
+                        <p className="mt-1.5 text-muted-foreground/50">
+                          Added by {a.added_by_name || a.added_by_email}
+                          {a.created_at && ` · ${new Date(a.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`}
+                        </p>
+                      </div>
+                      {a.has_screenshot && (
+                        <button
+                          onClick={() => setLightboxSrc(`/api/appreciations/${a.id}/screenshot`)}
+                          className="shrink-0 rounded-lg overflow-hidden border border-amber-200 dark:border-amber-500/30 hover:border-amber-400 transition-colors group relative"
+                          title="View screenshot"
+                        >
+                          <img
+                            src={`/api/appreciations/${a.id}/screenshot`}
+                            alt="Appreciation screenshot"
+                            className="h-14 w-20 object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                            <ZoomIn className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {appreciations !== null && appreciations.length === 0 && person.appreciation_count === 0 && null}
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] p-4">
+            <img src={lightboxSrc} alt="Appreciation screenshot" className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain" />
+            <button
+              onClick={() => setLightboxSrc(null)}
+              className="absolute top-2 right-2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -375,7 +476,7 @@ export function PeoplePage() {
         <div className="text-center">
           <Shield className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">People search is available for HR, PMO, Admin, and Manager roles.</p>
+          <p className="text-sm text-muted-foreground mt-1">People search is available for HR, PMO, Admin, Functional Manager, and Super Admin roles.</p>
         </div>
       </div>
     );

@@ -23,11 +23,9 @@ import {
   ThumbsDown,
   Megaphone,
   Clock,
-  Mail,
   X,
   Trash2,
   Sparkles,
-  Image,
 } from "lucide-react";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
@@ -87,10 +85,6 @@ function promptLabel(key: string) {
 function promptDescription(key: string) {
   return KNOWN_PROMPT_METADATA[key]?.description ?? "";
 }
-
-const ANNOUNCEMENT_CATEGORIES = [
-  "General", "Policy Update", "Holiday", "Events", "Hiring", "Training", "IT Alert",
-];
 
 const DOMAIN_ANNOUNCEMENT_CATEGORY: Record<string, string> = {
   hr: "Policy Update",
@@ -152,15 +146,16 @@ export function ConfigPage() {
   const [annBody, setAnnBody] = useState("");
   const [annCategory, setAnnCategory] = useState(DOMAIN_ANNOUNCEMENT_CATEGORY[activeDomain] ?? "General");
   const [annExpires, setAnnExpires] = useState("");
-  const [annImageUrl, setAnnImageUrl] = useState("");
+  const [annAudienceRole, setAnnAudienceRole] = useState("all");
   const [suggesting, setSuggesting] = useState(false);
-  const [sendEmail, setSendEmail] = useState(false);
-  const [emailTo, setEmailTo] = useState("all-staff@company.com");
+  const [recipientInput, setRecipientInput] = useState("");
+  const [recipientTags, setRecipientTags] = useState<string[]>([]);
   const [submittingAnn, setSubmittingAnn] = useState(false);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [editingAnn, setEditingAnn] = useState<any | null>(null);
   const [editFields, setEditFields] = useState({ title: "", body: "", category: "" });
   const [savingEdit, setSavingEdit] = useState(false);
+  const [recallTarget, setRecallTarget] = useState<number | null>(null);
 
 
   const headers = {
@@ -436,6 +431,12 @@ export function ConfigPage() {
     }
   };
 
+  const addRecipientTag = () => {
+    const email = recipientInput.trim();
+    if (email && !recipientTags.includes(email)) setRecipientTags((t) => [...t, email]);
+    setRecipientInput("");
+  };
+
   const handleCreateAnnouncement = async () => {
     if (!annTitle.trim() || !annBody.trim()) {
       toast.error("Title and body are required");
@@ -443,6 +444,9 @@ export function ConfigPage() {
     }
     setSubmittingAnn(true);
     try {
+      const emailRecipients = recipientTags.length > 0
+        ? recipientTags
+        : null;
       const res = await fetch("/api/announcements", {
         method: "POST",
         headers,
@@ -451,8 +455,9 @@ export function ConfigPage() {
           body: annBody,
           category: annCategory,
           created_by_domain: ROLE_TO_DOMAIN[role] ?? activeDomain,
+          target_audience: annAudienceRole,
           expires_days: annExpires ? parseInt(annExpires) : null,
-          image_url: annImageUrl.trim() || null,
+          email_recipients: emailRecipients,
         }),
       });
       const data = await res.json();
@@ -460,8 +465,8 @@ export function ConfigPage() {
       toast.success("Announcement published — all users will be notified.");
       setAnnTitle("");
       setAnnBody("");
-      setAnnImageUrl("");
-      setSendEmail(false);
+      setAnnAudienceRole("all");
+      setRecipientTags([]);
       fetchAnnouncements();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to publish");
@@ -496,11 +501,12 @@ export function ConfigPage() {
     }
   };
 
-  const handleDeactivateAnnouncement = async (id: number) => {
+  const handleDeactivateAnnouncement = async (id: number, recall: boolean) => {
     try {
-      const res = await fetch(`/api/announcements/${id}`, { method: "DELETE", headers });
+      const res = await fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers });
       if (!res.ok) throw new Error("Failed");
-      toast.success("Announcement removed");
+      toast.success(recall ? "Announcement removed and recall email sent" : "Announcement removed");
+      setRecallTarget(null);
       fetchAnnouncements();
     } catch {
       toast.error("Failed to remove announcement");
@@ -1278,38 +1284,16 @@ export function ConfigPage() {
                     </button>
                   </div>
 
-                  {/* Image URL */}
-                  <div className="flex items-center gap-2">
-                    <Image className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <input
-                      type="url"
-                      value={annImageUrl}
-                      onChange={(e) => setAnnImageUrl(e.target.value)}
-                      placeholder="Image URL (optional) — paste a link to an image"
-                      className="flex-1 rounded-xl border border-[var(--border)] bg-background px-4 py-2 text-[13px] text-foreground outline-none focus:border-primary/50"
-                    />
-                  </div>
-                  {annImageUrl.trim() && (
-                    <img
-                      src={annImageUrl.trim()}
-                      alt="Preview"
-                      className="h-28 w-auto rounded-xl object-cover border border-[var(--border)]"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
-                  )}
-
                   <div className="flex gap-3">
                     <div className="flex-1 space-y-1">
                       <label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Category</label>
-                      <select
+                      <input
+                        type="text"
                         value={annCategory}
                         onChange={(e) => setAnnCategory(e.target.value)}
-                        className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none"
-                      >
-                        {ANNOUNCEMENT_CATEGORIES.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
+                        placeholder="e.g. General, Holiday, IT Alert"
+                        className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50"
+                      />
                     </div>
                     <div className="w-36 space-y-1">
                       <label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Expires (days)</label>
@@ -1324,49 +1308,52 @@ export function ConfigPage() {
                     </div>
                   </div>
 
-                  {/* Email toggle */}
-                  <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-background px-4 py-3">
-                    <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-[13px] font-medium text-foreground">Also send email to all staff</p>
-                      <p className="text-[11px] text-muted-foreground">Sends the same content as an email notification</p>
+                  {/* Audience */}
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Send to</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: "All Staff", value: "all" },
+                        { label: "HR", value: "hr" },
+                        { label: "IT", value: "it" },
+                        { label: "Admin", value: "admin" },
+                        { label: "PMO", value: "pmo" },
+                        { label: "Manager", value: "functional_manager" },
+                        { label: "Employee", value: "employee" },
+                      ].map((r) => (
+                        <button
+                          key={r.value}
+                          type="button"
+                          onClick={() => setAnnAudienceRole(r.value)}
+                          className={cn(
+                            "rounded-full px-3 py-1 text-[12px] font-medium border transition-colors",
+                            annAudienceRole === r.value
+                              ? "bg-primary text-white border-transparent"
+                              : "border-[var(--border)] text-muted-foreground hover:border-primary/40"
+                          )}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
                     </div>
-                    <button
-                      onClick={() => setSendEmail((v) => !v)}
-                      className={cn(
-                        "relative h-5 w-9 rounded-full transition-colors",
-                        sendEmail ? "bg-primary" : "bg-muted-foreground/30",
-                      )}
-                    >
-                      <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform", sendEmail ? "translate-x-4" : "translate-x-0.5")} />
-                    </button>
+                    <div className="flex flex-wrap gap-1.5 items-center min-h-[32px]">
+                      {recipientTags.map((t) => (
+                        <span key={t} className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[12px] text-foreground">
+                          {t}
+                          <button onClick={() => setRecipientTags((p) => p.filter((x) => x !== t))} className="text-muted-foreground hover:text-rose-500">×</button>
+                        </span>
+                      ))}
+                      <input
+                        type="email"
+                        placeholder="Add specific email recipient..."
+                        value={recipientInput}
+                        onChange={(e) => setRecipientInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientTag(); } }}
+                        onBlur={addRecipientTag}
+                        className="flex-1 min-w-[200px] rounded-xl border border-[var(--border)] bg-background px-3 py-1.5 text-[12px] text-foreground outline-none focus:border-primary/50"
+                      />
+                    </div>
                   </div>
-
-                  {sendEmail && (
-                    <div className="rounded-xl border border-[var(--border)] bg-background px-4 py-4 space-y-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">Email preview</p>
-                      <div className="space-y-1">
-                        <p className="text-[12px] text-muted-foreground">To:</p>
-                        <input
-                          value={emailTo}
-                          onChange={(e) => setEmailTo(e.target.value)}
-                          className="w-full rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[13px] text-foreground outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[12px] text-muted-foreground">Subject:</p>
-                        <p className="text-[13px] text-foreground/80 border border-[var(--border)] rounded-lg px-3 py-1.5 bg-card">
-                          {annTitle || "(announcement title)"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[12px] text-muted-foreground">Body:</p>
-                        <p className="text-[13px] text-foreground/70 border border-[var(--border)] rounded-lg px-3 py-2 bg-card whitespace-pre-wrap">
-                          {annBody || "(announcement body)"}
-                        </p>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex justify-end">
@@ -1392,7 +1379,7 @@ export function ConfigPage() {
                         key={a.id}
                         ann={a}
                         onEdit={() => openEdit(a)}
-                        onRemove={() => handleDeactivateAnnouncement(a.id)}
+                        onRemove={() => setRecallTarget(a.id)}
                       />
                     ))}
                 </div>
@@ -1417,13 +1404,13 @@ export function ConfigPage() {
                       rows={6}
                       className="w-full resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[13px] text-foreground outline-none focus:border-primary/50"
                     />
-                    <select
+                    <input
+                      type="text"
                       value={editFields.category}
                       onChange={(e) => setEditFields((p) => ({ ...p, category: e.target.value }))}
-                      className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none"
-                    >
-                      {ANNOUNCEMENT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                      placeholder="e.g. General, Holiday, IT Alert"
+                      className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-primary/50"
+                    />
                   </div>
                   <DialogFooter className="gap-2">
                     <Button variant="outline" onClick={() => setEditingAnn(null)}>Cancel</Button>
@@ -1438,6 +1425,38 @@ export function ConfigPage() {
           )}
         </main>
       </div>
+
+      {/* Recall confirm dialog */}
+      {recallTarget !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-[var(--border)] bg-card p-6 shadow-2xl space-y-4">
+            <p className="text-[15px] font-bold text-foreground">Delete Announcement</p>
+            <p className="text-[13px] text-muted-foreground">
+              Do you also want to recall the email sent to recipients? A retraction notice will be sent.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => handleDeactivateAnnouncement(recallTarget, true)}
+                className="w-full rounded-xl bg-rose-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-rose-700 transition-colors"
+              >
+                Delete &amp; Recall Email
+              </button>
+              <button
+                onClick={() => handleDeactivateAnnouncement(recallTarget, false)}
+                className="w-full rounded-xl border border-[var(--border)] px-4 py-2.5 text-[13px] font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                Delete Only
+              </button>
+              <button
+                onClick={() => setRecallTarget(null)}
+                className="w-full rounded-xl px-4 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

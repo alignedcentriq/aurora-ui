@@ -180,6 +180,22 @@ _RAW: list[tuple[str, str, str]] = [
     ("key for desk B-07", "admin", "desk_key_request"),
     ("I need a desk key", "admin", "desk_key_request"),
 
+    # ── admin: office supplies ───────────────────────────────────────────────────
+    ("I need pens", "admin", "office_supply_request"),
+    ("need markers for the whiteboard", "admin", "office_supply_request"),
+    ("I want a notebook", "admin", "office_supply_request"),
+    ("can I get stationery", "admin", "office_supply_request"),
+    ("need some sticky notes", "admin", "office_supply_request"),
+    ("request highlighters and folders", "admin", "office_supply_request"),
+
+    # ── admin: cabin directory ───────────────────────────────────────────────────
+    ("where is HR seated", "admin", "cabin_info"),
+    ("which cabin is the Admin team in", "admin", "cabin_info"),
+    ("where can I find IT support", "admin", "cabin_info"),
+    ("PMO cabin location", "admin", "cabin_info"),
+    ("HR room number", "admin", "cabin_info"),
+    ("where to find the HR department", "admin", "cabin_info"),
+
     # ── admin: visitor pass  (TRAP: not a software install) ──────────────────────
     ("register a visitor coming to meet me", "admin", "visitor_pass"),
     ("I need a guest pass for tomorrow", "admin", "visitor_pass"),
@@ -199,6 +215,22 @@ _RAW: list[tuple[str, str, str]] = [
     ("I finished reading Clean Code", "admin", "bookshelf.return"),
     ("extend my borrow for 7 more days", "admin", "bookshelf.extend"),
     ("renew Atomic Habits, I need more time", "admin", "bookshelf.extend"),
+
+    # ── admin: travel management ──────────────────────────────────────────────────
+    ("I need to travel for a client meeting", "admin", "travel_request"),
+    ("submit a business travel request", "admin", "travel_request"),
+    ("apply for official travel", "admin", "travel_request"),
+    ("I have to go to Mumbai for a project", "admin", "travel_request"),
+    ("business trip to London, need visa too", "admin", "travel_request"),
+    ("request approval for a work trip", "admin", "travel_request"),
+    ("I'm travelling internationally for work", "admin", "travel_request"),
+    ("check my travel request status", "admin", "travel_status"),
+    ("show my pending travel approvals", "admin", "travel_status"),
+    ("what is the status of my travel request", "admin", "travel_status"),
+    ("submit my post-trip expenses", "admin", "travel_expense"),
+    ("I'm back from the trip, file expenses", "admin", "travel_expense"),
+    ("claim travel expense for my trip", "admin", "travel_expense"),
+    ("raise expense claim for TRVL-0001", "admin", "travel_expense"),
 
     # ── it_support: software install  (the canonical install verbs) ─────────────
     ("install Node.js", "it_support", "software_install"),
@@ -249,6 +281,14 @@ _RAW: list[tuple[str, str, str]] = [
     ("request a Claude license", "it_support", "license_request"),
     ("request a monitor for my desk", "it_support", "asset_request"),
     ("I need a new keyboard and mouse", "it_support", "asset_request"),
+    ("I want headphones", "it_support", "asset_request"),
+    ("need a headset for work", "it_support", "asset_request"),
+    ("can I get a mouse", "it_support", "asset_request"),
+    ("I need an ethernet cable", "it_support", "asset_request"),
+    ("request a USB hub", "it_support", "asset_request"),
+    ("I want a webcam", "it_support", "asset_request"),
+    ("I need a docking station", "it_support", "asset_request"),
+    ("request an external monitor", "it_support", "asset_request"),
 
     # ── pmo ────────────────────────────────────────────────────────────────────
     ("show all company projects", "pmo", "list_projects"),

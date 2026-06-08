@@ -4,6 +4,14 @@ import { Check, X, Loader2, RefreshCw, GraduationCap, ClipboardList, Send, Power
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 type Tab = "udemy" | "project-update";
 
@@ -89,6 +97,10 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [acting, setActing] = useState<number | null>(null);
   const [filter, setFilter] = useState("Pending");
 
+  const [rejectId, setRejectId] = useState<number | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
@@ -112,9 +124,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     finally { setActing(null); }
   };
 
-  const reject = async (id: number) => {
-    const reason = window.prompt("Reason for declining (shown to the employee):")?.trim();
-    if (!reason) return;
+  const reject = async (id: number, reason: string) => {
     setActing(id);
     try {
       const res = await fetch(`/api/portal/pmo/udemy/${id}/reject`, {
@@ -122,6 +132,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
       toast.success("Request declined");
+      setRejectDialogOpen(false);
       fetch_();
     } catch (e: unknown) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setActing(null); }
@@ -190,7 +201,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                         {acting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                         Approve
                       </button>
-                      <button onClick={() => reject(r.id)} disabled={acting === r.id}
+                      <button onClick={() => { setRejectId(r.id); setRejectReason(""); setRejectDialogOpen(true); }} disabled={acting === r.id}
                         className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50">
                         <X className="h-3 w-3" />
                         Decline
@@ -203,6 +214,43 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           </tbody>
         </table>
       )}
+
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Decline Course License Request</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="text-xs font-medium text-muted-foreground block">
+              Reason for declining (shown to the employee) *
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={3}
+                placeholder="Enter reason..."
+                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </label>
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setRejectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!rejectReason.trim() || acting === rejectId}
+              onClick={() => {
+                if (rejectId) {
+                  reject(rejectId, rejectReason.trim());
+                }
+              }}
+            >
+              {acting === rejectId && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Decline Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

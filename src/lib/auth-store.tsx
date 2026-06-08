@@ -70,10 +70,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const msalRole = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
           const email = account.username;
 
-          console.log("✅ MSAL Authentication Successful!");
-          console.log("👤 User Account Details:", account);
-          console.log("🔑 ID Token Claims:", idTokenClaims);
-
           // Verify the user is on the backend allowlist before granting access.
           try {
             const res = await fetch("/api/me", {
@@ -106,13 +102,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Fall through with MSAL role
           }
 
+          const cachedAvatar = localStorage.getItem(`avatar_${email}`) || undefined;
           setUser((prev) => ({
             id: account.localAccountId,
             name: account.name || account.username || "User",
             email,
             role: effectiveRole,
             scopes,
-            avatarUrl: prev?.avatarUrl, // preserve photo if already fetched
+            avatarUrl: prev?.avatarUrl || cachedAvatar,
             team: [
               { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
               { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
@@ -130,7 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // navigates away — isLoading stays true (spinner shown)
             } catch (e: any) {
               if (e.name !== "BrowserAuthError" || e.errorCode !== "interaction_in_progress") {
-                console.error("Auto-login failed:", e);
+                // silent — auth failure will surface via fallback login button
               }
               setIsLoading(false); // show fallback button
             }
@@ -146,6 +143,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const fetchGraphPhoto = async () => {
       if (accounts.length > 0 && inProgress === InteractionStatus.None) {
+        const email = accounts[0].username;
         try {
           const request = {
             scopes: ["User.Read"],
@@ -161,11 +159,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (photoResponse.ok) {
             const blob = await photoResponse.blob();
-            const url = URL.createObjectURL(blob);
-            setUser((prev) => (prev ? { ...prev, avatarUrl: url } : prev));
+            // Convert to base64 for persistent caching across refreshes / restarts
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64 = reader.result as string;
+              localStorage.setItem(`avatar_${email}`, base64);
+              setUser((prev) => (prev ? { ...prev, avatarUrl: base64 } : prev));
+            };
+            reader.readAsDataURL(blob);
           }
-        } catch (error) {
-          console.warn("Could not fetch profile photo from Graph:", error);
+        } catch {
+          // photo fetch failed — avatar stays unset
         }
       }
     };
@@ -179,7 +183,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await instance.loginRedirect(loginRequest);
     } catch (e: any) {
       if (e.name !== "BrowserAuthError" || e.errorCode !== "interaction_in_progress") {
-        console.error("Login failed:", e);
+        // silent — login redirect failure
       }
     }
   };
@@ -187,11 +191,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     if (isInteracting) return;
     try {
+      if (user?.email) {
+        localStorage.removeItem(`avatar_${user.email}`);
+      }
       await instance.logoutRedirect();
       setUser(null);
     } catch (e: any) {
       if (e.name !== "BrowserAuthError" || e.errorCode !== "interaction_in_progress") {
-        console.error("Logout failed:", e);
+        // silent — logout redirect failure
       }
     }
   };

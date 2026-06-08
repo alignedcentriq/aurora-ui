@@ -83,6 +83,7 @@ class AttendanceSchedule(Base):
     day_of_week = Column(Integer, nullable=True)   # 0=Mon .. 6=Sun (weekly / custom)
     day_of_month = Column(Integer, nullable=True)  # 1..28 (monthly / custom)
     hour = Column(Integer, default=8)       # local hour of day, 0..23
+    minute = Column(Integer, default=0)     # minute of hour, 0..59
     recipients = Column(Text)               # comma-separated; empty => manager_email
     period_mode = Column(String, default="prev_period")  # prev_period | current
     active = Column(Boolean, default=True)
@@ -345,7 +346,7 @@ class SoftwareRequest(Base):
 class AssetAssignment(Base):
     __tablename__ = "asset_assignments"
     __table_args__ = {"schema": SCHEMA}
-    
+
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     asset_type = Column(String)  # Laptop, Monitor, Keyboard, Mouse, Headset
@@ -356,6 +357,18 @@ class AssetAssignment(Base):
     assigned_date = Column(Date)
     returned_date = Column(Date, nullable=True)
     status = Column(String, default="Assigned")  # Assigned, Returned
+
+
+class AssetRequest(Base):
+    """Tracks hardware/peripheral requests so duplicate requests can be blocked."""
+    __tablename__ = "asset_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), index=True)
+    asset_name = Column(String, nullable=False)          # normalised lowercase e.g. "headset"
+    status = Column(String, default="Pending", index=True)  # Pending | Fulfilled | Rejected
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 # ── Software Catalog (ManageEngine Endpoint Central packages) ─────────────────
@@ -580,6 +593,8 @@ class Announcement(Base):
     target_audience = Column(String, default="all")
     is_active = Column(Boolean, default=True)
     image_url = Column(String, nullable=True)
+    image_action = Column(JSON, nullable=True)  # {type: "url"|"form"|"app", value: str|int, label: str}
+    email_recipients = Column(JSON, nullable=True)  # explicit email addresses for the email blast
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
 
@@ -635,6 +650,72 @@ class Grievance(Base):
     resolution_notes = Column(Text, nullable=True)
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+
+
+# ── Travel Management ─────────────────────────────────────────────────────────
+
+class TravelRequest(Base):
+    __tablename__ = "travel_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    ref_id = Column(String, unique=True, index=True)          # TRVL-0001
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
+    business_reason = Column(Text, nullable=False)
+    from_location = Column(String, nullable=False)
+    to_destination = Column(String, nullable=False)
+    travel_date = Column(Date, nullable=False)
+    return_date = Column(Date, nullable=True)
+    is_international = Column(Boolean, default=False)
+    visa_required = Column(Boolean, default=False)
+    mode_of_travel = Column(String, nullable=True)             # Flight, Train, Car, Other
+    accommodation_required = Column(Boolean, default=False)
+    estimated_cost = Column(Float, nullable=True)
+    notes = Column(Text, nullable=True)
+    # Status: pending_rm → rm_approved → admin_approved → completed; or rm_rejected / admin_rejected
+    status = Column(String, default="pending_rm")
+    # RM approval (email token-based, like installation requests)
+    rm_approval_token = Column(String, nullable=True, index=True)
+    rm_token_expires_at = Column(DateTime, nullable=True)
+    rm_decision_by = Column(String, nullable=True)
+    rm_decision_at = Column(DateTime, nullable=True)
+    rm_rejection_reason = Column(Text, nullable=True)
+    # Admin action
+    admin_decision_by = Column(String, nullable=True)
+    admin_decision_at = Column(DateTime, nullable=True)
+    admin_rejection_reason = Column(Text, nullable=True)
+    expense_limit = Column(Float, nullable=True)               # per-trip limit set by admin on approval
+    ticket_details = Column(Text, nullable=True)               # flight/train booking info
+    hotel_details = Column(Text, nullable=True)                # hotel / guest-house details
+    visa_status = Column(Text, nullable=True)                  # visa processing notes
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TravelExpenseClaim(Base):
+    __tablename__ = "travel_expense_claims"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    ref_id = Column(String, unique=True, index=True)           # TEXPC-0001
+    travel_request_id = Column(Integer, ForeignKey(f"{SCHEMA}.travel_requests.id"))
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
+    amount = Column(Float, nullable=False)
+    breakdown = Column(Text, nullable=True)                    # itemised description
+    over_limit_reason = Column(Text, nullable=True)            # mandatory when amount > limit
+    status = Column(String, default="Pending")                 # Pending, Approved, Rejected
+    approved_by = Column(String, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class TravelSettings(Base):
+    """Key-value store for travel management configuration (e.g. global expense limit)."""
+    __tablename__ = "travel_settings"
+    __table_args__ = {"schema": SCHEMA}
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=True)
 
 
 class ChatFeedback(Base):
@@ -1050,6 +1131,7 @@ class FormTemplate(Base):
     enabled = Column(Boolean, default=True, index=True)      # disable to pull a form out of chat without deleting
     notify_email = Column(String, nullable=True)             # explicit recipient for new submissions
     notify_domain = Column(String, nullable=True)            # fallback recipient by domain (admin/hr/…)
+    is_anonymous = Column(Boolean, default=False)            # when True, submitter identity is NOT stored
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -1124,6 +1206,25 @@ class MS365User(Base):
     manager_email = Column(String, nullable=True)
     manager_name = Column(String, nullable=True)
     synced_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class Appreciation(Base):
+    """Client-side appreciation received by an employee, added by FM or Super Admin."""
+    __tablename__ = "appreciations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_email = Column(String, index=True, nullable=False)
+    employee_name = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    client_name = Column(String, nullable=True)
+    screenshot_data = Column(LargeBinary, nullable=True)
+    screenshot_name = Column(String, nullable=True)
+    screenshot_content_type = Column(String, nullable=True)
+    added_by_email = Column(String, nullable=False)
+    added_by_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class EmployeeSkill(Base):
@@ -1266,6 +1367,7 @@ class AutomationRule(Base):
     day_of_week = Column(Integer, nullable=True)              # 0=Mon .. 6=Sun (weekly / custom)
     day_of_month = Column(Integer, nullable=True)             # 1..28 (monthly / custom)
     hour = Column(Integer, default=9)                         # local hour of day, 0..23
+    minute = Column(Integer, default=0)                       # minute of hour, 0..59
 
     # Email
     email_subject = Column(String, nullable=False)
@@ -1274,6 +1376,9 @@ class AutomationRule(Base):
     # Recipients JSON array: [{type: "individual", email: "x@y.com", name: "..."} |
     #                          {type: "teams_group", id: "...", name: "...", emails: [...]}]
     recipients_json = Column(JSON, default=list)
+
+    # Co-owners: list of email strings; can view but not edit/delete/toggle/send-now
+    co_owners_json = Column(JSON, default=list)
 
     # State
     is_active = Column(Boolean, default=True, index=True)
@@ -1315,3 +1420,56 @@ class WelcomeLog(Base):
     acted_by = Column(String, nullable=True)
 
 
+class OnboardingRequest(Base):
+    """Client-side onboarding initiated by a Functional Manager for a team member.
+
+    Covers service-company pre-engagement steps: drug test, background verification,
+    and client-side onboarding — not all steps apply to every engagement.
+    """
+    __tablename__ = "onboarding_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_name = Column(String, nullable=False)
+    employee_email = Column(String, nullable=True)
+    # JSON: {"drug_test": bool, "background_check": bool, "client_onboarding": bool}
+    steps = Column(JSON, default=dict)
+    client_name = Column(String, nullable=True)          # required when client_onboarding = True
+    notes = Column(Text, nullable=True)
+    status = Column(String, default="Pending", index=True)  # Pending | In Progress | Completed
+    created_by = Column(String, nullable=False, index=True)  # FM email
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class PMOTeamRequest(Base):
+    """Request from a Functional Manager to PMO for VDI provisioning or revocation."""
+    __tablename__ = "pmo_team_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_type = Column(String, nullable=False, index=True)  # vdi_provision | vdi_revoke
+    employee_name = Column(String, nullable=False)
+    employee_email = Column(String, nullable=True)
+    details = Column(Text, nullable=True)
+    status = Column(String, default="Pending", index=True)  # Pending | In Progress | Completed | Rejected
+    created_by = Column(String, nullable=False, index=True)  # FM email
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class LibraryDocument(Base):
+    """Company document library — PPTs, PDFs, DOCX etc. uploaded by HR/Admin for all staff."""
+    __tablename__ = "library_documents"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True, index=True)
+    filename = Column(String, nullable=False)
+    file_type = Column(String, nullable=False)   # pdf | pptx | docx | xlsx | …
+    file_size = Column(Integer, nullable=False)  # bytes
+    file_content = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)

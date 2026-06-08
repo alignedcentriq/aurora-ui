@@ -29,3 +29,20 @@ async def set_company_context(
     # (Policy changes invalidate via the SharePoint sync; company context didn't.)
     AnswerCacheService.invalidate_domain("general")
     return {"status": "ok", "message": "Company context updated."}
+
+
+@router.get("/cabins")
+async def get_cabin_directory(_: CurrentUser = Depends(require_super_admin)):
+    return {
+        "key": "cabin_directory",
+        "value": CompanySettingsService.get("cabin_directory"),
+    }
+
+
+@router.put("/cabins")
+async def set_cabin_directory(
+    payload: CompanyContextPayload,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    CompanySettingsService.set("cabin_directory", payload.value, updated_by=user.email)
+    return {"status": "ok", "message": "Cabin directory updated."}

@@ -77,7 +77,6 @@ class AnswerCacheService:
             return result
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] lookup skipped ({type(e).__name__}): {e}")
             return None
         finally:
             db.close()
@@ -117,7 +116,6 @@ class AnswerCacheService:
             return True
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] store skipped ({type(e).__name__}): {e}")
             return False
         finally:
             db.close()
@@ -141,7 +139,6 @@ class AnswerCacheService:
             return deleted
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] invalidate_by_source_key skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()
@@ -176,7 +173,6 @@ class AnswerCacheService:
             return deleted
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] invalidate_by_query skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()
@@ -198,7 +194,6 @@ class AnswerCacheService:
             return deleted
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] invalidate_by_subintent skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()
@@ -215,7 +210,6 @@ class AnswerCacheService:
             return deleted
         except Exception as e:
             db.rollback()
-            print(f"[AnswerCache] invalidate_domain skipped ({type(e).__name__}): {e}")
             return 0
         finally:
             db.close()

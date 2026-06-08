@@ -11,11 +11,6 @@ from app.models import Announcement
 
 logger = logging.getLogger("aurora-logger")
 
-ALLOWED_CATEGORIES = {
-    "Policy Update", "Holiday", "Events", "Hiring", "Training", "General", "IT Alert", "Activity"
-}
-
-
 class AnnouncementService:
 
     @staticmethod
@@ -28,12 +23,11 @@ class AnnouncementService:
         target_audience: str = "all",
         expires_days: Optional[int] = None,
         image_url: Optional[str] = None,
+        image_action: Optional[dict] = None,
+        email_recipients: Optional[list] = None,
     ) -> str:
         db = SessionLocal()
         try:
-            if category not in ALLOWED_CATEGORIES:
-                category = "General"
-
             expires_at = None
             if expires_days:
                 expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expires_days)
@@ -41,30 +35,36 @@ class AnnouncementService:
             ann = Announcement(
                 title=title,
                 body=body,
-                category=category,
+                category=category or "General",
                 created_by=created_by,
                 created_by_domain=created_by_domain,
                 target_audience=target_audience,
                 is_active=True,
                 image_url=image_url,
+                image_action=image_action,
+                email_recipients=email_recipients or [],
                 expires_at=expires_at,
             )
             db.add(ann)
             db.commit()
             db.refresh(ann)
 
-            # Broadcast email notification
+            # Email blast: use explicit recipients if provided, else ADMIN_EMAIL
             try:
                 from app.services.email_service import send_announcement_email
                 from app.config import settings
-                send_announcement_email(
-                    recipients=[settings.ADMIN_EMAIL],
-                    title=title,
-                    body=body,
-                    category=category,
-                    sent_by=created_by,
-                    image_url=image_url,
-                )
+                recipients = email_recipients if email_recipients else [settings.ADMIN_EMAIL]
+                recipients = [r for r in recipients if r]
+                if recipients:
+                    send_announcement_email(
+                        user_email=created_by,
+                        recipients=recipients,
+                        title=title,
+                        body=body,
+                        category=category,
+                        sent_by=created_by,
+                        image_url=image_url,
+                    )
             except Exception as e:
                 logger.warning(f"Announcement email failed: {e}")
 
@@ -167,12 +167,30 @@ class AnnouncementService:
             db.close()
 
     @staticmethod
-    def deactivate(announcement_id: int, requested_by: str) -> str:
+    def deactivate(announcement_id: int, requested_by: str, recall: bool = False) -> str:
         db = SessionLocal()
         try:
             ann = db.query(Announcement).filter(Announcement.id == announcement_id).first()
             if not ann:
                 return f"Announcement #{announcement_id} not found."
+
+            if recall:
+                try:
+                    from app.services.email_service import send_announcement_recall_email
+                    from app.config import settings
+                    recipients = list(ann.email_recipients or []) or [settings.ADMIN_EMAIL]
+                    recipients = [r for r in recipients if r]
+                    if recipients:
+                        send_announcement_recall_email(
+                            user_email=requested_by,
+                            recipients=recipients,
+                            title=ann.title,
+                            category=ann.category,
+                            recalled_by=requested_by,
+                        )
+                except Exception as e:
+                    logger.warning(f"Recall email failed: {e}")
+
             ann.is_active = False
             db.commit()
             return f"Announcement '{ann.title}' (#{announcement_id}) has been deactivated."
@@ -217,6 +235,8 @@ class AnnouncementService:
                     "target_audience": a.target_audience,
                     "is_active": a.is_active,
                     "image_url": a.image_url,
+                    "image_action": a.image_action,
+                    "email_recipients": a.email_recipients or [],
                     "created_at": a.created_at.isoformat(),
                     "expires_at": a.expires_at.isoformat() if a.expires_at else None,
                 }

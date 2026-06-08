@@ -1,4 +1,4 @@
-import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink } from "lucide-react";
+import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink, Eye, EyeOff } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -22,6 +22,8 @@ type Props = {
   onStop?: () => void;
   suggestions?: string[];
   onSuggestionSelect?: (text: string) => void;
+  isPrivate?: boolean;
+  onPrivateToggle?: () => void;
 };
 
 interface AttachedFile {
@@ -53,6 +55,8 @@ export function Composer({
   onStop,
   suggestions,
   onSuggestionSelect,
+  isPrivate = false,
+  onPrivateToggle,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -309,7 +313,13 @@ export function Composer({
         <div
           className={cn(
             "relative flex flex-col rounded-[24px] border bg-card/60 backdrop-blur-xl shadow-lg transition-all p-2",
-            isFocused && !disabled ? "border-primary/50 ring-2 ring-primary/10 shadow-xl" : "border-border",
+            isPrivate
+              ? (isFocused && !disabled
+                  ? "border-purple-500/80 ring-4 ring-purple-500/20 shadow-purple-500/10 shadow-xl"
+                  : "border-purple-500/40 ring-2 ring-purple-500/10 shadow-purple-500/5")
+              : (isFocused && !disabled
+                  ? "border-primary/50 ring-2 ring-primary/10 shadow-xl"
+                  : "border-border"),
           )}
           onFocus={() => setIsFocused(true)}
           onBlur={(e) => {
@@ -454,7 +464,7 @@ export function Composer({
                 handleSubmit();
               }
             }}
-            placeholder="Message Centriq AI... (type / for forms & links)"
+            placeholder={isPrivate ? "Message Centriq AI (Private Mode)..." : "Message Centriq AI... (type / for forms & links)"}
             disabled={disabled}
             className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
           />
@@ -489,6 +499,24 @@ export function Composer({
               >
                 <AudioLines className={cn("h-4 w-4", voiceMode && "animate-pulse")} strokeWidth={1.5} />
               </motion.button>
+
+              {/* Private Mode Toggle */}
+              {onPrivateToggle && (
+                <motion.button
+                  whileTap={{ scale: 0.85 }}
+                  type="button"
+                  onClick={onPrivateToggle}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-full transition-all",
+                    isPrivate
+                      ? "bg-purple-500/15 text-purple-500 ring-2 ring-purple-500/30"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  )}
+                  title={isPrivate ? "Disable Private Chat" : "Enable Private Chat (Do Not Log/Cache)"}
+                >
+                  {isPrivate ? <EyeOff className="h-4 w-4" strokeWidth={1.5} /> : <Eye className="h-4 w-4" strokeWidth={1.5} />}
+                </motion.button>
+              )}
 
 
 

@@ -370,7 +370,7 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
                 model_name=None,
             ))
         except Exception as log_err:  # noqa: BLE001
-            print(f"[documents] audit log error: {log_err}")
+            pass
 
         db.commit()
 
@@ -410,8 +410,8 @@ def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
                 doc.rendered_docx = rendered
                 doc.content = engine.docx_to_html(rendered)
             except Exception as e:  # noqa: BLE001
+                pass
                 # Don't block release on a render hiccup — keep the draft render.
-                print(f"[documents] approve re-render notice: {e}")
 
         doc.status = "verified"
         doc.is_official = True

@@ -216,7 +216,6 @@ def _extract_images_from_pdf_bytes(data: bytes) -> list:
         doc.close()
         return images
     except Exception as e:
-        print(f"[PolicyService] PDF image extraction error: {e}")
         return []
 
 
@@ -242,7 +241,6 @@ def _extract_images_from_docx_bytes(data: bytes) -> list:
                 results.append((position_ratio, img_bytes, ext))
         return results
     except Exception as e:
-        print(f"[PolicyService] DOCX image extraction error: {e}")
         return []
 
 
@@ -277,7 +275,6 @@ def _extract_images_from_pptx_bytes(data: bytes) -> list:
                 results.append((position_ratio, blob, ext))
         return results
     except Exception as e:
-        print(f"[PolicyService] PPTX image extraction error: {e}")
         return []
 
 
@@ -302,7 +299,7 @@ def _upload_policy_images(policy_id: int, title: str, raw_images: list, db, is_d
             db.flush()
             ids.append(img.id)
         except Exception as e:
-            print(f"[PolicyService] Image save failed (idx={idx}): {e}")
+            pass
     return ids
 
 
@@ -343,7 +340,6 @@ def _extract_text_from_pdf(filepath: str) -> str:
                     parts.append(t)
         return "\n".join(parts)
     except Exception as e:
-        print(f"[PolicyService] PDF read error {filepath}: {e}")
         return ""
 
 
@@ -353,7 +349,6 @@ def _extract_text_from_docx(filepath: str) -> str:
         doc = Document(filepath)
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     except Exception as e:
-        print(f"[PolicyService] DOCX read error {filepath}: {e}")
         return ""
 
 
@@ -365,7 +360,6 @@ def _extract_text_from_pdf_bytes(data: bytes) -> str:
             parts = [page.extract_text() for page in pdf.pages if page.extract_text()]
         return "\n".join(parts)
     except Exception as e:
-        print(f"[PolicyService] PDF bytes read error: {e}")
         return ""
 
 
@@ -376,7 +370,6 @@ def _extract_text_from_docx_bytes(data: bytes) -> str:
         doc = Document(_io.BytesIO(data))
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     except Exception as e:
-        print(f"[PolicyService] DOCX bytes read error: {e}")
         return ""
 
 
@@ -412,7 +405,6 @@ def _extract_text_from_pptx_bytes(data: bytes) -> str:
                 parts.append("\n".join(slide_lines))
         return "\n\n".join(parts)
     except Exception as e:
-        print(f"[PolicyService] PPTX bytes read error: {e}")
         return ""
 
 
@@ -521,7 +513,6 @@ class PolicyService:
             cls._embedding_cache[key] = result
             return result
         except Exception as e:
-            print(f"[PolicyService] Embedding skipped ({type(e).__name__}): {e}")
             return None
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
@@ -535,7 +526,6 @@ class PolicyService:
         """
         folder = Path(folder_path) if folder_path else POLICY_DIR
         if not folder.exists():
-            print(f"[PolicyService] Folder not found (skipping file ingest): {folder}")
             return {"ingested": 0, "skipped": 0, "errors": []}
 
         db = SessionLocal()
@@ -588,9 +578,8 @@ class PolicyService:
                         if idxs
                     }
                     PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
-                    print(f"  [OK] Ingested: {title} [{len(content)} chars, {len(img_ids)} images]")
                 else:
-                    print(f"  [OK] Ingested: {title} [{len(content)} chars, no images]")
+                    pass
 
                 ingested += 1
 
@@ -598,12 +587,10 @@ class PolicyService:
         except Exception as e:
             db.rollback()
             errors.append(str(e))
-            print(f"[PolicyService] Ingestion error: {e}")
         finally:
             db.close()
 
         result = {"ingested": ingested, "skipped": skipped, "errors": errors}
-        print(f"[PolicyService] Ingest done: {result}")
         return result
 
 
@@ -658,12 +645,9 @@ class PolicyService:
                 db.query(PolicyChunk).filter(PolicyChunk.policy_id == p.id).delete()
                 n = PolicyService._chunk_and_embed(p, db)
                 total_chunks += n
-                print(f"  [OK] Chunked '{p.title}': {n} chunks")
             db.commit()
-            print(f"[PolicyService] Bootstrap complete — {total_chunks} total chunks stored.")
         except Exception as e:
             db.rollback()
-            print(f"[PolicyService] embed_all_policies error: {e}")
         finally:
             db.close()
 
@@ -745,6 +729,31 @@ class PolicyService:
         """Hybrid search scoped to company-project content (summaries, demo
         transcripts, project details) — never touches HR/IT/Admin policies."""
         return PolicyService._hybrid_search(query, limit, category_in=[PROJECT_CATEGORY])
+
+    @staticmethod
+    def list_project_names() -> list[str]:
+        """Return sorted unique project names from SharePoint-ingested project content.
+
+        Project titles are stored as '{ProjectName} — {type}: {stem}'; we split on
+        ' — ' and deduplicate to get the canonical project name list."""
+        from app.database import SessionLocal
+        from app.models import Policy
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Policy.title)
+                .filter(Policy.category == PROJECT_CATEGORY)
+                .all()
+            )
+            names: set[str] = set()
+            for (title,) in rows:
+                if title and " — " in title:
+                    names.add(title.split(" — ", 1)[0].strip())
+                elif title:
+                    names.add(title.strip())
+            return sorted(names)
+        finally:
+            db.close()
 
     @staticmethod
     def search_it_docs(query: str, limit: int = 3) -> str:
@@ -844,7 +853,7 @@ class PolicyService:
                 ).fetchall()
                 bm25_ids = [r[0] for r in bm25_rows]
             except Exception as bm25_err:
-                print(f"[PolicyService] BM25 search skipped: {bm25_err}")
+                pass
 
             # ── 3. RRF fusion ─────────────────────────────────────────────────
             if sem_ids or bm25_ids:

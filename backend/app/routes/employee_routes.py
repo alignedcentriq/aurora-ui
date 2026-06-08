@@ -68,7 +68,7 @@ def _get_or_create_employee(db, email: str) -> Employee:
             from app.services.welcome_service import notify_hr_new_employee
             notify_hr_new_employee(emp.email, emp.name, db)
         except Exception as _e:
-            print(f"[welcome] Non-fatal: HR notification failed for {email}: {_e}")
+            pass
     return emp
 
 
@@ -517,6 +517,218 @@ def update_employee_role(
         )
         
         return {"status": "ok", "message": f"Updated role to {normalized_role}"}
+    finally:
+        db.close()
+
+
+
+@router.get("/me/requests")
+def my_requests(
+    user: CurrentUser = Depends(get_current_user),
+):
+    from app.models import (
+        Leave, ParkingSticker, FacilityComplaint, Reimbursement,
+        TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
+        HRQuery, Grievance, Escalation
+    )
+
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == user.email).first()
+        if not emp:
+            return {
+                "leaves": [],
+                "parking": [],
+                "complaints": [],
+                "reimbursements": [],
+                "travel_requests": [],
+                "travel_expenses": [],
+                "udemy": [],
+                "hr_queries": [],
+                "grievances": [],
+                "escalations": []
+            }
+
+        # 1. Leaves
+        leaves = db.query(Leave).filter(Leave.employee_id == emp.id).order_by(Leave.created_at.desc()).all()
+
+        # 2. Parking Stickers
+        parking = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).order_by(ParkingSticker.valid_from.desc()).all()
+
+        # 3. Facility Complaints
+        complaints = db.query(FacilityComplaint).filter(FacilityComplaint.employee_id == emp.id).order_by(FacilityComplaint.created_at.desc()).all()
+
+        # 4. Reimbursements
+        reimbs = db.query(Reimbursement).filter(Reimbursement.employee_id == emp.id).order_by(Reimbursement.created_at.desc()).all()
+
+        # 5. Travel Requests
+        travel_reqs = db.query(TravelRequest).filter(TravelRequest.employee_id == emp.id).order_by(TravelRequest.created_at.desc()).all()
+
+        # 6. Travel Expense Claims
+        travel_expenses = db.query(TravelExpenseClaim).filter(TravelExpenseClaim.employee_id == emp.id).order_by(TravelExpenseClaim.created_at.desc()).all()
+
+        # 7. Udemy License Requests
+        udemy = db.query(UdemyLicenseRequest).filter(UdemyLicenseRequest.employee_id == emp.id).order_by(UdemyLicenseRequest.created_at.desc()).all()
+
+        # 8. HR Queries
+        hr_queries = db.query(HRQuery).filter(HRQuery.employee_id == emp.id).order_by(HRQuery.created_at.desc()).all()
+
+        # 9. Grievances
+        grievances = db.query(Grievance).filter(Grievance.employee_id == emp.id).order_by(Grievance.submitted_at.desc()).all()
+
+        # 10. Escalations
+        escalations = db.query(Escalation).filter(Escalation.user_email == emp.email).order_by(Escalation.created_at.desc()).all()
+
+        return {
+            "leaves": [
+                {
+                    "id": l.id,
+                    "leave_type": l.leave_type,
+                    "status": l.status,
+                    "start_date": str(l.start_date) if l.start_date else None,
+                    "end_date": str(l.end_date) if l.end_date else None,
+                    "reason": l.reason or "",
+                    "days": ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else 1,
+                    "created_at": l.created_at.isoformat() if hasattr(l, "created_at") and l.created_at else None,
+                }
+                for l in leaves
+            ],
+            "parking": [
+                {
+                    "id": p.id,
+                    "vehicle_type": p.vehicle_type,
+                    "vehicle_number": p.vehicle_number,
+                    "vehicle_make": p.vehicle_make or "",
+                    "vehicle_model": p.vehicle_model or "",
+                    "status": p.status,
+                    "sticker_number": p.sticker_number or "Pending",
+                    "valid_from": p.valid_from.isoformat() if p.valid_from else None,
+                    "valid_until": p.valid_until.isoformat() if p.valid_until else None,
+                }
+                for p in parking
+            ],
+            "complaints": [
+                {
+                    "id": c.id,
+                    "ticket_id": c.ticket_id,
+                    "category": c.category,
+                    "description": c.description,
+                    "location": c.location,
+                    "priority": c.priority,
+                    "status": c.status,
+                    "resolution_notes": c.resolution_notes or "",
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in complaints
+            ],
+            "reimbursements": [
+                {
+                    "id": r.id,
+                    "type": r.type,
+                    "amount": r.amount,
+                    "reason": r.reason or "",
+                    "status": r.status,
+                    "approved_by": r.approved_by or "",
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in reimbs
+            ],
+            "travel_requests": [
+                {
+                    "id": t.id,
+                    "ref_id": t.ref_id,
+                    "from_location": t.from_location,
+                    "to_destination": t.to_destination,
+                    "travel_date": t.travel_date.isoformat() if t.travel_date else None,
+                    "return_date": t.return_date.isoformat() if t.return_date else None,
+                    "is_international": t.is_international,
+                    "visa_required": t.visa_required,
+                    "mode_of_travel": t.mode_of_travel,
+                    "accommodation_required": t.accommodation_required,
+                    "estimated_cost": t.estimated_cost,
+                    "notes": t.notes or "",
+                    "status": t.status,
+                    "expense_limit": t.expense_limit,
+                    "ticket_details": t.ticket_details or "",
+                    "hotel_details": t.hotel_details or "",
+                    "visa_status": t.visa_status or "",
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                }
+                for t in travel_reqs
+            ],
+            "travel_expenses": [
+                {
+                    "id": e.id,
+                    "ref_id": e.ref_id,
+                    "travel_request_id": e.travel_request_id,
+                    "amount": e.amount,
+                    "breakdown": e.breakdown or "",
+                    "over_limit_reason": e.over_limit_reason or "",
+                    "status": e.status,
+                    "approved_by": e.approved_by or "",
+                    "rejection_reason": e.rejection_reason or "",
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in travel_expenses
+            ],
+            "udemy": [
+                {
+                    "id": u.id,
+                    "platform": u.platform or "Udemy",
+                    "course_name": u.course_name or "",
+                    "justification": u.justification or "",
+                    "status": u.status,
+                    "decided_by": u.decided_by or "",
+                    "decision_reason": u.decision_reason or "",
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in udemy
+            ],
+            "hr_queries": [
+                {
+                    "id": q.id,
+                    "reference_id": q.reference_id,
+                    "category": q.category,
+                    "subject": q.subject,
+                    "description": q.description,
+                    "status": q.status,
+                    "priority": q.priority,
+                    "response": q.response or "",
+                    "responded_by": q.responded_by or "",
+                    "responded_at": q.responded_at.isoformat() if q.responded_at else None,
+                    "created_at": q.created_at.isoformat() if q.created_at else None,
+                }
+                for q in hr_queries
+            ],
+            "grievances": [
+                {
+                    "id": g.id,
+                    "reference_id": g.reference_id,
+                    "category": g.category,
+                    "description": g.description,
+                    "status": g.status,
+                    "resolved_by": g.resolved_by or "",
+                    "resolution_notes": g.resolution_notes or "",
+                    "submitted_at": g.submitted_at.isoformat() if g.submitted_at else None,
+                }
+                for g in grievances
+            ],
+            "escalations": [
+                {
+                    "id": e.id,
+                    "reference_id": e.reference_id,
+                    "domain": e.domain or "",
+                    "original_query": e.original_query or "",
+                    "error_type": e.error_type or "",
+                    "description": e.description or "",
+                    "priority": e.priority,
+                    "status": e.status,
+                    "notified_to": e.notified_to or "",
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in escalations
+            ]
+        }
     finally:
         db.close()
 

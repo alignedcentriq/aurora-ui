@@ -50,13 +50,17 @@ _C_PURPLE  = "#7c3aed"   # confidential
 _GRADIENT  = "linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%)"
 _FONT      = "'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
-# Buddy mascot — loaded once and base64-encoded for inline (cid:) embedding.
+# Brand assets — loaded once and base64-encoded for inline (cid:) embedding.
 _ASSETS_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets"
 try:
+    _LOGO_B64 = base64.b64encode((_ASSETS_DIR / "logo.png").read_bytes()).decode()
+except Exception as _e:  # pragma: no cover
+    _LOGO_B64 = ""
+    logger.warning("[email] logo.png asset not found: %s", _e)
+try:
     _BUDDY_B64 = base64.b64encode((_ASSETS_DIR / "buddy.png").read_bytes()).decode()
-except Exception as _e:  # pragma: no cover - asset should always be present
-    _BUDDY_B64 = ""
-    logger.warning("[email] buddy.png asset not found: %s", _e)
+except Exception:
+    _BUDDY_B64 = _LOGO_B64
 
 
 def _nl2br(text: str) -> str:
@@ -90,7 +94,7 @@ def _email_shell(title: str, intro_html: str, body_html: str, *, preheader: str 
     <tr><td bgcolor="{_C_PRIMARY}" style="background:{_C_PRIMARY};background:{_GRADIENT};padding:24px 32px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
         <td width="60" valign="middle" style="padding-right:16px;">
-          <img src="cid:buddy" width="48" height="48" alt="Centriq buddy" style="display:block;border:0;outline:none;border-radius:50%;background:rgba(255,255,255,.12);">
+          <img src="cid:logo" width="48" height="48" alt="Centriq" style="display:block;border:0;outline:none;border-radius:10px;background:rgba(255,255,255,.12);">
         </td>
         <td valign="middle">
           <div style="font:800 20px/1 {_FONT};color:#ffffff;letter-spacing:.3px;">Centriq AI</div>
@@ -107,7 +111,7 @@ def _email_shell(title: str, intro_html: str, body_html: str, *, preheader: str 
     <tr><td style="padding:14px 32px 22px;border-top:1px solid #edf2f8;background:#fafbfd;">
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
         <td width="28" valign="middle" style="padding-right:10px;">
-          <img src="cid:buddy" width="20" height="20" alt="" style="display:block;border:0;opacity:0.80;border-radius:50%;">
+          <img src="cid:logo" width="20" height="20" alt="" style="display:block;border:0;opacity:0.80;border-radius:4px;">
         </td>
         <td valign="middle" style="font:500 12px {_FONT};color:#374151;">
           Centriq AI <span style="color:#9ca3af;font-weight:400;">· Aligned Automation</span>
@@ -320,11 +324,11 @@ def _send_html(
     html_body: str,
     files: "dict | None" = None,
 ) -> bool:
-    """Send a shell-rendered email with the buddy mascot attached inline (cid:buddy),
+    """Send a shell-rendered email with the Centriq logo attached inline (cid:logo),
     plus optional file attachments via `files` ({filename: (base64, content_type)})."""
     return _send(
         user_email, to, subject, html_body,
-        inline_images={"buddy": ("buddy.png", _BUDDY_B64)},
+        inline_images={"logo": ("logo.png", _LOGO_B64)},
         files=files,
     )
 
@@ -1048,6 +1052,49 @@ def send_leave_fyi_notification(
     return result
 
 
+def send_leave_cancellation_notification(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    leave_type: str,
+    start_date: str,
+    end_date: str,
+    was_approved: bool,
+    manager_email: str,
+) -> bool:
+    """Notify the reporting manager that the employee cancelled their leave."""
+    status_label = "Approved Leave Cancelled" if was_approved else "Pending Leave Withdrawn"
+    color = _C_AMBER
+    subject = f"[Leave Cancelled] {employee_name} — {leave_type} · {start_date} to {end_date}"
+    intro = (
+        f'<p>{_status_pill("Cancelled", color)}</p>'
+        f"<p>Hi,</p>"
+        f"<p><strong>{html.escape(employee_name)}</strong> has cancelled their leave request.</p>"
+    )
+    rows = [
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Leave Type", html.escape(leave_type)),
+        ("From", html.escape(start_date)),
+        ("To", html.escape(end_date)),
+        ("Status", html.escape(status_label)),
+    ]
+    if was_approved:
+        rows.append(("Balance", "Leave balance has been restored."))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    html_body = _email_shell("Leave Cancelled", intro, body_html,
+                             preheader=f"{leave_type} · {start_date}–{end_date} cancelled")
+    result = _send_html(user_email, manager_email, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Leave Type:</b> {html.escape(leave_type)}<br>"
+        f"<b>Period:</b> {html.escape(start_date)} → {html.escape(end_date)}<br>"
+        f"<b>Status:</b> {html.escape(status_label)}"
+        + ("<br><i>Leave balance restored.</i>" if was_approved else "")
+    )
+    notify_teams(user_email, manager_email, "🚫 Leave Cancelled", teams_body)
+    return result
+
+
 # ── Biweekly Project Update ───────────────────────────────────────────────────
 
 def send_project_update_form_email(
@@ -1264,6 +1311,30 @@ def send_onboarding_checklist(
     return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
 
 
+def send_joining_kit_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+) -> bool:
+    """Notify the admin that a new employee has joined and a joining kit needs to be prepared."""
+    import datetime
+    subject = f"[Admin] Joining Kit — New Employee Joined: {employee_name}"
+    intro = (f'<p>{_status_pill("Joining Kit", _C_OK)}</p>'
+             f"<p>A new employee has been welcomed to the organization. "
+             f"Please prepare and dispatch the joining kit for <strong>{html.escape(employee_name)}</strong>.</p>")
+    body_html = (
+        _detail_rows([
+            ("Employee Name", html.escape(employee_name)),
+            ("Employee Email", html.escape(employee_email)),
+            ("Date Joined", datetime.date.today().strftime("%d %B %Y")),
+        ])
+        + _note("This is an automated notification to coordinate onboarding logistics. Submitted via Centriq AI.")
+    )
+    html_body = _email_shell("Joining Kit Dispatch Request", intro, body_html,
+                             preheader=f"Joining Kit for {employee_name}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
 def send_offboarding_checklist(
     user_email: str,
     employee_name: str,
@@ -1373,6 +1444,34 @@ def send_announcement_email(
     )
     html_body = _email_shell("Company Announcement", intro, body_html,
                              preheader=title)
+    return _send_html(user_email, recipients, subject, html_body)
+
+
+def send_announcement_recall_email(
+    user_email: str,
+    recipients: list,
+    title: str,
+    category: str,
+    recalled_by: str,
+) -> bool:
+    """Send a recall notice for a previously sent announcement."""
+    if not recipients:
+        return False
+    subject = f"Recall: {title}"
+    intro = (
+        f'<p>{_status_pill("Announcement Recalled", _C_NO)}</p>'
+        f'<h2 style="margin:6px 0 14px;font:800 20px {_FONT};color:#0d1b2e;">Recall Notice</h2>'
+        "<p>Dear Team,</p>"
+    )
+    body_html = (
+        f'<div style="font:400 15px/1.75 {_FONT};color:#334155;">'
+        f'Please disregard the announcement titled <strong>{html.escape(title)}</strong> '
+        f'({html.escape(category or "General")}) sent earlier. It has been recalled and is no longer active.'
+        f'</div>'
+        f'<p style="margin-top:18px;font:400 15px {_FONT};color:#334155;">Apologies for any confusion.<br>'
+        f'<strong>HR Team</strong></p>'
+    )
+    html_body = _email_shell("Announcement Recall", intro, body_html, preheader=subject)
     return _send_html(user_email, recipients, subject, html_body)
 
 
@@ -1710,3 +1809,351 @@ def send_team_attendance_report(
         fname, b64 = xlsx
         files = {fname: (b64, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
     return _send_html(user_email, recipients, subject, html_body, files=files)
+
+
+# ── Travel Management Emails ───────────────────────────────────────────────────
+
+def send_travel_rm_approval_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    ref_id: str,
+    from_location: str,
+    to_destination: str,
+    travel_date: str,
+    return_date: str,
+    business_reason: str,
+    estimated_cost: float,
+    is_international: bool,
+    mode: str,
+    accommodation_required: bool,
+    notes: str,
+    approve_url: str,
+    reject_url: str,
+    manager_email: str,
+    travel_id: int,
+) -> bool:
+    subject = f"[Travel Approval] {employee_name} — {from_location} → {to_destination} · {travel_date}"
+    intro = (
+        f'<p>{_status_pill("Pending Your Approval", _C_AMBER)}</p>'
+        f"<p>Hi,</p>"
+        f"<p><strong>{html.escape(employee_name)}</strong> has submitted a business travel request "
+        f"and needs your approval.</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("From", html.escape(from_location)),
+        ("To", html.escape(to_destination)),
+        ("Travel Date", html.escape(travel_date)),
+        ("Return Date", html.escape(return_date) if return_date else "—"),
+        ("Mode", html.escape(mode)),
+        ("International", "Yes — Visa may be required" if is_international else "No"),
+        ("Accommodation", "Required" if accommodation_required else "Not required"),
+        ("Estimated Cost", f"INR {estimated_cost:,.0f}" if estimated_cost else "—"),
+        ("Business Reason", _nl2br(business_reason)),
+    ]
+    if notes:
+        rows.append(("Notes", _nl2br(notes)))
+    body_html = _detail_rows(rows)
+    body_html += _button_row([
+        ("✓ Approve Travel", approve_url, _C_OK),
+        ("✗ Reject Travel", reject_url, _C_NO),
+    ])
+    body_html += _note("These links expire in 48 hours. Submitted via Centriq AI. "
+                       "Reply to contact the employee directly.")
+    html_body = _email_shell("Travel Approval Request", intro, body_html,
+                             preheader=f"{employee_name} · {from_location}→{to_destination}")
+    result = _send_html(user_email, manager_email, subject, html_body)
+    teams_body = (
+        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
+        f"<b>Route:</b> {html.escape(from_location)} → {html.escape(to_destination)}<br>"
+        f"<b>Date:</b> {html.escape(travel_date)}<br>"
+        f"<b>Reason:</b> {html.escape(business_reason)}<br><br>"
+        f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; "
+        f"<a href='{html.escape(reject_url)}'>✗ Reject</a>"
+    )
+    notify_teams(user_email, manager_email, "✈️ Travel Approval Request", teams_body)
+    return result
+
+
+def send_travel_decision_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    ref_id: str,
+    from_loc: str,
+    to_loc: str,
+    travel_date: str,
+    stage: str,
+    decision: str,
+    reason: str = "",
+) -> bool:
+    color = _C_OK if decision == "Approved" else _C_NO
+    subject = f"[Travel {decision}] {ref_id} — {from_loc} → {to_loc}"
+    intro = (
+        f'<p>{_status_pill(f"{stage} {decision}", color)}</p>'
+        f"<p>Hi {html.escape(employee_name)},</p>"
+        f'<p>Your travel request has been <strong style="color:{color};">{html.escape(decision)}</strong> '
+        f"by your {html.escape(stage)}.</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Route", f"{html.escape(from_loc)} → {html.escape(to_loc)}"),
+        ("Travel Date", html.escape(travel_date)),
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+        ("Actioned by", html.escape(stage)),
+    ]
+    if reason:
+        rows.append(("Reason", _nl2br(reason)))
+    if decision == "Approved" and stage == "RM":
+        rows.append(("Next Step", "Admin will now review and arrange tickets / accommodation."))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    html_body = _email_shell(f"Travel Request {decision}", intro, body_html,
+                             preheader=f"{ref_id} · {decision}")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+def send_travel_admin_pending_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    ref_id: str,
+    from_location: str,
+    to_destination: str,
+    travel_date: str,
+    return_date: str,
+    business_reason: str,
+    estimated_cost: float,
+    is_international: bool,
+    mode: str,
+    accommodation_required: bool,
+    notes: str,
+    travel_id: int,
+) -> bool:
+    """Notify admin that RM has approved the travel request — action needed."""
+    subject = f"[Travel] RM Approved — Action Required: {ref_id} · {employee_name}"
+    intro = (
+        f'<p>{_status_pill("RM Approved — Your Action Required", _C_INFO)}</p>'
+        f"<p><strong>{html.escape(employee_name)}</strong>'s travel request has been approved by "
+        f"the reporting manager. Please review and arrange tickets"
+        + (" / visa" if is_international else "")
+        + (" / accommodation" if accommodation_required else "")
+        + ".</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("From", html.escape(from_location)),
+        ("To", html.escape(to_destination)),
+        ("Travel Date", html.escape(travel_date)),
+        ("Return Date", html.escape(return_date) if return_date else "—"),
+        ("Mode", html.escape(mode)),
+        ("International", "Yes — Visa required" if is_international else "No"),
+        ("Accommodation", "Required" if accommodation_required else "Not required"),
+        ("Estimated Cost", f"INR {estimated_cost:,.0f}" if estimated_cost else "—"),
+        ("Business Reason", _nl2br(business_reason)),
+    ]
+    if notes:
+        rows.append(("Notes", _nl2br(notes)))
+    rows.append(("Action", "Log in to the Admin Portal → Travel Requests to approve and add trip details."))
+    body_html = _detail_rows(rows) + _note("Submitted via Centriq AI. Log in to the Admin Portal to take action.")
+    html_body = _email_shell("Travel Request — Action Required", intro, body_html,
+                             preheader=f"{employee_name} · {from_location}→{to_destination}")
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    notify_teams(user_email, settings.NOTIFY_TO_EMAIL, "✈️ Travel: Admin Action Needed",
+                 f"<b>{html.escape(employee_name)}</b> travel request {html.escape(ref_id)} needs admin action (RM approved).")
+    return result
+
+
+def send_travel_admin_approved_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    ref_id: str,
+    from_location: str,
+    to_destination: str,
+    travel_date: str,
+    return_date: str,
+    ticket_details: str,
+    hotel_details: str,
+    visa_status: str,
+    expense_limit: "float | None",
+    decided_by: str,
+) -> bool:
+    """Email employee with trip details after admin approval."""
+    subject = f"[Travel Approved] {ref_id} — {from_location} → {to_destination} · {travel_date}"
+    intro = (
+        f'<p>{_status_pill("Approved", _C_OK)}</p>'
+        f"<p>Hi {html.escape(employee_name)},</p>"
+        f"<p>Your travel request has been <strong style='color:{_C_OK};'>approved</strong> by Admin. "
+        f"Your trip details are below.</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Route", f"{html.escape(from_location)} → {html.escape(to_destination)}"),
+        ("Travel Date", html.escape(travel_date)),
+        ("Return Date", html.escape(return_date) if return_date else "—"),
+        ("Approved by", html.escape(decided_by)),
+    ]
+    if ticket_details:
+        rows.append(("Ticket Details", _nl2br(ticket_details)))
+    if hotel_details:
+        rows.append(("Hotel / Accommodation", _nl2br(hotel_details)))
+    if visa_status:
+        rows.append(("Visa Status", _nl2br(visa_status)))
+    if expense_limit:
+        rows.append(("Expense Limit", f"INR {expense_limit:,.0f} — file your claim after the trip"))
+    body_html = _detail_rows(rows)
+    body_html += _note(
+        "Please keep all receipts for your expense claim. "
+        "Submit your post-trip expense via Centriq AI after returning."
+    )
+    html_body = _email_shell("Travel Approved — Trip Details", intro, body_html,
+                             preheader=f"{ref_id} · Approved · {from_location}→{to_destination}")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+def send_travel_expense_submitted_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    expense_ref: str,
+    travel_ref: str,
+    from_location: str,
+    to_destination: str,
+    amount: float,
+    breakdown: str,
+    over_limit_reason: str,
+    limit: "float | None",
+    claim_id: int,
+) -> bool:
+    over_limit = limit and amount > limit
+    subject = f"[Travel Expense] {expense_ref} — {employee_name} · INR {amount:,.0f}"
+    intro = (
+        f'<p>{_status_pill("Over Limit" if over_limit else "Expense Claim", _C_AMBER if over_limit else _C_INFO)}</p>'
+        f"<p><strong>{html.escape(employee_name)}</strong> has submitted a post-trip expense claim.</p>"
+    )
+    rows = [
+        ("Expense Ref", html.escape(expense_ref)),
+        ("Travel Ref", html.escape(travel_ref)),
+        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
+        ("Route", f"{html.escape(from_location)} → {html.escape(to_destination)}"),
+        ("Claimed Amount", f"<strong>INR {amount:,.0f}</strong>"),
+    ]
+    if limit:
+        rows.append(("Approved Limit", f"INR {limit:,.0f}"))
+    if over_limit:
+        rows.append(("Excess", f'<strong style="color:{_C_NO};">INR {amount - limit:,.0f} over limit</strong>'))
+    if breakdown:
+        rows.append(("Breakdown", _nl2br(breakdown)))
+    if over_limit_reason:
+        rows.append(("Reason for Excess", _nl2br(over_limit_reason)))
+    body_html = _detail_rows(rows) + _note("Review in the Admin Portal → Travel → Expense Claims.")
+    html_body = _email_shell("Travel Expense Claim", intro, body_html,
+                             preheader=f"{employee_name} · INR {amount:,.0f}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
+def send_travel_expense_decision_email(
+    user_email: str,
+    employee_name: str,
+    employee_email: str,
+    expense_ref: str,
+    travel_ref: str,
+    amount: float,
+    decision: str,
+    decided_by: str,
+    reason: str = "",
+) -> bool:
+    color = _C_OK if decision == "Approved" else _C_NO
+    subject = f"[Travel Expense {decision}] {expense_ref} — INR {amount:,.0f}"
+    intro = (
+        f'<p>{_status_pill(decision, color)}</p>'
+        f"<p>Hi {html.escape(employee_name)},</p>"
+        f'<p>Your travel expense claim has been <strong style="color:{color};">{html.escape(decision)}</strong>.</p>'
+    )
+    rows = [
+        ("Expense Ref", html.escape(expense_ref)),
+        ("Travel Ref", html.escape(travel_ref)),
+        ("Claimed Amount", f"INR {amount:,.0f}"),
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+        ("Actioned by", html.escape(decided_by)),
+    ]
+    if reason:
+        rows.append(("Reason", _nl2br(reason)))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    html_body = _email_shell(f"Travel Expense {decision}", intro, body_html,
+                             preheader=f"{expense_ref} · {decision}")
+    return _send_html(user_email, employee_email, subject, html_body)
+
+
+# ── Manager → PMO: Client Onboarding Request ───────────────────────────────────
+
+def send_onboarding_request_email(
+    user_email: str,
+    manager_name: str,
+    employee_name: str,
+    employee_email: str,
+    steps: dict,
+    client_name: str,
+    notes: str,
+    ref_id: str,
+) -> bool:
+    subject = f"[Onboarding Request] {employee_name} — {ref_id}"
+    step_labels = {
+        "drug_test": "Drug Test",
+        "background_check": "Background Verification",
+        "client_onboarding": "Client-Side Onboarding",
+    }
+    selected = [step_labels[k] for k, v in steps.items() if v and k in step_labels]
+    intro = (
+        f'<p>{_status_pill("Onboarding Request", _C_INFO)}</p>'
+        f"<p>A new client onboarding has been initiated by <strong>{html.escape(manager_name)}</strong>.</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Employee", html.escape(employee_name)),
+        ("Employee Email", html.escape(employee_email or "—")),
+        ("Steps Required", ", ".join(selected) or "None selected"),
+    ]
+    if client_name:
+        rows.append(("Client", html.escape(client_name)))
+    if notes:
+        rows.append(("Notes", _nl2br(notes)))
+    rows.append(("Initiated By", html.escape(manager_name)))
+    body_html = _detail_rows(rows) + _note("Please coordinate with the employee and client to complete the onboarding steps.")
+    html_body = _email_shell("Client Onboarding Request", intro, body_html, preheader=f"{ref_id} · {employee_name}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+
+
+# ── Manager → PMO: VDI / Revoke Request ────────────────────────────────────────
+
+def send_pmo_team_request_email(
+    user_email: str,
+    manager_name: str,
+    employee_name: str,
+    employee_email: str,
+    request_type: str,
+    details: str,
+    ref_id: str,
+) -> bool:
+    type_labels = {"vdi_provision": "VDI Provision", "vdi_revoke": "VDI Revoke / Access Revocation"}
+    type_label = type_labels.get(request_type, request_type.replace("_", " ").title())
+    subject = f"[PMO Request] {type_label} — {employee_name} — {ref_id}"
+    intro = (
+        f'<p>{_status_pill(type_label, _C_AMBER)}</p>'
+        f"<p>A new PMO request has been submitted by <strong>{html.escape(manager_name)}</strong>.</p>"
+    )
+    rows = [
+        ("Reference", html.escape(ref_id)),
+        ("Request Type", html.escape(type_label)),
+        ("Employee", html.escape(employee_name)),
+        ("Employee Email", html.escape(employee_email or "—")),
+        ("Requested By", html.escape(manager_name)),
+    ]
+    if details:
+        rows.append(("Details", _nl2br(details)))
+    body_html = _detail_rows(rows) + _note("Please action this request and update the status in the PMO portal.")
+    html_body = _email_shell(f"PMO Request: {type_label}", intro, body_html, preheader=f"{ref_id} · {employee_name}")
+    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)

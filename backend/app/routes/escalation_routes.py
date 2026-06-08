@@ -18,7 +18,7 @@ from app.services.escalation_service import create_escalation, _contact_for
 
 router = APIRouter(prefix="/api", tags=["Escalation"])
 
-_STAFF_ROLES = {"Admin", "HR", "IT", "PMO", "Super Admin", "Functional Manager"}
+_STAFF_ROLES = {"admin", "hr", "it", "pmo", "super admin", "functional manager"}
 
 
 class EscalationRequest(BaseModel):

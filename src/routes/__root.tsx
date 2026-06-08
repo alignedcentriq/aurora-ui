@@ -67,7 +67,6 @@ function RootComponent() {
           setIsMsalInitialized(true);
         })
         .catch((e) => {
-          console.error("MSAL Init Error:", e);
           setIsMsalInitialized(true);
         });
     }

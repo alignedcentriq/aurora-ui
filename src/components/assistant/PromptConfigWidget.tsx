@@ -4,6 +4,13 @@ import { SlidersHorizontal, Loader2, Save, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import type { PromptConfigPrefill } from "@/lib/chat-store";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const DOMAINS = [
   { id: "hr", label: "HR" },
@@ -102,36 +109,38 @@ export function PromptConfigWidget({ userEmail, userRole, prefill, onSaved }: Pr
       <div className="space-y-3 p-4">
         <div className="flex gap-2">
           <div className="flex-1">
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Domain
             </label>
-            <select
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-            >
-              {DOMAINS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
+            <Select value={domain} onValueChange={setDomain}>
+              <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+                {DOMAINS.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex-1">
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Section
             </label>
-            <select
-              value={promptKey}
-              onChange={(e) => setPromptKey(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-            >
-              {PROMPT_KEYS.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
+            <Select value={promptKey} onValueChange={setPromptKey}>
+              <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-60 bg-card border-border rounded-xl shadow-xl z-50">
+                {PROMPT_KEYS.map((k) => (
+                  <SelectItem key={k.id} value={k.id}>
+                    {k.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

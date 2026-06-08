@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   FileText,
   Search,
@@ -22,6 +22,14 @@ import {
   Settings2,
   RefreshCw,
   Save,
+  Library,
+  Upload,
+  Trash2,
+  FileSpreadsheet,
+  FilePieChart,
+  FileImage,
+  FileArchive,
+  Tag,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
@@ -43,6 +51,7 @@ export const Route = createFileRoute("/_layout/documents")({
 });
 
 const HR_ROLES = new Set(["HR", "Admin"]);
+const LIBRARY_ADMIN_ROLES = new Set(["HR", "Admin", "Super Admin"]);
 
 type FieldType = "text" | "textarea" | "date" | "select";
 
@@ -129,7 +138,8 @@ function DocumentsPage() {
     [user?.email, user?.role],
   );
 
-  const [mode, setMode] = useState<"generate" | "manage">("generate");
+  const [mode, setMode] = useState<"generate" | "manage" | "library">("generate");
+  const isLibraryAdmin = !!user && LIBRARY_ADMIN_ROLES.has(user.role);
 
   const [catalogue, setCatalogue] = useState<DocCatalogItem[]>([]);
   const [docType, setDocType] = useState<string>("");
@@ -392,16 +402,19 @@ function DocumentsPage() {
             </div>
           </div>
 
-          {isHr && (
-            <div className="flex rounded-xl border border-[var(--border)] bg-card p-1">
-              <PillTab active={mode === "generate"} onClick={() => setMode("generate")}>
-                Generate
-              </PillTab>
+          <div className="flex rounded-xl border border-[var(--border)] bg-card p-1">
+            <PillTab active={mode === "generate"} onClick={() => setMode("generate")}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" /> Generate
+            </PillTab>
+            <PillTab active={mode === "library"} onClick={() => setMode("library")}>
+              <Library className="mr-1.5 h-3.5 w-3.5" /> Document Library
+            </PillTab>
+            {isHr && (
               <PillTab active={mode === "manage"} onClick={() => setMode("manage")}>
-                <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Manage document types
+                <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Manage templates
               </PillTab>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -412,6 +425,8 @@ function DocumentsPage() {
             onChanged={fetchCatalogue}
             onApproversChanged={fetchApprovers}
           />
+        ) : mode === "library" ? (
+          <DocumentLibrary authHeaders={authHeaders} isLibraryAdmin={isLibraryAdmin} />
         ) : (
           <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-8 py-6 lg:grid-cols-2">
             {/* ── Form ── */}
@@ -1120,6 +1135,382 @@ function DocList({
     </section>
   );
 }
+
+// ── Document Library ─────────────────────────────────────────────────────────
+
+interface LibraryDoc {
+  id: number;
+  title: string;
+  description: string | null;
+  category: string | null;
+  filename: string;
+  file_type: string;
+  file_size: number;
+  uploaded_by: string;
+  created_at: string | null;
+}
+
+const FILE_TYPE_ICON: Record<string, typeof FileText> = {
+  pdf: FileText,
+  ppt: FilePieChart,
+  pptx: FilePieChart,
+  doc: FileText,
+  docx: FileText,
+  xls: FileSpreadsheet,
+  xlsx: FileSpreadsheet,
+  csv: FileSpreadsheet,
+  png: FileImage,
+  jpg: FileImage,
+  jpeg: FileImage,
+  gif: FileImage,
+  zip: FileArchive,
+  rar: FileArchive,
+};
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function DocumentLibrary({
+  authHeaders,
+  isLibraryAdmin,
+}: {
+  authHeaders: Record<string, string>;
+  isLibraryAdmin: boolean;
+}) {
+  const [docs, setDocs] = useState<LibraryDoc[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [filterCat, setFilterCat] = useState("");
+  const [searchQ, setSearchQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<number | null>(null);
+
+  // upload form
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadDesc, setUploadDesc] = useState("");
+  const [uploadCat, setUploadCat] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const baseHeaders = useMemo(() => {
+    const { "Content-Type": _, ...rest } = authHeaders;
+    return rest;
+  }, [authHeaders]);
+
+  const fetchDocs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const url = filterCat
+        ? `/api/document-library?category=${encodeURIComponent(filterCat)}`
+        : "/api/document-library";
+      const r = await fetch(url, { headers: baseHeaders });
+      const d = await r.json();
+      setDocs(d.documents || []);
+    } catch {
+      toast.error("Failed to load document library");
+    } finally {
+      setLoading(false);
+    }
+  }, [filterCat, baseHeaders]);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const r = await fetch("/api/document-library/categories", { headers: baseHeaders });
+      const d = await r.json();
+      setCategories(d.categories || []);
+    } catch {
+      // non-fatal
+    }
+  }, [baseHeaders]);
+
+  useEffect(() => {
+    fetchDocs();
+  }, [fetchDocs]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
+
+  const handleUpload = async () => {
+    if (!uploadTitle.trim() || !uploadFile) {
+      toast.error("Title and file are required.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("title", uploadTitle.trim());
+      fd.append("description", uploadDesc.trim());
+      fd.append("category", uploadCat.trim());
+      fd.append("file", uploadFile);
+      const r = await fetch("/api/document-library/upload", {
+        method: "POST",
+        headers: baseHeaders,
+        body: fd,
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || "Upload failed");
+      }
+      flyBanner("Document uploaded to the library!");
+      setUploadOpen(false);
+      setUploadTitle("");
+      setUploadDesc("");
+      setUploadCat("");
+      setUploadFile(null);
+      fetchDocs();
+      fetchCategories();
+    } catch (e: any) {
+      toast.error(e.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownload = async (doc: LibraryDoc) => {
+    try {
+      const r = await fetch(`/api/document-library/${doc.id}/download`, { headers: baseHeaders });
+      if (!r.ok) throw new Error("Download failed");
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Download failed");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    setDeleting(id);
+    try {
+      const r = await fetch(`/api/document-library/${id}`, {
+        method: "DELETE",
+        headers: baseHeaders,
+      });
+      if (!r.ok) throw new Error("Delete failed");
+      toast.success("Document removed from library");
+      setDocs((prev) => prev.filter((d) => d.id !== id));
+    } catch {
+      toast.error("Delete failed");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const filtered = docs.filter(
+    (d) =>
+      !searchQ ||
+      d.title.toLowerCase().includes(searchQ.toLowerCase()) ||
+      (d.category || "").toLowerCase().includes(searchQ.toLowerCase()) ||
+      d.filename.toLowerCase().includes(searchQ.toLowerCase()),
+  );
+
+  return (
+    <div className="mx-auto max-w-5xl px-8 py-6">
+      {/* Toolbar */}
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder="Search by title, category or filename…"
+            className="pl-9 h-9 text-[13px]"
+          />
+        </div>
+        {categories.length > 0 && (
+          <Select value={filterCat || "_all"} onValueChange={(v) => setFilterCat(v === "_all" ? "" : v)}>
+            <SelectTrigger className="h-9 w-44 text-[13px]">
+              <Tag className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <SelectValue placeholder="All categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all">All categories</SelectItem>
+              {categories.map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {isLibraryAdmin && (
+          <button
+            onClick={() => setUploadOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white"
+            style={{ background: "var(--gradient-primary)" }}
+          >
+            <Upload className="h-4 w-4" /> Upload document
+          </button>
+        )}
+      </div>
+
+      {/* Upload panel */}
+      {uploadOpen && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-5 rounded-2xl border border-[var(--border)] bg-card p-5 shadow-sm"
+        >
+          <h3 className="mb-4 text-[13px] font-semibold text-foreground">Add document to library</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Title <span className="text-destructive">*</span>
+              </label>
+              <Input
+                value={uploadTitle}
+                onChange={(e) => setUploadTitle(e.target.value)}
+                placeholder="e.g. Q1 2025 Company Overview"
+                className="text-[13px]"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Category
+              </label>
+              <Input
+                value={uploadCat}
+                onChange={(e) => setUploadCat(e.target.value)}
+                placeholder="e.g. Presentations, Policies, Training"
+                className="text-[13px]"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Description
+              </label>
+              <Textarea
+                value={uploadDesc}
+                onChange={(e) => setUploadDesc(e.target.value)}
+                placeholder="Short description of what this document contains…"
+                className="text-[13px]"
+                rows={2}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                File <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.zip"
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1 file:text-[12px] file:font-medium file:text-primary"
+              />
+              {uploadFile && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {uploadFile.name} · {formatBytes(uploadFile.size)}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              onClick={handleUpload}
+              disabled={uploading}
+              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50"
+              style={{ background: "var(--gradient-primary)" }}
+            >
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {uploading ? "Uploading…" : "Upload"}
+            </button>
+            <button
+              onClick={() => setUploadOpen(false)}
+              className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Document grid */}
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+          <Library className="mb-3 h-10 w-10 opacity-30" />
+          <p className="text-[13px]">
+            {docs.length === 0
+              ? isLibraryAdmin
+                ? "No documents yet. Upload the first one."
+                : "No documents have been uploaded yet."
+              : "No documents match your search."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((doc) => {
+            const Icon = FILE_TYPE_ICON[doc.file_type] ?? FileText;
+            return (
+              <motion.div
+                key={doc.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="group flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                    style={{ background: "color-mix(in oklab, var(--connectivity) 12%, transparent)" }}
+                  >
+                    <Icon className="h-4.5 w-4.5" style={{ color: "var(--connectivity)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-foreground">{doc.title}</p>
+                    {doc.category && (
+                      <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                        {doc.category}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {doc.description && (
+                  <p className="line-clamp-2 text-[12px] text-muted-foreground">{doc.description}</p>
+                )}
+                <div className="mt-auto flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-muted-foreground">
+                    {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {isLibraryAdmin && (
+                      <button
+                        onClick={() => handleDelete(doc.id)}
+                        disabled={deleting === doc.id}
+                        className="rounded-lg p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                      >
+                        {deleting === doc.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDownload(doc)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--connectivity)] px-2.5 py-1 text-[11px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)]"
+                    >
+                      <Download className="h-3 w-3" /> Download
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PillTab ───────────────────────────────────────────────────────────────────
 
 function PillTab({
   active,

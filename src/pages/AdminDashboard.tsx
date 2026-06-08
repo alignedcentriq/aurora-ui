@@ -8,7 +8,6 @@ import {
   Trash2,
   Loader2,
   Sparkles,
-  Image,
   CheckCircle2,
   AlertTriangle,
   TrendingUp,
@@ -36,11 +35,15 @@ export function AdminDashboard() {
 
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [annLoading, setAnnLoading] = useState(true);
-  const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General", image_url: "" });
+  const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General" });
+  const [audienceRole, setAudienceRole] = useState("all");
+  const [recipientInput, setRecipientInput] = useState("");
+  const [recipientTags, setRecipientTags] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [recallTarget, setRecallTarget] = useState<number | null>(null);
 
   const authHeaders = useMemo(() => ({
     "Content-Type": "application/json",
@@ -74,6 +77,22 @@ export function AdminDashboard() {
     } finally { setSuggesting(false); }
   };
 
+  const AUDIENCE_ROLES = [
+    { label: "All Staff", value: "all" },
+    { label: "HR", value: "hr" },
+    { label: "IT", value: "it" },
+    { label: "Admin", value: "admin" },
+    { label: "PMO", value: "pmo" },
+    { label: "Manager", value: "functional_manager" },
+    { label: "Employee", value: "employee" },
+  ];
+
+  const addRecipientTag = () => {
+    const email = recipientInput.trim();
+    if (email && !recipientTags.includes(email)) setRecipientTags((t) => [...t, email]);
+    setRecipientInput("");
+  };
+
   const handleCreateAnnouncement = async () => {
     if (!newAnn.title.trim() || !newAnn.body.trim()) return;
     setCreating(true);
@@ -82,18 +101,21 @@ export function AdminDashboard() {
         method: "POST", headers: authHeaders,
         body: JSON.stringify({
           title: newAnn.title, body: newAnn.body, category: newAnn.category,
-          created_by_domain: "admin", target_audience: "all",
-          image_url: newAnn.image_url.trim() || null,
+          created_by_domain: "admin", target_audience: audienceRole,
+          email_recipients: recipientTags.length > 0 ? recipientTags : null,
         }),
       });
-      setNewAnn({ title: "", body: "", category: "General", image_url: "" });
+      setNewAnn({ title: "", body: "", category: "General" });
+      setAudienceRole("all");
+      setRecipientTags([]);
       setShowForm(false);
       refreshAnnouncements();
     } finally { setCreating(false); }
   };
 
-  const handleDeactivate = async (id: number) => {
-    await fetch(`/api/announcements/${id}`, { method: "DELETE", headers: authHeaders });
+  const handleDeactivate = async (id: number, recall: boolean) => {
+    await fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers: authHeaders });
+    setRecallTarget(null);
     refreshAnnouncements();
   };
 
@@ -224,15 +246,13 @@ export function AdminDashboard() {
                 onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
                 className="flex-1 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50"
               />
-              <select
+              <input
+                type="text"
+                placeholder="Category"
                 value={newAnn.category}
                 onChange={(e) => setNewAnn((p) => ({ ...p, category: e.target.value }))}
-                className="rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50"
-              >
-                {["General", "Policy Update", "Holiday", "Events", "IT Alert"].map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+                className="w-36 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50"
+              />
             </div>
             <div className="relative">
               <textarea
@@ -251,20 +271,48 @@ export function AdminDashboard() {
                 Suggest
               </button>
             </div>
-            <div className="flex items-center gap-2">
-              <Image className="h-3.5 w-3.5 text-[#94a3b8] shrink-0" />
-              <input
-                type="url"
-                placeholder="Image URL (optional)"
-                value={newAnn.image_url}
-                onChange={(e) => setNewAnn((p) => ({ ...p, image_url: e.target.value }))}
-                className="flex-1 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50"
-              />
+
+            {/* Audience */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-[#94a3b8]">Send to</p>
+              <div className="flex flex-wrap gap-1.5">
+                {AUDIENCE_ROLES.map((r) => (
+                  <button
+                    key={r.value}
+                    type="button"
+                    onClick={() => setAudienceRole(r.value)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-[12px] font-medium border transition-colors",
+                      audienceRole === r.value
+                        ? "bg-[#00a29a] dark:bg-[#00c4bb] text-white border-transparent"
+                        : "border-[#e2e8f0] dark:border-white/[0.1] text-[#64748b] dark:text-white/50 hover:border-[#00a29a]/40"
+                    )}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Specific email recipients */}
+              <div className="flex flex-wrap gap-1.5 items-center">
+                {recipientTags.map((t) => (
+                  <span key={t} className="flex items-center gap-1 rounded-full bg-[#f1f5f9] dark:bg-white/[0.06] px-2.5 py-0.5 text-[12px] text-[#334155] dark:text-white/70">
+                    {t}
+                    <button onClick={() => setRecipientTags((p) => p.filter((x) => x !== t))} className="text-[#94a3b8] hover:text-rose-500">×</button>
+                  </span>
+                ))}
+                <input
+                  type="email"
+                  placeholder="Add email recipient..."
+                  value={recipientInput}
+                  onChange={(e) => setRecipientInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientTag(); } }}
+                  onBlur={addRecipientTag}
+                  className="flex-1 min-w-[180px] rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-1.5 text-[12px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50"
+                />
+              </div>
             </div>
-            {newAnn.image_url.trim() && (
-              <img src={newAnn.image_url.trim()} alt="Preview" className="h-24 w-auto rounded-lg object-cover border border-[#e2e8f0] dark:border-white/[0.1]"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-            )}
+
             <div className="flex items-center gap-3">
               <button
                 onClick={handleCreateAnnouncement}
@@ -275,7 +323,7 @@ export function AdminDashboard() {
                 Publish
               </button>
               <button
-                onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General", image_url: "" }); }}
+                onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General" }); setAudienceRole("all"); setRecipientTags([]); }}
                 className="rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] px-4 py-2 text-[13px] font-medium text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors"
               >
                 Cancel
@@ -359,7 +407,7 @@ export function AdminDashboard() {
                     </div>
                     {ann.is_active && (
                       <button
-                        onClick={() => handleDeactivate(ann.id)}
+                        onClick={() => setRecallTarget(ann.id)}
                         className="shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors"
                       >
                         <Trash2 className="h-3.5 w-3.5" /> Deactivate
@@ -372,6 +420,38 @@ export function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Recall confirm dialog */}
+      {recallTarget !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-6 shadow-2xl space-y-4">
+            <p className="text-[15px] font-bold text-[#0f172a] dark:text-white">Delete Announcement</p>
+            <p className="text-[13px] text-[#64748b] dark:text-white/50">
+              Do you also want to recall the email sent to recipients? A retraction notice will be sent.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => handleDeactivate(recallTarget, true)}
+                className="w-full rounded-xl bg-rose-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-rose-700 transition-colors"
+              >
+                Delete &amp; Recall Email
+              </button>
+              <button
+                onClick={() => handleDeactivate(recallTarget, false)}
+                className="w-full rounded-xl border border-[#e2e8f0] dark:border-white/[0.1] px-4 py-2.5 text-[13px] font-medium text-[#334155] dark:text-white/70 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.06] transition-colors"
+              >
+                Delete Only
+              </button>
+              <button
+                onClick={() => setRecallTarget(null)}
+                className="w-full rounded-xl px-4 py-2 text-[12px] font-medium text-[#94a3b8] hover:text-[#64748b] transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

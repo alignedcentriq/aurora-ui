@@ -51,7 +51,7 @@ def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: s
         )
         return json.dumps({"success": True, "message": result_msg})
     except Exception as exc:
-        print(f"[submit_zoho_leave] Internal apply error: {exc}")
+        pass
 
     # API not configured or failed — return fallback link
     def _fmt(iso: str) -> str:

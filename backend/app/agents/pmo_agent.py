@@ -44,92 +44,58 @@ OUTPUT FORMATTING:
 
 @tool
 def list_projects() -> str:
-    """List all available project names in the system."""
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        projects = db.query(Project).all()
-        if not projects:
-            return "No projects found in the system."
-        return "Available projects:\n" + "\n".join([f"- {p.name}" for p in projects])
-    finally:
-        db.close()
+    """List all available project names ingested from SharePoint."""
+    from app.services.policy_service import PolicyService
+    names = PolicyService.list_project_names()
+    if not names:
+        return "No projects found in the system."
+    return "Available projects:\n" + "\n".join(f"- {n}" for n in names)
 
 
 @tool
 def get_project_status(project_name: str) -> str:
-    """Get current status, completion percentage, next milestone, and owner for a project."""
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
-        if not project:
-            names = [p.name for p in db.query(Project).all()]
-            return f"No project found matching '{project_name}'. Available projects: {', '.join(names)}"
-        return (
-            f"Project: {project.name} | Status: {project.status} | "
-            f"Completion: {project.completion_pct}% | "
-            f"Next Milestone: {project.next_milestone} ({project.next_milestone_date}) | "
-            f"Owner: {project.owner}"
-        )
-    finally:
-        db.close()
+    """Get status, milestones, and details for a specific project from SharePoint content."""
+    from app.services.policy_service import PolicyService
+    result = PolicyService.search_projects(f"{project_name} status milestones", limit=4)
+    if not result or "no results" in result.lower():
+        names = PolicyService.list_project_names()
+        return f"No project found matching '{project_name}'. Available projects: {', '.join(names)}"
+    return result
 
 
 @tool
 def get_project_achievements(project_name: str) -> str:
-    """Get the key achievements and successes for a specific project."""
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
-        if not project:
-            return f"No project found matching '{project_name}' to retrieve achievements."
-        achievements = project.achievements or "No achievements recorded yet."
-        return f"Achievements for **{project.name}**:\n{achievements}"
-    finally:
-        db.close()
+    """Get the key achievements and successes for a specific project from SharePoint content."""
+    from app.services.policy_service import PolicyService
+    result = PolicyService.search_projects(f"{project_name} achievements outcomes results", limit=4)
+    if not result or "no results" in result.lower():
+        return f"No project found matching '{project_name}' to retrieve achievements."
+    return result
 
 
 @tool
 def generate_project_report(project_name: str, report_type: str = "project_status_report") -> str:
-    """Generate a downloadable PDF report for one project."""
-    from app.database import SessionLocal
+    """Generate a downloadable PDF report for one project using SharePoint content."""
     from app.document_generation.generator import generate_pdf
     from app.document_store import store_pdf
-    from app.models import Project
-    db = SessionLocal()
+    from app.services.policy_service import PolicyService
     try:
-        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
-        if not project:
-            names = [p.name for p in db.query(Project).all()]
+        content = PolicyService.search_projects(f"{project_name}", limit=8)
+        if not content or "no results" in content.lower():
+            names = PolicyService.list_project_names()
             return f"No project found matching '{project_name}'. Available: {', '.join(names)}"
-        lines = [
-            f"Project: {project.name}",
-            f"Status: {project.status}",
-            f"Completion: {project.completion_pct}%",
-            f"Owner: {project.owner}",
-            f"Next Milestone: {project.next_milestone} ({project.next_milestone_date})",
-        ]
-        if project.achievements:
-            lines += ["", "Achievements:", project.achievements]
-        title = f"{project.name} - {report_type.replace('_', ' ').title()}"
+        title = f"{project_name} - {report_type.replace('_', ' ').title()}"
         pdf_bytes = generate_pdf(
             doc_type=report_type,
             title=title,
-            content="\n".join(lines),
+            content=content,
             generated_by="Centriq PMO Agent",
         )
         file_id = str(uuid.uuid4())[:8]
-        store_pdf(file_id, pdf_bytes, f"{project.name.replace(' ', '_')}_report")
-        return f"PDF report generated for **{project.name}**.\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
+        store_pdf(file_id, pdf_bytes, f"{project_name.replace(' ', '_')}_report")
+        return f"PDF report generated for **{project_name}**.\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
     except Exception as exc:
         return f"Failed to generate report: {exc}"
-    finally:
-        db.close()
 
 
 @tool
@@ -137,34 +103,27 @@ def generate_multi_project_report(
     project_names: str = "all",
     report_type: str = "project_status_report",
 ) -> str:
-    """Generate a single PDF report covering multiple projects."""
-    from app.database import SessionLocal
+    """Generate a single PDF report covering multiple projects using SharePoint content."""
     from app.document_generation.generator import generate_pdf
     from app.document_store import store_pdf
-    from app.models import Project
-    db = SessionLocal()
+    from app.services.policy_service import PolicyService
     try:
+        all_names = PolicyService.list_project_names()
         if project_names.strip().lower() == "all":
-            projects = db.query(Project).all()
+            chosen = all_names
         else:
-            projects = []
-            for name in [n.strip() for n in project_names.split(",") if n.strip()]:
-                p = db.query(Project).filter(Project.name.ilike(f"%{name}%")).first()
-                if p:
-                    projects.append(p)
-        if not projects:
-            names = [p.name for p in db.query(Project).all()]
-            return f"No matching projects found. Available: {', '.join(names)}"
-        lines = [f"Organization Project Report — {len(projects)} Projects", ""]
-        for p in projects:
-            lines += [
-                f"{p.name.upper()}:",
-                f"Status: {p.status} | Completion: {p.completion_pct}%",
-                f"Owner: {p.owner}",
-                f"Next Milestone: {p.next_milestone} ({p.next_milestone_date})",
-                "",
+            requested = [n.strip() for n in project_names.split(",") if n.strip()]
+            chosen = [
+                n for n in all_names
+                if any(r.lower() in n.lower() or n.lower() in r.lower() for r in requested)
             ]
-        title = f"Organization Report - {len(projects)} Projects"
+        if not chosen:
+            return f"No matching projects found. Available: {', '.join(all_names)}"
+        lines = [f"Organization Project Report — {len(chosen)} Projects", ""]
+        for name in chosen:
+            snippet = PolicyService.search_projects(name, limit=3)
+            lines += [f"\n{name.upper()}:", snippet or "(no content available)", ""]
+        title = f"Organization Report - {len(chosen)} Projects"
         pdf_bytes = generate_pdf(
             doc_type=report_type,
             title=title,
@@ -173,12 +132,10 @@ def generate_multi_project_report(
         )
         file_id = str(uuid.uuid4())[:8]
         store_pdf(file_id, pdf_bytes, "org_projects_report")
-        names = ", ".join(p.name for p in projects)
-        return f"PDF report generated covering {len(projects)} projects: {names}.\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
+        names_str = ", ".join(chosen)
+        return f"PDF report generated covering {len(chosen)} projects: {names_str}.\n\n[DOWNLOAD_PDF:/api/documents/download/{file_id}:{title}]"
     except Exception as exc:
         return f"Failed to generate multi-project report: {exc}"
-    finally:
-        db.close()
 
 
 @tool
@@ -245,57 +202,31 @@ class PMOState(TypedDict):
 # ── DB helpers (no LLM) ───────────────────────────────────────────────────────
 
 def _db_list_all_projects() -> dict:
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        projects = db.query(Project).all()
-        if not projects:
-            return {"messages": [AIMessage(content="There are currently no projects in the system.")]}
-        lines = [
-            f"{i + 1}. **{p.name}** — {p.status} ({p.completion_pct}% complete)"
-            for i, p in enumerate(projects)
-        ]
-        body = f"Here are all **{len(projects)} projects** in the organization:\n\n" + "\n".join(lines)
-        return {"messages": [AIMessage(content=body)]}
-    finally:
-        db.close()
+    from app.services.policy_service import PolicyService
+    names = PolicyService.list_project_names()
+    if not names:
+        return {"messages": [AIMessage(content="There are currently no projects in the system.")]}
+    lines = [f"{i + 1}. **{n}**" for i, n in enumerate(names)]
+    body = f"Here are all **{len(names)} projects** in the organization:\n\n" + "\n".join(lines)
+    return {"messages": [AIMessage(content=body)]}
 
 
 def _db_project_status(project_name: str) -> dict:
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
-        if not project:
-            all_names = [p.name for p in db.query(Project).all()]
-            return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
-        body = (
-            f"**{project.name}**\n"
-            f"- Status: {project.status}\n"
-            f"- Completion: {project.completion_pct}%\n"
-            f"- Owner: {project.owner}\n"
-            f"- Next Milestone: {project.next_milestone} ({project.next_milestone_date})"
-        )
-        return {"messages": [AIMessage(content=body)]}
-    finally:
-        db.close()
+    from app.services.policy_service import PolicyService
+    content = PolicyService.search_projects(f"{project_name} status milestones", limit=4)
+    if not content or "no results" in content.lower():
+        all_names = PolicyService.list_project_names()
+        return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
+    return {"messages": [AIMessage(content=f"**{project_name}**\n\n{content}")]}
 
 
 def _db_project_achievements(project_name: str) -> dict:
-    from app.database import SessionLocal
-    from app.models import Project
-    db = SessionLocal()
-    try:
-        project = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
-        if not project:
-            all_names = [p.name for p in db.query(Project).all()]
-            return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
-        achievements = project.achievements or "No achievements recorded yet."
-        return {"messages": [AIMessage(content=f"**Achievements for {project.name}:**\n{achievements}")]}
-    finally:
-        db.close()
+    from app.services.policy_service import PolicyService
+    content = PolicyService.search_projects(f"{project_name} achievements outcomes results", limit=4)
+    if not content or "no results" in content.lower():
+        all_names = PolicyService.list_project_names()
+        return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
+    return {"messages": [AIMessage(content=f"**Achievements for {project_name}:**\n\n{content}")]}
 
 
 def _detect_platform(entities: dict, text: str) -> str:
@@ -423,7 +354,6 @@ def pmo_assistant(state: PMOState):
         llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(pmo_tools)
         return {"messages": [llm.invoke(messages)]}
     except Exception as exc:
-        print(f"PMO Agent LLM error: {exc}")
         return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}
 
 

@@ -11,6 +11,7 @@ from app.services.bookshelf_service import BookshelfService
 from app.services.prompt_service import PromptService
 from app.hr_service import HRService
 from app.config import settings
+import app.services.travel_service as _travel_svc
 
 
 # ── Agent State ───────────────────────────────────────────────────────────────
@@ -294,6 +295,19 @@ def post_admin_announcement(title: str, body: str, category: str = "General", ta
     )
 
 @tool
+def request_office_supply(
+    item_name: str,
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Request an office supply or stationery item (pens, markers, notebooks, notepads,
+    stationery, whiteboard markers, sticky notes, folders, binders, books).
+    Call immediately when the user asks for any office supply. item_name must be the item
+    only — never a sentence. Do not ask for justification. Admin team is notified."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return AdminService.request_office_supply(email, item_name)
+
+
+@tool
 def request_desk_key(
     desk_number: str,
     reason: str = "",
@@ -308,6 +322,19 @@ def request_desk_key(
     return AdminService.request_desk_key(email, desk_number, reason)
 
 @tool
+def get_cabin_info(state: Annotated[dict, InjectedState] = None):
+    """Look up cabin/room numbers for Admin, HR, IT Support, and PMO at the user's office.
+    Call when user asks where to find a department, which cabin HR is in, or where to go for Admin/IT/PMO.
+    Also call when referring the user to a department so you can give them the exact location.
+    The user's office location is detected automatically — no need to ask."""
+    from app.services.company_settings_service import CompanySettingsService
+    location = (state or {}).get("user_location", "")
+    if not location:
+        return "Your office location is not set in your profile. Ask IT to update officeLocation in your M365 account."
+    return CompanySettingsService.get_cabin_info(location)
+
+
+@tool
 def update_admin_prompt(new_prompt: str):
     """Update the Admin agent system prompt (Admin manager role only)."""
     return PromptService.update_prompt(
@@ -317,6 +344,82 @@ def update_admin_prompt(new_prompt: str):
         updated_by=settings.DEFAULT_USER_EMAIL,
         user_role="admin_manager",
     )
+
+
+@tool
+def submit_travel_request(
+    business_reason: str,
+    from_location: str,
+    to_destination: str,
+    travel_date: str,
+    return_date: str = "",
+    is_international: bool = False,
+    visa_required: bool = False,
+    mode_of_travel: str = "Flight",
+    accommodation_required: bool = False,
+    estimated_cost: float = 0.0,
+    notes: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Submit a business travel request. Collect ALL required fields before calling.
+    REQUIRED: business_reason, from_location, to_destination, travel_date (YYYY-MM-DD).
+    Ask for missing fields one at a time. Infer is_international if destination is a different country.
+    Set visa_required=True for international travel. accommodation_required if user says they need hotel/stay.
+    mode_of_travel: Flight / Train / Car / Other.
+    Reporting manager is notified by email for approval. Do NOT call with placeholder values."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    result = _travel_svc.submit_travel_request(
+        employee_email=email,
+        business_reason=business_reason,
+        from_location=from_location,
+        to_destination=to_destination,
+        travel_date=travel_date,
+        return_date=return_date,
+        is_international=is_international,
+        visa_required=visa_required,
+        mode_of_travel=mode_of_travel,
+        accommodation_required=accommodation_required,
+        estimated_cost=estimated_cost,
+        notes=notes,
+    )
+    return result.get("message", "Travel request submitted.")
+
+
+@tool
+def check_travel_requests(state: Annotated[dict, InjectedState] = None):
+    """Check the status of all your business travel requests."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    return _travel_svc.get_my_travel_requests(email)
+
+
+@tool
+def submit_travel_expense(
+    travel_ref_id: str,
+    amount: float,
+    breakdown: str = "",
+    over_limit_reason: str = "",
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Submit a post-trip expense claim for a completed/approved travel request.
+    REQUIRED: travel_ref_id (e.g. TRVL-0001), amount.
+    breakdown: itemised description of expenses (meals, transport, etc.).
+    over_limit_reason: REQUIRED only if the amount exceeds the trip's approved limit — ask the user for it.
+    Do NOT call with placeholder values. Check check_travel_requests first to find the ref_id."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    result = _travel_svc.submit_expense_claim(
+        employee_email=email,
+        travel_ref_id=travel_ref_id,
+        amount=amount,
+        breakdown=breakdown,
+        over_limit_reason=over_limit_reason,
+    )
+    if result.get("over_limit"):
+        return (
+            f"The claimed amount INR {result['amount']:,.0f} exceeds the approved limit of "
+            f"INR {result['limit']:,.0f}. Please provide a reason for the excess amount, "
+            f"then I'll resubmit with your explanation."
+        )
+    return result.get("message", "Expense claim submitted.")
 
 
 # ── Agent Logic ───────────────────────────────────────────────────────────────
@@ -329,8 +432,11 @@ tools = [
     submit_food_complaint, submit_food_feedback, get_vendor_ratings,
     list_available_books, borrow_book_by_name, request_book, check_book_requests,
     return_my_book, request_book_extension,
+    request_office_supply,
     request_desk_key,
     post_admin_announcement, update_admin_prompt,
+    submit_travel_request, check_travel_requests, submit_travel_expense,
+    get_cabin_info,
 ]
 
 _BOOKSHELF_TOOLS = [
@@ -353,7 +459,12 @@ _TOOL_GROUPS: dict[str, list] = {
     "accommodation":      [request_accommodation, search_admin_policies],
     "visitor_pass":       [request_visitor_pass],
     "policy_query":       [search_admin_policies, submit_reimbursement, check_reimbursement_status],
+    "office_supply_request": [request_office_supply],
     "desk_key_request":   [request_desk_key],
+    "travel_request":     [submit_travel_request, check_travel_requests, search_admin_policies],
+    "travel_expense":     [check_travel_requests, submit_travel_expense],
+    "travel_status":      [check_travel_requests],
+    "cabin_info":         [get_cabin_info],
 }
 
 import re as _re
@@ -371,10 +482,14 @@ def admin_assistant(state: AdminState):
         f"You are the Admin Services Assistant for Aligned Automation.\n"
         f"Employee email: {user_email}. Never ask for it.\n\n"
         f"Answer from tool results and provided policy context only.\n"
+        f"Office supply request (pens, markers, notebooks, notepads, stationery, sticky notes, folders) → "
+        f"call request_office_supply IMMEDIATELY. Never ask for justification.\n"
         f"If [PRE-SEARCHED POLICY] is in context, answer from it directly — do not call search_admin_policies.\n"
         f"If [POLICY SEARCH RESULT] says none found, tell user and suggest contacting Admin team or Zoho (expense.zoho@alignedautomation.com).\n"
         f"'Hotel reimbursement' or 'hotel expense' is a policy question — search policies, not book accommodation.\n"
         f"After a tool result is already in the conversation, present it clearly — do not re-call tools.\n"
+        f"When user asks where HR/Admin/IT/PMO is located, which cabin/room/floor, or where to go — call get_cabin_info immediately.\n"
+        f"When referring the user to a department, also call get_cabin_info to include their cabin location.\n"
         f"Never open with greetings — act immediately.\n"
     )
     base_prompt = PromptService.get_system_prompt("admin", default_prompt)

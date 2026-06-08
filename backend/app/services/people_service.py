@@ -11,7 +11,7 @@ from typing import Optional
 import pandas as pd
 from sqlalchemy import or_, and_
 from app.database import SessionLocal
-from app.models import Employee, EmployeeZohoProfile, EmployeeAllocation, Project
+from app.models import Employee, EmployeeZohoProfile, EmployeeAllocation, Project, Appreciation
 
 
 # ── Column maps ───────────────────────────────────────────────────────────────
@@ -377,6 +377,12 @@ class PeopleService:
                     )
                 ).order_by(EmployeeAllocation.allocation_date.desc()).limit(5).all()
 
+                appreciation_count = 0
+                if p.official_email:
+                    appreciation_count = db.query(Appreciation).filter(
+                        Appreciation.employee_email == (p.official_email or "").lower()
+                    ).count()
+
                 results.append({
                     "name": full_name,
                     "email": p.official_email,
@@ -400,6 +406,7 @@ class PeopleService:
                     "reporting_manager": p.reporting_manager,
                     "functional_manager": p.functional_manager,
                     "status": p.employee_status,
+                    "appreciation_count": appreciation_count,
                     "projects": [
                         {
                             "project": a.project_name,

@@ -59,7 +59,7 @@ def get_current_user(
 
 def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     """Dependency that rejects non-admin callers with 403."""
-    if user.role != "admin":
+    if user.role not in {"admin", "super admin"}:
         raise HTTPException(status_code=403, detail="Admin access required.")
     return user
 
@@ -72,15 +72,15 @@ def require_domain_manager(user: CurrentUser = Depends(get_current_user)) -> Cur
 
 
 def require_hr(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Allows hr and admin roles."""
-    if user.role not in {"hr", "admin"}:
+    """Allows hr, admin, and super admin roles."""
+    if user.role not in {"hr", "admin", "super admin"}:
         raise HTTPException(status_code=403, detail="HR access required.")
     return user
 
 
 def require_it(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Allows it and admin roles."""
-    if user.role not in {"it", "admin"}:
+    """Allows it, admin, and super admin roles."""
+    if user.role not in {"it", "admin", "super admin"}:
         raise HTTPException(status_code=403, detail="IT access required.")
     return user
 
@@ -93,8 +93,8 @@ def require_super_admin(user: CurrentUser = Depends(get_current_user)) -> Curren
 
 
 def require_pmo(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Allows pmo and admin roles."""
-    if user.role not in {"pmo", "admin"}:
+    """Allows pmo, admin, and super admin roles."""
+    if user.role not in {"pmo", "admin", "super admin"}:
         raise HTTPException(status_code=403, detail="PMO access required.")
     return user
 

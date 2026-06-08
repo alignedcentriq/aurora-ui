@@ -20,20 +20,25 @@ import { Input } from "@/components/ui/input";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { VisitorPassForm } from "./VisitorPassForm";
+import { TravelRequestForm } from "./TravelRequestForm";
+import { TravelExpenseForm } from "./TravelExpenseForm";
 import { DynamicFormWidget } from "./DynamicFormWidget";
 import { ChoiceWidget } from "./ChoiceWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
+import { CancelLeaveWidget } from "./CancelLeaveWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
 import { SkillsEditorWidget } from "./SkillsEditorWidget";
 import { AnnouncementWidget } from "./AnnouncementWidget";
 import { PromptConfigWidget } from "./PromptConfigWidget";
 import { AttendanceScheduleWidget } from "./AttendanceScheduleWidget";
+import { MyAttendanceWidget } from "./MyAttendanceWidget";
 import { VoiceOrb } from "./VoiceOrb";
 import { ThinkingBuddy } from "./ThinkingBuddy";
 import { SmartWidgets } from "./SmartWidgets";
 import { useVoiceStore } from "@/lib/voice-store";
 import { createRecognition, resetSpeech, enqueueFrom, cancelSpeech } from "@/lib/speech";
+import { subscribeFormTrigger } from "@/lib/form-trigger";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -85,6 +90,16 @@ const BOOK_MY_RE = /\b(?:my\s+(?:borrowed\s+)?(?:books?|library|borrows?|book\s+
 // Stationery-style phrases that look like book intents but are not.
 const NOT_BOOK_RE = /\bborrow\s+(?:a\s+)?(?:pen|pencil|charger|cable|notebook(?!\s+book)|stapler|marker)\b/i;
 
+function normalizeBullets(text: string): string {
+  // Convert Unicode bullet markers (•) used as inline or line-start separators
+  // into proper markdown list items so ReactMarkdown renders them correctly.
+  // Only triggers when 2+ bullet-delimited segments are found.
+  if (!/[•·]/.test(text)) return text;
+  const parts = text.split(/\s*[•·]\s*/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return text;
+  return parts.map((p) => `- ${p}`).join("\n");
+}
+
 function detectBookIntent(text: string): { path: string; label: string; reply: string } | null {
   const t = text.toLowerCase();
   if (NOT_BOOK_RE.test(t)) return null;
@@ -105,8 +120,51 @@ function detectBookIntent(text: string): { path: string; label: string; reply: s
   return null;
 }
 
+// ── Role-gate definitions ────────────────────────────────────────────────────
+// Checked before any intercept fires. If the user's role isn't in `allowed`,
+// the assistant returns a friendly denial instead of routing to the LLM.
+const ROLE_GATES: Array<{ re: RegExp; allowed: string[]; denial: string }> = [
+  {
+    re: /\b(hr\s+portal|hr\s+(?:admin|tools?|dashboard|management)|manage\s+(?:all\s+)?employees|employee\s+management)\b/i,
+    allowed: ["hr"],
+    denial: "The HR Portal is only available to the HR team. If you have an HR-related question, just ask and I'll help.",
+  },
+  {
+    re: /\b(admin\s+portal|admin\s+(?:panel|tools?|dashboard|settings))\b/i,
+    allowed: ["admin", "super admin"],
+    denial: "The Admin Portal is only accessible to Admin and Super Admin roles.",
+  },
+  {
+    re: /\b(it\s+portal|it\s+(?:admin|dashboard|tools?)|manage\s+(?:support\s+)?tickets|it\s+admin)\b/i,
+    allowed: ["it", "super admin"],
+    denial: "The IT Portal is only available to the IT team.",
+  },
+  {
+    re: /\b(pmo\s+portal|pmo\s+(?:admin|dashboard|tools?))\b/i,
+    allowed: ["pmo", "super admin"],
+    denial: "The PMO Portal is only available to the PMO team.",
+  },
+  {
+    re: /\b(llm\s+controls?|model\s+controls?|ai\s+model\s+settings|configure\s+(?:ai|llm)\s+models?)\b/i,
+    allowed: ["super admin"],
+    denial: "LLM Controls are reserved for Super Admin only.",
+  },
+  {
+    re: /\b(manager\s+portal|manage\s+(?:my\s+)?team'?s?\s+(?:leaves?|attendance|requests?)|approve\s+(?:team|my\s+team'?s?)\s+(?:leave|request))\b/i,
+    allowed: ["hr", "it", "pmo", "admin", "functional manager", "rm", "super admin"],
+    denial: "Manager features are only available to team managers and above.",
+  },
+];
+
+// ── Document types the catalogue supports ────────────────────────────────────
+const DOC_TYPE_RE = /\b(?:noc|no[- ]?objection(?:\s+cert(?:ificate)?)?|experience\s+cert(?:ificate)?|employment\s+verif(?:ication)?|address\s+proof|relieving\s+letter|internship\s+cert(?:ificate)?|recommendation\s+letter|travel\s+support(?:\s+letter)?|project\s+proposal)\b/i;
+const DOC_GEN_RE = /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:letter|certificate|document)\b/i;
+
+// ── My-requests navigation ────────────────────────────────────────────────────
+const MY_REQUESTS_VIEW_RE = /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
+
 export function AssistantView() {
-  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
+  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread, togglePrivate } =
     useChatStore();
   // The active chat is "thinking" only if it is the thread currently generating a response
   // (pre-first-token phase — drives the ThinkingBuddy bubble).
@@ -172,6 +230,24 @@ export function AssistantView() {
       .then((data) => { if (Array.isArray(data)) formsRef.current = data; })
       .catch(() => {});
   }, [user?.email]);
+
+  // Open a form from the announcement banner image click.
+  useEffect(() => {
+    return subscribeFormTrigger((detail) => {
+      const tid = activeId;
+      if (!tid) return;
+      addTurn(tid, { role: "ai", text: detail.description || `Here is the ${detail.name} form:`, interactive: {
+        type: "dynamic_form",
+        data: {
+          template_id: detail.formId,
+          name: detail.name,
+          description: detail.description,
+          fields: detail.fields,
+          submit_endpoint: detail.submitEndpoint,
+        },
+      }});
+    });
+  }, [activeId, addTurn]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [starterPage, setStarterPage] = useState(0);
 
@@ -346,6 +422,61 @@ export function AssistantView() {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
+      // ── Role-gate: block portal/admin access for unauthorised roles ────────
+      const role = (user?.role || "employee").toLowerCase();
+      const gateHit = ROLE_GATES.find(
+        (g) => g.re.test(text) && !g.allowed.includes(role),
+      );
+      if (gateHit) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, { role: "ai", text: gateHit.denial });
+        setInput("");
+        return;
+      }
+
+      // ── Document generation navigation ─────────────────────────────────────
+      const isDocGen = (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
+        /\b(?:generate|create|make|draft|prepare|issue|get|need|want|request)\b/i.test(text) &&
+        !/\b(?:expense|claim|reimburse)\b/i.test(text);
+      if (isDocGen) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Opening **Document Generation** — select the document type and I'll prepare it for you.\n\n<<NAV:/documents|Open Documents>>",
+        });
+        setInput("");
+        window.setTimeout(() => navigate({ to: "/documents" }), 400);
+        return;
+      }
+
+      // ── My-requests navigation ─────────────────────────────────────────────
+      if (MY_REQUESTS_VIEW_RE.test(text)) {
+        const statusFilter: "all" | "open" | "in-progress" | "closed" =
+          /\b(pending|open|waiting|submitted|new)\b/i.test(text) ? "open"
+          : /\b(approved|done|completed|resolved|closed|finished|processed|cancelled)\b/i.test(text) ? "closed"
+          : /\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(text) ? "in-progress"
+          : "all";
+        const statusLabel: Record<string, string> = {
+          all: "all",
+          open: "pending",
+          "in-progress": "in-progress",
+          closed: "approved / closed",
+        };
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: `Opening **My Requests** — showing ${statusLabel[statusFilter]} requests.\n\n<<NAV:/my-requests|View My Requests>>`,
+        });
+        setInput("");
+        window.setTimeout(() => {
+          navigate({ to: "/my-requests" });
+          window.dispatchEvent(
+            new CustomEvent("centriq:requests-filter", { detail: { status: statusFilter } }),
+          );
+        }, 400);
+        return;
+      }
+
       // Intercept parking sticker requests
       if (
         text.toLowerCase().includes("parking sticker") ||
@@ -356,6 +487,42 @@ export function AssistantView() {
           role: "ai",
           text: "Please fill in your vehicle details below to submit a parking sticker request.",
           interactive: { type: "parking_form" },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept travel request submissions (exclude document/letter requests like "travel support letter")
+      const travelLower = text.toLowerCase();
+      if (
+        !DOC_TYPE_RE.test(text) &&
+        (travelLower.includes("travel") || travelLower.includes("trip") || travelLower.includes("visa")) &&
+        (travelLower.includes("business") || travelLower.includes("official") || travelLower.includes("work") ||
+         travelLower.includes("request") || travelLower.includes("apply") || travelLower.includes("submit") ||
+         travelLower.includes("need to travel") || travelLower.includes("travelling for"))
+      ) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Let me help you submit a business travel request. Please fill in the details below.",
+          interactive: { type: "travel_request_form" },
+          domain: "admin",
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept travel expense submissions
+      if (
+        (travelLower.includes("travel") || travelLower.includes("trip")) &&
+        (travelLower.includes("expense") || travelLower.includes("claim") || travelLower.includes("back from") || travelLower.includes("post-trip") || travelLower.includes("post trip") || travelLower.includes("after trip"))
+      ) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Welcome back! Let me help you submit your post-trip expense claim.",
+          interactive: { type: "travel_expense_form" },
+          domain: "admin",
         });
         setInput("");
         return;
@@ -412,6 +579,21 @@ export function AssistantView() {
         return;
       }
 
+      // Intercept leave cancellation / withdrawal requests
+      if (
+        /\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time[- ]?off)\b/i.test(text) ||
+        /\b(leave|time[- ]?off)\b.{0,30}\b(cancel|withdraw|revoke|recall)\b/i.test(text)
+      ) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here are your pending and approved leaves — select one to cancel.",
+          interactive: { type: "cancel_leave_form" },
+        });
+        setInput("");
+        return;
+      }
+
       // Intercept "show my schedule / my meetings / upcoming bookings" — read-only calendar pull, zero LLM.
       if (
         /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(text) ||
@@ -449,7 +631,6 @@ export function AssistantView() {
       }
 
       // Admin commands — only for domain managers; others fall through to chat.
-      const role = (user?.role || "employee").toLowerCase();
       const isManager = ["hr", "it", "pmo", "admin"].includes(role);
 
       // Intercept team attendance requests — Functional Managers only. Zero-LLM, structural.
@@ -489,6 +670,22 @@ export function AssistantView() {
             interactive: { type: "team_attendance" },
           });
         }
+        setInput("");
+        return;
+      }
+
+      // Intercept "my attendance" — any logged-in employee. Zero-LLM.
+      if (
+        mentionsAttendance &&
+        !mentionsTeamScope &&
+        /\b(my\s+attendance|attendance\s+(this|for)\s+(month|june|july|august|september|october|november|december|january|february|march|april|may)|show\s+(my\s+)?attendance|view\s+(my\s+)?attendance|attendance\s+(summary|report)|days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark)\b/i.test(text)
+      ) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Here's your attendance for this month.",
+          interactive: { type: "my_attendance" },
+        });
         setInput("");
         return;
       }
@@ -632,7 +829,7 @@ export function AssistantView() {
                 name: triggeredForm.name,
                 description: triggeredForm.description,
                 fields: triggeredForm.fields,
-                submit_endpoint: `/api/forms/${triggeredForm.id}/submit`,
+                submit_endpoint: "/api/forms/submit",
               },
             },
           });
@@ -698,6 +895,7 @@ export function AssistantView() {
           history,
           session_id: threadId,
           preferences: {},
+          is_private: threads[threadId]?.isPrivate || false,
         }),
       })
         .then(async (res) => {
@@ -817,13 +1015,12 @@ export function AssistantView() {
             return;
           }
 
-          console.error("Backend Error:", err);
           const isTimeout = err.name === "AbortError";
 
           addTurn(threadId, {
             role: "ai",
             text: isTimeout
-              ? "This request is taking too long, so I stopped waiting. Please try again, or check the backend logs for the step that stalled."
+              ? "This request is taking too long. Please try again."
               : "I couldn't complete that request right now. Please try again in a moment.",
             isError: true,
           });
@@ -1200,6 +1397,8 @@ export function AssistantView() {
                     onQuickAction={(p) => !busy && send(p)}
                     suggestions={suggestions}
                     onSuggestionSelect={(t) => !busy && send(t)}
+                    isPrivate={activeThread.isPrivate || false}
+                    onPrivateToggle={() => activeId && togglePrivate(activeId)}
                   />
                 </motion.div>
               </motion.section>
@@ -1219,7 +1418,7 @@ export function AssistantView() {
                         <UserMessage
                           initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
                           text={t.text}
-                          onSaveQuickSearch={handleOpenSavePrompt}
+                          onSaveQuickSearch={activeThread.isPrivate ? undefined : handleOpenSavePrompt}
                         >
                           {t.text}
                         </UserMessage>
@@ -1249,14 +1448,17 @@ export function AssistantView() {
                               ? activeThread.turns[i - 1].text
                               : undefined
                           }
+                          isPrivate={activeThread.isPrivate || false}
                         >
                           <div className="space-y-4">
                             {t.text && (() => {
                               const navTokens: { path: string; label: string }[] = [];
-                              const cleaned = t.text.replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
-                                navTokens.push({ path: String(path).trim(), label: String(label).trim() });
-                                return "";
-                              }).trim();
+                              const cleaned = normalizeBullets(
+                                t.text.replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
+                                  navTokens.push({ path: String(path).trim(), label: String(label).trim() });
+                                  return "";
+                                }).trim()
+                              );
                               return (
                                 <>
                                   {cleaned && (
@@ -1359,6 +1561,22 @@ export function AssistantView() {
                                 }
                               />
                             )}
+                            {t.interactive?.type === "travel_request_form" && (
+                              <TravelRequestForm
+                                userEmail={user?.email || ""}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "travel_expense_form" && (
+                              <TravelExpenseForm
+                                userEmail={user?.email || ""}
+                                onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                }
+                              />
+                            )}
                             {t.interactive?.type === "dynamic_form" && t.interactive.data && (
                               <DynamicFormWidget
                                 data={t.interactive.data as import("@/lib/chat-store").DynamicFormData}
@@ -1400,6 +1618,15 @@ export function AssistantView() {
                                 userRole={user?.role || "employee"}
                                 onCancelled={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "cancel_leave_form" && (
+                              <CancelLeaveWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                                onCancelled={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}
@@ -1450,6 +1677,12 @@ export function AssistantView() {
                                 }
                               />
                             )}
+                            {t.interactive?.type === "my_attendance" && (
+                              <MyAttendanceWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                              />
+                            )}
                           </div>
                         </AIMessage>
                       </motion.div>
@@ -1466,7 +1699,7 @@ export function AssistantView() {
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ type: "spring", stiffness: 300, damping: 30 }}
                     >
-                      <AIMessage live>
+                      <AIMessage live isPrivate={activeThread.isPrivate || false}>
                         <ThinkingBuddy activity={activity} />
                       </AIMessage>
                     </motion.div>
@@ -1518,6 +1751,8 @@ export function AssistantView() {
                 onGenerateDoc={openDocModal}
                 suggestions={suggestions}
                 onSuggestionSelect={(t) => !busy && send(t)}
+                isPrivate={activeThread.isPrivate || false}
+                onPrivateToggle={() => activeId && togglePrivate(activeId)}
               />
             </div>
           </motion.footer>

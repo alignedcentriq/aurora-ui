@@ -53,7 +53,7 @@ export interface VisitorPassPrefill {
 export interface DynamicFormField {
   name: string;
   label: string;
-  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox" | "user";
+  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox" | "user" | "image";
   required?: boolean;
   options?: string[];
   placeholder?: string;
@@ -94,8 +94,12 @@ export interface InteractivePayload {
     | "skills_editor"
     | "team_attendance"
     | "attendance_schedule"
+    | "my_attendance"
     | "dynamic_form"
-    | "quick_choice";
+    | "quick_choice"
+    | "travel_request_form"
+    | "travel_expense_form"
+    | "cancel_leave_form";
   data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData;
 }
 
@@ -117,6 +121,7 @@ export interface Thread {
   id: string;
   turns: Turn[];
   updatedAt: number;
+  isPrivate?: boolean;
 }
 
 interface ChatState {
@@ -130,7 +135,12 @@ interface ChatState {
   addTurn: (threadId: string, turn: Turn) => void;
   updateLastAITurn: (threadId: string, updates: Partial<Turn>) => void;
   deleteThread: (id: string) => void;
+  togglePrivate: (threadId: string) => void;
 }
+
+// Threads inactive for longer than this are automatically purged from localStorage.
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const isExpired = (t: Thread) => t.updatedAt < Date.now() - RETENTION_MS;
 
 export const useChatStore = create<ChatState>()(
   persist(
@@ -203,25 +213,49 @@ export const useChatStore = create<ChatState>()(
           }
           return { threads: newThreads, activeId: newActiveId };
         }),
+      togglePrivate: (threadId) =>
+        set((state) => {
+          const thread = state.threads[threadId];
+          if (!thread) return state;
+          return {
+            threads: {
+              ...state.threads,
+              [threadId]: { ...thread, isPrivate: !thread.isPrivate },
+            },
+          };
+        }),
     }),
     {
       name: "aurora-chat-storage",
-      partialize: (state) => ({
-        activeId: state.activeId,
-        threads: Object.fromEntries(
-          Object.entries(state.threads).map(([id, thread]) => [
-            id,
-            {
-              ...thread,
-              turns: thread.turns.map(({ images: _images, ...turn }) => turn),
-            },
-          ])
-        ),
-      }),
+      partialize: (state) => {
+        const cutoff = Date.now() - RETENTION_MS;
+        return {
+          activeId: state.activeId,
+          threads: Object.fromEntries(
+            Object.entries(state.threads)
+              .filter(([_, thread]) => !thread.isPrivate && thread.updatedAt >= cutoff)
+              .map(([id, thread]) => [
+                id,
+                {
+                  ...thread,
+                  turns: thread.turns.map(({ images: _images, ...turn }) => turn),
+                },
+              ])
+          ),
+        };
+      },
       onRehydrateStorage: () => (state) => {
         // thinkingThreads is never persisted — reset any stale generating flags on load.
         if (state) {
           state.thinkingThreads = {};
+          // Evict threads older than 30 days on every page load.
+          const cutoff = Date.now() - RETENTION_MS;
+          state.threads = Object.fromEntries(
+            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff)
+          );
+          if (state.activeId && !state.threads[state.activeId]) {
+            state.activeId = null;
+          }
         }
       },
     }

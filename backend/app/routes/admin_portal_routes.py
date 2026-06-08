@@ -524,7 +524,7 @@ def approve_book_request(id: int, body: BookRequestActionBody, user: CurrentUser
             admin_remarks=body.admin_remarks or "",
         )
     except Exception as e:
-        print(f"[admin-portal] Book approval email error: {e}")
+        pass
     return result
 
 
@@ -548,7 +548,7 @@ def reject_book_request(id: int, body: BookRequestActionBody, user: CurrentUser 
             admin_remarks=body.admin_remarks or "",
         )
     except Exception as e:
-        print(f"[admin-portal] Book rejection email error: {e}")
+        pass
     return result
 
 
@@ -569,7 +569,7 @@ def return_book(id: int, body: BookRequestActionBody, user: CurrentUser = Depend
             ticket_id=req.get("ticket_id") or f"#{id}",
         )
     except Exception as e:
-        print(f"[admin-portal] Return confirmation email error: {e}")
+        pass
     return result
 
 
@@ -610,7 +610,7 @@ def approve_book_extension(
             admin_remarks=body.admin_remarks or "",
         )
     except Exception as e:
-        print(f"[admin-portal] Extension approval email error: {e}")
+        pass
     return result
 
 
@@ -640,7 +640,7 @@ def reject_book_extension(
             admin_remarks=body.admin_remarks or "",
         )
     except Exception as e:
-        print(f"[admin-portal] Extension rejection email error: {e}")
+        pass
     return result
 
 

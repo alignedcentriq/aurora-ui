@@ -730,6 +730,33 @@ class AdminService:
             db.close()
 
     @staticmethod
+    def build_office_supply_email(email: str, item_name: str):
+        subject = f"Office Supply Request - {item_name}"
+        body = (
+            f"Dear Admin Team,\n\n"
+            f"I would like to request the following office supply at the earliest convenience.\n\n"
+            f"Details:\n"
+            f"  Requested by: {email}\n"
+            f"  Item requested: {item_name}\n\n"
+            f"Please let me know if any additional information is required.\n\n"
+            f"Thank you.\n\n"
+            f"Best regards"
+        )
+        to = settings.NOTIFY_TO_EMAIL or settings.HELPDESK_EMAIL
+        return {"to": to, "subject": subject, "body": body}
+
+    @staticmethod
+    def request_office_supply(email: str, item_name: str):
+        import json
+        draft = AdminService.build_office_supply_email(email, item_name)
+        draft_json = json.dumps({"to": draft["to"], "subject": draft["subject"], "body": draft["body"]})
+        return (
+            f"I've prepared a request email for **{item_name}**. "
+            f"Review and edit it below, then click Send.\n\n"
+            f"[EMAIL_DRAFT_START]{draft_json}[EMAIL_DRAFT_END]"
+        )
+
+    @staticmethod
     def list_desk_keys(status: str | None = None) -> list[dict]:
         db = SessionLocal()
         try:

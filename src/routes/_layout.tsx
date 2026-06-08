@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { Sidebar } from "@/components/Sidebar";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
-import { Menu, Search, Trash2, Globe, ChevronDown, Check, Sun, Moon } from "lucide-react";
+import { Menu, Search, Trash2, Globe, ChevronDown, Sun, Moon } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -10,12 +10,14 @@ import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 import { useQuickQueries } from "@/hooks/useQuickQueries";
 import { ICON_MAP, QUERY_CATEGORY_LABELS } from "@/lib/quickQueries";
 import { useChatStore } from "@/lib/chat-store";
-import { useSettings, COUNTRIES } from "@/lib/settings-store";
+import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_layout")({
   component: LayoutComponent,
 });
+
+let isInitialAppLoad = true;
 
 function LayoutComponent() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -27,6 +29,13 @@ function LayoutComponent() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (isInitialAppLoad) {
+      isInitialAppLoad = false;
+      createThread();
+    }
+  }, [createThread]);
+
   const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"], toggleClock } = useSettings();
 
   const activeTheme = theme === "system"
@@ -37,13 +46,15 @@ function LayoutComponent() {
     const targetTheme = activeTheme === "dark" ? "light" : "dark";
     setTheme(targetTheme);
   };
-  const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
   const [clocksDropdownOpen, setClocksDropdownOpen] = useState(false);
-  const countryRef = useRef<HTMLDivElement>(null);
-  const mobileCountryRef = useRef<HTMLDivElement>(null);
   const clocksRef = useRef<HTMLDivElement>(null);
 
-  const activeCountryData = COUNTRIES.find((c) => c.code === country) ?? COUNTRIES[0];
+  // Auto-detect country from browser timezone on mount
+  useEffect(() => {
+    const detected = detectCountryFromTimezone();
+    if (detected !== country) setCountry(detected);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [timeTick, setTimeTick] = useState(new Date());
 
@@ -93,17 +104,11 @@ function LayoutComponent() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Click outside to close country or clocks dropdown
+  // Click outside to close clocks dropdown
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      const insideDesktop = countryRef.current && countryRef.current.contains(target);
-      const insideMobile = mobileCountryRef.current && mobileCountryRef.current.contains(target);
-      const insideClocks = clocksRef.current && clocksRef.current.contains(target);
-      if (!insideDesktop && !insideMobile) {
-        setCountryDropdownOpen(false);
-      }
-      if (!insideClocks) {
+      if (clocksRef.current && !clocksRef.current.contains(target)) {
         setClocksDropdownOpen(false);
       }
     };
@@ -152,43 +157,6 @@ function LayoutComponent() {
         <Logo size="sm" />
         <BrandName className="text-[14px]" withAI={true} />
         <div className="ml-auto flex items-center gap-1.5">
-          <div className="relative" ref={mobileCountryRef}>
-            <button
-              onClick={() => setCountryDropdownOpen(!countryDropdownOpen)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground hover:bg-accent transition-colors cursor-pointer"
-            >
-              <span className="text-base">{activeCountryData?.flag}</span>
-            </button>
-            <AnimatePresence>
-              {countryDropdownOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute top-10 right-0 w-52 rounded-xl border border-white/[0.1] bg-[#0c1222] backdrop-blur-xl shadow-2xl p-1.5 z-50 overflow-hidden"
-                >
-                  {COUNTRIES.map((c) => {
-                    const isSelected = country === c.code;
-                    return (
-                      <button
-                        key={c.code}
-                        onClick={() => {
-                          setCountry(c.code);
-                          setCountryDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-white/80 hover:bg-white/[0.08] hover:text-white transition-colors text-left"
-                      >
-                        <span className="text-sm shrink-0">{c.flag}</span>
-                        <span className="flex-1 truncate">{c.name}</span>
-                        {isSelected && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
           <button
             onClick={handleThemeToggle}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
@@ -320,48 +288,6 @@ function LayoutComponent() {
             </AnimatePresence>
           </div>
 
-          {/* Country Selector */}
-          <div className="relative mr-3" ref={countryRef}>
-            <button
-              onClick={() => setCountryDropdownOpen(!countryDropdownOpen)}
-              className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 hover:bg-muted/70 px-3 h-8 text-[12px] font-medium text-foreground transition-all shrink-0 cursor-pointer"
-            >
-              <span>{activeCountryData?.flag}</span>
-              <span className="hidden lg:inline">{activeCountryData?.name}</span>
-              <span className="lg:hidden">{activeCountryData?.code}</span>
-              <ChevronDown className="h-3 w-3 opacity-60" />
-            </button>
-            <AnimatePresence>
-              {countryDropdownOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
-                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute top-10 right-0 w-52 rounded-xl border border-white/[0.1] bg-[#0c1222] backdrop-blur-xl shadow-2xl p-1.5 z-50 overflow-hidden"
-                >
-                  {COUNTRIES.map((c) => {
-                    const isSelected = country === c.code;
-                    return (
-                      <button
-                        key={c.code}
-                        onClick={() => {
-                          setCountry(c.code);
-                          setCountryDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-white/80 hover:bg-white/[0.08] hover:text-white transition-colors text-left"
-                      >
-                        <span className="text-sm shrink-0">{c.flag}</span>
-                        <span className="flex-1 truncate">{c.name}</span>
-                        {isSelected && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
           {/* Custom Clocks Dropdown */}
           <div className="relative mr-3" ref={clocksRef}>
             <button
@@ -396,7 +322,7 @@ function LayoutComponent() {
                             <div className="flex items-center justify-between min-w-0">
                               <span className="truncate font-semibold text-white/85 flex items-center gap-1">
                                 <span className="text-xs">{c.flag}</span>
-                                <span className="truncate text-[10px]">{c.office.split(" ")[0]}</span>
+                                <span className="truncate text-[10px]">{c.name}</span>
                               </span>
                               <span className={cn(
                                 "h-1.5 w-1.5 rounded-full shrink-0",
@@ -430,7 +356,7 @@ function LayoutComponent() {
                             />
                             <span className="text-[11px] text-white/75 flex items-center gap-1">
                               <span>{c.flag}</span>
-                              <span className="truncate">{c.office.split(" ")[0]}</span>
+                              <span className="truncate">{c.name}</span>
                             </span>
                           </label>
                         );

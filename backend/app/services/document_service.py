@@ -498,7 +498,6 @@ def seed_default_templates(db) -> None:
         )
         if removed:
             db.commit()
-            print(f"[documents] SharePoint is template source — dropped {removed} built-in seed template(s).")
         return
 
     already = (
@@ -526,7 +525,6 @@ def seed_default_templates(db) -> None:
         )
         db.add(row)
     db.commit()
-    print(f"[documents] seeded {len(_SEED_TEMPLATES)} default templates.")
 
 
 def _public_field(f: dict) -> dict:

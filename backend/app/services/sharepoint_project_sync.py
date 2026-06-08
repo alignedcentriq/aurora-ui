@@ -162,6 +162,6 @@ def project_sync_loop():
                 continue
             result = sync_projects()
             if result.get("total_new") or result.get("total_updated"):
-                print(f"[Project sync loop] {result}")
+                pass
         except Exception as e:
-            print(f"[Project sync loop] error: {e}")
+            pass

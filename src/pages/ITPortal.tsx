@@ -1,12 +1,12 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
-import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap, Briefcase, ShieldCheck, Wrench, Calendar, Mail, Users, MessageSquare, HelpCircle, Minus, Plus, Undo, Info, Newspaper } from "lucide-react";
+import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap, Briefcase, ShieldCheck, Wrench, Calendar, Mail, Users, MessageSquare, HelpCircle, Minus, Plus, Undo, Info, Newspaper, Trash2, Shield, Clock, Send, Globe, Rss } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { motion, AnimatePresence } from "framer-motion";
 
-type Tab = "tickets" | "software";
+type Tab = "tickets" | "software" | "security-digest";
 
 const STATUS_BADGE: Record<string, string> = {
   Open: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
@@ -31,7 +31,9 @@ const TICKET_STATUSES = ["Open", "Awaiting Approval", "In Progress", "Resolved",
 
 export function ITPortal() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("tickets");
+  const isSuperAdmin = user?.role === "Super Admin";
+  const isIT = user?.role === "IT";
+  const [tab, setTab] = useState<Tab>(isSuperAdmin && !isIT ? "security-digest" : "tickets");
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -39,13 +41,21 @@ export function ITPortal() {
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
   };
 
-  if (user?.role !== "IT") {
+  if (!isIT && !isSuperAdmin) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         Access restricted to IT team.
       </div>
     );
   }
+
+  const allTabs = [
+    { id: "tickets" as Tab, label: "Support Tickets", icon: Ticket, adminOnly: false },
+    { id: "software" as Tab, label: "Software Requests", icon: Package, adminOnly: false },
+    { id: "security-digest" as Tab, label: "Security Digest", icon: Shield, adminOnly: true },
+  ];
+
+  const visibleTabs = allTabs.filter(t => !t.adminOnly || isSuperAdmin);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -59,13 +69,10 @@ export function ITPortal() {
 
       {/* Tabs */}
       <div className="flex gap-1 px-8 py-3 border-b border-[var(--border)] shrink-0">
-        {[
-          { id: "tickets", label: "Support Tickets", icon: Ticket },
-          { id: "software", label: "Software Requests", icon: Package },
-        ].map(({ id, label, icon: Icon }) => (
+        {visibleTabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
-            onClick={() => setTab(id as Tab)}
+            onClick={() => setTab(id)}
             className={cn(
               "flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition-colors",
               tab === id
@@ -82,6 +89,7 @@ export function ITPortal() {
       <div className="flex-1 overflow-auto px-8 py-6">
         {tab === "tickets" && <TicketsTab authHeaders={authHeaders} />}
         {tab === "software" && <SoftwareTab authHeaders={authHeaders} />}
+        {tab === "security-digest" && isSuperAdmin && <SecurityDigestTab authHeaders={authHeaders} />}
       </div>
     </div>
   );
@@ -361,15 +369,16 @@ function TableEmpty({ label }: { label: string }) {
 interface TierCfg { model: string; temperature: number; max_tokens: number | null; timeout: number | null; }
 interface LlmCfg {
   chat_enabled: boolean;
-  security_news_enabled: boolean;
   disabled_domains: string[];
   max_concurrency: number;
   max_queue: number;
   tiers: Record<string, TierCfg>;
 }
+interface TierCallDefaults { max_tokens: number | null; timeout: number | null; }
 interface LlmControlsResponse {
   effective: LlmCfg;
   defaults: LlmCfg;
+  tier_call_defaults: Record<string, TierCallDefaults>;
   bounds: Record<string, [number, number]>;
   models: string[];
   models_live: boolean;
@@ -389,6 +398,16 @@ const TIER_META: Record<string, { label: string; sub: string; icon: React.Compon
 
 // Tiers whose models MUST support tool-calling / structured output
 const TOOLCALL_TIERS = new Set(["agent", "service", "router"]);
+
+// Per-tier capability requirements — mirrors backend TIER_REQUIREMENTS
+const TIER_REQUIREMENTS: Record<string, { caps: string[]; hint: string }> = {
+  agent:      { caps: ["tools"], hint: "tool-calling (HR & MS365 reasoning)" },
+  service:    { caps: ["tools"], hint: "tool-calling (Admin, IT, PMO, Manager)" },
+  router:     { caps: ["tools"], hint: "structured output for intent detection" },
+  general:    { caps: [],        hint: "" },
+  summarizer: { caps: [],        hint: "" },
+};
+
 const DOMAIN_LABELS: Record<string, string> = {
   hr: "HR", admin: "Admin Services", it_support: "IT Support",
   pmo: "PMO", ms365: "Microsoft 365", functional_manager: "Manager",
@@ -412,31 +431,78 @@ const DOMAIN_DESCS: Record<string, string> = {
   functional_manager: "Coordinates manager approvals, team workload, and feedback.",
 };
 
-function SecurityNewsCard({
-  cfg, setCfg, authHeaders, baseline,
-}: {
-  cfg: LlmCfg;
-  setCfg: (c: LlmCfg) => void;
-  authHeaders: Record<string, string>;
-  baseline: LlmCfg;
-}) {
+// ── Security Digest Tab ────────────────────────────────────────────────────────
+
+interface SnSource { key: string; name: string; category: string; enabled: boolean; }
+interface SnConfig { enabled: boolean; hour: number; recipients: string[]; sources: Record<string, boolean>; }
+
+const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  "General News": Globe,
+  "Threat Intelligence": Shield,
+  "Enterprise Security": Briefcase,
+  "Malware & Threats": AlertTriangle,
+  "Vulnerabilities": ShieldAlert,
+};
+
+function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [cfg, setCfg] = useState<SnConfig | null>(null);
+  const [catalog, setCatalog] = useState<SnSource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
-  const [lastResult, setLastResult] = useState<{ type: "sent" | "no_news"; stories: number; at: string } | null>(null);
+  const [lastSend, setLastSend] = useState<{ type: "sent" | "no_news"; stories: number; at: string } | null>(null);
+  const [newEmail, setNewEmail] = useState("");
+  const [baseline, setBaseline] = useState<SnConfig | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/it/security-news/config", { headers: authHeaders });
+      if (!res.ok) throw new Error("Failed to load config");
+      const body = await res.json();
+      setCfg(body.config);
+      setBaseline(body.config);
+      setCatalog(body.sources_catalog);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to load security digest config");
+    } finally {
+      setLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!cfg) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/it/security-news/config", {
+        method: "PUT", headers: authHeaders, body: JSON.stringify(cfg),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "Save failed");
+      setCfg(body.config);
+      setBaseline(body.config);
+      flyBanner("Security digest settings saved");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const sendNow = async () => {
     setSending(true);
     try {
-      const res = await fetch("/api/it/llm-controls/security-news/send-now", {
-        method: "POST", headers: authHeaders,
-      });
+      const res = await fetch("/api/it/security-news/send-now", { method: "POST", headers: authHeaders });
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || "Send failed");
       if (body.status === "no_news") {
-        setLastResult({ type: "no_news", stories: 0, at: new Date().toLocaleTimeString() });
+        setLastSend({ type: "no_news", stories: 0, at: new Date().toLocaleTimeString() });
         toast.info("No new stories in the last 24 hours — nothing to send.");
       } else {
-        setLastResult({ type: "sent", stories: body.stories, at: new Date().toLocaleTimeString() });
-        flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length > 1 ? "s" : ""}`);
+        setLastSend({ type: "sent", stories: body.stories, at: new Date().toLocaleTimeString() });
+        flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length !== 1 ? "s" : ""}`);
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to send digest");
@@ -445,94 +511,187 @@ function SecurityNewsCard({
     }
   };
 
-  const isChanged = cfg.security_news_enabled !== baseline.security_news_enabled;
+  const addRecipient = () => {
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) return;
+    if (cfg?.recipients.includes(email)) { toast.info("Already in list"); return; }
+    setCfg(c => c ? { ...c, recipients: [...c.recipients, email] } : c);
+    setNewEmail("");
+  };
+
+  const removeRecipient = (email: string) => {
+    setCfg(c => c ? { ...c, recipients: c.recipients.filter(r => r !== email) } : c);
+  };
+
+  const toggleSource = (key: string, val: boolean) => {
+    setCfg(c => c ? { ...c, sources: { ...c.sources, [key]: val } } : c);
+  };
+
+  if (loading || !cfg) {
+    return <div className="flex items-center justify-center h-40 text-muted-foreground text-[13px]"><Loader2 className="h-4 w-4 animate-spin mr-2" />Loading…</div>;
+  }
+
+  const dirty = JSON.stringify(cfg) !== JSON.stringify(baseline);
+
+  // Group sources by category
+  const byCategory: Record<string, SnSource[]> = {};
+  for (const s of catalog) {
+    (byCategory[s.category] ??= []).push({ ...s, enabled: cfg.sources[s.key] ?? true });
+  }
 
   return (
-    <Card
-      icon={<Newspaper className="h-4 w-4 text-primary" />}
-      title="Security News Digest"
-      desc="Daily cybersecurity email digest sent at the configured hour. Pulls headlines from The Hacker News, Bleeping Computer, and CISA Known Exploited Vulnerabilities. No links included — source attribution only."
-    >
+    <div className="max-w-3xl space-y-6">
+      {/* Status + toggle */}
       <div className={cn(
-        "rounded-2xl border p-5 transition-all duration-300",
-        cfg.security_news_enabled
-          ? "border-emerald-500/25 bg-emerald-500/[0.04]"
-          : "border-[var(--border)]/60 bg-secondary/10",
-        isChanged && "border-amber-500/30"
+        "rounded-2xl border p-5 transition-all",
+        cfg.enabled ? "border-emerald-500/25 bg-emerald-500/[0.04]" : "border-[var(--border)]/60 bg-secondary/10"
       )}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4 flex-1 min-w-0">
-            <div className={cn(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all duration-300",
-              cfg.security_news_enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-secondary text-muted-foreground"
-            )}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", cfg.enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-secondary text-muted-foreground")}>
               <Newspaper className="h-5 w-5" />
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2.5">
+            <div>
+              <div className="flex items-center gap-2">
                 <span className="text-[14px] font-bold text-foreground">Daily Email Digest</span>
-                <span className={cn(
-                  "flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase tracking-wider",
-                  cfg.security_news_enabled
-                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
-                    : "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
+                <span className={cn("flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase tracking-wider",
+                  cfg.enabled ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" : "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
                 )}>
-                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.security_news_enabled ? "bg-emerald-400 animate-pulse" : "bg-zinc-500")} />
-                  {cfg.security_news_enabled ? "Active" : "Paused"}
+                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.enabled ? "bg-emerald-400 animate-pulse" : "bg-zinc-500")} />
+                  {cfg.enabled ? "Active" : "Paused"}
                 </span>
-                {isChanged && (
-                  <span className="text-[10px] text-amber-500 font-semibold">Unsaved change</span>
-                )}
               </div>
-              <p className="mt-1 text-[12px] text-muted-foreground leading-relaxed max-w-lg">
-                {cfg.security_news_enabled
-                  ? "Digest is active. Recipients in SECURITY_NEWS_RECIPIENTS will receive it daily."
-                  : "Digest is paused. No scheduled emails will go out until re-enabled."}
+              <p className="mt-0.5 text-[12px] text-muted-foreground">
+                {cfg.enabled ? "Digest is active — recipients will receive it daily at the configured hour." : "Digest is paused — no scheduled emails will go out."}
               </p>
-              <div className="mt-2.5 flex flex-wrap gap-2">
-                {["The Hacker News", "Bleeping Computer", "CISA KEV"].map((src) => (
-                  <span key={src} className="rounded-md bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground border border-[var(--border)]/50">
-                    {src}
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
-          <Toggle
-            on={cfg.security_news_enabled}
-            onChange={(v) => setCfg({ ...cfg, security_news_enabled: v })}
-          />
+          <Toggle on={cfg.enabled} onChange={(v) => setCfg({ ...cfg, enabled: v })} />
         </div>
 
-        {/* Send-now test trigger */}
-        <div className="mt-4 pt-4 border-t border-[var(--border)]/30 flex items-center justify-between gap-3 flex-wrap">
+        {/* Send hour */}
+        <div className="mt-4 pt-4 border-t border-[var(--border)]/30 flex items-center gap-3">
+          <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-[12px] text-muted-foreground">Send at</span>
+          <select
+            value={cfg.hour}
+            onChange={(e) => setCfg({ ...cfg, hour: Number(e.target.value) })}
+            className="rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            {Array.from({ length: 24 }, (_, i) => (
+              <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
+            ))}
+          </select>
+          <span className="text-[12px] text-muted-foreground">server local time</span>
+        </div>
+
+        {/* Send now */}
+        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-[11px] text-muted-foreground">
-            {lastResult?.type === "sent" ? (
-              <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
-                <Check className="h-3.5 w-3.5" />
-                Sent {lastResult.stories} stories at {lastResult.at}
-              </span>
-            ) : lastResult?.type === "no_news" ? (
-              <span className="flex items-center gap-1.5 text-amber-400 font-medium">
-                <Minus className="h-3.5 w-3.5" />
-                No new stories in the last 24 h — checked at {lastResult.at}
-              </span>
+            {lastSend?.type === "sent" ? (
+              <span className="flex items-center gap-1.5 text-emerald-400 font-medium"><Check className="h-3.5 w-3.5" />Sent {lastSend.stories} stories at {lastSend.at}</span>
+            ) : lastSend?.type === "no_news" ? (
+              <span className="flex items-center gap-1.5 text-amber-400 font-medium"><Minus className="h-3.5 w-3.5" />No new stories — checked at {lastSend.at}</span>
             ) : (
-              <span>Bypasses the daily schedule. Only sends if there are new stories in the last 24 hours.</span>
+              <span>Manual trigger — bypasses schedule, sends only if there are new stories.</span>
             )}
           </div>
-          <button
-            onClick={sendNow}
-            disabled={sending}
-            className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-4 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none shrink-0"
-          >
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Newspaper className="h-3.5 w-3.5" />}
+          <button onClick={sendNow} disabled={sending} className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-4 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none shrink-0">
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             {sending ? "Sending…" : "Send digest now"}
           </button>
         </div>
       </div>
-    </Card>
+
+      {/* Recipients */}
+      <div className="rounded-2xl border border-[var(--border)] bg-card p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <Mail className="h-4 w-4 text-primary" />
+          <span className="text-[13px] font-semibold text-foreground">Recipients</span>
+          <span className="ml-auto text-[11px] text-muted-foreground">{cfg.recipients.length} address{cfg.recipients.length !== 1 ? "es" : ""}</span>
+        </div>
+        <div className="space-y-1.5">
+          {cfg.recipients.length === 0 && (
+            <p className="text-[12px] text-muted-foreground italic">No recipients — add at least one to enable the digest.</p>
+          )}
+          {cfg.recipients.map((email) => (
+            <div key={email} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/30 px-3 py-2">
+              <span className="text-[12px] text-foreground font-mono">{email}</span>
+              <button onClick={() => removeRecipient(email)} className="text-muted-foreground hover:text-rose-400 transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 pt-1">
+          <input
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addRecipient()}
+            placeholder="email@company.com"
+            className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button onClick={addRecipient} className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-secondary px-3 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary/80 active:scale-95 transition-all">
+            <Plus className="h-3.5 w-3.5" />Add
+          </button>
+        </div>
+      </div>
+
+      {/* Sources by category */}
+      <div className="rounded-2xl border border-[var(--border)] bg-card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Rss className="h-4 w-4 text-primary" />
+          <span className="text-[13px] font-semibold text-foreground">News Sources</span>
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            {Object.values(cfg.sources).filter(Boolean).length} / {catalog.length} enabled
+          </span>
+        </div>
+        {Object.entries(byCategory).map(([cat, sources]) => {
+          const CatIcon = CATEGORY_ICONS[cat] ?? Globe;
+          return (
+            <div key={cat}>
+              <div className="flex items-center gap-1.5 mb-2">
+                <CatIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{cat}</span>
+              </div>
+              <div className="space-y-1.5 pl-5">
+                {sources.map((src) => (
+                  <div key={src.key} className="flex items-center justify-between gap-3 rounded-lg bg-secondary/20 px-3 py-2.5">
+                    <span className="text-[12px] font-medium text-foreground">{src.name}</span>
+                    <Toggle
+                      on={cfg.sources[src.key] ?? true}
+                      onChange={(v) => toggleSource(src.key, v)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Save bar */}
+      {dirty && (
+        <div className="sticky bottom-4 rounded-2xl border border-amber-500/30 bg-background/90 px-5 py-3 shadow-xl backdrop-blur-md flex items-center justify-between gap-4">
+          <span className="text-[12px] text-amber-500 font-semibold flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
+            Unsaved changes
+          </span>
+          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-[12px] font-semibold text-primary-foreground hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50">
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      )}
+    </div>
   );
+}
+
+interface CapCheck {
+  checking: boolean;
+  capabilities: string[] | null;
+  error: string | null;
+  model: string;
 }
 
 export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
@@ -542,6 +701,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
   const [saving, setSaving] = useState(false);
   const [confirmModels, setConfirmModels] = useState<string[] | null>(null);
   const [load, setLoad] = useState<{ active: number; waiting: number; max_concurrency: number } | null>(null);
+  const [capChecks, setCapChecks] = useState<Record<string, CapCheck>>({});
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -556,6 +716,17 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
   }, []);
 
   useEffect(() => { fetch_(); }, [fetch_]);
+
+  const checkModelCaps = useCallback(async (tier: string, model: string) => {
+    setCapChecks(prev => ({ ...prev, [tier]: { checking: true, capabilities: null, error: null, model } }));
+    try {
+      const res = await fetch(`/api/it/llm-controls/model-capabilities?model=${encodeURIComponent(model)}`, { headers: authHeaders });
+      const d = await res.json();
+      setCapChecks(prev => ({ ...prev, [tier]: { checking: false, capabilities: d.capabilities ?? null, error: d.error ?? null, model } }));
+    } catch {
+      setCapChecks(prev => ({ ...prev, [tier]: { checking: false, capabilities: null, error: "Could not reach server", model } }));
+    }
+  }, [authHeaders]);
 
   // Live load meter — poll the existing concurrency-gate stats endpoint.
   useEffect(() => {
@@ -625,6 +796,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
 
   const discardEdits = () => {
     setCfg(JSON.parse(JSON.stringify(data.effective)));
+    setCapChecks({});
     toast.success("Discarded unsaved changes");
   };
 
@@ -636,9 +808,6 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
   const pendingChanges: { label: string; details: string }[] = [];
   if (cfg.chat_enabled !== baseline.chat_enabled) {
     pendingChanges.push({ label: "AI Chat Status", details: cfg.chat_enabled ? "Paused → Live" : "Live → Paused" });
-  }
-  if (cfg.security_news_enabled !== baseline.security_news_enabled) {
-    pendingChanges.push({ label: "Security News Digest", details: cfg.security_news_enabled ? "Off → On" : "On → Off" });
   }
   if (cfg.max_concurrency !== baseline.max_concurrency) {
     pendingChanges.push({ label: "Max Concurrency", details: `${baseline.max_concurrency} → ${cfg.max_concurrency}` });
@@ -657,10 +826,14 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
         pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Temp`, details: `${b.temperature} → ${t.temperature}` });
       }
       if (t.max_tokens !== b.max_tokens) {
-        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Max Tokens`, details: `${b.max_tokens ?? "default"} → ${t.max_tokens ?? "default"}` });
+        const callDef = data?.tier_call_defaults?.[tier];
+        const defTok = callDef?.max_tokens != null ? `default (${callDef.max_tokens})` : "default (no limit)";
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Max Tokens`, details: `${b.max_tokens ?? defTok} → ${t.max_tokens ?? defTok}` });
       }
       if (t.timeout !== b.timeout) {
-        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Timeout`, details: `${b.timeout ?? "default"} → ${t.timeout ?? "default"}` });
+        const callDef = data?.tier_call_defaults?.[tier];
+        const defTimeout = callDef?.timeout != null ? `default (${callDef.timeout} s)` : "default";
+        pendingChanges.push({ label: `${TIER_META[tier]?.label ?? tier} Timeout`, details: `${b.timeout != null ? `${b.timeout} s` : defTimeout} → ${t.timeout != null ? `${t.timeout} s` : defTimeout}` });
       }
     }
   });
@@ -809,10 +982,10 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
         desc="Temperature, max tokens, and timeout configured for specific assistant tasks. Modify with care — router and agents require tool-calling compatibility."
       >
         {/* Warning callout for model swaps */}
-        <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.05] p-3.5 shadow-sm">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <p className="text-[12px] leading-relaxed text-amber-200/90">
-            <span className="font-bold text-amber-300">Model Swap Warning:</span> The <span className="font-semibold text-foreground">Agent</span>, <span className="font-semibold text-foreground">Domain Service Agents</span>, and <span className="font-semibold text-foreground">Router</span> tiers rely heavily on tool execution. Deploying a model that lacks native tool calling (structured JSON output) will break workspace functions immediately.
+        <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/[0.05] p-3.5 shadow-sm">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-[12px] leading-relaxed text-amber-800 dark:text-amber-200/90">
+            <span className="font-bold text-amber-900 dark:text-amber-300">Model Swap Warning:</span> The <span className="font-semibold text-foreground">Agent</span>, <span className="font-semibold text-foreground">Domain Service Agents</span>, and <span className="font-semibold text-foreground">Router</span> tiers rely heavily on tool execution. Deploying a model that lacks native tool calling (structured JSON output) will break workspace functions immediately.
           </p>
         </div>
 
@@ -874,7 +1047,10 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     <div className="relative">
                       <select
                         value={t.model}
-                        onChange={(e) => setTier(tier, { model: e.target.value })}
+                        onChange={(e) => {
+                          setTier(tier, { model: e.target.value });
+                          checkModelCaps(tier, e.target.value);
+                        }}
                         className={cn(
                           "w-full appearance-none rounded-xl border bg-card pl-3 pr-8 py-2 text-[13px] text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all",
                           modelChanged ? "border-amber-500/50" : "border-[var(--border)]"
@@ -889,7 +1065,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                       </select>
                       <ChevronDown className="absolute right-2.5 top-2.5 h-4 w-4 pointer-events-none text-muted-foreground/60" />
                     </div>
-                    
+
                     {modelMissing && (
                       <span className="flex items-center gap-1 text-[11px] text-rose-400 font-medium mt-1">
                         <AlertTriangle className="h-3 w-3" /> Model not loaded on server
@@ -900,6 +1076,36 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                         Changed: {baseline.tiers[tier]?.model} → {t.model}
                       </span>
                     )}
+
+                    {/* Capability check result */}
+                    {(() => {
+                      const chk = capChecks[tier];
+                      if (!chk || chk.model !== t.model) return null;
+                      const req = TIER_REQUIREMENTS[tier]?.caps ?? [];
+                      if (req.length === 0) return null;
+                      if (chk.checking) return (
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground mt-1">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Checking capabilities…
+                        </span>
+                      );
+                      if (chk.error) return (
+                        <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                          <AlertTriangle className="h-3 w-3" /> Could not verify capabilities
+                        </span>
+                      );
+                      const missing = chk.capabilities ? req.filter(c => !chk.capabilities!.includes(c)) : req;
+                      if (missing.length > 0) return (
+                        <span className="flex items-start gap-1 text-[11px] text-rose-600 dark:text-rose-400 font-medium mt-1 leading-snug">
+                          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                          Not capable — <span className="font-semibold">{t.model}</span> lacks {missing.join(", ")}. This tier requires {TIER_REQUIREMENTS[tier]?.hint}.
+                        </span>
+                      );
+                      return (
+                        <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1">
+                          <Check className="h-3 w-3" /> Capable — supports {req.join(", ")}
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {/* Temperature slider */}
@@ -919,7 +1125,11 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     <NumField
                       label="Max tokens"
                       value={t.max_tokens ?? ""}
-                      placeholder="Default"
+                      placeholder={
+                        data.tier_call_defaults?.[tier]?.max_tokens != null
+                          ? `Default (${data.tier_call_defaults[tier].max_tokens})`
+                          : "Default (no limit)"
+                      }
                       nullable
                       bounds={data.bounds.max_tokens}
                       onChange={(v) => setTier(tier, { max_tokens: numOrNull(v) })}
@@ -927,7 +1137,11 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     <NumField
                       label="Timeout (s)"
                       value={t.timeout ?? ""}
-                      placeholder="Default"
+                      placeholder={
+                        data.tier_call_defaults?.[tier]?.timeout != null
+                          ? `Default (${data.tier_call_defaults[tier].timeout} s)`
+                          : "Default"
+                      }
                       nullable
                       bounds={data.bounds.timeout}
                       onChange={(v) => setTier(tier, { timeout: numOrNull(v) })}
@@ -1037,9 +1251,6 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
           })}
         </div>
       </Card>
-
-      {/* ── Security News Digest ── */}
-      <SecurityNewsCard cfg={cfg} setCfg={setCfg} authHeaders={authHeaders} baseline={baseline} />
 
       {/* ── Sticky action bar / control console ── */}
       <AnimatePresence>
@@ -1158,15 +1369,53 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                       {cfg.tiers[tier]?.model}
                     </span>
                   </div>
+                  {/* Capability result in confirm modal */}
+                  {(() => {
+                    const chk = capChecks[tier];
+                    const req = TIER_REQUIREMENTS[tier]?.caps ?? [];
+                    if (!chk || chk.model !== cfg.tiers[tier]?.model || req.length === 0) return null;
+                    if (chk.checking) return (
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1">
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" /> Checking…
+                      </span>
+                    );
+                    if (chk.error) return null;
+                    const missing = chk.capabilities ? req.filter(c => !chk.capabilities!.includes(c)) : [];
+                    if (missing.length > 0) return (
+                      <span className="flex items-center gap-1 text-[10px] text-rose-600 dark:text-rose-400 font-semibold mt-1">
+                        <AlertTriangle className="h-2.5 w-2.5" /> Missing: {missing.join(", ")} — will break at runtime
+                      </span>
+                    );
+                    return (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 mt-1">
+                        <Check className="h-2.5 w-2.5" /> Capability verified
+                      </span>
+                    );
+                  })()}
                 </li>
               ))}
             </ul>
 
-            {confirmModels.some((t) => TOOLCALL_TIERS.has(t)) && (
-              <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3 text-[12px] text-amber-200/90 leading-relaxed">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            {/* Show a hard warning if any changed tier is incapable */}
+            {confirmModels.some((t) => {
+              const chk = capChecks[t];
+              const req = TIER_REQUIREMENTS[t]?.caps ?? [];
+              return req.length > 0 && chk && !chk.checking && !chk.error && chk.model === cfg.tiers[t]?.model &&
+                req.some(c => !chk.capabilities?.includes(c));
+            }) && (
+              <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/[0.06] p-3 text-[12px] text-rose-800 dark:text-rose-200/90 leading-relaxed">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
                 <p>
-                  <span className="font-bold text-amber-300">Caution:</span> One or more tool-calling tiers are changing. Verify that the new models natively support structure output parsing to avoid router failures.
+                  <span className="font-bold text-rose-900 dark:text-rose-300">Capability mismatch:</span> One or more models above are missing required capabilities. Applying will break those tiers immediately.
+                </p>
+              </div>
+            )}
+
+            {confirmModels.some((t) => TOOLCALL_TIERS.has(t)) && (
+              <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/[0.05] p-3 text-[12px] text-amber-800 dark:text-amber-200/90 leading-relaxed">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                <p>
+                  <span className="font-bold text-amber-900 dark:text-amber-300">Caution:</span> One or more tool-calling tiers are changing. Verify that the new models natively support structured output parsing to avoid router failures.
                 </p>
               </div>
             )}

@@ -14,6 +14,7 @@ import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
 import { Route as LayoutProjectUpdateRouteImport } from './routes/_layout.project-update'
+import { Route as LayoutMyRequestsRouteImport } from './routes/_layout.my-requests'
 import { Route as LayoutMyLibraryRouteImport } from './routes/_layout.my-library'
 import { Route as LayoutDocumentsRouteImport } from './routes/_layout.documents'
 import { Route as LayoutControlHubRouteImport } from './routes/_layout.control-hub'
@@ -43,6 +44,11 @@ const LayoutProjectUpdateRoute = LayoutProjectUpdateRouteImport.update({
   path: '/project-update',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutMyRequestsRoute = LayoutMyRequestsRouteImport.update({
+  id: '/my-requests',
+  path: '/my-requests',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutMyLibraryRoute = LayoutMyLibraryRouteImport.update({
   id: '/my-library',
   path: '/my-library',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/control-hub': typeof LayoutControlHubRoute
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
+  '/my-requests': typeof LayoutMyRequestsRoute
   '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
@@ -79,6 +86,7 @@ export interface FileRoutesByTo {
   '/control-hub': typeof LayoutControlHubRoute
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
+  '/my-requests': typeof LayoutMyRequestsRoute
   '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   '/_layout/control-hub': typeof LayoutControlHubRoute
   '/_layout/documents': typeof LayoutDocumentsRoute
   '/_layout/my-library': typeof LayoutMyLibraryRoute
+  '/_layout/my-requests': typeof LayoutMyRequestsRoute
   '/_layout/project-update': typeof LayoutProjectUpdateRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
     | '/control-hub'
     | '/documents'
     | '/my-library'
+    | '/my-requests'
     | '/project-update'
     | '/settings'
     | '/team'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
     | '/control-hub'
     | '/documents'
     | '/my-library'
+    | '/my-requests'
     | '/project-update'
     | '/settings'
     | '/team'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/_layout/control-hub'
     | '/_layout/documents'
     | '/_layout/my-library'
+    | '/_layout/my-requests'
     | '/_layout/project-update'
     | '/_layout/settings'
     | '/_layout/team'
@@ -171,6 +183,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutProjectUpdateRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/my-requests': {
+      id: '/_layout/my-requests'
+      path: '/my-requests'
+      fullPath: '/my-requests'
+      preLoaderRoute: typeof LayoutMyRequestsRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/my-library': {
       id: '/_layout/my-library'
       path: '/my-library'
@@ -207,6 +226,7 @@ interface LayoutRouteChildren {
   LayoutControlHubRoute: typeof LayoutControlHubRoute
   LayoutDocumentsRoute: typeof LayoutDocumentsRoute
   LayoutMyLibraryRoute: typeof LayoutMyLibraryRoute
+  LayoutMyRequestsRoute: typeof LayoutMyRequestsRoute
   LayoutProjectUpdateRoute: typeof LayoutProjectUpdateRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
@@ -218,6 +238,7 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutControlHubRoute: LayoutControlHubRoute,
   LayoutDocumentsRoute: LayoutDocumentsRoute,
   LayoutMyLibraryRoute: LayoutMyLibraryRoute,
+  LayoutMyRequestsRoute: LayoutMyRequestsRoute,
   LayoutProjectUpdateRoute: LayoutProjectUpdateRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,

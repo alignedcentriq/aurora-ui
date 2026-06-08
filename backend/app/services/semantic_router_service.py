@@ -131,7 +131,6 @@ class SemanticRouterService:
                 for (r, dist) in rows
             ]
         except Exception as e:  # noqa: BLE001 — never break the request path
-            print(f"[SemanticRouter] knn skipped ({type(e).__name__}): {e}")
             return None
         finally:
             db.close()
@@ -233,7 +232,6 @@ class SemanticRouterService:
             return True
         except Exception as e:  # noqa: BLE001
             db.rollback()
-            print(f"[SemanticRouter] add_example skipped ({type(e).__name__}): {e}")
             return False
         finally:
             db.close()
@@ -251,7 +249,6 @@ class SemanticRouterService:
                 for r in db.query(RouterExample).filter(RouterExample.source != "manual").all()
             }
         except Exception as e:  # noqa: BLE001
-            print(f"[SemanticRouter] seed_from_catalog read failed ({type(e).__name__}): {e}")
             db.close()
             return {"error": str(e)}
         finally:
@@ -284,5 +281,4 @@ class SemanticRouterService:
 
         summary = {"total": len(ROUTER_SEEDS), "inserted": inserted,
                    "embedded": embedded, "skipped": skipped, "failed": failed}
-        print(f"[SemanticRouter] seed_from_catalog: {summary}")
         return summary

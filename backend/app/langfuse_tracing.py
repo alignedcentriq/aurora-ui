@@ -38,7 +38,6 @@ def get_langfuse_client() -> Langfuse | None:
         )
         return _client
     except Exception as e:
-        print(f"[Langfuse] Client init failed: {e}")
         return None
 
 
@@ -58,13 +57,17 @@ class TracingContext:
     """
 
     def __init__(self, session_id: str = None, user_id: str = None,
-                 metadata: dict = None, tags: list = None):
-        self._client = get_langfuse_client()
-        self._trace = None
+                 metadata: dict = None, tags: list = None, is_private: bool = False):
         self._generations: dict[str, object] = {}   # run_id → generation span
         self._gen_starts: dict[str, float] = {}      # run_id → start time
         self.trace_id: str | None = None
 
+        if is_private:
+            self._client = None
+            self._trace = None
+            return
+
+        self._client = get_langfuse_client()
         if self._client is None:
             return
 
@@ -78,7 +81,6 @@ class TracingContext:
             )
             self.trace_id = self._trace.id
         except Exception as e:
-            print(f"[Langfuse] Trace creation failed: {e}")
             self._trace = None
 
     # -- Generation span lifecycle --
@@ -96,7 +98,7 @@ class TracingContext:
             )
             self._generations[run_id] = gen
         except Exception as e:
-            print(f"[Langfuse] Generation start error: {e}")
+            pass
 
     def end_generation(self, run_id: str, output=None, usage_metadata: dict = None,
                        tool_calls: list = None):
@@ -132,7 +134,7 @@ class TracingContext:
                 metadata=meta if meta else None,
             )
         except Exception as e:
-            print(f"[Langfuse] Generation end error: {e}")
+            pass
 
     # -- Tool spans --
 
@@ -147,7 +149,7 @@ class TracingContext:
                 output=str(output_data)[:500] if output_data else None,
             )
         except Exception as e:
-            print(f"[Langfuse] Tool span error: {e}")
+            pass
 
     # -- Finalise --
 
@@ -167,7 +169,7 @@ class TracingContext:
                 metadata=meta,
             )
         except Exception as e:
-            print(f"[Langfuse] Finalize error: {e}")
+            pass
         finally:
             self._flush()
 
@@ -179,7 +181,7 @@ class TracingContext:
             self._trace.score(name=name, value=value, comment=comment)
             self._flush()
         except Exception as e:
-            print(f"[Langfuse] Score error: {e}")
+            pass
 
     def _flush(self):
         if self._client:
@@ -202,4 +204,4 @@ def langfuse_event(name: str, data: dict = None):
         trace.event(name=name, metadata=data or {})
         client.flush()
     except Exception as e:
-        print(f"[Langfuse] Event error: {e}")
+        pass

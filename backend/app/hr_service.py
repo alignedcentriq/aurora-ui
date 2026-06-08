@@ -216,7 +216,7 @@ class HRService:
                     manager_email=manager_email, leave_id=new_leave.id,
                 )
             except Exception as e:
-                print(f"[HR] Approval email error (non-fatal): {e}")
+                pass
 
             # Send FYI notification to Functional Manager (no approve/reject links)
             try:
@@ -229,7 +229,7 @@ class HRService:
                         reason=reason, functional_manager_email=fm_email,
                     )
             except Exception as e:
-                print(f"[HR] FM FYI email error (non-fatal): {e}")
+                pass
 
             return (
                 f"Your {leave_type} leave request from {start_date} to {end_date} has been submitted. "
@@ -269,7 +269,7 @@ class HRService:
                     description=description,
                 )
             except Exception as e:
-                print(f"[HR] Query notification email error (non-fatal): {e}")
+                pass
             return (
                 f"Your HR query has been submitted (Ref: **{reference_id}**). "
                 f"Category: {category}. HR will respond within 2 working days."

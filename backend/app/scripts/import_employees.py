@@ -297,7 +297,6 @@ def import_from_dataframe(df: pd.DataFrame, db: Session) -> dict:
     db.commit()
 
     # ── Second pass: resolve manager_id references ──
-    print("Resolving manager relationships...")
     profiles = db.query(EmployeeZohoProfile).filter(
         EmployeeZohoProfile.reporting_manager.isnot(None)
     ).all()
@@ -319,7 +318,6 @@ def main():
 
     filepath = Path(args.file)
     if not filepath.exists():
-        print(f"Error: File not found: {filepath}")
         sys.exit(1)
 
     # Read file
@@ -328,25 +326,17 @@ def main():
     elif filepath.suffix.lower() == ".csv":
         df = pd.read_csv(filepath)
     else:
-        print(f"Error: Unsupported file format: {filepath.suffix}")
         sys.exit(1)
 
-    print(f"Read {len(df)} rows from {filepath.name}")
-    print(f"Columns: {list(df.columns)}")
 
     # Init DB and import
     init_db()
     db = SessionLocal()
     try:
         stats = import_from_dataframe(df, db)
-        print(f"\nImport complete:")
-        print(f"  Created: {stats['created']}")
-        print(f"  Updated: {stats['updated']}")
-        print(f"  Skipped: {stats['skipped']}")
         if stats["errors"]:
-            print(f"  Errors ({len(stats['errors'])}):")
             for err in stats["errors"][:20]:
-                print(f"    - {err}")
+                pass
     finally:
         db.close()
 

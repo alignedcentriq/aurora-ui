@@ -153,6 +153,57 @@ def descendants(db, manager_id: int) -> list[Employee]:
     return sorted(found.values(), key=lambda e: ((e.department or "").lower(), (e.name or "").lower()))
 
 
+def calendar_records(query: str, month: str = "", year: str = "") -> dict:
+    """Day-by-day attendance records for a self-service calendar widget."""
+    db = SessionLocal()
+    try:
+        emp = resolve_employee(db, query)
+        if not emp:
+            return {"success": False, "error": "employee_not_found", "query": query}
+
+        today = datetime.date.today()
+        m = int(month) if month else today.month
+        y = int(year) if year else today.year
+        start, end = _month_bounds(y, m)
+
+        rows = (
+            db.query(Attendance)
+            .filter(
+                Attendance.employee_id == emp.id,
+                Attendance.date >= start,
+                Attendance.date <= end,
+            )
+            .order_by(Attendance.date)
+            .all()
+        )
+
+        days = []
+        for r in rows:
+            is_late = (
+                r.status == "Present"
+                and r.check_in is not None
+                and r.check_in.time() > LATE_THRESHOLD
+            )
+            days.append({
+                "date": r.date.isoformat(),
+                "status": r.status or "",
+                "check_in": r.check_in.strftime("%H:%M") if r.check_in else None,
+                "check_out": r.check_out.strftime("%H:%M") if r.check_out else None,
+                "late": is_late,
+            })
+
+        return {
+            "success": True,
+            "employee": emp.name,
+            "month": m,
+            "year": y,
+            "period": datetime.date(y, m, 1).strftime("%B %Y"),
+            "days": days,
+        }
+    finally:
+        db.close()
+
+
 def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
     """
     Whole-hierarchy attendance report for a manager: a per-employee monthly summary for

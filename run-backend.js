@@ -4,6 +4,27 @@ import net from "net";
 import os from "os";
 import path from "path";
 
+const spawnedChildren = [];
+
+/** On Windows: kill any process currently listening on the given port. */
+const freePort = (port) => {
+  if (os.platform() !== "win32") return;
+  try {
+    const out = execFileSync("netstat", ["-ano"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const pids = new Set();
+    for (const line of out.split("\n")) {
+      const m = line.match(/[:\s](\d+)\s+\S+\s+LISTENING\s+(\d+)/);
+      if (m && parseInt(m[1], 10) === port) pids.add(m[2]);
+    }
+    for (const pid of pids) {
+      try {
+        execFileSync("taskkill", ["/PID", pid, "/F"], { stdio: "ignore" });
+        console.log(`Freed port ${port} (killed PID ${pid})`);
+      } catch { /* already dead */ }
+    }
+  } catch { /* netstat unavailable */ }
+};
+
 const repoRoot = process.cwd();
 const backendDir = path.join(repoRoot, "backend");
 const platform = os.platform();
@@ -337,6 +358,7 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
 
   const launch = () => {
     if (uvicornShuttingDown) return;
+    freePort(port);
     console.log(`--- Starting ${label} on port ${port} ---`);
     const child = spawn(uvicornPath, args, {
       cwd: backendDir,
@@ -344,12 +366,17 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
       stdio: "inherit",
       shell: false,
     });
+    spawnedChildren.push(child);
     child.on("error", (err) => {
+      const idx = spawnedChildren.indexOf(child);
+      if (idx !== -1) spawnedChildren.splice(idx, 1);
       if (uvicornShuttingDown) return;
       console.error(`[${label}] failed to start: ${err.message} — retrying in 5s`);
       setTimeout(launch, 5000);
     });
     child.on("exit", (code) => {
+      const idx = spawnedChildren.indexOf(child);
+      if (idx !== -1) spawnedChildren.splice(idx, 1);
       if (uvicornShuttingDown) return;
       if (code !== 0 && code !== null) {
         console.error(`[${label}] exited with code ${code} — restarting in 5s`);
@@ -403,6 +430,7 @@ const startBackend = async () => {
   startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
   startMockServer(venvPaths.uvicorn, "mock_nexus_library_server:app", 8092, "Mock Nexus Library");
 
+  freePort(8080);
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runUvicornWithRestart(venvPaths.uvicorn);
 };
@@ -415,14 +443,14 @@ startBackend().catch((err) => {
   process.exit(1);
 });
 
-process.on("SIGINT", () => {
+const shutdownAll = () => {
   uvicornShuttingDown = true;
+  for (const child of spawnedChildren) {
+    try { child.kill(); } catch { /* already gone */ }
+  }
   stopWslKeepAlive();
   process.exit(0);
-});
+};
 
-process.on("SIGTERM", () => {
-  uvicornShuttingDown = true;
-  stopWslKeepAlive();
-  process.exit(0);
-});
+process.on("SIGINT", shutdownAll);
+process.on("SIGTERM", shutdownAll);
