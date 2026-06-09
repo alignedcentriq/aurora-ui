@@ -210,6 +210,8 @@ def init_db():
                 f'  reason TEXT,'
                 f'  created_at TIMESTAMP DEFAULT NOW()'
                 f')',
+                # Backfill viewer_oid column for tables created before it was added
+                f'ALTER TABLE "{SCHEMA}".content_reveal_audits ADD COLUMN IF NOT EXISTS viewer_oid VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -285,7 +287,10 @@ def init_db():
 
             for _col_stmt in [
                 f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
+                f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS co_owners_json JSON DEFAULT \'[]\'::json',
                 f'ALTER TABLE "{SCHEMA}".attendance_schedules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
+                f'ALTER TABLE "{SCHEMA}".travel_requests ADD COLUMN IF NOT EXISTS expense_limit_currency VARCHAR DEFAULT \'INR\'',
+                f'ALTER TABLE "{SCHEMA}".travel_expense_claims ADD COLUMN IF NOT EXISTS currency VARCHAR DEFAULT \'INR\'',
             ]:
                 try:
                     conn.execute(text(_col_stmt))

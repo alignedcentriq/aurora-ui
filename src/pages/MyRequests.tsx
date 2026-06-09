@@ -179,7 +179,7 @@ const STATUS_FILTERS: { key: StatusFilter; label: string; icon: React.ElementTyp
 ];
 
 const OPEN_STATUSES = ["open", "pending approval", "draft", "pending", "pending_rm", "pending_fm"];
-const CLOSED_STATUSES = ["resolved", "closed", "verified", "approved", "completed", "cancelled", "finance_processed"];
+const CLOSED_STATUSES = ["resolved", "closed", "verified", "approved", "completed", "cancelled", "finance_processed", "rejected"];
 const IN_PROGRESS_STATUSES = [
   "acknowledged",
   "under review",
@@ -874,7 +874,7 @@ function DetailPanel({ item }: { item: RequestItem }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Detail label="Estimated Cost" value={raw.estimated_cost ? `$${raw.estimated_cost}` : "—"} />
-              <Detail label="Expense Limit Allocated" value={raw.expense_limit ? `$${raw.expense_limit}` : "—"} />
+              <Detail label="Expense Limit Allocated" value={raw.expense_limit ? `${raw.expense_limit_currency || "INR"} ${raw.expense_limit.toLocaleString()}` : "—"} />
             </div>
             {raw.notes && <Detail label="Travel Justification/Notes" value={String(raw.notes)} />}
             {(raw.ticket_details || raw.hotel_details || raw.visa_status) && (

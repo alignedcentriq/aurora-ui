@@ -444,7 +444,7 @@ const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string }>
   "Vulnerabilities": ShieldAlert,
 };
 
-function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+export function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [cfg, setCfg] = useState<SnConfig | null>(null);
   const [catalog, setCatalog] = useState<SnSource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -917,12 +917,14 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
               value={cfg.max_concurrency}
               bounds={data.bounds.max_concurrency}
               onChange={(v) => setCfg({ ...cfg, max_concurrency: Number(v) || 1 })}
+              className="w-full sm:w-48"
             />
             <NumField
               label="Max queue size"
               value={cfg.max_queue}
               bounds={data.bounds.max_queue}
               onChange={(v) => setCfg({ ...cfg, max_queue: Number(v) || 0 })}
+              className="w-full sm:w-48"
             />
           </div>
           
@@ -1522,7 +1524,7 @@ function SliderField({ label, value, onChange, min, max, step }: {
   );
 }
 
-function NumField({ label, value, onChange, bounds, step = 1, placeholder, nullable }: {
+function NumField({ label, value, onChange, bounds, step = 1, placeholder, nullable, className }: {
   label: string;
   value: number | string;
   onChange: (v: string) => void;
@@ -1530,6 +1532,7 @@ function NumField({ label, value, onChange, bounds, step = 1, placeholder, nulla
   step?: number;
   placeholder?: string;
   nullable?: boolean;
+  className?: string;
 }) {
   const currentVal = value === "" ? 0 : Number(value);
   const handleDecrement = () => {
@@ -1544,16 +1547,16 @@ function NumField({ label, value, onChange, bounds, step = 1, placeholder, nulla
   };
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={cn("flex flex-col gap-1.5 w-full", className)}>
       <label className="text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
         {label}
       </label>
-      <div className="flex items-center rounded-xl border border-[var(--border)] bg-card overflow-hidden focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 transition-all h-9">
+      <div className="flex items-center rounded-xl border border-[var(--border)] bg-card overflow-hidden focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 transition-all h-9 w-full">
         <button
           type="button"
           onClick={handleDecrement}
           disabled={bounds ? currentVal <= bounds[0] : false}
-          className="flex h-full w-9 items-center justify-center border-r border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+          className="flex h-full w-9 shrink-0 items-center justify-center border-r border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
         >
           <Minus className="h-3 w-3" />
         </button>
@@ -1565,13 +1568,13 @@ function NumField({ label, value, onChange, bounds, step = 1, placeholder, nulla
           max={bounds?.[1]}
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
-          className="w-20 bg-transparent py-1.5 text-center text-[13px] text-foreground focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-bold font-mono"
+          className="flex-1 min-w-0 bg-transparent py-1.5 text-center text-[13px] text-foreground focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-bold font-mono px-1 placeholder:text-[9px] placeholder:font-normal placeholder:tracking-tight placeholder:text-muted-foreground/50"
         />
         <button
           type="button"
           onClick={handleIncrement}
           disabled={bounds ? currentVal >= bounds[1] : false}
-          className="flex h-full w-9 items-center justify-center border-l border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+          className="flex h-full w-9 shrink-0 items-center justify-center border-l border-[var(--border)]/75 text-muted-foreground hover:bg-secondary hover:text-foreground active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
         >
           <Plus className="h-3 w-3" />
         </button>

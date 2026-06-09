@@ -367,6 +367,14 @@ def submit_travel_request(
     Set visa_required=True for international travel. accommodation_required if user says they need hotel/stay.
     mode_of_travel: Flight / Train / Car / Other.
     Reporting manager is notified by email for approval. Do NOT call with placeholder values."""
+    missing = [f for f, v in [
+        ("business_reason", business_reason),
+        ("from_location", from_location),
+        ("to_destination", to_destination),
+        ("travel_date", travel_date),
+    ] if not (v or "").strip()]
+    if missing:
+        return f"Cannot submit — required field(s) missing: {', '.join(missing)}. Please ask the user for these before calling this tool."
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
     result = _travel_svc.submit_travel_request(
         employee_email=email,

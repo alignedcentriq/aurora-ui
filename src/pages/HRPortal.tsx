@@ -502,7 +502,7 @@ function ActionPanel({
   onDone: () => void;
 }) {
   const raw = item.raw;
-  const isFinal = ["resolved", "closed", "verified"].includes(item.status.toLowerCase());
+  const isFinal = ["resolved", "closed", "verified", "rejected"].includes(item.status.toLowerCase());
 
   const [responseText, setResponseText] = useState(
     item.type === "query" ? String(raw.response ?? "") : ""
@@ -517,6 +517,8 @@ function ActionPanel({
   const [notes, setNotes] = useState(
     item.type === "grievance" ? String(raw.resolution_notes ?? "") : ""
   );
+  const [rejectReason, setRejectReason] = useState("");
+  const [showRejectForm, setShowRejectForm] = useState(false);
   const [acting, setActing] = useState(false);
 
   const act = async (action: string) => {
@@ -535,6 +537,11 @@ function ActionPanel({
         "doc-approve": {
           url: `/api/documents/${raw.id as number}/approve`,
           method: "POST",
+        },
+        "doc-reject": {
+          url: `/api/documents/${raw.id as number}/reject`,
+          method: "POST",
+          body: JSON.stringify({ reason: rejectReason }),
         },
         "query-respond": {
           url: `/api/portal/hr/queries/${raw.id as number}/respond`,
@@ -555,7 +562,9 @@ function ActionPanel({
       const ep = endpoints[action];
       if (!ep) return;
 
-      const res = await fetch(ep.url, { method: ep.method, headers: authHeaders, body: ep.body });
+      const fetchHeaders: Record<string, string> = { ...authHeaders };
+      if (ep.body) fetchHeaders["Content-Type"] = "application/json";
+      const res = await fetch(ep.url, { method: ep.method, headers: fetchHeaders, body: ep.body });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error((err as { detail?: string }).detail || "Action failed");
@@ -715,23 +724,66 @@ function ActionPanel({
         {/* Document */}
         {item.type === "document" && (
           isFinal ? (
-            <div className="flex items-center gap-2 text-emerald-400 text-[13px]">
+            <div className={`flex items-center gap-2 text-[13px] ${item.status.toLowerCase() === "rejected" ? "text-rose-400" : "text-emerald-400"}`}>
               <CheckCircle2 className="h-4 w-4" />
-              Released by {String(raw.verified_by_email || "HR")}
+              {item.status.toLowerCase() === "rejected"
+                ? `Rejected by ${String(raw.verified_by_email || "HR")}`
+                : `Released by ${String(raw.verified_by_email || "HR")}`}
+            </div>
+          ) : showRejectForm ? (
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
+                  Reason for rejection
+                </label>
+                <textarea
+                  rows={3}
+                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Optional — will be included in the notification email"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { act("doc-reject"); setShowRejectForm(false); }}
+                  disabled={acting}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+                >
+                  {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  Confirm Reject
+                </button>
+                <button
+                  onClick={() => setShowRejectForm(false)}
+                  className="rounded-lg px-3 py-2 text-[13px] text-muted-foreground hover:bg-muted/40 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           ) : (
-            <button
-              onClick={() => act("doc-approve")}
-              disabled={acting}
-              className="flex items-center justify-center gap-1.5 w-full rounded-lg px-4 py-2.5 text-[13px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-            >
-              {acting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              )}
-              Approve &amp; Release
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => act("doc-approve")}
+                disabled={acting}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+              >
+                {acting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                Approve &amp; Release
+              </button>
+              <button
+                onClick={() => setShowRejectForm(true)}
+                disabled={acting}
+                className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-[13px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+              >
+                <X className="h-3.5 w-3.5" />
+                Reject
+              </button>
+            </div>
           )
         )}
 

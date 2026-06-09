@@ -44,21 +44,54 @@ OUTPUT FORMATTING:
 
 @tool
 def list_projects() -> str:
-    """List all available project names ingested from SharePoint."""
-    from app.services.policy_service import PolicyService
-    names = PolicyService.list_project_names()
-    if not names:
-        return "No projects found in the system."
-    return "Available projects:\n" + "\n".join(f"- {n}" for n in names)
+    """List all available projects from the project database."""
+    from app.database import SessionLocal
+    from app.models import Project
+    db = SessionLocal()
+    try:
+        rows = db.query(Project).order_by(Project.name).all()
+        if not rows:
+            # Fall back to SharePoint-derived names if DB is empty
+            from app.services.policy_service import PolicyService
+            names = PolicyService.list_project_names()
+            if not names:
+                return "No projects found in the system."
+            return "Available projects:\n" + "\n".join(f"- {n}" for n in names)
+        lines = []
+        for p in rows:
+            status = f" [{p.status}]" if p.status else ""
+            pct = f" — {int(p.completion_pct)}% complete" if p.completion_pct else ""
+            owner = f" (Owner: {p.owner})" if p.owner else ""
+            lines.append(f"- {p.name}{status}{pct}{owner}")
+        return f"Available projects ({len(rows)}):\n" + "\n".join(lines)
+    finally:
+        db.close()
 
 
 @tool
 def get_project_status(project_name: str) -> str:
-    """Get status, milestones, and details for a specific project from SharePoint content."""
+    """Get status, milestones, and details for a specific project."""
+    from app.database import SessionLocal
+    from app.models import Project
     from app.services.policy_service import PolicyService
+    db = SessionLocal()
+    try:
+        row = db.query(Project).filter(Project.name.ilike(f"%{project_name}%")).first()
+        if row:
+            lines = [f"**{row.name}**"]
+            if row.status: lines.append(f"Status: {row.status}")
+            if row.completion_pct: lines.append(f"Completion: {int(row.completion_pct)}%")
+            if row.owner: lines.append(f"Owner: {row.owner}")
+            if row.sprint_name: lines.append(f"Sprint: {row.sprint_name}")
+            if row.next_milestone: lines.append(f"Next milestone: {row.next_milestone}" + (f" ({row.next_milestone_date})" if row.next_milestone_date else ""))
+            if row.achievements: lines.append(f"Achievements: {row.achievements}")
+            return "\n".join(lines)
+    finally:
+        db.close()
+    # Fall back to SharePoint content
     result = PolicyService.search_projects(f"{project_name} status milestones", limit=4)
     if not result or "no results" in result.lower():
-        names = PolicyService.list_project_names()
+        names = _get_project_names_from_db()
         return f"No project found matching '{project_name}'. Available projects: {', '.join(names)}"
     return result
 
@@ -82,7 +115,7 @@ def generate_project_report(project_name: str, report_type: str = "project_statu
     try:
         content = PolicyService.search_projects(f"{project_name}", limit=8)
         if not content or "no results" in content.lower():
-            names = PolicyService.list_project_names()
+            names = _get_project_names_from_db()
             return f"No project found matching '{project_name}'. Available: {', '.join(names)}"
         title = f"{project_name} - {report_type.replace('_', ' ').title()}"
         pdf_bytes = generate_pdf(
@@ -108,7 +141,7 @@ def generate_multi_project_report(
     from app.document_store import store_pdf
     from app.services.policy_service import PolicyService
     try:
-        all_names = PolicyService.list_project_names()
+        all_names = _get_project_names_from_db()
         if project_names.strip().lower() == "all":
             chosen = all_names
         else:
@@ -201,9 +234,23 @@ class PMOState(TypedDict):
 
 # ── DB helpers (no LLM) ───────────────────────────────────────────────────────
 
-def _db_list_all_projects() -> dict:
+def _get_project_names_from_db() -> list[str]:
+    """Return sorted project names from the projects table; fall back to SharePoint titles."""
+    from app.database import SessionLocal
+    from app.models import Project
+    db = SessionLocal()
+    try:
+        rows = db.query(Project.name).order_by(Project.name).all()
+        if rows:
+            return [r.name for r in rows]
+    finally:
+        db.close()
     from app.services.policy_service import PolicyService
-    names = PolicyService.list_project_names()
+    return PolicyService.list_project_names()
+
+
+def _db_list_all_projects() -> dict:
+    names = _get_project_names_from_db()
     if not names:
         return {"messages": [AIMessage(content="There are currently no projects in the system.")]}
     lines = [f"{i + 1}. **{n}**" for i, n in enumerate(names)]
@@ -215,7 +262,7 @@ def _db_project_status(project_name: str) -> dict:
     from app.services.policy_service import PolicyService
     content = PolicyService.search_projects(f"{project_name} status milestones", limit=4)
     if not content or "no results" in content.lower():
-        all_names = PolicyService.list_project_names()
+        all_names = _get_project_names_from_db()
         return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
     return {"messages": [AIMessage(content=f"**{project_name}**\n\n{content}")]}
 
@@ -224,7 +271,7 @@ def _db_project_achievements(project_name: str) -> dict:
     from app.services.policy_service import PolicyService
     content = PolicyService.search_projects(f"{project_name} achievements outcomes results", limit=4)
     if not content or "no results" in content.lower():
-        all_names = PolicyService.list_project_names()
+        all_names = _get_project_names_from_db()
         return {"messages": [AIMessage(content=f"No project found matching '{project_name}'. Available: {', '.join(all_names)}")]}
     return {"messages": [AIMessage(content=f"**Achievements for {project_name}:**\n\n{content}")]}
 

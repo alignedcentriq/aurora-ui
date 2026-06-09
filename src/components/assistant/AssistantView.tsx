@@ -499,6 +499,7 @@ export function AssistantView() {
         (travelLower.includes("travel") || travelLower.includes("trip") || travelLower.includes("visa")) &&
         (travelLower.includes("business") || travelLower.includes("official") || travelLower.includes("work") ||
          travelLower.includes("request") || travelLower.includes("apply") || travelLower.includes("submit") ||
+         travelLower.includes("create") || travelLower.includes("plan") || travelLower.includes("book") ||
          travelLower.includes("need to travel") || travelLower.includes("travelling for"))
       ) {
         addTurn(activeId, { role: "user", text });
@@ -722,7 +723,7 @@ export function AssistantView() {
       // Intercept leave application intent — offer self-serve vs. assistant-handled choice.
       // The "through the assistant" suffix on the continuation message prevents re-interception.
       const isLeaveApplication =
-        !text.includes("through the assistant") && (
+        !text.includes("via the assistant") && (
           /\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(text) ||
           /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
           /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(text)
@@ -752,7 +753,7 @@ export function AssistantView() {
                 {
                   label: "Let the assistant handle it",
                   action: "message",
-                  value: "Please apply leave for me through the assistant",
+                  value: `${text} via the assistant`,
                   icon: "sparkles",
                 },
               ],

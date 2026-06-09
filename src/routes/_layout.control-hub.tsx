@@ -31,6 +31,7 @@ import {
   ClipboardList,
   ShieldCheck,
   TrendingUp,
+  Newspaper,
 } from "lucide-react";
 
 // Page components live outside the routes folder so they are code-split
@@ -49,6 +50,7 @@ import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
 import { CabinDirectory } from "@/pages/CabinDirectory";
+import { SecurityDigestPage } from "@/pages/SecurityDigestPage";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -74,7 +76,8 @@ type TabId =
   | "url-library"
   | "form-library"
   | "automation-hub"
-  | "cabin-directory";
+  | "cabin-directory"
+  | "security-digest";
 
 interface TabItem {
   id: TabId;
@@ -172,6 +175,15 @@ const TABS: TabItem[] = [
     component: ITPortal,
   },
   {
+    id: "security-digest",
+    label: "Security Digest",
+    category: "Management Portals",
+    icon: Newspaper,
+    color: "#F59E0B",
+    show: (role) => role === "Super Admin",
+    component: SecurityDigestPage,
+  },
+  {
     id: "pmo-portal",
     label: "PMO Portal",
     category: "Management Portals",
@@ -258,6 +270,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
   "form-library": "Submit custom forms, view request archives, and check statuses.",
+  "security-digest": "Configure cybersecurity news digest — recipients, schedule, and news sources.",
 };
 
 const ROLE_META: Record<string, { icon: any; color: string; bg: string; label: string }> = {

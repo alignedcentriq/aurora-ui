@@ -1861,12 +1861,14 @@ function TravelTab({ authHeaders, canApprove, canSettings }: { authHeaders: Reco
   );
 }
 
+const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "JPY", "CAD", "AUD"];
+
 type TravelRequest = {
   id: number; ref_id: string; employee_name: string; employee_email: string;
   from_location: string; to_destination: string; travel_date: string; return_date?: string;
   is_international: boolean; visa_required: boolean; mode_of_travel: string;
   accommodation_required: boolean; estimated_cost?: number; business_reason: string;
-  notes?: string; status: string; expense_limit?: number;
+  notes?: string; status: string; expense_limit?: number; expense_limit_currency?: string;
   ticket_details?: string; hotel_details?: string; visa_status?: string;
   admin_rejection_reason?: string; rm_rejection_reason?: string; created_at: string;
 };
@@ -1879,7 +1881,7 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
   const [approveModal, setApproveModal] = useState<TravelRequest | null>(null);
   const [rejectModal, setRejectModal] = useState<{ id: number; ref_id: string } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [approveForm, setApproveForm] = useState({ expense_limit: "", ticket_details: "", hotel_details: "", visa_status: "" });
+  const [approveForm, setApproveForm] = useState({ expense_limit: "", expense_limit_currency: "INR", ticket_details: "", hotel_details: "", visa_status: "" });
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -1898,6 +1900,7 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
   const openApprove = (item: TravelRequest) => {
     setApproveForm({
       expense_limit: item.expense_limit ? String(item.expense_limit) : "",
+      expense_limit_currency: item.expense_limit_currency || "INR",
       ticket_details: item.ticket_details || "",
       hotel_details: item.hotel_details || "",
       visa_status: item.visa_status || "",
@@ -1913,6 +1916,7 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
         method: "PUT", headers: authHeaders,
         body: JSON.stringify({
           expense_limit: approveForm.expense_limit ? parseFloat(approveForm.expense_limit) : null,
+          expense_limit_currency: approveForm.expense_limit_currency || "INR",
           ticket_details: approveForm.ticket_details,
           hotel_details: approveForm.hotel_details,
           visa_status: approveForm.visa_status,
@@ -1978,7 +1982,7 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
                   <td className="px-4 py-3">{item.mode_of_travel || "—"}</td>
                   <td className="px-4 py-3">
                     {item.estimated_cost ? `INR ${item.estimated_cost.toLocaleString()}` : "—"}
-                    {item.expense_limit && <div className="text-[11px] text-emerald-600">Limit: INR {item.expense_limit.toLocaleString()}</div>}
+                    {item.expense_limit && <div className="text-[11px] text-emerald-600">Limit: {item.expense_limit_currency || "INR"} {item.expense_limit.toLocaleString()}</div>}
                   </td>
                   <td className="px-4 py-3">
                     <span className={cn("px-2 py-1 rounded-full text-[11px] font-semibold", TRAVEL_STATUS_BADGE[item.status] || "bg-zinc-100 text-zinc-500")}>
@@ -2026,11 +2030,18 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Expense Limit (INR) <span className="text-[#94a3b8] font-normal">optional</span></label>
-                <input type="number" placeholder="Leave blank to use global limit"
-                  value={approveForm.expense_limit}
-                  onChange={e => setApproveForm(f => ({ ...f, expense_limit: e.target.value }))}
-                  className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+                <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Expense Limit <span className="text-[#94a3b8] font-normal">optional — leave blank to use global limit</span></label>
+                <div className="flex gap-2">
+                  <select value={approveForm.expense_limit_currency}
+                    onChange={e => setApproveForm(f => ({ ...f, expense_limit_currency: e.target.value }))}
+                    className="border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-2 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30 w-24">
+                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <input type="number" placeholder="e.g. 25000"
+                    value={approveForm.expense_limit}
+                    onChange={e => setApproveForm(f => ({ ...f, expense_limit: e.target.value }))}
+                    className="flex-1 border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+                </div>
               </div>
               <div>
                 <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">Ticket Details <span className="text-[#94a3b8] font-normal">flight/train PNR, booking ref</span></label>
@@ -2099,8 +2110,8 @@ function TravelRequestsSubTab({ authHeaders, canApprove }: { authHeaders: Record
 
 type ExpenseClaim = {
   id: number; ref_id: string; travel_ref: string; employee_name: string; employee_email: string;
-  from_location: string; to_destination: string; amount: number; breakdown?: string;
-  over_limit_reason?: string; expense_limit?: number; status: string;
+  from_location: string; to_destination: string; amount: number; currency?: string; breakdown?: string;
+  over_limit_reason?: string; expense_limit?: number; expense_limit_currency?: string; status: string;
   approved_by?: string; rejection_reason?: string; created_at: string;
 };
 
@@ -2169,13 +2180,13 @@ function TravelExpensesSubTab({ authHeaders, canApprove }: { authHeaders: Record
                     <td className="px-4 py-3 text-[#374151] dark:text-white/70">{item.from_location} → {item.to_destination}</td>
                     <td className="px-4 py-3">
                       <div className={cn("font-bold", overLimit ? "text-rose-600" : "text-[#0f172a] dark:text-white")}>
-                        INR {item.amount.toLocaleString()}
+                        {item.currency || "INR"} {item.amount.toLocaleString()}
                       </div>
                       {item.expense_limit && (
-                        <div className="text-[11px] text-[#94a3b8]">Limit: INR {item.expense_limit.toLocaleString()}</div>
+                        <div className="text-[11px] text-[#94a3b8]">Limit: {item.expense_limit_currency || "INR"} {item.expense_limit.toLocaleString()}</div>
                       )}
                       {overLimit && (
-                        <div className="text-[10px] text-rose-500 font-semibold">Over by INR {(item.amount - item.expense_limit!).toLocaleString()}</div>
+                        <div className="text-[10px] text-rose-500 font-semibold">Over by {item.expense_limit_currency || "INR"} {(item.amount - item.expense_limit!).toLocaleString()}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 max-w-[160px]">
@@ -2241,13 +2252,16 @@ function TravelExpensesSubTab({ authHeaders, canApprove }: { authHeaders: Record
 
 function TravelSettingsSubTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [limit, setLimit] = useState<string>("");
-  const [loading, setLoading] = useState(false);
+  const [currency, setCurrency] = useState<string>("INR");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch("/api/portal/admin/travel/settings", { headers: authHeaders })
       .then(r => r.json())
-      .then(d => { setLimit(d.global_expense_limit != null ? String(d.global_expense_limit) : ""); })
+      .then(d => {
+        setLimit(d.global_expense_limit != null ? String(d.global_expense_limit) : "");
+        setCurrency(d.global_expense_limit_currency || "INR");
+      })
       .catch(() => {});
   }, [authHeaders]);
 
@@ -2256,7 +2270,10 @@ function TravelSettingsSubTab({ authHeaders }: { authHeaders: Record<string, str
     try {
       const res = await fetch("/api/portal/admin/travel/settings", {
         method: "PUT", headers: authHeaders,
-        body: JSON.stringify({ global_expense_limit: limit ? parseFloat(limit) : null }),
+        body: JSON.stringify({
+          global_expense_limit: limit ? parseFloat(limit) : null,
+          global_expense_limit_currency: currency,
+        }),
       });
       if (!res.ok) throw new Error("Failed");
       toast.success("Travel settings saved");
@@ -2273,12 +2290,17 @@ function TravelSettingsSubTab({ authHeaders }: { authHeaders: Record<string, str
         </p>
         <div className="mb-4">
           <label className="block text-[12px] font-semibold text-[#374151] dark:text-white/70 mb-1.5">
-            Global Expense Limit (INR) <span className="text-[#94a3b8] font-normal">— leave blank for no limit</span>
+            Global Expense Limit <span className="text-[#94a3b8] font-normal">— leave blank for no limit</span>
           </label>
-          <input type="number" placeholder="e.g. 25000"
-            value={limit}
-            onChange={e => setLimit(e.target.value)}
-            className="w-full border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+          <div className="flex gap-2">
+            <select value={currency} onChange={e => setCurrency(e.target.value)}
+              className="border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-2 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30 w-24">
+              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input type="number" placeholder="e.g. 25000"
+              value={limit} onChange={e => setLimit(e.target.value)}
+              className="flex-1 border border-[#e2e8f0] dark:border-white/[0.08] rounded-lg px-3 py-2 text-[13px] bg-white dark:bg-background text-[#0f172a] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#00a29a]/30" />
+          </div>
           <p className="text-[11px] text-[#94a3b8] mt-1.5">
             When an employee files a post-trip expense that exceeds this limit, they must provide a reason. Admin can then approve or reject the excess.
           </p>

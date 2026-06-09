@@ -25,11 +25,13 @@ import {
   Clock,
   X,
   Trash2,
-  Sparkles,
+  Search,
+  UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { cn } from "@/lib/utils";
+import { AnnouncementBodyEditor, type ImageAction } from "@/components/assistant/AnnouncementBodyEditor";
 
 interface PromptRow {
   domain: string;
@@ -147,9 +149,13 @@ export function ConfigPage() {
   const [annCategory, setAnnCategory] = useState(DOMAIN_ANNOUNCEMENT_CATEGORY[activeDomain] ?? "General");
   const [annExpires, setAnnExpires] = useState("");
   const [annAudienceRole, setAnnAudienceRole] = useState("all");
-  const [suggesting, setSuggesting] = useState(false);
-  const [recipientInput, setRecipientInput] = useState("");
-  const [recipientTags, setRecipientTags] = useState<string[]>([]);
+  const [annImageUrl, setAnnImageUrl] = useState<string | null>(null);
+  const [annImageAction, setAnnImageAction] = useState<ImageAction | null>(null);
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState<{ name: string; email: string }[]>([]);
+  const [showRecipientDrop, setShowRecipientDrop] = useState(false);
+  const [recipientTags, setRecipientTags] = useState<{ name: string; email: string }[]>([]);
+  const recipientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [submittingAnn, setSubmittingAnn] = useState(false);
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [editingAnn, setEditingAnn] = useState<any | null>(null);
@@ -412,30 +418,26 @@ export function ConfigPage() {
     }
   };
 
-  const handleSuggestBody = async () => {
-    if (!annTitle.trim()) { toast.error("Enter a title first"); return; }
-    setSuggesting(true);
-    try {
-      const res = await fetch("/api/announcements/suggest", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ title: annTitle, category: annCategory }),
-      });
-      if (!res.ok) throw new Error("Suggestion failed");
-      const data = await res.json();
-      setAnnBody(data.body);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Could not generate suggestion");
-    } finally {
-      setSuggesting(false);
-    }
-  };
+  function handleRecipientSearch(q: string) {
+    setRecipientSearch(q);
+    setShowRecipientDrop(q.length >= 2);
+    if (recipientTimer.current) clearTimeout(recipientTimer.current);
+    if (q.length < 2) { setRecipientResults([]); return; }
+    recipientTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/announcements/users/search?q=${encodeURIComponent(q)}`, { headers });
+        const data = await res.json();
+        setRecipientResults(Array.isArray(data) ? data : []);
+      } catch { setRecipientResults([]); }
+    }, 250);
+  }
 
-  const addRecipientTag = () => {
-    const email = recipientInput.trim();
-    if (email && !recipientTags.includes(email)) setRecipientTags((t) => [...t, email]);
-    setRecipientInput("");
-  };
+  function addRecipient(u: { name: string; email: string }) {
+    if (!recipientTags.some((r) => r.email === u.email)) {
+      setRecipientTags((prev) => [...prev, u]);
+    }
+    setRecipientSearch(""); setRecipientResults([]); setShowRecipientDrop(false);
+  }
 
   const handleCreateAnnouncement = async () => {
     if (!annTitle.trim() || !annBody.trim()) {
@@ -445,7 +447,7 @@ export function ConfigPage() {
     setSubmittingAnn(true);
     try {
       const emailRecipients = recipientTags.length > 0
-        ? recipientTags
+        ? recipientTags.map((r) => r.email)
         : null;
       const res = await fetch("/api/announcements", {
         method: "POST",
@@ -458,6 +460,8 @@ export function ConfigPage() {
           target_audience: annAudienceRole,
           expires_days: annExpires ? parseInt(annExpires) : null,
           email_recipients: emailRecipients,
+          image_url: annImageUrl ?? null,
+          image_action: annImageAction ?? null,
         }),
       });
       const data = await res.json();
@@ -466,7 +470,8 @@ export function ConfigPage() {
       setAnnTitle("");
       setAnnBody("");
       setAnnAudienceRole("all");
-      setRecipientTags([]);
+      setAnnImageUrl(null); setAnnImageAction(null);
+      setRecipientTags([]); setRecipientSearch(""); setRecipientResults([]);
       fetchAnnouncements();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to publish");
@@ -1265,24 +1270,18 @@ export function ConfigPage() {
                     placeholder="Title"
                     className="w-full rounded-xl border border-[var(--border)] bg-background px-4 py-2.5 text-[14px] text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5"
                   />
-                  <div className="relative">
-                    <textarea
-                      value={annBody}
-                      onChange={(e) => setAnnBody(e.target.value)}
-                      placeholder="Announcement body..."
-                      rows={4}
-                      className="w-full resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 pr-28 text-[13px] text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5"
-                    />
-                    <button
-                      onClick={handleSuggestBody}
-                      disabled={suggesting || !annTitle.trim()}
-                      title="Suggest body from title"
-                      className="absolute right-3 top-3 flex items-center gap-1 rounded-lg bg-violet-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-violet-500 hover:bg-violet-500/20 disabled:opacity-40 transition-colors"
-                    >
-                      {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                      Suggest
-                    </button>
-                  </div>
+                  <AnnouncementBodyEditor
+                    body={annBody}
+                    onBodyChange={setAnnBody}
+                    imageUrl={annImageUrl}
+                    onImageUrlChange={setAnnImageUrl}
+                    imageAction={annImageAction}
+                    onImageActionChange={setAnnImageAction}
+                    authHeaders={headers}
+                    title={annTitle}
+                    category={annCategory}
+                    rows={8}
+                  />
 
                   <div className="flex gap-3">
                     <div className="flex-1 space-y-1">
@@ -1336,22 +1335,43 @@ export function ConfigPage() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex flex-wrap gap-1.5 items-center min-h-[32px]">
-                      {recipientTags.map((t) => (
-                        <span key={t} className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[12px] text-foreground">
-                          {t}
-                          <button onClick={() => setRecipientTags((p) => p.filter((x) => x !== t))} className="text-muted-foreground hover:text-rose-500">×</button>
-                        </span>
-                      ))}
-                      <input
-                        type="email"
-                        placeholder="Add specific email recipient..."
-                        value={recipientInput}
-                        onChange={(e) => setRecipientInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientTag(); } }}
-                        onBlur={addRecipientTag}
-                        className="flex-1 min-w-[200px] rounded-xl border border-[var(--border)] bg-background px-3 py-1.5 text-[12px] text-foreground outline-none focus:border-primary/50"
-                      />
+                    <div className="space-y-2">
+                      {recipientTags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {recipientTags.map((r) => (
+                            <span key={r.email} className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[12px] text-foreground">
+                              {r.name || r.email}
+                              <button onClick={() => setRecipientTags((p) => p.filter((x) => x.email !== r.email))} className="text-muted-foreground hover:text-rose-500">×</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder="Search people by name or email…"
+                          value={recipientSearch}
+                          onChange={(e) => handleRecipientSearch(e.target.value)}
+                          onFocus={() => recipientSearch.length >= 2 && setShowRecipientDrop(true)}
+                          onBlur={() => setTimeout(() => setShowRecipientDrop(false), 150)}
+                          className="w-full pl-8 pr-3 rounded-xl border border-[var(--border)] bg-background py-1.5 text-[12px] text-foreground outline-none focus:border-primary/50"
+                        />
+                        {showRecipientDrop && recipientResults.length > 0 && (
+                          <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-[var(--border)] rounded-xl shadow-lg w-full max-h-44 overflow-y-auto">
+                            {recipientResults.map((u) => (
+                              <button key={u.email} type="button" onMouseDown={() => addRecipient(u)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left">
+                                <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0">
+                                  <div className="text-[12px] font-medium truncate">{u.name}</div>
+                                  <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -137,6 +137,7 @@ def my_travel_requests(user: CurrentUser = Depends(get_current_user), db: Sessio
             "hotel_details": r.hotel_details,
             "visa_status": r.visa_status,
             "expense_limit": r.expense_limit,
+            "expense_limit_currency": r.expense_limit_currency or "INR",
             "rejection_reason": r.rm_rejection_reason or r.admin_rejection_reason,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
@@ -159,9 +160,11 @@ def my_expense_claims(user: CurrentUser = Depends(get_current_user), db: Session
             "from_location": r.from_location,
             "to_destination": r.to_destination,
             "amount": c.amount,
+            "currency": c.currency or "INR",
             "breakdown": c.breakdown,
             "over_limit_reason": c.over_limit_reason,
             "expense_limit": r.expense_limit,
+            "expense_limit_currency": r.expense_limit_currency or "INR",
             "status": c.status,
             "rejection_reason": c.rejection_reason,
             "created_at": c.created_at.isoformat() if c.created_at else None,
@@ -209,6 +212,7 @@ def submit_travel(body: SubmitTravelBody, user: CurrentUser = Depends(get_curren
 class SubmitExpenseBody(BaseModel):
     travel_ref_id: str
     amount: float
+    currency: str = "INR"
     breakdown: str = ""
     over_limit_reason: str = ""
 
@@ -219,6 +223,7 @@ def submit_expense(body: SubmitExpenseBody, user: CurrentUser = Depends(get_curr
         employee_email=user.email,
         travel_ref_id=body.travel_ref_id,
         amount=body.amount,
+        currency=body.currency,
         breakdown=body.breakdown,
         over_limit_reason=body.over_limit_reason,
     )
@@ -236,6 +241,7 @@ def list_travel(status: Optional[str] = None, _: CurrentUser = Depends(require_a
 
 class AdminApproveBody(BaseModel):
     expense_limit: Optional[float] = None
+    expense_limit_currency: str = "INR"
     ticket_details: str = ""
     hotel_details: str = ""
     visa_status: str = ""
@@ -247,6 +253,7 @@ def admin_approve(id: int, body: AdminApproveBody, user: CurrentUser = Depends(r
         travel_id=id,
         decided_by=user.email,
         expense_limit=body.expense_limit,
+        expense_limit_currency=body.expense_limit_currency,
         ticket_details=body.ticket_details,
         hotel_details=body.hotel_details,
         visa_status=body.visa_status,
@@ -291,6 +298,7 @@ def reject_expense(id: int, body: RejectBody, user: CurrentUser = Depends(requir
 
 class TravelSettingsBody(BaseModel):
     global_expense_limit: Optional[float] = None
+    global_expense_limit_currency: str = "INR"
 
 
 @admin_router.get("/settings")
@@ -300,4 +308,4 @@ def get_settings(_: CurrentUser = Depends(require_admin)):
 
 @admin_router.put("/settings")
 def update_settings(body: TravelSettingsBody, _: CurrentUser = Depends(require_admin)):
-    return ts.set_global_expense_limit(body.global_expense_limit)
+    return ts.set_global_expense_limit(body.global_expense_limit, body.global_expense_limit_currency)

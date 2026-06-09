@@ -2735,12 +2735,16 @@ async def admin_agent_node(state: AgentState):
     # Execute-first for policy queries: search embeddings/chunks at Python level,
     # avoiding an unreliable LLM tool-calling round-trip.
     if "policy" in sub_intent:
+        # Use full user message for precise search (e.g. "expense reimbursement policy"
+        # vs just the extracted entity "reimbursement" which is too generic and returns
+        # the wrong document like Certificate Reimbursement Policy).
         topic = (
-            entities.get("policy_topic")
+            next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+            or entities.get("policy_topic")
             or entities.get("topic")
-            or next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
         )
-        policy_result = HRService.search_policies(str(topic), limit=2)
+        from app.services.policy_service import PolicyService
+        policy_result = PolicyService.search_admin_docs(str(topic), limit=2)
         if policy_result and "No policies found" not in policy_result:
             # Return policy text directly — zero LLM, eliminates tool-call JSON leak
             return {"messages": [AIMessage(content=policy_result)]}

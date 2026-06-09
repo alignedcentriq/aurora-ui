@@ -386,6 +386,10 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
         db.close()
 
 
+class RejectRequest(BaseModel):
+    reason: str = ""
+
+
 @router.post("/{document_id}/approve")
 def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
     """HR only: approve & release a draft. This is what makes it downloadable and adds
@@ -419,6 +423,68 @@ def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
         doc.verified_at = datetime.datetime.utcnow()
         db.commit()
         db.refresh(doc)
+
+        # Notify the requester that their document is ready.
+        try:
+            from app.services.email_service import send_document_decision_email
+            label = document_service.label_for(db, doc.doc_type)
+            recipient = doc.generated_by_email or doc.subject_email or ""
+            name = doc.subject_name or (recipient.split("@")[0].replace(".", " ").title())
+            if recipient:
+                send_document_decision_email(
+                    user_email=user.email,
+                    employee_email=recipient,
+                    employee_name=name,
+                    document_label=label,
+                    decided_by=user.email,
+                    decision="Approved",
+                )
+        except Exception:
+            pass
+
+        return _doc_summary(db, doc)
+    finally:
+        db.close()
+
+
+@router.post("/{document_id}/reject")
+def reject(document_id: int, body: RejectRequest = Body(RejectRequest()), user: CurrentUser = Depends(get_current_user)):
+    """HR only: reject a pending document request."""
+    if not _can_release(user):
+        raise HTTPException(status_code=403, detail="Only HR can reject documents.")
+    db = SessionLocal()
+    try:
+        doc = db.query(GeneratedDocument).filter(GeneratedDocument.id == document_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        if (doc.status or "draft") == "verified":
+            raise HTTPException(status_code=409, detail="Document is already approved and cannot be rejected.")
+
+        doc.status = "rejected"
+        doc.verified_by_email = user.email
+        doc.verified_at = datetime.datetime.utcnow()
+        db.commit()
+        db.refresh(doc)
+
+        # Notify the requester that their document was rejected.
+        try:
+            from app.services.email_service import send_document_decision_email
+            label = document_service.label_for(db, doc.doc_type)
+            recipient = doc.generated_by_email or doc.subject_email or ""
+            name = doc.subject_name or (recipient.split("@")[0].replace(".", " ").title())
+            if recipient:
+                send_document_decision_email(
+                    user_email=user.email,
+                    employee_email=recipient,
+                    employee_name=name,
+                    document_label=label,
+                    decided_by=user.email,
+                    decision="Rejected",
+                    reason=(body.reason or "").strip(),
+                )
+        except Exception:
+            pass
+
         return _doc_summary(db, doc)
     finally:
         db.close()

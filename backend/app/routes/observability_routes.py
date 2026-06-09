@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.auth import CurrentUser, get_current_user
-from app.azure_auth import RevealUser, get_reveal_user
 from app.database import get_db
 from app.models import AiRequestLog, AiLlmCallLog, ChatFeedback, ContentRevealAudit
 
@@ -141,7 +140,7 @@ def get_log_detail(
     db: Session = Depends(get_db),
 ):
     """Full log detail with LLM call breakdown (for expanded row). Operational only —
-    content reveal is gated separately via /reveal-scope + /reveal."""
+    content reveal is gated separately via /reveal."""
     req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
     if not req:
         raise HTTPException(404, "Log entry not found")
@@ -187,57 +186,38 @@ def get_log_detail(
     }
 
 
-# ── Content Reveal — Azure AD group-gated, validated server-side, audited ──────
+# ── Content Reveal — Super admin only, audited ──────────────────────────────────
 
 class RevealRequest(BaseModel):
-    reason: str
-
-
-@router.get("/reveal-scope")
-def get_reveal_scope(user: RevealUser = Depends(get_reveal_user)):
-    """Domains the caller is permitted to reveal, derived from their (validated) Azure AD
-    group membership. Lets the UI show the reveal affordance only on permitted rows."""
-    return {"domains": sorted(user.allowed_domains)}
+    reason: Optional[str] = None
 
 
 @router.post("/logs/{log_id}/reveal")
 def reveal_log_content(
     log_id: int,
     body: RevealRequest,
-    user: RevealUser = Depends(get_reveal_user),
+    user: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
-    """Reveal a single conversation's content. Gated by Azure AD group membership (a group
-    maps to a domain); requires a reason; writes a ContentRevealAudit row. Content PII is
-    masked even for the authorized viewer."""
+    """Reveal a single conversation's content. Super admin only; writes a ContentRevealAudit row.
+    Content PII is masked even for the authorized viewer."""
     req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
     if not req:
         raise HTTPException(404, "Log entry not found")
-
-    reason = (body.reason or "").strip()
-    if not reason:
-        raise HTTPException(422, "A reason is required to reveal conversation content.")
-
-    if req.domain not in user.allowed_domains:
-        raise HTTPException(
-            403,
-            f"Access denied: your account is not authorised to reveal '{req.domain}' conversations. "
-            f"Contact your administrator to be added to the '{req.domain}' reveal group.",
-        )
 
     try:
         db.add(ContentRevealAudit(
             request_log_id=req.id,
             viewer_email=user.email,
-            viewer_oid=user.oid,
             domain=req.domain,
-            reason=reason,
+            reason=(body.reason or "").strip() or None,
         ))
         db.commit()
     except Exception as exc:
         db.rollback()
         logging.getLogger(__name__).error("ContentRevealAudit insert failed: %s", exc, exc_info=True)
-        raise HTTPException(500, f"Failed to record reveal audit: {exc}")
+        # Log the audit failure but don't block the reveal — audit is best-effort
+        pass
 
     return {
         "id": req.id,

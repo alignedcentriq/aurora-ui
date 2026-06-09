@@ -223,6 +223,7 @@ class Config:
             "shivani.patel@alignedautomation.com,"
             "suraj.ghuge@alignedautomation.com,"
             "priyanka.sonawane@alignedautomation.com,"
+            "kajal.jadhav@alignedautomation.com,"
             "shivam.sharma@alignedautomation.com",
         ).split(",")
         if e.strip()

@@ -21,7 +21,6 @@ import {
 import {
   Activity,
   Eye,
-  Lock,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -279,29 +278,10 @@ function LogsTab() {
   const [detail, setDetail] = useState<LogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Content reveal (Azure-group gated, audited) — scoped to the currently expanded row
-  const [revealScope, setRevealScope] = useState<string[]>([]);
+  // Content reveal (super admin only, audited) — scoped to the currently expanded row
   const [revealed, setRevealed] = useState<RevealedContent | null>(null);
-  const [revealReason, setRevealReason] = useState("");
   const [revealLoading, setRevealLoading] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
-
-  // Domains this user may reveal — derived server-side from validated Azure AD group
-  // membership (or DEV_REVEAL_DOMAINS in local dev). Fetched once with a Bearer token.
-  useEffect(() => {
-    (async () => {
-      try {
-        const token = await getApiToken();
-        const res = await fetch("/api/observability/reveal-scope", {
-          headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        });
-        const data = await res.json();
-        setRevealScope(data.domains || []);
-      } catch {
-        setRevealScope([]);
-      }
-    })();
-  }, [authHeaders]);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -341,7 +321,6 @@ function LogsTab() {
   const handleExpand = async (id: number) => {
     // collapsing or switching rows clears any revealed content
     setRevealed(null);
-    setRevealReason("");
     setRevealError(null);
     if (expandedId === id) {
       setExpandedId(null);
@@ -352,7 +331,7 @@ function LogsTab() {
     await loadDetail(id);
   };
 
-  // Reveal content — gated by Azure AD group membership (validated server-side), audited.
+  // Reveal content — super admin only, audited.
   const handleReveal = async (id: number) => {
     setRevealLoading(true);
     setRevealError(null);
@@ -360,8 +339,8 @@ function LogsTab() {
       const token = await getApiToken();
       const res = await fetch(`/api/observability/logs/${id}/reveal`, {
         method: "POST",
-        headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ reason: revealReason.trim() }),
+        headers: { "Content-Type": "application/json", ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({}),
       });
       if (!res.ok) {
         let detail = `HTTP ${res.status}`;
@@ -550,23 +529,15 @@ function LogsTab() {
                               </div>
                             )}
                           </div>
-                        ) : revealScope.includes(detail.domain) ? (
+                        ) : (
                           <div className="rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 space-y-2">
                             <p className="text-[12px] text-muted-foreground">
-                              Conversation content is hidden to protect employee privacy. Revealing it is logged
-                              against your name (IDs and money amounts are masked). Enter a reason to proceed.
+                              Conversation content is hidden to protect employee privacy. Revealing it is logged against your name (IDs and money amounts are masked).
                             </p>
                             <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                placeholder="Reason (e.g. abuse investigation INC-1234)"
-                                value={revealReason}
-                                onChange={(e) => setRevealReason(e.target.value)}
-                                className="flex-1 rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                              />
                               <button
                                 onClick={() => handleReveal(detail.id)}
-                                disabled={revealLoading || !revealReason.trim()}
+                                disabled={revealLoading}
                                 className="flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-3.5 py-2 text-[12px] font-medium hover:bg-primary/20 disabled:opacity-40 transition-colors"
                               >
                                 {revealLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
@@ -574,11 +545,6 @@ function LogsTab() {
                               </button>
                             </div>
                             {revealError && <p className="text-[11px] text-rose-400">{revealError}</p>}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 text-[12px] text-muted-foreground">
-                            <Lock className="h-3.5 w-3.5 shrink-0" />
-                            <span>Conversation content is restricted. Your Azure AD group membership does not grant access to {detail.domain} conversations.</span>
                           </div>
                         )}
 

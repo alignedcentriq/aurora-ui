@@ -33,6 +33,7 @@ import {
   Globe,
   Search,
   ClipboardCheck,
+  Newspaper,
 } from "lucide-react";
 import { Logo } from "./Logo";
 import { BrandName } from "./BrandName";
@@ -141,6 +142,13 @@ const CONTROL_HUB_SUB_ITEMS: ControlHubSubItem[] = [
     category: "Management Portals",
     icon: Ticket,
     show: (role) => role === "IT",
+  },
+  {
+    id: "security-digest",
+    label: "Security Digest",
+    category: "Management Portals",
+    icon: Newspaper,
+    show: (role) => role === "Super Admin",
   },
   {
     id: "pmo-portal",
