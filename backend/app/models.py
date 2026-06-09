@@ -685,6 +685,7 @@ class TravelRequest(Base):
     admin_decision_at = Column(DateTime, nullable=True)
     admin_rejection_reason = Column(Text, nullable=True)
     expense_limit = Column(Float, nullable=True)               # per-trip limit set by admin on approval
+    expense_limit_currency = Column(String, default="INR")     # currency for the per-trip expense limit
     ticket_details = Column(Text, nullable=True)               # flight/train booking info
     hotel_details = Column(Text, nullable=True)                # hotel / guest-house details
     visa_status = Column(Text, nullable=True)                  # visa processing notes
@@ -700,6 +701,7 @@ class TravelExpenseClaim(Base):
     travel_request_id = Column(Integer, ForeignKey(f"{SCHEMA}.travel_requests.id"))
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
     amount = Column(Float, nullable=False)
+    currency = Column(String, default="INR")                   # currency of the claimed amount
     breakdown = Column(Text, nullable=True)                    # itemised description
     over_limit_reason = Column(Text, nullable=True)            # mandatory when amount > limit
     status = Column(String, default="Pending")                 # Pending, Approved, Rejected

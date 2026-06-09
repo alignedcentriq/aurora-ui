@@ -1,5 +1,6 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { AnnouncementBodyEditor, type ImageAction } from "@/components/assistant/AnnouncementBodyEditor";
 import {
   Server,
   Shield,
@@ -7,7 +8,6 @@ import {
   Plus,
   Trash2,
   Loader2,
-  Sparkles,
   CheckCircle2,
   AlertTriangle,
   TrendingUp,
@@ -16,6 +16,8 @@ import {
   Clock,
   AtSign,
   Hash,
+  Search,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -37,10 +39,14 @@ export function AdminDashboard() {
   const [annLoading, setAnnLoading] = useState(true);
   const [newAnn, setNewAnn] = useState({ title: "", body: "", category: "General" });
   const [audienceRole, setAudienceRole] = useState("all");
-  const [recipientInput, setRecipientInput] = useState("");
-  const [recipientTags, setRecipientTags] = useState<string[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageAction, setImageAction] = useState<ImageAction | null>(null);
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState<{ name: string; email: string }[]>([]);
+  const [showRecipientDrop, setShowRecipientDrop] = useState(false);
+  const [recipientTags, setRecipientTags] = useState<{ name: string; email: string }[]>([]);
+  const recipientTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [creating, setCreating] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [recallTarget, setRecallTarget] = useState<number | null>(null);
@@ -65,18 +71,6 @@ export function AdminDashboard() {
       .then((data) => setAnnouncements(Array.isArray(data) ? data : []))
       .catch(() => {});
 
-  const handleSuggestBody = async () => {
-    if (!newAnn.title.trim()) return;
-    setSuggesting(true);
-    try {
-      const res = await fetch("/api/announcements/suggest", {
-        method: "POST", headers: authHeaders,
-        body: JSON.stringify({ title: newAnn.title, category: newAnn.category }),
-      });
-      if (res.ok) { const data = await res.json(); setNewAnn((p) => ({ ...p, body: data.body })); }
-    } finally { setSuggesting(false); }
-  };
-
   const AUDIENCE_ROLES = [
     { label: "All Staff", value: "all" },
     { label: "HR", value: "hr" },
@@ -87,11 +81,26 @@ export function AdminDashboard() {
     { label: "Employee", value: "employee" },
   ];
 
-  const addRecipientTag = () => {
-    const email = recipientInput.trim();
-    if (email && !recipientTags.includes(email)) setRecipientTags((t) => [...t, email]);
-    setRecipientInput("");
-  };
+  function handleRecipientSearch(q: string) {
+    setRecipientSearch(q);
+    setShowRecipientDrop(q.length >= 2);
+    if (recipientTimer.current) clearTimeout(recipientTimer.current);
+    if (q.length < 2) { setRecipientResults([]); return; }
+    recipientTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/announcements/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders });
+        const data = await res.json();
+        setRecipientResults(Array.isArray(data) ? data : []);
+      } catch { setRecipientResults([]); }
+    }, 250);
+  }
+
+  function addRecipient(u: { name: string; email: string }) {
+    if (!recipientTags.some((r) => r.email === u.email)) {
+      setRecipientTags((prev) => [...prev, u]);
+    }
+    setRecipientSearch(""); setRecipientResults([]); setShowRecipientDrop(false);
+  }
 
   const handleCreateAnnouncement = async () => {
     if (!newAnn.title.trim() || !newAnn.body.trim()) return;
@@ -102,12 +111,15 @@ export function AdminDashboard() {
         body: JSON.stringify({
           title: newAnn.title, body: newAnn.body, category: newAnn.category,
           created_by_domain: "admin", target_audience: audienceRole,
-          email_recipients: recipientTags.length > 0 ? recipientTags : null,
+          email_recipients: recipientTags.length > 0 ? recipientTags.map((r) => r.email) : null,
+          image_url: imageUrl ?? null,
+          image_action: imageAction ?? null,
         }),
       });
       setNewAnn({ title: "", body: "", category: "General" });
       setAudienceRole("all");
-      setRecipientTags([]);
+      setImageUrl(null); setImageAction(null);
+      setRecipientTags([]); setRecipientSearch(""); setRecipientResults([]);
       setShowForm(false);
       refreshAnnouncements();
     } finally { setCreating(false); }
@@ -254,23 +266,18 @@ export function AdminDashboard() {
                 className="w-36 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50"
               />
             </div>
-            <div className="relative">
-              <textarea
-                placeholder="Announcement body..."
-                rows={4}
-                value={newAnn.body}
-                onChange={(e) => setNewAnn((p) => ({ ...p, body: e.target.value }))}
-                className="w-full rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-2 pr-28 text-[13px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50 dark:focus:border-teal-500/50 resize-none"
-              />
-              <button
-                onClick={handleSuggestBody}
-                disabled={suggesting || !newAnn.title.trim()}
-                className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-violet-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-500/20 disabled:opacity-40 transition-colors"
-              >
-                {suggesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                Suggest
-              </button>
-            </div>
+            <AnnouncementBodyEditor
+              body={newAnn.body}
+              onBodyChange={(v) => setNewAnn((p) => ({ ...p, body: v }))}
+              imageUrl={imageUrl}
+              onImageUrlChange={setImageUrl}
+              imageAction={imageAction}
+              onImageActionChange={setImageAction}
+              authHeaders={authHeaders}
+              title={newAnn.title}
+              category={newAnn.category}
+              rows={8}
+            />
 
             {/* Audience */}
             <div className="space-y-2">
@@ -293,23 +300,44 @@ export function AdminDashboard() {
                 ))}
               </div>
 
-              {/* Specific email recipients */}
-              <div className="flex flex-wrap gap-1.5 items-center">
-                {recipientTags.map((t) => (
-                  <span key={t} className="flex items-center gap-1 rounded-full bg-[#f1f5f9] dark:bg-white/[0.06] px-2.5 py-0.5 text-[12px] text-[#334155] dark:text-white/70">
-                    {t}
-                    <button onClick={() => setRecipientTags((p) => p.filter((x) => x !== t))} className="text-[#94a3b8] hover:text-rose-500">×</button>
-                  </span>
-                ))}
-                <input
-                  type="email"
-                  placeholder="Add email recipient..."
-                  value={recipientInput}
-                  onChange={(e) => setRecipientInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientTag(); } }}
-                  onBlur={addRecipientTag}
-                  className="flex-1 min-w-[180px] rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background px-3 py-1.5 text-[12px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50"
-                />
+              {/* Specific email recipients — people search */}
+              <div className="space-y-2">
+                {recipientTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {recipientTags.map((r) => (
+                      <span key={r.email} className="flex items-center gap-1 rounded-full bg-[#f1f5f9] dark:bg-white/[0.06] px-2.5 py-0.5 text-[12px] text-[#334155] dark:text-white/70">
+                        {r.name || r.email}
+                        <button onClick={() => setRecipientTags((p) => p.filter((x) => x.email !== r.email))} className="text-[#94a3b8] hover:text-rose-500">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#94a3b8] pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Search people by name or email…"
+                    value={recipientSearch}
+                    onChange={(e) => handleRecipientSearch(e.target.value)}
+                    onFocus={() => recipientSearch.length >= 2 && setShowRecipientDrop(true)}
+                    onBlur={() => setTimeout(() => setShowRecipientDrop(false), 150)}
+                    className="w-full pl-8 pr-3 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-[#f8fafc] dark:bg-background py-1.5 text-[12px] text-foreground placeholder:text-[#94a3b8] outline-none focus:border-[#00a29a]/50"
+                  />
+                  {showRecipientDrop && recipientResults.length > 0 && (
+                    <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-[#e2e8f0] dark:border-white/[0.1] rounded-xl shadow-lg w-full max-h-44 overflow-y-auto">
+                      {recipientResults.map((u) => (
+                        <button key={u.email} type="button" onMouseDown={() => addRecipient(u)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left">
+                          <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-medium truncate">{u.name}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -323,7 +351,7 @@ export function AdminDashboard() {
                 Publish
               </button>
               <button
-                onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General" }); setAudienceRole("all"); setRecipientTags([]); }}
+                onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General" }); setAudienceRole("all"); setImageUrl(null); setImageAction(null); setRecipientTags([]); setRecipientSearch(""); setRecipientResults([]); }}
                 className="rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] px-4 py-2 text-[13px] font-medium text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors"
               >
                 Cancel

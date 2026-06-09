@@ -318,6 +318,7 @@ def admin_approve_travel(
     travel_id: int,
     decided_by: str,
     expense_limit: float = None,
+    expense_limit_currency: str = "INR",
     ticket_details: str = "",
     hotel_details: str = "",
     visa_status: str = "",
@@ -338,6 +339,10 @@ def admin_approve_travel(
         req.visa_status = visa_status
         if expense_limit is not None:
             req.expense_limit = expense_limit
+            req.expense_limit_currency = expense_limit_currency or "INR"
+        else:
+            # Fall back to global currency so the employee sees the right symbol
+            req.expense_limit_currency = _get_global_limit_currency(db)
         db.commit()
         db.refresh(req)
 
@@ -428,6 +433,7 @@ def list_travel_requests(status_filter: str = "") -> list:
                 "notes": r.notes,
                 "status": r.status,
                 "expense_limit": r.expense_limit,
+                "expense_limit_currency": r.expense_limit_currency or "INR",
                 "ticket_details": r.ticket_details,
                 "hotel_details": r.hotel_details,
                 "visa_status": r.visa_status,
@@ -446,6 +452,7 @@ def submit_expense_claim(
     employee_email: str,
     travel_ref_id: str,
     amount: float,
+    currency: str = "INR",
     breakdown: str = "",
     over_limit_reason: str = "",
 ) -> dict:
@@ -460,20 +467,26 @@ def submit_expense_claim(
         if req.status not in ("admin_approved", "completed"):
             return {"success": False, "message": f"Cannot file expenses — trip status is '{req.status}'. Admin must approve the trip first."}
 
-        # Check against limit
+        # Check against limit — only enforce when currencies match
         trip_limit = req.expense_limit
+        limit_currency = req.expense_limit_currency or "INR"
         global_limit = _get_global_limit(db)
+        global_currency = _get_global_limit_currency(db)
         effective_limit = trip_limit if trip_limit is not None else global_limit
+        effective_currency = limit_currency if trip_limit is not None else global_currency
 
-        if effective_limit and amount > effective_limit and not over_limit_reason:
+        same_currency = (currency or "INR").upper() == effective_currency.upper()
+        if effective_limit and same_currency and amount > effective_limit and not over_limit_reason:
             return {
                 "success": False,
                 "over_limit": True,
                 "limit": effective_limit,
+                "limit_currency": effective_currency,
                 "amount": amount,
+                "currency": currency,
                 "message": (
-                    f"Claimed amount INR {amount:,.0f} exceeds the limit of INR {effective_limit:,.0f}. "
-                    f"Please provide a reason for the excess."
+                    f"Claimed amount {effective_currency} {amount:,.0f} exceeds the limit of "
+                    f"{effective_currency} {effective_limit:,.0f}. Please provide a reason for the excess."
                 ),
             }
 
@@ -483,6 +496,7 @@ def submit_expense_claim(
             travel_request_id=req.id,
             employee_id=emp.id,
             amount=amount,
+            currency=currency or "INR",
             breakdown=breakdown,
             over_limit_reason=over_limit_reason,
             status="Pending",
@@ -514,7 +528,7 @@ def submit_expense_claim(
         return {
             "success": True,
             "ref_id": ref_id,
-            "message": f"Expense claim {ref_id} submitted for INR {amount:,.0f}. Admin will review it shortly.",
+            "message": f"Expense claim {ref_id} submitted for {currency} {amount:,.0f}. Admin will review it shortly.",
         }
     finally:
         db.close()
@@ -600,9 +614,11 @@ def list_expense_claims(status_filter: str = "") -> list:
                 "travel_ref": r.ref_id,
                 "employee_name": emp.name, "employee_email": emp.email,
                 "from_location": r.from_location, "to_destination": r.to_destination,
-                "amount": c.amount, "breakdown": c.breakdown,
+                "amount": c.amount, "currency": c.currency or "INR",
+                "breakdown": c.breakdown,
                 "over_limit_reason": c.over_limit_reason,
                 "expense_limit": r.expense_limit,
+                "expense_limit_currency": r.expense_limit_currency or "INR",
                 "status": c.status,
                 "approved_by": c.approved_by,
                 "rejection_reason": c.rejection_reason,
@@ -626,24 +642,35 @@ def _get_global_limit(db) -> float | None:
     return None
 
 
+def _get_global_limit_currency(db) -> str:
+    row = db.query(TravelSettings).filter(TravelSettings.key == "global_expense_limit_currency").first()
+    return row.value if row and row.value else "INR"
+
+
+def _upsert_setting(db, key: str, value: str | None):
+    row = db.query(TravelSettings).filter(TravelSettings.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(TravelSettings(key=key, value=value))
+
+
 def get_travel_settings() -> dict:
     db = SessionLocal()
     try:
         limit = _get_global_limit(db)
-        return {"global_expense_limit": limit}
+        currency = _get_global_limit_currency(db)
+        return {"global_expense_limit": limit, "global_expense_limit_currency": currency}
     finally:
         db.close()
 
 
-def set_global_expense_limit(limit: float | None) -> dict:
+def set_global_expense_limit(limit: float | None, currency: str = "INR") -> dict:
     db = SessionLocal()
     try:
-        row = db.query(TravelSettings).filter(TravelSettings.key == "global_expense_limit").first()
-        if row:
-            row.value = str(limit) if limit is not None else None
-        else:
-            db.add(TravelSettings(key="global_expense_limit", value=str(limit) if limit is not None else None))
+        _upsert_setting(db, "global_expense_limit", str(limit) if limit is not None else None)
+        _upsert_setting(db, "global_expense_limit_currency", currency or "INR")
         db.commit()
-        return {"ok": True, "global_expense_limit": limit}
+        return {"ok": True, "global_expense_limit": limit, "global_expense_limit_currency": currency}
     finally:
         db.close()

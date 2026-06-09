@@ -1210,6 +1210,49 @@ def send_project_update_decision_notification(
     return result
 
 
+def send_document_decision_email(
+    user_email: str,
+    employee_email: str,
+    employee_name: str,
+    document_label: str,
+    decided_by: str,
+    decision: str,
+    reason: str = "",
+) -> bool:
+    """Notify the requester/subject that their document request was Approved or Rejected."""
+    approved = decision == "Approved"
+    color = _C_OK if approved else _C_NO
+    title = f"Document {decision}"
+    intro = (
+        f'<p>{_status_pill(decision, color)}</p>'
+        + (f"<p>Hi {html.escape(employee_name) or 'there'}, your document request has been "
+           f'<strong style="color:{color};">approved and released</strong>. '
+           f"You can now download it from Centriq AI → <strong>My Requests</strong>.</p>"
+           if approved else
+           f"<p>Hi {html.escape(employee_name) or 'there'}, your document request was "
+           f'<strong style="color:{color};">not approved</strong>.</p>')
+    )
+    rows = [
+        ("Document", html.escape(document_label)),
+        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
+        ("Actioned by", html.escape(decided_by)),
+    ]
+    if reason:
+        rows.append(("Reason", _nl2br(reason)))
+    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
+    subject = f"[Document {decision}] {document_label}"
+    html_body = _email_shell(title, intro, body_html, preheader=f"{document_label} · {decision}")
+    result = _send_html(user_email, employee_email, subject, html_body)
+    teams_body = (
+        f"<b>Document:</b> {html.escape(document_label)}<br>"
+        f"<b>Decision:</b> {html.escape(decision)}<br>"
+        f"<b>Actioned by:</b> {html.escape(decided_by)}"
+        + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
+    )
+    notify_teams(user_email, employee_email, f"📄 Document {decision}", teams_body)
+    return result
+
+
 # ── HR Notifications ──────────────────────────────────────────────────────────
 
 def send_hr_query_notification(

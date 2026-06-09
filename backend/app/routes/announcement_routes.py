@@ -151,3 +151,35 @@ def deactivate_announcement(
     if "not found" in result.lower():
         raise HTTPException(status_code=404, detail=result)
     return {"message": result}
+
+
+@router.get("/users/search")
+def search_users_for_recipients(
+    q: str = "",
+    _: CurrentUser = Depends(require_domain_manager),
+):
+    """Search employees by name or email for the announcement recipient picker."""
+    from sqlalchemy import or_
+    from app.database import SessionLocal
+    from app.models import Employee
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Employee.name, Employee.email)
+            .filter(
+                Employee.email.isnot(None),
+                or_(
+                    Employee.name.ilike(f"%{q}%"),
+                    Employee.email.ilike(f"%{q}%"),
+                ),
+            )
+            .order_by(Employee.name)
+            .limit(15)
+            .all()
+        )
+        return [{"name": r.name or r.email, "email": r.email} for r in rows if r.email]
+    finally:
+        db.close()
