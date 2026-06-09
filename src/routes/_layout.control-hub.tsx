@@ -3,6 +3,8 @@ import { useAuth } from "@/lib/auth-store";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
+import { HoverEffect } from "@/components/ui/card-hover-effect";
+import { Meteors } from "@/components/ui/meteors";
 import {
   Megaphone,
   Car,
@@ -333,9 +335,12 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
         </div>
 
         {/* Live Nominals Tracker Card */}
-        <div className="flex items-center gap-3 rounded-2xl bg-white/70 dark:bg-card/70 border border-[#e2e8f0] dark:border-white/[0.06] backdrop-blur-md p-3.5 pr-5 max-w-xs shadow-sm">
-          <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse shrink-0" />
-          <div className="text-left">
+        <div className="flex items-center gap-3 rounded-2xl bg-white/70 dark:bg-card/70 border border-[#e2e8f0] dark:border-white/[0.06] backdrop-blur-md p-3.5 pr-5 max-w-xs shadow-sm relative overflow-hidden">
+          <div className="absolute inset-0 z-0">
+            <Meteors number={8} />
+          </div>
+          <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse shrink-0 relative z-10" />
+          <div className="text-left relative z-10">
             <p className="text-[11px] font-bold text-foreground flex items-center gap-1">
               All Systems Operational
             </p>
@@ -447,72 +452,18 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
             <p className="text-sm text-muted-foreground">No portals match your criteria.</p>
           </motion.div>
         ) : (
-          <motion.div
-            layout
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 w-full"
-          >
-            {filteredTabs.map((tab) => {
+          <HoverEffect
+            items={filteredTabs.map((tab) => {
               const TabIcon = tab.icon;
-              const hoverShadowGlow = `0 12px 30px -5px color-mix(in oklab, ${tab.color} 18%, transparent), 0 0 0 1px color-mix(in oklab, ${tab.color} 24%, transparent)`;
-              return (
-                <motion.div
-                  key={tab.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  onClick={() => onTabChange(tab.id)}
-                  whileHover={{ y: -4, scale: 1.01 }}
-                  className="glass-widget rounded-2xl p-5 border border-[#e2e8f0] dark:border-white/[0.06] flex flex-col justify-between h-44 cursor-pointer text-left relative overflow-hidden group"
-                  style={{
-                    boxShadow: "0 4px 12px -2px rgba(0, 0, 0, 0.02)",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.boxShadow = hoverShadowGlow;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.boxShadow = "0 4px 12px -2px rgba(0, 0, 0, 0.02)";
-                  }}
-                >
-                  {/* Subtle top color stripe overlay */}
-                  <div
-                    className="absolute top-0 left-0 right-0 h-[2.5px] opacity-75 group-hover:opacity-100 transition-opacity"
-                    style={{ backgroundColor: tab.color }}
-                  />
-
-                  {/* Icon & Category Indicator */}
-                  <div className="flex items-center justify-between">
-                    <div
-                      className="flex h-10 w-10 items-center justify-center rounded-xl transition-all"
-                      style={{
-                        backgroundColor: `color-mix(in oklab, ${tab.color} 12%, transparent)`,
-                      }}
-                    >
-                      <TabIcon
-                        className="h-5 w-5 transition-transform duration-300 group-hover:scale-110"
-                        style={{ color: tab.color }}
-                      />
-                    </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
-                      {tab.category}
-                    </span>
-                  </div>
-
-                  {/* Title & Description */}
-                  <div className="mt-3 flex-1">
-                    <h3 className="text-[14px] font-extrabold text-foreground group-hover:text-primary dark:group-hover:text-[#00c4bb] transition-colors leading-tight flex items-center gap-1">
-                      {tab.label}
-                      <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 -translate-x-1.5 group-hover:translate-x-0 transition-all duration-200" style={{ color: tab.color }} />
-                    </h3>
-                    <p className="text-[11.5px] text-muted-foreground leading-snug mt-1.5 line-clamp-2">
-                      {TAB_DESCRIPTIONS[tab.id] || "Workspace management portal."}
-                    </p>
-                  </div>
-                </motion.div>
-              );
+              return {
+                title: tab.label,
+                description: TAB_DESCRIPTIONS[tab.id] || "Workspace management portal.",
+                onClick: () => onTabChange(tab.id),
+                icon: <TabIcon className="h-5 w-5" style={{ color: tab.color }} />,
+                color: tab.color,
+              };
             })}
-          </motion.div>
+          />
         )}
       </AnimatePresence>
     </div>

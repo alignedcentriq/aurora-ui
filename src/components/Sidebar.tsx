@@ -213,9 +213,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
 
 
 
-  const isControlHubActive = location.pathname.startsWith("/control-hub");
-  const [isControlHubExpanded, setIsControlHubExpanded] = useState(isControlHubActive);
-
   // For employees: show the automation-hub sidebar item only if they have co-owned automations
   const [hasCoOwnedAutomations, setHasCoOwnedAutomations] = useState(false);
   useEffect(() => {
@@ -227,13 +224,6 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
       .then((data) => setHasCoOwnedAutomations(Array.isArray(data) && data.length > 0))
       .catch(() => {});
   }, [user?.email, user?.role]);
-
-  // Auto-expand when path changes to control-hub
-  useEffect(() => {
-    if (isControlHubActive) {
-      setIsControlHubExpanded(true);
-    }
-  }, [isControlHubActive]);
 
   const defaultCollapsed = () => {
     if (typeof window === "undefined") return false;
@@ -449,213 +439,165 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         </div>
 
         {/* ── Navigation ─────────────────────────────── */}
-        <nav className="relative flex-1 overflow-y-auto py-3 space-y-0.5 no-scrollbar px-2">
-          {navItems
-            .filter((n) => n.show)
-            .map((item, idx) => {
-              const Icon = item.icon;
-              const active = isActive(item.to);
-              const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-              
-              const isControlHub = item.to === "/control-hub";
+        {/* ── Navigation ─────────────────────────────── */}
+        <nav className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Main Navigation Links */}
+          <div className="shrink-0 py-3 space-y-0.5 px-2">
+            {navItems
+              .filter((n) => n.show)
+              .map((item, idx) => {
+                const Icon = item.icon;
+                const active = isActive(item.to);
+                const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
+                
+                const isControlHub = item.to === "/control-hub";
 
-              const content = (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  title={!showLabels ? item.label : undefined}
-                  onClick={() => {
-                    if (mobileOpen) onMobileClose();
-                    if (isCollapsed) {
-                      toggle();
-                    }
-                  }}
-                  className={cn(
-                    "group relative flex items-center rounded-xl py-2.5 text-[13px] font-medium transition-all duration-200",
-                    showLabels ? "gap-3 px-3" : "justify-center px-0",
-                    active
-                      ? "text-[var(--sidebar-foreground)]"
-                      : "text-[var(--sidebar-foreground)]/45 hover:text-[var(--sidebar-foreground)]/80",
-                  )}
-                  style={active ? {
-                    background: `linear-gradient(90deg, color-mix(in oklab, ${accentColor} 16%, transparent), color-mix(in oklab, ${accentColor} 6%, transparent))`,
-                    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 12%, transparent)`,
-                  } : undefined}
-                >
-                  {/* Unique: Left accent bar (per-C color coded) */}
-                  {active && (
-                    <motion.div
-                      layoutId="nav-active-bar"
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-full"
-                      style={{
-                        height: "65%",
-                        background: accentColor,
-                        boxShadow: `0 0 8px ${accentColor}`,
-                      }}
-                      transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                    />
-                  )}
-
-                  {/* Icon with per-C color glow when active */}
-                  <div
+                const content = (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    title={!showLabels ? item.label : undefined}
+                    onClick={() => {
+                      if (mobileOpen) onMobileClose();
+                      if (isCollapsed) {
+                        toggle();
+                      }
+                    }}
                     className={cn(
-                      "relative flex items-center justify-center rounded-lg h-7 w-7 shrink-0 transition-all duration-200",
-                      active ? "" : "opacity-60 group-hover:opacity-90",
+                      "group relative flex items-center rounded-xl py-2.5 text-[13px] font-medium transition-all duration-200",
+                      showLabels ? "gap-3 px-3" : "justify-center px-0",
+                      active
+                        ? "text-[var(--sidebar-foreground)]"
+                        : "text-[var(--sidebar-foreground)]/45 hover:text-[var(--sidebar-foreground)]/80",
                     )}
                     style={active ? {
-                      background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
+                      background: `linear-gradient(90deg, color-mix(in oklab, ${accentColor} 16%, transparent), color-mix(in oklab, ${accentColor} 6%, transparent))`,
+                      boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 12%, transparent)`,
                     } : undefined}
                   >
-                    <Icon
-                      className="h-[16px] w-[16px] shrink-0 transition-colors"
-                      style={{ color: active ? accentColor : "inherit" }}
-                    />
-                    {/* Active icon glow pulse */}
+                    {/* Unique: Left accent bar (per-C color coded) */}
                     {active && (
                       <motion.div
-                        className="absolute inset-0 rounded-lg pointer-events-none"
-                        style={{ background: `color-mix(in oklab, ${accentColor} 20%, transparent)` }}
-                        animate={{ opacity: [0.5, 1, 0.5] }}
-                        transition={{ duration: 2, repeat: Infinity }}
+                        layoutId="nav-active-bar"
+                        className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-full"
+                        style={{
+                          height: "65%",
+                          background: accentColor,
+                          boxShadow: `0 0 8px ${accentColor}`,
+                        }}
+                        transition={{ type: "spring", stiffness: 500, damping: 35 }}
                       />
                     )}
-                  </div>
 
-                  {showLabels && <span className="flex-1 truncate">{item.label}</span>}
-
-                  {/* Expand/Collapse Chevron for Control Hub */}
-                  {showLabels && isControlHub && (
-                    <ChevronDown
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setIsControlHubExpanded((prev) => !prev);
-                      }}
+                    {/* Icon with per-C color glow when active */}
+                    <div
                       className={cn(
-                        "ml-auto h-4 w-4 text-[var(--sidebar-foreground)]/25 transition-transform duration-200 hover:text-[var(--sidebar-foreground)]/80",
-                        isControlHubExpanded && "rotate-180"
+                        "relative flex items-center justify-center rounded-lg h-7 w-7 shrink-0 transition-all duration-200",
+                        active ? "" : "opacity-60 group-hover:opacity-90",
                       )}
-                    />
-                  )}
-
-                  {/* Unique: Active C-badge */}
-                  {showLabels && active && !isControlHub && (
-                    <motion.div
-                      initial={{ scale: 0, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className="ml-auto shrink-0 h-4 w-4 rounded-full flex items-center justify-center text-[7px] font-black"
-                      style={{
-                        background: accentColor,
-                        color: "#fff",
-                        boxShadow: `0 0 6px ${accentColor}`,
-                      }}
+                      style={active ? {
+                        background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
+                      } : undefined}
                     >
-                      C
-                    </motion.div>
-                  )}
-                </Link>
-              );
-
-              if (isControlHub) {
-                return (
-                  <div key={item.to} className="space-y-0.5">
-                    {content}
-                    <AnimatePresence>
-                      {showLabels && isControlHubExpanded && (
+                      <Icon
+                        className="h-[16px] w-[16px] shrink-0 transition-colors"
+                        style={{ color: active ? accentColor : "inherit" }}
+                      />
+                      {/* Active icon glow pulse */}
+                      {active && (
                         <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden pl-7 pr-1 mt-1 space-y-1"
-                        >
-                          {visibleControlHubItems.map((sub) => {
-                            const SubIcon = sub.icon;
-                            const isSubActive = isControlHubActive && (location.search as any).tab === sub.id;
-                            return (
-                              <Link
-                                key={sub.id}
-                                to="/control-hub"
-                                search={{ tab: sub.id }}
-                                className={cn(
-                                  "flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition-all duration-200 border border-transparent",
-                                  isSubActive
-                                    ? "text-white bg-[#00a29a]/20 border-[#00a29a]/30 shadow-[0_0_12px_rgba(0,162,154,0.1)] font-semibold"
-                                    : "text-[var(--sidebar-foreground)]/50 hover:text-[var(--sidebar-foreground)]/80 hover:bg-white/[0.04]"
-                                )}
-                              >
-                                <SubIcon className="h-3.5 w-3.5 opacity-60 shrink-0" />
-                                <span className="truncate flex-1 text-left">{sub.label}</span>
-                              </Link>
-                            );
-                          })}
-                        </motion.div>
+                          className="absolute inset-0 rounded-lg pointer-events-none"
+                          style={{ background: `color-mix(in oklab, ${accentColor} 20%, transparent)` }}
+                          animate={{ opacity: [0.5, 1, 0.5] }}
+                          transition={{ duration: 2, repeat: Infinity }}
+                        />
                       )}
-                    </AnimatePresence>
-                  </div>
+                    </div>
+
+                    {showLabels && <span className="flex-1 truncate">{item.label}</span>}
+
+                    {/* Unique: Active C-badge */}
+                    {showLabels && active && (
+                      <motion.div
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="ml-auto shrink-0 h-4 w-4 rounded-full flex items-center justify-center text-[7px] font-black"
+                        style={{
+                          background: accentColor,
+                          color: "#fff",
+                          boxShadow: `0 0 6px ${accentColor}`,
+                        }}
+                      >
+                        C
+                      </motion.div>
+                    )}
+                  </Link>
                 );
-              }
 
-              return content;
-            })}
+                return content;
+              })}
 
-          {/* New conversation (collapsed) */}
-          {isCollapsed && !mobileOpen && isActive("/") && (
-            <button
-              onClick={() => createThread()}
-              title="New Conversation"
-              className="flex w-full items-center justify-center rounded-xl py-2.5 text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.05] hover:text-[var(--clarity)] transition-all duration-150"
-            >
-              <Plus className="h-[18px] w-[18px] shrink-0" />
-            </button>
+            {/* New conversation (collapsed) */}
+            {isCollapsed && !mobileOpen && isActive("/") && (
+              <button
+                onClick={() => createThread()}
+                title="New Conversation"
+                className="flex w-full items-center justify-center rounded-xl py-2.5 text-[var(--sidebar-foreground)]/40 hover:bg-white/[0.05] hover:text-[var(--clarity)] transition-all duration-150"
+              >
+                <Plus className="h-[18px] w-[18px] shrink-0" />
+              </button>
+            )}
+          </div>
+
+          {/* Sticky Controls area above Recent Chats */}
+          {showLabels && isActive("/") && (
+            <div className="shrink-0 space-y-1 mt-1 mb-2 px-2">
+              <motion.button
+                whileHover={{ x: 3, scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  createThread();
+                  if (mobileOpen) onMobileClose();
+                }}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-150"
+                style={{ color: "var(--clarity)" }}
+              >
+                <div
+                  className="flex h-5 w-5 items-center justify-center rounded-md"
+                  style={{ background: "color-mix(in oklab, var(--clarity) 15%, transparent)" }}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </div>
+                <span>New Conversation</span>
+              </motion.button>
+
+              {/* Search Chat Input */}
+              <div className="px-3 py-1 relative flex items-center">
+                <Search className="absolute left-[22px] h-3.5 w-3.5 text-[var(--sidebar-foreground)]/35 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search chats..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.1] hover:bg-white/[0.03] focus:border-[var(--clarity)]/30 focus:bg-white/[0.05] text-[13px] text-[var(--sidebar-foreground)] placeholder-[var(--sidebar-foreground)]/35 rounded-xl pl-10 pr-8 py-2 focus:outline-none transition-all duration-200"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-5 p-0.5 rounded-md text-[var(--sidebar-foreground)]/30 hover:text-[var(--sidebar-foreground)]/70 hover:bg-white/5 transition-all"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
           )}
 
-          {/* Recent Chats */}
+          {/* Scrollable Recent Chats Area */}
           {showLabels && isActive("/") && (
-            <>
-              {/* Controls at the top of the chat area */}
-              <div className="space-y-1 mt-1 mb-2">
-                <motion.button
-                  whileHover={{ x: 3, scale: 1.01 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    createThread();
-                    if (mobileOpen) onMobileClose();
-                  }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-150"
-                  style={{ color: "var(--clarity)" }}
-                >
-                  <div
-                    className="flex h-5 w-5 items-center justify-center rounded-md"
-                    style={{ background: "color-mix(in oklab, var(--clarity) 15%, transparent)" }}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span>New Conversation</span>
-                </motion.button>
-
-                {/* Search Chat Input */}
-                <div className="px-3 py-1 relative flex items-center">
-                  <Search className="absolute left-[22px] h-3.5 w-3.5 text-[var(--sidebar-foreground)]/35 pointer-events-none" />
-                  <input
-                    type="text"
-                    placeholder="Search chats..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white/[0.02] border border-white/[0.05] hover:border-white/[0.1] hover:bg-white/[0.03] focus:border-[var(--clarity)]/30 focus:bg-white/[0.05] text-[13px] text-[var(--sidebar-foreground)] placeholder-[var(--sidebar-foreground)]/35 rounded-xl pl-10 pr-8 py-2 focus:outline-none transition-all duration-200"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-5 p-0.5 rounded-md text-[var(--sidebar-foreground)]/30 hover:text-[var(--sidebar-foreground)]/70 hover:bg-white/5 transition-all"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
+            <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-3 flex flex-col min-h-0">
               {/* Recent Chats Divider Header */}
-              <div className="px-3 pt-3 pb-2 flex items-center gap-2">
+              <div className="px-3 pt-3 pb-2 flex items-center gap-2 shrink-0">
                 <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
                 <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--sidebar-foreground)]/25">
                   Recent
@@ -663,8 +605,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                 <div className="h-[1px] flex-1 opacity-10" style={{ background: "var(--gradient-primary)" }} />
               </div>
 
-              <div className="space-y-0.5">
-
+              <div className="space-y-0.5 flex-1">
                 <AnimatePresence mode="popLayout">
                   {(() => {
                     const filteredThreads = Object.values(threads)
@@ -754,7 +695,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                   })()}
                 </AnimatePresence>
               </div>
-            </>
+            </div>
           )}
         </nav>
 

@@ -42,6 +42,7 @@ import { subscribeFormTrigger } from "@/lib/form-trigger";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { SparklesCore } from "@/components/ui/sparkles";
 
 import type { Turn } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
@@ -1300,8 +1301,11 @@ export function AssistantView() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.6 }}
-                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto"
+                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-[500px]"
               >
+                <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
+                  <SparklesCore id="chat-sparkles" minSize={0.4} maxSize={1.0} particleDensity={60} speed={0.4} particleColor="#3B8FE8" />
+                </div>
                 {(() => {
                   const { heading, subheading } = getGreeting(user?.name || "there");
                   return (
