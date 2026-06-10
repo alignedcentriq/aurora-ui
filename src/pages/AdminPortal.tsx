@@ -38,23 +38,10 @@ const ALL_PORTAL_TABS = [
   { id: "bookshelf" as Tab,       label: "Bookshelf Buddy",     icon: BookOpen },
 ];
 
-const STATUS_BADGE: Record<string, string> = {
-  Pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
-  Approved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
-  Active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
-  Rejected: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
-  Surrendered: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
-  Expired: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
-  Open: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20",
-  "In Progress": "bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20",
-  Acknowledged: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
-  Resolved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
-  Closed: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
-  "Auto-Rejected": "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
-  Released: "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
-  Due: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
-  Paid: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
-};
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { FilterBar } from "@/components/ui/FilterBar";
+import { TableLoader } from "@/components/ui/TableLoader";
+import { TableEmpty } from "@/components/ui/TableEmpty";
 
 const PRIORITY_BADGE: Record<string, string> = {
   Low: "text-zinc-400",
@@ -1751,13 +1738,6 @@ function ParkingDuesTab({ authHeaders, canManage }: { authHeaders: Record<string
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", STATUS_BADGE[status] ?? "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400")}>
-      {status}
-    </span>
-  );
-}
 
 function ActionButtons({ id, acting, onApprove, onReject }: { id: number; acting: number | null; onApprove: () => void; onReject: () => void }) {
   return (
@@ -1774,40 +1754,6 @@ function ActionButtons({ id, acting, onApprove, onReject }: { id: number; acting
   );
 }
 
-function FilterBar({ filter, setFilter, options, onRefresh }: { filter: string; setFilter: (s: string) => void; options: string[]; onRefresh: () => void }) {
-  return (
-    <div className="flex items-center justify-between mb-5">
-      <div className="flex gap-0.5 bg-[#f1f5f9] dark:bg-white/[0.06] rounded-lg p-0.5">
-        {options.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={cn(
-              "rounded-md px-4 py-1.5 text-[13px] font-medium transition-all",
-              filter === s
-                ? "bg-white dark:bg-white/[0.12] text-[#0f172a] dark:text-white shadow-sm"
-                : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60"
-            )}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-      <button onClick={onRefresh} className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] bg-white dark:bg-card px-3.5 py-1.5 text-[13px] font-medium text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white hover:border-[#cbd5e1] dark:hover:border-white/[0.15] transition-all">
-        <RefreshCw className="h-3.5 w-3.5" />
-        Refresh
-      </button>
-    </div>
-  );
-}
-
-function TableLoader() {
-  return <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-[#94a3b8]" /></div>;
-}
-
-function TableEmpty({ label }: { label: string }) {
-  return <div className="flex h-40 items-center justify-center text-[13px] text-[#94a3b8] dark:text-white/40">No {label} found</div>;
-}
 
 // ── Travel Tab ─────────────────────────────────────────────────────────────────
 

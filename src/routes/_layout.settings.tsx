@@ -23,31 +23,7 @@ export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
 });
 
-interface ToggleProps {
-  enabled: boolean;
-  onToggle: () => void;
-}
-
-function Toggle({ enabled, onToggle }: ToggleProps) {
-  return (
-    <button
-      onClick={onToggle}
-      className={cn(
-        "h-6 w-11 rounded-full transition-colors duration-200 relative shrink-0",
-        enabled ? "bg-primary" : "bg-muted",
-      )}
-    >
-      <motion.div
-        layout
-        transition={{ type: "spring", stiffness: 500, damping: 35 }}
-        className={cn(
-          "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm",
-          enabled ? "left-[22px]" : "left-0.5",
-        )}
-      />
-    </button>
-  );
-}
+import { Toggle } from "@/components/ui/Toggle";
 
 interface SettingRowProps {
   icon: LucideIcon;
@@ -400,7 +376,7 @@ function SettingsPage() {
                   Your vector-rigged active assistant in the sidebar.
                 </p>
               </div>
-              <Toggle enabled={buddyEnabled} onToggle={() => setBuddyEnabled(!buddyEnabled)} />
+              <Toggle on={buddyEnabled} onChange={setBuddyEnabled} />
             </div>
 
             <div className="p-4 sm:p-6 space-y-6">

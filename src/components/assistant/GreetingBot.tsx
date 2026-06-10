@@ -828,6 +828,7 @@ export function GreetingOverlay() {
   const colors = useBuddyColors();
   const { botState, setBotState } = useBuddyStore();
   const { user } = useAuth();
+  const { buddyEnabled } = useSettings();
   
   const [expression, setExpression] = useState<"normal" | "wink" | "happy" | "heart">("wink");
   const [showHearts, setShowHearts] = useState(false);
@@ -854,7 +855,7 @@ export function GreetingOverlay() {
     return () => clearTimeout(timer);
   }, [setBotState]);
 
-  if (botState !== "greeting") return null;
+  if (!buddyEnabled || botState !== "greeting") return null;
 
   const handleHiBack = () => {
     setExpression("heart");
@@ -1303,11 +1304,15 @@ export function SittingBuddy() {
 // Global default export coordinates both
 export default function GreetingBot() {
   const { checkGreetingTrigger } = useBuddyStore();
+  const { buddyEnabled } = useSettings();
 
   useEffect(() => {
+    if (!buddyEnabled) return;
     // Trigger on mount
     checkGreetingTrigger();
-  }, [checkGreetingTrigger]);
+  }, [checkGreetingTrigger, buddyEnabled]);
+
+  if (!buddyEnabled) return null;
 
   return <GreetingOverlay />;
 }

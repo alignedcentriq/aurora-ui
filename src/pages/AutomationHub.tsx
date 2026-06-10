@@ -144,29 +144,7 @@ async function apiFetch(url: string, email: string, role: string, opts?: Request
     },
   });
 }
-
-// ── Status badge ──────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-xs text-muted-foreground">—</span>;
-  if (status === "sent")
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
-        <CheckCircle2 className="h-3 w-3" /> Sent
-      </span>
-    );
-  if (status.startsWith("failed:no_recipients"))
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-        <AlertCircle className="h-3 w-3" /> No recipients
-      </span>
-    );
-  return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
-      <XCircle className="h-3 w-3" /> Failed
-    </span>
-  );
-}
+import { StatusBadge } from "@/components/ui/StatusBadge";
 
 // ── Recipient Pill ────────────────────────────────────────────────────────────
 

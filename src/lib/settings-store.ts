@@ -247,7 +247,7 @@ export const useSettings = create<SettingsState>()(
       buddyCharId: "robot",
       setBuddyCharId: (id) => set({ buddyCharId: id }),
 
-      buddyEnabled: true,
+      buddyEnabled: false,
       setBuddyEnabled: (enabled) => set({ buddyEnabled: enabled }),
 
       buddyGender: "auto",

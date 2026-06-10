@@ -44,6 +44,9 @@ def manager_assistant(state: ManagerState):
         f"Manager email: {user_email}. Never ask who the user is.\n"
         f"Leave approval is handled via email links — there is no leave approval action in this chat.\n"
         f"For HR policy questions, tell the manager to ask Centriq in the HR context.\n"
+        f"FORMATTING: Use bullet points for lists, **bold** for key terms, short paragraphs.\n"
+        f"Lead with a direct 1-2 sentence answer. Synthesize tool results — never dump raw output.\n"
+        f"ALWAYS respond in first person. Never write simulated dialogue or use labels like 'User:'.\n"
     )
     base_prompt = PromptService.get_system_prompt("functional_manager", default_prompt)
     guardrail = PromptService.get_guardrail("functional_manager")

@@ -8,17 +8,11 @@ import { motion, AnimatePresence } from "framer-motion";
 
 type Tab = "tickets" | "software" | "security-digest";
 
-const STATUS_BADGE: Record<string, string> = {
-  Open: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "Awaiting Approval": "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  "In Progress": "bg-violet-500/15 text-violet-400 border border-violet-500/20",
-  Resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  Closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  Pending: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  Approved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  Rejected: "bg-rose-500/15 text-rose-400 border border-rose-500/20",
-  Installed: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-};
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { FilterBar } from "@/components/ui/FilterBar";
+import { TableLoader } from "@/components/ui/TableLoader";
+import { TableEmpty } from "@/components/ui/TableEmpty";
+import { Toggle } from "@/components/ui/Toggle";
 
 const PRIORITY_COLOR: Record<string, string> = {
   Low: "text-zinc-400",
@@ -154,6 +148,7 @@ function TicketsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         setFilter={setFilter}
         options={["Open", "In Progress", "Awaiting Approval", "Resolved", "All"]}
         onRefresh={fetch_}
+        variant="tabs"
       />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="tickets" /> : (
         <table className="w-full text-[13px]">
@@ -262,7 +257,7 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
 
   return (
     <div>
-      <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetch_} />
+      <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetch_} variant="tabs" />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="software requests" /> : (
         <table className="w-full text-[13px]">
           <thead>
@@ -317,49 +312,6 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       )}
     </div>
   );
-}
-
-// ── Shared helpers ────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", STATUS_BADGE[status] ?? "bg-zinc-500/10 text-zinc-400")}>
-      {status}
-    </span>
-  );
-}
-
-function FilterBar({ filter, setFilter, options, onRefresh }: { filter: string; setFilter: (s: string) => void; options: string[]; onRefresh: () => void }) {
-  return (
-    <div className="flex items-center justify-between mb-4">
-      <div className="flex gap-1">
-        {options.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={cn(
-              "rounded-lg px-3.5 py-1.5 text-[13px] font-medium transition-colors",
-              filter === s ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-            )}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-      <button onClick={onRefresh} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
-        <RefreshCw className="h-3.5 w-3.5" />
-        Refresh
-      </button>
-    </div>
-  );
-}
-
-function TableLoader() {
-  return <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
-}
-
-function TableEmpty({ label }: { label: string }) {
-  return <div className="flex h-40 items-center justify-center text-[13px] text-muted-foreground">No {label} found</div>;
 }
 
 // ── Model Controls Tab ──────────────────────────────────────────────────────────
@@ -566,7 +518,7 @@ export function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string,
               </p>
             </div>
           </div>
-          <Toggle on={cfg.enabled} onChange={(v) => setCfg({ ...cfg, enabled: v })} />
+          <Toggle on={cfg.enabled} onChange={(v) => setCfg({ ...cfg, enabled: v })} activeColor="bg-emerald-500" inactiveColor="bg-zinc-600" />
         </div>
 
         {/* Send hour */}
@@ -661,6 +613,8 @@ export function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string,
                     <Toggle
                       on={cfg.sources[src.key] ?? true}
                       onChange={(v) => toggleSource(src.key, v)}
+                      activeColor="bg-emerald-500"
+                      inactiveColor="bg-zinc-600"
                     />
                   </div>
                 ))}
@@ -899,7 +853,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
             </div>
           </div>
           <div className="flex items-center self-end sm:self-center">
-            <Toggle on={cfg.chat_enabled} onChange={(v) => setCfg({ ...cfg, chat_enabled: v })} />
+            <Toggle on={cfg.chat_enabled} onChange={(v) => setCfg({ ...cfg, chat_enabled: v })} activeColor="bg-emerald-500" inactiveColor="bg-zinc-600" />
           </div>
         </div>
       </motion.section>
@@ -1468,24 +1422,6 @@ function Card({ icon, title, desc, badge, children }: {
       <p className="text-[12px] text-muted-foreground mb-5 leading-relaxed">{desc}</p>
       {children}
     </section>
-  );
-}
-
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!on)}
-      className={cn(
-        "relative h-8 w-[58px] shrink-0 rounded-full transition-colors outline-none focus:ring-2 focus:ring-emerald-500/40 focus:ring-offset-2 dark:focus:ring-offset-background",
-        on ? "bg-emerald-500" : "bg-zinc-600"
-      )}
-    >
-      <motion.span
-        animate={{ x: on ? 26 : 0 }}
-        transition={{ type: "spring", stiffness: 450, damping: 25 }}
-        className="absolute top-1 left-1 h-6 w-6 rounded-full bg-white shadow-md block"
-      />
-    </button>
   );
 }
 

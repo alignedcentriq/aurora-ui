@@ -216,7 +216,7 @@ function LayoutComponent() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 10 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute top-10 right-0 w-[340px] rounded-2xl border border-white/[0.08] dark:border-white/[0.08] bg-[#0c1222]/95 backdrop-blur-xl shadow-2xl p-3 z-50 max-h-[380px] overflow-y-auto space-y-3 no-scrollbar"
+                  className="absolute top-10 right-0 w-[340px] rounded-2xl border border-border bg-popover/95 backdrop-blur-xl shadow-2xl p-3 z-50 max-h-[380px] overflow-y-auto space-y-3 no-scrollbar text-popover-foreground"
                 >
                   {(() => {
                     const filtered = queries.filter(q =>
@@ -226,7 +226,7 @@ function LayoutComponent() {
 
                     if (filtered.length === 0) {
                       return (
-                        <div className="py-6 text-center text-xs text-white/40">
+                        <div className="py-6 text-center text-muted-foreground/60">
                           No quick searches found
                         </div>
                       );
@@ -239,7 +239,7 @@ function LayoutComponent() {
 
                       return (
                         <div key={cat} className="space-y-1">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-white/35 px-2 py-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 px-2 py-1">
                             {QUERY_CATEGORY_LABELS[cat]}
                           </p>
                           {items.map((q) => {
@@ -247,21 +247,21 @@ function LayoutComponent() {
                             return (
                               <div
                                 key={q.prompt}
-                                className="group/item flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 hover:bg-white/[0.05] transition-colors cursor-pointer text-left"
+                                className="group/item flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 hover:bg-accent/60 transition-colors cursor-pointer text-left"
                                 onClick={() => {
                                   runSearchAction(q.prompt);
                                   setSearchVal("");
                                 }}
                               >
                                 <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[0.06] text-white/60 shrink-0">
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-accent text-muted-foreground shrink-0">
                                     <Icon className={`h-3.5 w-3.5 ${q.iconColor}`} />
                                   </div>
                                   <div className="min-w-0 flex-1">
-                                    <p className="text-[12px] font-semibold text-white/95 truncate">
+                                    <p className="text-[12px] font-semibold text-foreground truncate">
                                       {q.label}
                                     </p>
-                                    <p className="text-[10px] text-white/40 truncate">
+                                    <p className="text-[10px] text-muted-foreground truncate">
                                       {q.prompt}
                                     </p>
                                   </div>
@@ -271,7 +271,7 @@ function LayoutComponent() {
                                     e.stopPropagation();
                                     removeQuery(q.prompt);
                                   }}
-                                  className="opacity-0 group-hover/item:opacity-100 p-1 rounded text-white/30 hover:bg-rose-500/20 hover:text-rose-400 transition-all shrink-0"
+                                  className="opacity-0 group-hover/item:opacity-100 p-1 rounded text-muted-foreground/50 hover:bg-rose-500/20 hover:text-rose-500 transition-all shrink-0"
                                   title="Remove quick search"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
@@ -305,10 +305,10 @@ function LayoutComponent() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 8, scale: 0.95 }}
                   transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute top-10 right-0 w-80 rounded-2xl border border-border bg-[#0c1222]/95 backdrop-blur-xl shadow-2xl p-4 z-50 space-y-4 text-left"
+                  className="absolute top-10 right-0 w-80 rounded-2xl border border-border bg-popover/95 backdrop-blur-xl shadow-2xl p-4 z-50 space-y-4 text-left text-popover-foreground"
                 >
                   <div>
-                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/35">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/60">
                       Global Clocks
                     </span>
                     <div className="grid grid-cols-2 gap-2 mt-2">
@@ -317,10 +317,10 @@ function LayoutComponent() {
                         return (
                           <div
                             key={c.code}
-                            className="flex flex-col gap-0.5 rounded-lg bg-white/[0.02] border border-white/[0.04] p-2 hover:bg-white/[0.04] transition-colors"
+                            className="flex flex-col gap-0.5 rounded-lg bg-accent/30 border border-border/40 p-2 hover:bg-accent/60 transition-colors"
                           >
                             <div className="flex items-center justify-between min-w-0">
-                              <span className="truncate font-semibold text-white/85 flex items-center gap-1">
+                              <span className="truncate font-semibold text-foreground flex items-center gap-1">
                                 <span className="text-xs">{c.flag}</span>
                                 <span className="truncate text-[10px]">{c.name}</span>
                               </span>
@@ -329,15 +329,15 @@ function LayoutComponent() {
                                 isOpen ? "bg-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.6)]" : "bg-zinc-600"
                               )} />
                             </div>
-                            <span className="text-[10px] text-white/50 font-bold">{time}</span>
+                            <span className="text-[10px] text-muted-foreground font-bold">{time}</span>
                           </div>
                         );
                       })}
                     </div>
                   </div>
 
-                  <div className="border-t border-white/[0.08] pt-3">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/35">
+                  <div className="border-t border-border/60 pt-3">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground/60">
                       Manage Clocks
                     </span>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-2 max-h-36 overflow-y-auto pr-1 select-none no-scrollbar">
@@ -346,7 +346,7 @@ function LayoutComponent() {
                         return (
                           <label
                             key={c.code}
-                            className="flex items-center gap-2 cursor-pointer py-0.5 rounded hover:bg-white/[0.03] px-1"
+                            className="flex items-center gap-2 cursor-pointer py-0.5 rounded hover:bg-accent/30 px-1"
                           >
                             <input
                               type="checkbox"
@@ -354,7 +354,7 @@ function LayoutComponent() {
                               onChange={() => toggleClock(c.code)}
                               className="rounded border-border bg-background text-primary focus:ring-0 focus:ring-offset-0 h-3 w-3 accent-primary"
                             />
-                            <span className="text-[11px] text-white/75 flex items-center gap-1">
+                            <span className="text-[11px] text-foreground flex items-center gap-1">
                               <span>{c.flag}</span>
                               <span className="truncate">{c.name}</span>
                             </span>

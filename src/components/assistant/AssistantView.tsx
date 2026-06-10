@@ -39,9 +39,11 @@ import { SmartWidgets } from "./SmartWidgets";
 import { useVoiceStore } from "@/lib/voice-store";
 import { createRecognition, resetSpeech, enqueueFrom, cancelSpeech } from "@/lib/speech";
 import { subscribeFormTrigger } from "@/lib/form-trigger";
+import { parseFormCommand } from "@/lib/form-command-parser";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { SparklesCore } from "@/components/ui/sparkles";
 
 import type { Turn } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
@@ -807,6 +809,53 @@ export function AssistantView() {
         }
       }
 
+      // Create-form command intercept — admin only, no LLM needed.
+      if (role === "admin") {
+        const parsed = parseFormCommand(text);
+        if (parsed) {
+          const capturedId = activeId;
+          addTurn(capturedId, { role: "user", text });
+          setInput("");
+          const createHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (user?.email) createHeaders["X-User-Email"] = user.email;
+          fetch("/api/admin/form-library", {
+            method: "POST",
+            headers: createHeaders,
+            credentials: "include",
+            body: JSON.stringify(parsed),
+          })
+            .then((res) =>
+              res.json().then((data) => {
+                if (res.ok) {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Form **"${parsed.name}"** created successfully with ${parsed.fields.length} field(s). It's now live in the Form Library.`,
+                  });
+                  // Refresh forms cache so new trigger keywords work immediately
+                  fetch("/api/forms/list", createHeaders)
+                    .then((r) => r.ok ? r.json() : [])
+                    .then((d) => { if (Array.isArray(d)) formsRef.current = d; })
+                    .catch(() => {});
+                } else {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Could not create the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                    isError: true,
+                  });
+                }
+              })
+            )
+            .catch(() => {
+              addTurn(capturedId, {
+                role: "ai",
+                text: "Could not reach the server. Please try again.",
+                isError: true,
+              });
+            });
+          return;
+        }
+      }
+
       // Form Library intercept — open the matched form inline without going through the LLM.
       if (!text.includes("via the assistant")) {
         const lowerText = text.toLowerCase();
@@ -1300,8 +1349,11 @@ export function AssistantView() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.6 }}
-                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto"
+                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-[500px]"
               >
+                <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
+                  <SparklesCore id="chat-sparkles" minSize={0.4} maxSize={1.0} particleDensity={60} speed={0.4} particleColor="#3B8FE8" />
+                </div>
                 {(() => {
                   const { heading, subheading } = getGreeting(user?.name || "there");
                   return (

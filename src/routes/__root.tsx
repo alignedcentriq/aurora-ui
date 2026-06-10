@@ -19,6 +19,10 @@ import { useSettings } from "../lib/settings-store";
 import GreetingBot from "../components/assistant/GreetingBot";
 import { useBuddyStore } from "../lib/buddy-store";
 import { SplashOverlay } from "../components/assistant/SplashOverlay";
+import { AuroraBackground } from "../components/ui/aurora-background";
+import { SparklesCore } from "../components/ui/sparkles";
+import { HoverBorderGradient } from "../components/ui/hover-border-gradient";
+import { FlipWords } from "../components/ui/flip-words";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -94,18 +98,16 @@ function RootComponent() {
 /** Brand splash — just the Centriq AI heading */
 function SplashScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background relative overflow-hidden">
-      <AnimatedBackground />
-
+    <AuroraBackground>
       <motion.h1
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        className="relative z-10 text-4xl font-black tracking-tight text-4c"
+        className="relative z-10 text-4xl font-black tracking-tight text-4c text-glow animate-pulse-glow"
       >
         Centriq AI
       </motion.h1>
-    </div>
+    </AuroraBackground>
   );
 }
 
@@ -122,8 +124,9 @@ function LoginView() {
   ] as const;
 
   return (
-    <div className="flex min-h-screen bg-background relative overflow-hidden">
-      <AnimatedBackground />
+    <AuroraBackground>
+      <div className="flex w-full h-full bg-transparent relative overflow-hidden z-10">
+        <SparklesCore id="login-sparkles" minSize={0.4} maxSize={1.2} particleDensity={40} speed={0.5} particleColor="#3B8FE8" />
 
       {/* Left side — 4C brand panel */}
       <motion.div
@@ -221,13 +224,13 @@ function LoginView() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25 }}
               >
-                <h1 className="text-2xl font-black tracking-tight">
+                <h1 className="text-2xl font-black tracking-tight mb-2">
                   Welcome to{" "}
                   <span className="text-4c">Centriq</span>
                 </h1>
-                <p className="text-[13px] text-muted-foreground font-medium mt-1.5">
-                  Your intelligent workplace concierge
-                </p>
+                <div className="text-[13px] text-muted-foreground font-medium flex items-center justify-center gap-1.5">
+                  Your intelligent <FlipWords words={["Clarity", "Connectivity", "Collaboration", "Capacity"]} className="text-primary font-bold px-0 dark:text-[#00c4bb]" /> concierge
+                </div>
               </motion.div>
             </div>
 
@@ -250,28 +253,18 @@ function LoginView() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
+              className="flex justify-center"
             >
-              <motion.button
-                whileHover={{ scale: 1.015, y: -2 }}
-                whileTap={{ scale: 0.98 }}
+              <HoverBorderGradient
+                as="button"
                 onClick={() => login()}
                 disabled={isInteracting}
+                containerClassName="w-full rounded-2xl"
                 className={cn(
-                  "group relative flex w-full items-center justify-center gap-3 rounded-2xl p-4 text-[14px] font-bold text-white transition-all overflow-hidden",
+                  "group relative flex w-full items-center justify-center gap-3 rounded-2xl bg-zinc-950/40 p-4 text-[14px] font-bold text-white transition-all overflow-hidden",
                   isInteracting && "opacity-70 cursor-not-allowed",
                 )}
-                style={{ background: "var(--gradient-primary)" }}
               >
-                {/* Shimmer overlay */}
-                <motion.div
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  style={{
-                    background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.15) 50%, transparent 60%)",
-                  }}
-                  animate={{ x: ["-100%", "200%"] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                />
-
                 {isInteracting ? (
                   <>
                     <LoadingDots />
@@ -279,7 +272,7 @@ function LoginView() {
                   </>
                 ) : (
                   <>
-                    <svg className="h-5 w-5 shrink-0" viewBox="0 0 23 23" fill="none">
+                    <svg className="h-5 w-5 shrink-0 text-primary" viewBox="0 0 23 23" fill="none">
                       <path
                         d="M10.8 10.8H6.5V6.5h4.3v4.3zm5.7 0h-4.3V6.5h4.3v4.3zM10.8 16.5H6.5v-4.3h4.3v4.3zm5.7 0h-4.3v-4.3h4.3v4.3z"
                         fill="currentColor"
@@ -288,7 +281,7 @@ function LoginView() {
                     <span>Sign in with Microsoft</span>
                   </>
                 )}
-              </motion.button>
+              </HoverBorderGradient>
             </motion.div>
 
             {/* Footer */}
@@ -299,6 +292,7 @@ function LoginView() {
         </motion.div>
       </div>
     </div>
+  </AuroraBackground>
   );
 }
 

@@ -61,6 +61,9 @@ from app.routes.escalation_routes import router as escalation_router
 from app.routes.welcome_routes import router as welcome_router, public_router as welcome_public_router
 from app.routes.travel_routes import router as travel_router, admin_router as travel_admin_router
 from app.routes.appreciation_routes import router as appreciation_router
+from app.routes.skill_hr_routes import router as skill_hr_router
+from app.routes.skill_it_routes import router as skill_it_router
+from app.routes.skill_doc_routes import router as skill_doc_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -166,6 +169,9 @@ app.include_router(welcome_public_router)
 app.include_router(travel_router)
 app.include_router(travel_admin_router)
 app.include_router(appreciation_router)
+app.include_router(skill_hr_router)
+app.include_router(skill_it_router)
+app.include_router(skill_doc_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(_uploads_dir, exist_ok=True)
