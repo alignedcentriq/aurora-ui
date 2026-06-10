@@ -578,6 +578,8 @@ def ms365_assistant(state: MS365State):
         f"Format emails as readable summaries: sender, subject, time.\n"
         f"Format calendar as time-ordered schedule: time, subject, location.\n"
         f"Always respond in natural language. Never output raw JSON.\n"
+        f"FORMATTING: Use bullet points for lists, **bold** for names/subjects, short paragraphs.\n"
+        f"Synthesize tool results into clear prose — never paste raw data verbatim.\n"
         f"Act immediately when intent is clear. Never redirect to Outlook, Teams, or Yammer app.\n"
     )
     base_prompt = PromptService.get_system_prompt("ms365", default_prompt)

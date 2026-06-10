@@ -22,6 +22,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { TableLoader } from "@/components/ui/TableLoader";
+import { TableEmpty } from "@/components/ui/TableEmpty";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,18 +78,6 @@ interface WelcomeResource {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const WELCOME_STATUS_BADGE: Record<string, string> = {
-  pending_hr: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  welcome_sent: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  skipped: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-};
-
-const WELCOME_STATUS_LABEL: Record<string, string> = {
-  pending_hr: "Pending HR",
-  welcome_sent: "Sent",
-  skipped: "Skipped",
-};
-
 const CATEGORY_OPTIONS = [
   "App Guide", "HR", "Policy", "IT", "Admin", "Facilities", "Video", "Deck", "General",
 ];
@@ -117,28 +108,12 @@ const TYPE_LABEL: Record<RequestType, string> = {
   grievance: "Grievance",
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  open: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  "pending approval": "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  draft: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  acknowledged: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "under review": "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "in progress": "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  verified: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-};
-
 const PRIORITY_BADGE: Record<string, string> = {
   Low: "bg-zinc-500/15 text-zinc-400",
   Normal: "bg-zinc-500/15 text-zinc-400",
   Medium: "bg-amber-500/15 text-amber-400",
   High: "bg-rose-500/15 text-rose-400",
 };
-
-function statusBadgeCls(status: string) {
-  return STATUS_BADGE[status.toLowerCase()] ?? "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20";
-}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -381,9 +356,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           )}
         </td>
         <td className="py-3.5 pr-4">
-          <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", statusBadgeCls(item.status))}>
-            {item.status}
-          </span>
+          <StatusBadge status={item.status} />
         </td>
         <td className="py-3.5 pr-4 text-[12px] text-muted-foreground/60 whitespace-nowrap">
           {item.created_at ? item.created_at.slice(0, 10) : "—"}
@@ -460,14 +433,9 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       {/* Table */}
       <div className="flex-1 overflow-auto px-8 pb-8">
         {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
+          <TableLoader />
         ) : filtered.length === 0 ? (
-          <div className="flex h-40 items-center justify-center gap-2 text-muted-foreground">
-            <Inbox className="h-4 w-4" />
-            <span className="text-[13px]">No requests found</span>
-          </div>
+          <TableEmpty label="requests" icon={<Inbox className="h-4 w-4" />} />
         ) : (
           <table className="w-full text-[13px]">
             <thead>
@@ -969,14 +937,11 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
 
       <div className="flex-1 overflow-auto px-8 pb-8">
         {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
+          <TableLoader />
         ) : logs.length === 0 ? (
-          <div className="flex h-40 items-center justify-center gap-2 text-muted-foreground">
-            <Gift className="h-4 w-4" />
-            <span className="text-[13px]">No welcome logs yet — they appear when new employees are detected</span>
-          </div>
+          <TableEmpty icon={<Gift className="h-4 w-4" />}>
+            <span>No welcome logs yet — they appear when new employees are detected</span>
+          </TableEmpty>
         ) : (
           <table className="w-full text-[13px]">
             <thead>
@@ -1003,14 +968,7 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
                   </td>
                   <td className="py-3.5 pr-4 text-foreground/60">{l.created_at.slice(0, 10)}</td>
                   <td className="py-3.5 pr-4">
-                    <span
-                      className={cn(
-                        "rounded-full px-2.5 py-1 text-[11px] font-medium",
-                        WELCOME_STATUS_BADGE[l.status] ?? "bg-zinc-500/10 text-zinc-400"
-                      )}
-                    >
-                      {WELCOME_STATUS_LABEL[l.status] ?? l.status}
-                    </span>
+                    <StatusBadge status={l.status} />
                   </td>
                   <td className="py-3.5 pr-4 text-foreground/50 text-[12px]">
                     {l.acted_at ? (

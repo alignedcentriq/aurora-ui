@@ -124,6 +124,8 @@ def it_assistant(state: ITState):
         f"CRITICAL: After calling search_it_docs, extract and present the steps/information DIRECTLY in your reply.\n"
         f"   Never tell the user to 'check a document', 'refer to a policy', or 'read a guide' — give them the answer inline.\n"
         f"   If the search result has no relevant info, create a ticket instead.\n"
+        f"FORMATTING: Use numbered steps for procedures, bullet points for lists, **bold** for key terms.\n"
+        f"Lead with a direct answer. Never paste raw doc text verbatim — synthesize into clear steps.\n"
     )
     base_prompt = PromptService.get_system_prompt("it_support", default_prompt)
     guardrail = PromptService.get_guardrail("it_support")

@@ -39,6 +39,7 @@ import { SmartWidgets } from "./SmartWidgets";
 import { useVoiceStore } from "@/lib/voice-store";
 import { createRecognition, resetSpeech, enqueueFrom, cancelSpeech } from "@/lib/speech";
 import { subscribeFormTrigger } from "@/lib/form-trigger";
+import { parseFormCommand } from "@/lib/form-command-parser";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -804,6 +805,53 @@ export function AssistantView() {
             },
           });
           setInput("");
+          return;
+        }
+      }
+
+      // Create-form command intercept — admin only, no LLM needed.
+      if (role === "admin") {
+        const parsed = parseFormCommand(text);
+        if (parsed) {
+          const capturedId = activeId;
+          addTurn(capturedId, { role: "user", text });
+          setInput("");
+          const createHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (user?.email) createHeaders["X-User-Email"] = user.email;
+          fetch("/api/admin/form-library", {
+            method: "POST",
+            headers: createHeaders,
+            credentials: "include",
+            body: JSON.stringify(parsed),
+          })
+            .then((res) =>
+              res.json().then((data) => {
+                if (res.ok) {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Form **"${parsed.name}"** created successfully with ${parsed.fields.length} field(s). It's now live in the Form Library.`,
+                  });
+                  // Refresh forms cache so new trigger keywords work immediately
+                  fetch("/api/forms/list", createHeaders)
+                    .then((r) => r.ok ? r.json() : [])
+                    .then((d) => { if (Array.isArray(d)) formsRef.current = d; })
+                    .catch(() => {});
+                } else {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Could not create the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                    isError: true,
+                  });
+                }
+              })
+            )
+            .catch(() => {
+              addTurn(capturedId, {
+                role: "ai",
+                text: "Could not reach the server. Please try again.",
+                isError: true,
+              });
+            });
           return;
         }
       }

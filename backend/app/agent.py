@@ -41,6 +41,7 @@ from app.agents.it_agent import it_agent
 from app.agents.manager_agent import manager_agent
 from app.agents.deeplink_agent import get_deeplink_agent
 from app.agents.ms365_agent import ms365_agent
+from app.agents.doc_agent import doc_agent
 from app.services.it_service import ITService
 from app.services.employee_service import EmployeeService
 from app.services.announcement_service import AnnouncementService
@@ -2499,8 +2500,14 @@ def hr_agent(state: AgentState):
             f"answer the policy then present the portal link\n"
             f"- Where to do X / which app/portal/tool for X → find_apps(query)\n\n"
             f"Never answer from training knowledge — use tools only.\n"
-            + (f"If [PRE-SEARCHED HR POLICY] is present in context, answer from it directly "
-               f"without calling search_hr_policies.\n" if _hr_policy_context else ""),
+            + (f"If [PRE-SEARCHED HR POLICY] is present in context:\n"
+               f"- DO NOT paste or quote the raw policy text verbatim.\n"
+               f"- Read the excerpts and answer the employee's SPECIFIC question in your own words.\n"
+               f"- Use clear formatting: bold key terms, bullet points for lists, short paragraphs.\n"
+               f"- Lead with a direct 1-2 sentence answer, then add relevant details.\n"
+               f"- If the question asks 'what does X cover', list covered items clearly and call out exclusions.\n"
+               f"- Do not call search_hr_policies — the policy is already provided.\n"
+               if _hr_policy_context else ""),
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = (state.get("feedback_context") or "") + _hr_policy_context
@@ -2853,6 +2860,20 @@ async def manager_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
+async def doc_agent_node(state: AgentState):
+    """Document Agent — generates formal HR letters (NOC, experience cert, etc.)."""
+    result = await doc_agent.ainvoke({
+        "messages": state["messages"],
+        "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
+        "feedback_context": state.get("feedback_context") or "",
+    })
+    last_ai = next(
+        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)),
+        AIMessage(content="Failed to generate document."),
+    )
+    return {"messages": [last_ai]}
+
+
 async def ms365_agent_node(state: AgentState):
     """MS365 Agent — reads emails, sends emails, calendar, Teams, Yammer.
 
@@ -3105,8 +3126,9 @@ POLICY EXCERPTS:
 {tool_output}
 
 RULES:
-1. Answer the question directly and factually. Lead with the actual answer (e.g. yes / no / the figure), then a one-line reason drawn from the excerpts.
-2. GROUNDING: use ONLY facts present in the excerpts. If the excerpts do not answer the question, say you couldn't find it in the policy and suggest contacting HR — never guess or fill gaps.
+1. Answer the question directly and factually. Lead with a 1-2 sentence direct answer, then supporting details.
+2. FORMAT: Use bullet points for lists (covered items, required documents, steps). Use **bold** for key terms. Short paragraphs. Never paste raw policy text verbatim.
+3. GROUNDING: use ONLY facts present in the excerpts. If the excerpts do not answer the question, say you couldn't find it in the policy and suggest contacting HR — never guess or fill gaps.
 2a. EXCLUSIONS OVERRIDE COVERAGE: before answering any "is X covered / will X be reimbursed" question, scan ALL excerpts for an exclusions / general-exclusions / "not covered" list. If the thing asked about (or a clear synonym, e.g. cosmetic = plastic surgery) appears in such a list, the answer is NO — it is NOT covered/reimbursed — even if another excerpt (a claim form or general benefit list) seems to suggest it could be claimed. A generic claim-process or coverage excerpt does NOT override a specific exclusion. Cite the exclusion (e.g. the exclusion code) when present.
 3. NEVER write a letter, email, approval, or confirmation. NEVER claim the employee has submitted documents, that a claim was received/verified/processed/approved, or invent any name, amount, account, or date. You are answering a question, not processing a claim. Do not sign off or use "Dear Employee" / "Best regards".
 4. Start with the answer itself. Do not begin with "Here's a summary", and do not refer to "tool", "result(s)", or "excerpts". No JSON, curly braces, or metadata.
@@ -3181,6 +3203,7 @@ def route_to_agent(state: AgentState):
     if domain == "it_support": return "it_agent"
     if domain == "functional_manager": return "manager_agent"
     if domain == "ms365": return "ms365_agent"
+    if domain == "document": return "doc_agent"
     if domain == "dummy_test": return "dummy_test_agent"
     if status == "placeholder": return "placeholder_agent"
     if domain == "hr": return "hr_agent"
@@ -3231,6 +3254,7 @@ workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
 workflow.add_node("referral_choice_agent", referral_choice_agent_node)
 workflow.add_node("ms365_agent", ms365_agent_node)
+workflow.add_node("doc_agent", doc_agent_node)
 workflow.add_node("general_agent", general_agent)
 workflow.add_node("general_tools", general_tool_node)
 workflow.add_node("dummy_test_agent", dummy_test_agent)
@@ -3258,6 +3282,7 @@ workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("dynamic_form_agent", END)
 workflow.add_edge("referral_choice_agent", END)
 workflow.add_edge("ms365_agent", END)
+workflow.add_edge("doc_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 workflow.add_edge("disabled_agent", END)

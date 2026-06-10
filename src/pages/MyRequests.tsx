@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -96,78 +97,12 @@ const TYPE_ICON: Record<RequestType, React.ElementType> = {
   udemy: GraduationCap,
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  // Open statuses
-  open: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  "pending approval": "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  draft: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  pending: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  pending_rm: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-  pending_fm: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-
-  // In progress statuses
-  acknowledged: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "under review": "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  "in progress": "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  in_progress: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  rm_approved: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  pmo_approved: "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20",
-  ticket_booked: "bg-sky-500/15 text-sky-400 border border-sky-500/20",
-  hotel_booked: "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20",
-  fm_approved: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-
-  // Closed/Final statuses
-  resolved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  verified: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  approved: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  completed: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  finance_processed: "bg-teal-500/15 text-teal-400 border border-teal-500/20",
-  closed: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-  rejected: "bg-rose-500/15 text-rose-400 border border-rose-500/20",
-  cancelled: "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
-};
-
 const PRIORITY_BADGE: Record<string, string> = {
   Low: "bg-zinc-500/15 text-zinc-400",
   Normal: "bg-zinc-500/15 text-zinc-400",
   Medium: "bg-amber-500/15 text-amber-400",
   High: "bg-rose-500/15 text-rose-400",
 };
-
-function statusBadgeCls(status: string) {
-  return STATUS_BADGE[status.toLowerCase()] ?? "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20";
-}
-
-function formatStatus(status: string): string {
-  if (!status) return "—";
-  
-  const customMappings: Record<string, string> = {
-    pending_rm: "Pending RM Approval",
-    rm_approved: "RM Approved",
-    pmo_approved: "PMO Approved",
-    ticket_booked: "Ticket Booked",
-    hotel_booked: "Hotel Booked",
-    completed: "Completed",
-    rejected: "Rejected",
-    cancelled: "Cancelled",
-    
-    pending_fm: "Pending FM Approval",
-    fm_approved: "FM Approved",
-    finance_processed: "Finance Processed",
-    
-    pending: "Pending",
-    approved: "Approved",
-  };
-
-  const lower = status.toLowerCase();
-  if (customMappings[lower]) {
-    return customMappings[lower];
-  }
-
-  return status
-    .replace(/[_-]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 type StatusFilter = "all" | "open" | "closed" | "in-progress";
 
@@ -501,9 +436,7 @@ export function MyRequests() {
           )}
         </td>
         <td className="py-3.5 pr-4">
-          <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium", statusBadgeCls(item.status))}>
-            {formatStatus(item.status)}
-          </span>
+          <StatusBadge status={item.status} />
         </td>
         <td className="py-3.5 pr-4 text-[12px] text-muted-foreground/60 whitespace-nowrap">
           {item.created_at ? item.created_at.slice(0, 10) : "—"}
@@ -946,9 +879,7 @@ function DetailPanel({ item }: { item: RequestItem }) {
       {/* Status indicator on right side */}
       <div className="w-48 shrink-0 flex flex-col items-start gap-2">
         <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">Current Status</p>
-        <span className={cn("rounded-full px-3 py-1.5 text-[12px] font-semibold", statusBadgeCls(item.status))}>
-          {formatStatus(item.status)}
-        </span>
+        <StatusBadge status={item.status} className="px-3 py-1.5 text-[12px]" />
         {isFinal && (
           <div className="flex items-center gap-1.5 text-emerald-400 text-[12px] mt-1">
             <CheckCircle2 className="h-3.5 w-3.5" />

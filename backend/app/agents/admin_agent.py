@@ -489,7 +489,9 @@ def admin_assistant(state: AdminState):
     default_prompt = (
         f"You are the Admin Services Assistant for Aligned Automation.\n"
         f"Employee email: {user_email}. Never ask for it.\n\n"
-        f"Answer from tool results and provided policy context only.\n"
+        f"Answer from tool results and provided policy context only. Never invent facts.\n"
+        f"FORMATTING: Use bullet points for lists, **bold** for key terms, short paragraphs.\n"
+        f"Lead with a 1-2 sentence direct answer. Never paste raw policy text verbatim — synthesize.\n"
         f"Office supply request (pens, markers, notebooks, notepads, stationery, sticky notes, folders) → "
         f"call request_office_supply IMMEDIATELY. Never ask for justification.\n"
         f"If [PRE-SEARCHED POLICY] is in context, answer from it directly — do not call search_admin_policies.\n"
@@ -531,15 +533,25 @@ def admin_assistant(state: AdminState):
     else:
         response = llm_controls.get_llm("service", default_timeout=120).bind_tools(active_tools).invoke(messages)
 
-    # If the model returned empty text with no tool calls, surface the last tool result directly.
-    # This prevents the "unable to generate a text summary" fallback on weak models.
+    # If the model returned empty text with no tool calls, retry once with the tool result
+    # explicitly in the prompt rather than dumping it raw.
     if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
         last_tool = next(
             (m for m in reversed(state["messages"]) if isinstance(m, ToolMessage) and m.content),
             None,
         )
         if last_tool:
-            response = AIMessage(content=last_tool.content)
+            user_q = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+            retry_messages = messages + [
+                last_tool,
+                HumanMessage(content=(
+                    f"Based on the above result, answer this question clearly and concisely "
+                    f"using bullet points where appropriate: {user_q}"
+                )),
+            ]
+            response = llm_controls.get_llm("service", default_timeout=60).invoke(retry_messages)
+            if not (response.content or "").strip():
+                response = AIMessage(content=last_tool.content)
 
     return {"messages": [response]}
 
