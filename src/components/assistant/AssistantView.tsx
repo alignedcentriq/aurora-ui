@@ -971,6 +971,13 @@ export function AssistantView() {
             if (evt.type === "queued") {
               // Server is at capacity; our request is waiting for a slot.
               setActivity((evt.message as string) ?? "High demand — waiting in queue…");
+            } else if (evt.type === "status") {
+              // Real pipeline progress from the backend — replaces fake timer steps.
+              // Only update if we haven't received the first token yet (pre-stream phase).
+              if (!aiTurnAdded) {
+                const stage = (evt.stage as string) ?? "";
+                setActivity(stage);
+              }
             } else if (evt.type === "busy") {
               // Queue is full — degrade gracefully instead of timing out.
               setThinking(threadId, false);

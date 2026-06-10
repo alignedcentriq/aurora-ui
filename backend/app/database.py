@@ -52,6 +52,18 @@ from app.models import (
     OnboardingRequest,
     PMOTeamRequest,
     Appreciation,
+    Connector,
+    ConnectorAuth,
+    ConnectorOperation,
+    ConnectorScope,
+    ConnectorCallLog,
+    Flow,
+    FlowRun,
+    FlowStepRun,
+    Persona,
+    PersonaAssignment,
+    PersonaFeature,
+    DashboardConfig,
     SCHEMA,
 )
 from app.config import settings
@@ -212,6 +224,125 @@ def init_db():
                 f')',
                 # Backfill viewer_oid column for tables created before it was added
                 f'ALTER TABLE "{SCHEMA}".content_reveal_audits ADD COLUMN IF NOT EXISTS viewer_oid VARCHAR',
+                # Phase 0: Latency SLO instrumentation on ai_request_logs
+                f'ALTER TABLE "{SCHEMA}".ai_request_logs ADD COLUMN IF NOT EXISTS time_to_first_token_ms INTEGER',
+                f'ALTER TABLE "{SCHEMA}".ai_request_logs ADD COLUMN IF NOT EXISTS queue_wait_ms INTEGER',
+                f'ALTER TABLE "{SCHEMA}".ai_request_logs ADD COLUMN IF NOT EXISTS gate_result VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".ai_request_logs ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN DEFAULT FALSE',
+                f'ALTER TABLE "{SCHEMA}".ai_request_logs ADD COLUMN IF NOT EXISTS served_from VARCHAR',
+                # Phase 0: Per-LLM-call TTFT tracking
+                f'ALTER TABLE "{SCHEMA}".ai_llm_call_logs ADD COLUMN IF NOT EXISTS ttft_ms INTEGER',
+                # M1: Connector platform — core registry tables
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".connectors ('
+                f'  id SERIAL PRIMARY KEY, slug VARCHAR UNIQUE NOT NULL, name VARCHAR NOT NULL,'
+                f'  description TEXT, source_type VARCHAR NOT NULL, base_url VARCHAR,'
+                f'  spec_blob BYTEA, spec_url VARCHAR, status VARCHAR DEFAULT \'draft\','
+                f'  version INTEGER DEFAULT 1, created_by VARCHAR,'
+                f'  created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_connectors_slug ON "{SCHEMA}".connectors(slug)',
+                f'CREATE INDEX IF NOT EXISTS idx_connectors_status ON "{SCHEMA}".connectors(status)',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".connector_auths ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  connector_id INTEGER UNIQUE REFERENCES "{SCHEMA}".connectors(id) ON DELETE CASCADE,'
+                f'  auth_type VARCHAR NOT NULL, auth_mode VARCHAR DEFAULT \'service\','
+                f'  config_enc TEXT, updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".connector_operations ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  connector_id INTEGER REFERENCES "{SCHEMA}".connectors(id) ON DELETE CASCADE,'
+                f'  name VARCHAR NOT NULL, display_name VARCHAR, description TEXT,'
+                f'  method VARCHAR, path_template VARCHAR,'
+                f'  params_schema JSONB, response_map JSONB,'
+                f'  requires_confirmation BOOLEAN DEFAULT FALSE,'
+                f'  minutes_saved DOUBLE PRECISION DEFAULT 0,'
+                f'  response_mode VARCHAR DEFAULT \'passthrough\', template TEXT,'
+                f'  enabled BOOLEAN DEFAULT TRUE, version INTEGER DEFAULT 1,'
+                f'  python_ref VARCHAR, mcp_tool_name VARCHAR,'
+                f'  created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_connector_ops_connector_id ON "{SCHEMA}".connector_operations(connector_id)',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".connector_scopes ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  connector_id INTEGER REFERENCES "{SCHEMA}".connectors(id) ON DELETE CASCADE,'
+                f'  operation_id INTEGER REFERENCES "{SCHEMA}".connector_operations(id) ON DELETE CASCADE,'
+                f'  persona_id INTEGER, role VARCHAR, department VARCHAR'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_connector_scopes_connector ON "{SCHEMA}".connector_scopes(connector_id)',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".connector_call_logs ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  connector_id INTEGER REFERENCES "{SCHEMA}".connectors(id) ON DELETE SET NULL,'
+                f'  operation_id INTEGER REFERENCES "{SCHEMA}".connector_operations(id) ON DELETE SET NULL,'
+                f'  user_email VARCHAR, request_log_id INTEGER,'
+                f'  flow_run_id INTEGER, status VARCHAR DEFAULT \'success\','
+                f'  latency_ms INTEGER, error TEXT, created_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_connector_call_logs_created ON "{SCHEMA}".connector_call_logs(created_at)',
+                f'CREATE INDEX IF NOT EXISTS idx_connector_call_logs_user ON "{SCHEMA}".connector_call_logs(user_email)',
+                # M1: Connector platform — router examples FK
+                f'ALTER TABLE "{SCHEMA}".router_examples ADD COLUMN IF NOT EXISTS connector_operation_id INTEGER REFERENCES "{SCHEMA}".connector_operations(id) ON DELETE SET NULL',
+                # M2: Document template additive columns
+                f'ALTER TABLE "{SCHEMA}".document_templates ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT \'sharepoint\'',
+                f'ALTER TABLE "{SCHEMA}".document_templates ADD COLUMN IF NOT EXISTS created_by VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".document_templates ADD COLUMN IF NOT EXISTS category VARCHAR',
+                f'CREATE INDEX IF NOT EXISTS idx_document_templates_category ON "{SCHEMA}".document_templates(category)',
+                # M2: Persona layer
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".personas ('
+                f'  id SERIAL PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, description TEXT,'
+                f'  match_rules JSONB, priority INTEGER DEFAULT 0, is_active BOOLEAN DEFAULT TRUE,'
+                f'  created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".persona_assignments ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  persona_id INTEGER REFERENCES "{SCHEMA}".personas(id) ON DELETE CASCADE,'
+                f'  user_email VARCHAR UNIQUE NOT NULL,'
+                f'  assigned_by VARCHAR, created_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_persona_assignments_email ON "{SCHEMA}".persona_assignments(user_email)',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".persona_features ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  persona_id INTEGER REFERENCES "{SCHEMA}".personas(id) ON DELETE CASCADE,'
+                f'  feature_type VARCHAR NOT NULL, feature_ref VARCHAR NOT NULL,'
+                f'  config JSONB, sort_order INTEGER DEFAULT 0'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_persona_features_persona ON "{SCHEMA}".persona_features(persona_id)',
+                # M5: Dashboard config
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".dashboard_configs ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  persona_id INTEGER REFERENCES "{SCHEMA}".personas(id) ON DELETE CASCADE,'
+                f'  role VARCHAR, widgets JSONB,'
+                f'  updated_by VARCHAR, updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                # connector_scopes.persona_id FK (added after personas table exists)
+                f'DO $$ BEGIN '
+                f'IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = \'fk_connector_scopes_persona\') THEN '
+                f'ALTER TABLE "{SCHEMA}".connector_scopes ADD CONSTRAINT fk_connector_scopes_persona '
+                f'FOREIGN KEY (persona_id) REFERENCES "{SCHEMA}".personas(id) ON DELETE CASCADE; '
+                f'END IF; END $$',
+                # M3: Flow engine
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".flows ('
+                f'  id SERIAL PRIMARY KEY, name VARCHAR NOT NULL, description TEXT,'
+                f'  trigger JSONB, definition JSONB,'
+                f'  is_active BOOLEAN DEFAULT FALSE, version INTEGER DEFAULT 1,'
+                f'  minutes_saved DOUBLE PRECISION DEFAULT 0,'
+                f'  created_by VARCHAR, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()'
+                f')',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".flow_runs ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  flow_id INTEGER REFERENCES "{SCHEMA}".flows(id) ON DELETE CASCADE,'
+                f'  status VARCHAR DEFAULT \'running\', context JSONB, current_step VARCHAR,'
+                f'  started_by VARCHAR, started_at TIMESTAMP DEFAULT NOW(), finished_at TIMESTAMP'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON "{SCHEMA}".flow_runs(status)',
+                f'CREATE INDEX IF NOT EXISTS idx_flow_runs_started ON "{SCHEMA}".flow_runs(started_at)',
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".flow_step_runs ('
+                f'  id SERIAL PRIMARY KEY,'
+                f'  flow_run_id INTEGER REFERENCES "{SCHEMA}".flow_runs(id) ON DELETE CASCADE,'
+                f'  step_id VARCHAR, step_type VARCHAR, status VARCHAR DEFAULT \'pending\','
+                f'  input JSONB, output JSONB, error TEXT,'
+                f'  started_at TIMESTAMP, finished_at TIMESTAMP'
+                f')',
+                f'CREATE INDEX IF NOT EXISTS idx_flow_step_runs_run ON "{SCHEMA}".flow_step_runs(flow_run_id)',
             ]:
                 try:
                     conn.execute(text(stmt))

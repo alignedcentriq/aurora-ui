@@ -57,22 +57,22 @@ import {
 
 /** 4C color coding for roles */
 const ROLE_META: Record<Role, { icon: typeof Shield; color: string; label: string; cKey: string }> = {
-  Employee:          { icon: Briefcase,    color: "text-[#3B8FE8]",  label: "Employee",          cKey: "Clarity"       },
-  HR:                { icon: Users,        color: "text-[#22C55E]",  label: "Human Resources",   cKey: "Collaboration" },
-  IT:                { icon: Wrench,       color: "text-[#14B8A6]",  label: "IT Support",        cKey: "Connectivity"  },
-  PMO:               { icon: ClipboardList,color: "text-[#4F6FEF]",  label: "Project Management",cKey: "Capacity"      },
-  Admin:             { icon: Shield,       color: "text-[#3B8FE8]",  label: "Administrator",     cKey: "Clarity"       },
-  "Functional Manager": { icon: UserCog,   color: "text-[#22C55E]",  label: "Functional Manager",cKey: "Collaboration" },
-  "Super Admin":     { icon: Crown,        color: "text-[#F59E0B]",  label: "Super Admin",       cKey: "Capacity"      },
+  Employee: { icon: Briefcase, color: "text-[#3B8FE8]", label: "Employee", cKey: "Clarity" },
+  HR: { icon: Users, color: "text-[#22C55E]", label: "Human Resources", cKey: "Collaboration" },
+  IT: { icon: Wrench, color: "text-[#14B8A6]", label: "IT Support", cKey: "Connectivity" },
+  PMO: { icon: ClipboardList, color: "text-[#4F6FEF]", label: "Project Management", cKey: "Capacity" },
+  Admin: { icon: Shield, color: "text-[#3B8FE8]", label: "Administrator", cKey: "Clarity" },
+  "Functional Manager": { icon: UserCog, color: "text-[#22C55E]", label: "Functional Manager", cKey: "Collaboration" },
+  "Super Admin": { icon: Crown, color: "text-[#F59E0B]", label: "Super Admin", cKey: "Capacity" },
 };
 
 /** 4C Nav item accent colors for icons */
 const NAV_COLORS: Record<string, string> = {
-  "/":              "var(--clarity)",
-  "/documents":     "var(--connectivity)",
-  "/my-requests":   "var(--collaboration)",
-  "/control-hub":   "var(--clarity)",
-  "/settings":      "var(--capacity)",
+  "/": "var(--clarity)",
+  "/documents": "var(--connectivity)",
+  "/my-requests": "var(--collaboration)",
+  "/control-hub": "var(--clarity)",
+  "/settings": "var(--capacity)",
 };
 
 interface ControlHubSubItem {
@@ -222,7 +222,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     })
       .then((r) => r.json())
       .then((data) => setHasCoOwnedAutomations(Array.isArray(data) && data.length > 0))
-      .catch(() => {});
+      .catch(() => { });
   }, [user?.email, user?.role]);
 
   const defaultCollapsed = () => {
@@ -449,7 +449,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
                 const Icon = item.icon;
                 const active = isActive(item.to);
                 const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-                
+
                 const isControlHub = item.to === "/control-hub";
 
                 const content = (
@@ -703,7 +703,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         {showLabels && buddyEnabled && (
           <div className="relative shrink-0 border-t border-white/[0.04] bg-white/[0.01] px-4 py-2.5 flex flex-col items-center justify-end overflow-visible select-none h-[110px]">
             {/* Ledge glass/neon horizontal line */}
-            <div 
+            <div
               className="absolute bottom-2.5 left-4 right-4 h-[2px] rounded-full opacity-65"
               style={{
                 background: "linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent)",

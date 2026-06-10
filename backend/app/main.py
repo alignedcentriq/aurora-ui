@@ -64,6 +64,7 @@ from app.routes.appreciation_routes import router as appreciation_router
 from app.routes.skill_hr_routes import router as skill_hr_router
 from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
+from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -92,15 +93,15 @@ def _ping_model(model: str) -> bool:
     """POST a 0-token request to Ollama to keep ``model`` loaded in VRAM.
 
     Uses num_predict=0 so the server loads weights but generates nothing —
-    the cheapest possible keep-alive.  keep_alive=15m extends the eviction
-    window to match what get_llm() requests on every real call.
+    the cheapest possible keep-alive.  keep_alive=30m extends the eviction
+    window — 10min heartbeat cycle + 30min window = always warm even under load.
     """
     import urllib.request, json as _json
     url = _ollama_root() + "/api/generate"
     payload = _json.dumps({
         "model": model,
         "prompt": "",
-        "keep_alive": "15m",
+        "keep_alive": "30m",
         "options": {"num_predict": 0},
     }).encode()
     req = urllib.request.Request(
@@ -117,17 +118,33 @@ def _ping_model(model: str) -> bool:
 
 
 async def _warmup_task() -> None:
-    """Ping every heavy model tier once — run as a fire-and-forget task."""
+    """Ping every model tier once — run as a fire-and-forget task.
+
+    Covers generation tiers (agent, service, summarizer) AND the embedding model
+    and router model. Keeping the embed model warm eliminates cold-reload on the
+    first semantic-router/answer-cache/form-match call of the day.
+    """
     try:
         cfg = llm_controls.get_config()
         tiers = cfg.get("tiers", {})
         seen: set[str] = set()
+        # Generation tiers
         for tier in ("agent", "service", "summarizer"):
             model = (tiers.get(tier) or {}).get("model", "")
             if model and model not in seen:
                 seen.add(model)
-                ok = await asyncio.to_thread(_ping_model, model)
-    except Exception as exc:  # noqa: BLE001
+                await asyncio.to_thread(_ping_model, model)
+        # Router model (small, but still benefits from residency)
+        router_model = settings.ROUTER_MODEL_NAME
+        if router_model and router_model not in seen:
+            seen.add(router_model)
+            await asyncio.to_thread(_ping_model, router_model)
+        # Embedding model — critical for semantic router + answer cache on every request
+        embed_model = settings.EMBEDDING_MODEL_NAME
+        if embed_model and embed_model not in seen:
+            seen.add(embed_model)
+            await asyncio.to_thread(_ping_model, embed_model)
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -172,6 +189,8 @@ app.include_router(appreciation_router)
 app.include_router(skill_hr_router)
 app.include_router(skill_it_router)
 app.include_router(skill_doc_router)
+app.include_router(connector_admin_router)
+app.include_router(connector_invoke_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(_uploads_dir, exist_ok=True)
@@ -248,6 +267,12 @@ async def startup_event():
         await asyncio.to_thread(init_db)
     except Exception as e:
         logging.error("init_db failed: %s", e, exc_info=True)
+
+    try:
+        from app.connectors.registry import start_background_refresh
+        await start_background_refresh()
+    except Exception as e:
+        logging.warning("Connector registry startup failed (non-fatal): %s", e)
 
     try:
         from app.database import SessionLocal
@@ -394,6 +419,7 @@ async def me(user: CurrentUser = Depends(get_current_user)):
     role = user.role
     db = SessionLocal()
     try:
+        from app.models import Employee
         emp = db.query(Employee).filter(Employee.email == user.email).first()
         if emp and emp.role:
             role = emp.role.strip()
@@ -411,8 +437,14 @@ async def llm_health():
 
 @app.get("/api/chat/load")
 async def chat_load():
-    """Live concurrency-gate stats — handy while load testing."""
-    return await chat_gate.stats()
+    """Live concurrency-gate stats + circuit breaker states — handy while load testing."""
+    stats = await chat_gate.stats()
+    try:
+        from app.services.llm_resilience import get_breaker_status
+        stats["circuit_breakers"] = get_breaker_status()
+    except Exception:
+        pass
+    return stats
 
 
 @app.post("/api/warmup")
@@ -1156,7 +1188,23 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
     final_message = re.sub(r'\n{3,}', '\n\n', final_message).strip()
 
     if not final_message.strip():
-        final_message = "I processed your request, but I was unable to generate a text summary. Please try again or rephrase your question."
+        # Rescue: surface the last ToolMessage with meaningful text before giving up.
+        # This fires when the agent returned empty content (common with weak models after tool use).
+        from langchain_core.messages import ToolMessage as _TMsg, AIMessage as _AIMsg
+        _rescue = None
+        for _m in reversed(all_messages):
+            if isinstance(_m, _TMsg) and isinstance(_m.content, str) and _m.content.strip():
+                _candidate = _strip_json_blobs(_m.content.strip())
+                if _candidate.strip():
+                    _rescue = _candidate.strip()
+                    break
+            # Also accept an AIMessage that preceded the empty one
+            if isinstance(_m, _AIMsg) and isinstance(_m.content, str) and _m.content.strip():
+                _candidate = _strip_json_blobs(_m.content.strip())
+                if _candidate.strip():
+                    _rescue = _candidate.strip()
+                    break
+        final_message = _rescue if _rescue else "I'm sorry, I wasn't able to generate a response. Please try again or rephrase your question."
 
     return {
         "final_message": final_message,
@@ -1165,6 +1213,55 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         "images": policy_images if policy_images else None,
         "processing_time": f"{time.time() - start_time:.2f}s",
     }
+
+
+async def _get_token_and_location(user_email: str, x_graph_token: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Fetch MS graph token + user office location in parallel, with Redis cache for location.
+
+    Called inside generate() so cache/fastpath requests never pay this overhead.
+    Location is cached per email for 24h — it changes ~never during a workday.
+    """
+    from app.services.oauth_service import get_valid_token as _get_valid_token
+
+    async def _fetch_token() -> Optional[str]:
+        if x_graph_token:
+            return x_graph_token
+        try:
+            return await _get_valid_token(user_email.lower().strip(), "microsoft")
+        except Exception:
+            return None
+
+    async def _fetch_location_cached(token: Optional[str]) -> Optional[str]:
+        if not token:
+            return None
+        cache_key = f"user_loc:{user_email.lower()}"
+        try:
+            from app.redis_config import get_redis_client
+            rc = get_redis_client()
+            if rc:
+                cached = rc.get(cache_key)
+                if cached:
+                    return cached if cached != "__none__" else None
+        except Exception:
+            pass
+        try:
+            from app.services.ms365_service import fetch_my_profile
+            _profile = await fetch_my_profile(token)
+            loc = (_profile.get("officeLocation") or _profile.get("city") or _profile.get("country")) or None
+            try:
+                from app.redis_config import get_redis_client
+                rc = get_redis_client()
+                if rc:
+                    rc.setex(cache_key, 86400, loc if loc else "__none__")
+            except Exception:
+                pass
+            return loc
+        except Exception:
+            return None
+
+    token = await _fetch_token()
+    location = await _fetch_location_cached(token)
+    return token, location
 
 
 @app.post("/api/chat")
@@ -1178,41 +1275,9 @@ async def chat(
     user_email = x_user_email or settings.DEFAULT_USER_EMAIL
     user_role = (x_user_role or "employee").lower()
 
-    # Auto-fetch stored Microsoft token if none passed explicitly
-    effective_graph_token = x_graph_token or None
-    if not effective_graph_token:
-        try:
-            from app.services.oauth_service import get_valid_token
-            effective_graph_token = await get_valid_token(
-                user_email.lower().strip(),
-                "microsoft",
-            )
-        except Exception:
-            pass
-
-    # Detect user's office location from their M365 profile (officeLocation → city → country)
-    user_location: str | None = None
-    if effective_graph_token:
-        try:
-            from app.services.ms365_service import fetch_my_profile
-            _profile = await fetch_my_profile(effective_graph_token)
-            user_location = (
-                _profile.get("officeLocation")
-                or _profile.get("city")
-                or _profile.get("country")
-            ) or None
-        except Exception:
-            pass
-
+    # Token + location are resolved INSIDE generate() so cache/fastpath requests
+    # never block on the live MS Graph call. input_data is assembled lazily there.
     config = {"configurable": {"thread_id": request.session_id}}
-    input_data = {
-        "messages": [HumanMessage(content=request.message)],
-        "user_email": user_email,
-        "user_role": user_role,
-        "graph_token": effective_graph_token,
-        "session_id": request.session_id,
-        "user_location": user_location,
-    }
 
     async def generate():
         from app.models import AiRequestLog, AiLlmCallLog
@@ -1348,6 +1413,18 @@ async def chat(
 
         heartbeat_task = asyncio.ensure_future(chat_gate.slot_heartbeat(slot))
 
+        # Resolve token + location HERE (after all fast-paths) so cache/fastpath
+        # callers pay zero MS Graph latency. Both calls run in parallel.
+        effective_graph_token, user_location = await _get_token_and_location(user_email, x_graph_token)
+        input_data = {
+            "messages": [HumanMessage(content=request.message)],
+            "user_email": user_email,
+            "user_role": user_role,
+            "graph_token": effective_graph_token,
+            "session_id": request.session_id,
+            "user_location": user_location,
+        }
+
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
                 event_type = event.get("event", "")
@@ -1360,6 +1437,9 @@ async def chat(
                     model = meta.get("ls_model_name") or event.get("name", "unknown")
                     llm_calls[run_id] = {"node": node, "model": model, "start": time.time()}
                     tracing.start_generation(run_id, node, model)
+                    # Status event: let UI show "composing" when the response LLM starts
+                    if node not in _SKIP_STREAMING_NODES:
+                        yield f"data: {json.dumps({'type': 'status', 'stage': 'composing', 'node': node})}\n\n"
 
                 # ── Track LLM call end ───────────────────────────────────
                 elif event_type == "on_chat_model_end":
@@ -1414,6 +1494,35 @@ async def chat(
                         # Langfuse generation span
                         tracing.end_generation(run_id, output_msg, usage, tool_calls_list or None)
 
+
+                # ── Real-time status events — shown in the UI thinking indicator ──
+                # Replaces the fake timer-based activity steps: users see actual pipeline
+                # progress (routing → agent → tool → composing) within ~300ms of send.
+                elif event_type == "on_chain_start":
+                    _node_name = event.get("name", "")
+                    _node_label = {
+                        "intent_router": "routing",
+                        "context_manager": "loading context",
+                        "feedback_lookup": "loading context",
+                        "hr_agent": "thinking",
+                        "admin_agent": "thinking",
+                        "it_agent": "thinking",
+                        "pmo_agent": "thinking",
+                        "manager_agent": "thinking",
+                        "ms365_agent": "thinking",
+                        "deeplink_agent": "automating",
+                        "doc_agent": "generating document",
+                        "general_agent": "thinking",
+                        "connector_agent": "connecting",
+                    }.get(_node_name)
+                    if _node_label:
+                        yield f"data: {json.dumps({'type': 'status', 'stage': _node_label, 'node': _node_name})}\n\n"
+
+                elif event_type == "on_tool_start":
+                    _tool_name = event.get("name", "")
+                    # Friendly label: convert snake_case tool name to human-readable
+                    _friendly = _tool_name.replace("_", " ").strip()
+                    yield f"data: {json.dumps({'type': 'status', 'stage': f'using {_friendly}', 'node': _tool_name})}\n\n"
 
                 # Stream tokens from final-response nodes only
                 elif event_type == "on_chat_model_stream":

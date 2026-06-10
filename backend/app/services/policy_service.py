@@ -495,10 +495,39 @@ class PolicyService:
 
     @classmethod
     def _get_embedding(cls, text: str) -> list | None:
-        """Call the configured embedding model. Returns None on any failure."""
+        """Call the configured embedding model. Returns None on any failure.
+
+        Cache hierarchy: L1 in-process LRU (512 entries) → L2 Redis (14 days) → Ollama.
+        The same text is embedded for answer-cache lookup, semantic router, form match,
+        and policy search — so a Redis hit on repeated questions avoids multiple ml01 calls.
+        """
+        import hashlib
+        import struct
+
         key = text[:2000]
+        # L1: in-process LRU
         if key in cls._embedding_cache:
             return cls._embedding_cache[key]
+
+        # L2: Redis (packed float32 bytes for storage efficiency)
+        _text_hash = hashlib.sha256(key.encode()).hexdigest()[:32]
+        _redis_key = f"emb:{settings.EMBEDDING_MODEL_NAME}:{_text_hash}"
+        try:
+            from app.redis_config import get_redis_client
+            rc = get_redis_client()
+            if rc:
+                cached_bytes = rc.get(_redis_key)
+                if cached_bytes:
+                    # Stored as hex string for Redis compatibility
+                    raw = bytes.fromhex(cached_bytes)
+                    n = len(raw) // 4
+                    result = list(struct.unpack(f"{n}f", raw))
+                    cls._embedding_cache[key] = result
+                    return result
+        except Exception:
+            pass
+
+        # L3: actual embedding call
         try:
             resp = cls._get_embedding_client().embeddings.create(
                 input=key,
@@ -511,8 +540,17 @@ class PolicyService:
                 for k in drop:
                     del cls._embedding_cache[k]
             cls._embedding_cache[key] = result
+            # Store in Redis L2 as packed float32 hex (fail-soft)
+            try:
+                from app.redis_config import get_redis_client
+                rc = get_redis_client()
+                if rc:
+                    packed = struct.pack(f"{len(result)}f", *result)
+                    rc.setex(_redis_key, 86400 * 14, packed.hex())
+            except Exception:
+                pass
             return result
-        except Exception as e:
+        except Exception:
             return None
 
     # ── Ingestion ─────────────────────────────────────────────────────────────

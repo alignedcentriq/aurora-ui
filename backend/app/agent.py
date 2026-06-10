@@ -17,6 +17,7 @@ import json
 import re
 import random as _random
 import logging
+import asyncio
 from typing import TypedDict, Annotated, List, Optional
 
 from langgraph.graph import StateGraph, END
@@ -232,61 +233,87 @@ def _save_conversation_summary(thread_id: str, summary: str, domain: Optional[st
 
 
 async def context_manager_node(state: AgentState) -> dict:
-    """Rolling window + summarization node.
+    """Rolling window context manager — now runs off the hot path.
 
-    When the conversation grows beyond ~6000 tokens, this node:
-    1. Summarizes all but the last 6 messages via LLM
-    2. Injects the summary into feedback_context (already prepended to every agent's system prompt)
-    3. Persists the summary to conversation_summaries table for durability across Redis restarts
+    On-request behaviour (fast, no LLM):
+      - Loads the last persisted conversation summary from DB for sessions that exceed
+        the token threshold, and injects it into feedback_context so every agent sees it.
+      - Schedules async LLM summarization as a background task when the window is large;
+        the result is persisted and available on the NEXT request (not this one).
 
-    NOTE: Does NOT modify the messages list directly — LangGraph's reducer appends rather than
-    replaces, so summary is injected via feedback_context instead.
+    The expensive LLM summarization call that used to block here is now fire-and-forget,
+    triggered only when tokens > 6000 and scheduled via asyncio.create_task so it runs
+    after the stream completes.
     """
     messages = state.get("messages", [])
     total_tokens = sum(len(getattr(m, "content", "") or "") // 4 for m in messages)
 
-    if total_tokens <= 6000 or len(messages) <= 8:
+    # Load persisted summary (fast DB read — no LLM)
+    session_id = state.get("session_id")
+    persisted_summary = state.get("conversation_summary", "")
+    if not persisted_summary and session_id and total_tokens > 4000:
+        try:
+            persisted_summary = await asyncio.to_thread(_load_conversation_summary, session_id)
+        except Exception:
+            persisted_summary = ""
+
+    # Schedule background summarization if this window is large enough
+    if total_tokens > 6000 and len(messages) > 8 and session_id:
+        asyncio.create_task(
+            _summarize_conversation_async(session_id, messages[:-6], state.get("domain"))
+        )
+
+    if not persisted_summary:
         return {}
 
-    to_summarize = messages[:-6]  # everything except the last 3 turns
-
-    summary_prompt = (
-        "Summarize this conversation history in 3-5 sentences. "
-        "Preserve: key facts, dates, employee names, leave types, ticket IDs, "
-        "requests made, and decisions reached. Be concise and factual."
+    existing_feedback = state.get("feedback_context") or ""
+    updated_feedback = (
+        f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{persisted_summary}\n\n{existing_feedback}"
     )
+    return {
+        "conversation_summary": persisted_summary,
+        "feedback_context": updated_feedback,
+    }
+
+
+def _load_conversation_summary(thread_id: str) -> str:
+    """Synchronous DB read for use with asyncio.to_thread."""
     try:
-        summary_response = await llm_controls.get_llm("summarizer", default_timeout=20).ainvoke(
+        from app.models import ConversationSummary
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.query(ConversationSummary).filter(
+                ConversationSummary.thread_id == thread_id
+            ).first()
+            return row.summary if row else ""
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
+async def _summarize_conversation_async(thread_id: str, messages_to_summarize, domain: str) -> None:
+    """Background LLM summarization — runs AFTER the stream, never on the hot path."""
+    try:
+        summary_prompt = (
+            "Summarize this conversation history in 3-5 sentences. "
+            "Preserve: key facts, dates, employee names, leave types, ticket IDs, "
+            "requests made, and decisions reached. Be concise and factual."
+        )
+        summary_response = await llm_controls.get_llm("summarizer", default_timeout=25).ainvoke(
             [
                 SystemMessage(content=summary_prompt),
                 HumanMessage(content="\n".join(
-                    f"{m.type}: {getattr(m, 'content', '')}" for m in to_summarize
+                    f"{m.type}: {getattr(m, 'content', '')}" for m in messages_to_summarize
                 )),
             ]
         )
         summary_text = summary_response.content.strip()
-        if not summary_text:
-            return {}
-    except Exception as e:
-        return {}
-
-    session_id = state.get("session_id")
-    if session_id:
-        # Fire-and-forget: don't block the pipeline on a DB write
-        import asyncio as _asyncio
-        _asyncio.get_event_loop().run_in_executor(
-            None, _save_conversation_summary, session_id, summary_text, state.get("domain")
-        )
-
-    # Inject summary as a prefix to feedback_context — all agents append this to their system prompt
-    existing_feedback = state.get("feedback_context") or ""
-    updated_feedback = (
-        f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{summary_text}\n\n{existing_feedback}"
-    )
-    return {
-        "conversation_summary": summary_text,
-        "feedback_context": updated_feedback,
-    }
+        if summary_text:
+            await asyncio.to_thread(_save_conversation_summary, thread_id, summary_text, domain)
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1145,6 +1172,52 @@ hr_tools = [
     search_alchemy_skill_experts, get_employee_availability,
 ]
 hr_tool_node = ToolNode(hr_tools)
+
+# ── Sub-intent → tool group binding (≤8 tools per LLM call) ──────────────────
+# Binding all 38 hr_tools injects ~3-4k tokens of JSON schema into EVERY agent
+# call and degrades tool selection on small models (too many near-duplicate
+# choices). The router's sub_intent picks a small relevant group instead.
+# Execution is unaffected: hr_tool_node above keeps the FULL list, so any tool
+# the model calls still runs. Unknown/missing sub_intents get the core set.
+
+_HR_TOOL_GROUPS: dict[str, list] = {
+    "policy_query":       [search_hr_policies, find_apps, submit_hr_query],
+    "document_request":   [generate_hr_document, search_hr_policies],
+    "employee_search":    [search_alchemy_skill_experts, search_employee_directory,
+                           get_employee_profile, get_org_chart, get_team_roster,
+                           get_department_headcount, get_employee_availability, find_skills_expert],
+    "grievance":          [submit_grievance, submit_grievance_for, search_hr_policies],
+    "apply_leave":        [apply_leave, get_leave_balance, get_my_leaves, cancel_leave],
+    "submit_leave":       [apply_leave, get_leave_balance, get_my_leaves, cancel_leave],
+    "leave_balance":      [get_leave_balance, get_my_leaves, apply_leave, cancel_leave],
+    "cancel_leave":       [cancel_leave, get_my_leaves, get_leave_balance],
+    "timesheet":          [get_my_timesheet, get_my_attendance],
+    "attendance":         [get_my_attendance, get_employee_attendance, get_my_timesheet],
+    "team_attendance":    [get_team_absence_for, get_team_absence, get_team_roster],
+    "appraisal":          [get_my_appraisal_status, search_hr_policies],
+    "training":           [get_my_training_records, search_hr_policies],
+    "alchemy_my_skills":  [get_my_alchemy_skills],
+    "alchemy_skills_overview": [get_alchemy_skills_overview, search_alchemy_skill_experts],
+    "onboarding":         [trigger_onboarding_checklist, search_hr_policies],
+    "offboarding":        [trigger_offboarding_checklist, search_hr_policies],
+    "expense":            [get_my_expense_reports, get_my_reimbursement_status],
+    "reimbursement":      [get_my_reimbursement_status, get_my_expense_reports, search_hr_policies],
+    "recruitment":        [get_open_positions, get_candidate_status],
+    "open_positions":     [get_open_positions, get_candidate_status],
+    "announcements":      [get_announcements, create_announcement, deactivate_announcement],
+    "hr_query":           [submit_hr_query, search_hr_policies],
+}
+
+# Fallback for unknown/ambiguous sub_intents — the highest-traffic tools.
+_HR_CORE_TOOLS: list = [
+    search_hr_policies, get_leave_balance, get_employee_profile,
+    search_employee_directory, generate_hr_document, submit_hr_query,
+    find_apps, get_announcements,
+]
+
+
+def _hr_tools_for(sub_intent: str) -> list:
+    return _HR_TOOL_GROUPS.get((sub_intent or "").strip(), _HR_CORE_TOOLS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2197,7 +2270,9 @@ async def intent_router(state: AgentState):
     # exact is O(1)/free; classify is one embedding, spent only when the exact dictionary misses
     # (so exact hits stay embedding-free). Both are reused at their return points below.
     exact = SemanticRouterService.exact_match(last_human)
-    decision = SemanticRouterService.classify(last_human) if exact is None else None
+    # classify() calls the embedding model (blocking I/O) — run in thread to avoid
+    # freezing the event loop while other concurrent streams are active.
+    decision = await asyncio.to_thread(SemanticRouterService.classify, last_human) if exact is None else None
     semantic_overrides_sticky = bool(
         (exact is not None and exact.domain != existing_domain)
         or (decision is not None and decision.tier == "high" and decision.domain != existing_domain)
@@ -2275,7 +2350,7 @@ async def intent_router(state: AgentState):
     # the exact dictionary misses. Permanent replacement for the brittle keyword-regex bulk.
     # (Computed above when exact missed, for the stickiness override; reused here, never twice.)
     if decision is None:
-        decision = SemanticRouterService.classify(last_human)
+        decision = await asyncio.to_thread(SemanticRouterService.classify, last_human)
     if decision.tier == "high":
         entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
         return {
@@ -2296,7 +2371,8 @@ async def intent_router(state: AgentState):
     try:
         from app.services.form_library_service import FormLibraryService
         _form_threshold = 0.80 if _INFO_QUERY_RE.search(last_human) else None
-        form_match = FormLibraryService.match(last_human, threshold=_form_threshold)
+        # match() calls the embedding model — run in thread to avoid blocking the event loop.
+        form_match = await asyncio.to_thread(FormLibraryService.match, last_human, _form_threshold)
     except Exception as e:  # noqa: BLE001
         form_match = None
     if form_match:
@@ -2392,56 +2468,59 @@ async def feedback_lookup(state: AgentState) -> dict:
     if not last_human:
         return {}
 
-    # ── Proactive URL-library nudge (independent of feedback availability) ──
-    nudge_cached = _app_nudge_cache.get(last_human[:160])
-    if nudge_cached and now - nudge_cached[1] < _APP_NUDGE_TTL:
-        app_nudge = nudge_cached[0]
-    else:
+    # ── Parallel pre_work: nudge + feedback run concurrently ────────────────
+    async def _get_nudge():
+        nudge_cached = _app_nudge_cache.get(last_human[:160])
+        if nudge_cached and now - nudge_cached[1] < _APP_NUDGE_TTL:
+            return nudge_cached[0]
         try:
-            app_nudge = await asyncio.to_thread(_app_directory_nudge, last_human)
+            result = await asyncio.to_thread(_app_directory_nudge, last_human)
         except Exception:
-            app_nudge = ""
-        _app_nudge_cache[last_human[:160]] = (app_nudge, now)
+            result = ""
+        _app_nudge_cache[last_human[:160]] = (result, now)
         if len(_app_nudge_cache) > 500:
             for k in sorted(_app_nudge_cache, key=lambda k: _app_nudge_cache[k][1])[:100]:
                 _app_nudge_cache.pop(k, None)
+        return result
 
-    # ── Past-feedback context (gated on having enough feedback rows) ──
-    if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
-        try:
-            from app.database import SessionLocal as _SL
-            from app.models import ChatFeedback as _CF
-            def _count():
-                _db = _SL()
-                try:
-                    return _db.query(_CF).count()
-                finally:
-                    _db.close()
-            count = await asyncio.to_thread(_count)
-            _feedback_count_cache.update({"count": count, "ts": now})
-        except Exception:
-            _feedback_count_cache.update({"count": 0, "ts": now})
+    async def _get_feedback():
+        if now - _feedback_count_cache["ts"] > _FEEDBACK_COUNT_TTL:
+            try:
+                from app.database import SessionLocal as _SL
+                from app.models import ChatFeedback as _CF
+                def _count():
+                    _db = _SL()
+                    try:
+                        return _db.query(_CF).count()
+                    finally:
+                        _db.close()
+                count = await asyncio.to_thread(_count)
+                _feedback_count_cache.update({"count": count, "ts": now})
+            except Exception:
+                _feedback_count_cache.update({"count": 0, "ts": now})
 
-    domain = state.get("domain", "unknown") or "unknown"
-    fb_ctx = ""
-    if _feedback_count_cache["count"] >= 3:
+        domain = state.get("domain", "unknown") or "unknown"
+        if _feedback_count_cache["count"] < 3:
+            return ""
         cache_key = f"{domain}:{last_human[:120]}"
         cached = _feedback_result_cache.get(cache_key)
         if cached and now - cached[1] < _FEEDBACK_RESULT_TTL:
-            fb_ctx = cached[0]
-        else:
-            try:
-                relevant = await asyncio.to_thread(
-                    FeedbackService.get_relevant_feedback, domain, last_human, 3
-                )
-                fb_ctx = FeedbackService.build_feedback_prompt(relevant)
-            except Exception:
-                fb_ctx = ""
-            _feedback_result_cache[cache_key] = (fb_ctx, now)
-            if len(_feedback_result_cache) > 500:
-                oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
-                for k in oldest[:100]:
-                    _feedback_result_cache.pop(k, None)
+            return cached[0]
+        try:
+            relevant = await asyncio.to_thread(
+                FeedbackService.get_relevant_feedback, domain, last_human, 3
+            )
+            fb_ctx = FeedbackService.build_feedback_prompt(relevant)
+        except Exception:
+            fb_ctx = ""
+        _feedback_result_cache[cache_key] = (fb_ctx, now)
+        if len(_feedback_result_cache) > 500:
+            oldest = sorted(_feedback_result_cache, key=lambda k: _feedback_result_cache[k][1])
+            for k in oldest[:100]:
+                _feedback_result_cache.pop(k, None)
+        return fb_ctx
+
+    app_nudge, fb_ctx = await asyncio.gather(_get_nudge(), _get_feedback())
 
     combined = (fb_ctx or "") + (app_nudge or "")
     return {"feedback_context": combined} if combined else {}
@@ -2561,10 +2640,25 @@ def hr_agent(state: AgentState):
         except Exception:
             pass  # non-fatal — fall through to normal agent
 
+    # Bind only the sub-intent-relevant tool group (≤8 schemas) instead of all 38 —
+    # cuts ~3-4k prompt tokens per call and improves tool selection on small models.
+    _bound_tools = _hr_tools_for(sub_intent)
     try:
-        response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(hr_tools).invoke(messages)
+        response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(_bound_tools).invoke(messages)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now — please try again in a moment.")]}
+
+    # Guard: weak models sometimes return empty content with no tool calls.
+    # Surface the last ToolMessage (second-pass scenario) or return an explicit fallback.
+    if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
+        last_tool = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, ToolMessage) and m.content),
+            None,
+        )
+        if last_tool:
+            response = AIMessage(content=last_tool.content)
+        else:
+            response = AIMessage(content="I wasn't able to complete your request. Please try again or rephrase your question.")
 
     return {"messages": [response]}
 
@@ -2720,7 +2814,10 @@ async def pmo_agent_node(state: AgentState):
         "entities": state.get("entities") or {},
         "user_role": state.get("user_role") or "employee",
     })
-    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process PMO request."))
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process PMO request.")
     return {"messages": [last_ai]}
 
 
@@ -2788,7 +2885,10 @@ async def admin_agent_node(state: AgentState):
         "feedback_context": feedback_ctx,
         "user_role": state.get("user_role") or "employee",
     })
-    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Admin request."))
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Admin request.")
     return {"messages": [last_ai]}
 
 
@@ -2844,7 +2944,10 @@ async def it_agent_node(state: AgentState):
         "feedback_context": _location_prefix(state) + (state.get("feedback_context") or "") + entity_hint,
         "user_role": state.get("user_role") or "employee",
     })
-    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process IT request."))
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process IT request.")
     return {"messages": [last_ai]}
 
 
@@ -2856,7 +2959,10 @@ async def manager_agent_node(state: AgentState):
         "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
         "user_role": state.get("user_role") or "employee",
     })
-    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), AIMessage(content="Failed to process Manager request."))
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Manager request.")
     return {"messages": [last_ai]}
 
 
@@ -2867,10 +2973,10 @@ async def doc_agent_node(state: AgentState):
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
         "feedback_context": state.get("feedback_context") or "",
     })
-    last_ai = next(
-        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)),
-        AIMessage(content="Failed to generate document."),
-    )
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to generate document.")
     return {"messages": [last_ai]}
 
 
@@ -2962,10 +3068,10 @@ async def ms365_agent_node(state: AgentState):
         "graph_token": graph_token,
         "yammer_token": yammer_token,
     })
-    last_ai = next(
-        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)),
-        AIMessage(content="Failed to process Microsoft 365 request."),
-    )
+    last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
+    if not last_ai or not (last_ai.content or "").strip():
+        last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
+        last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Microsoft 365 request.")
     return {"messages": [last_ai]}
 
 
@@ -3072,24 +3178,20 @@ def placeholder_agent(state: AgentState):
 # summarizer LLM only adds latency and paraphrase drift (e.g. turning a clean
 # profile into a chatty letter signed "[Your Name]"), so we pass it through
 # verbatim and skip the LLM entirely.
-_PASSTHROUGH_TOOLS = {
-    "search_employee_directory", "get_employee_profile", "get_org_chart",
-    "get_team_roster", "find_skills_expert", "get_department_headcount",
-    "search_people_directory", "get_leave_balance", "get_announcements",
-    "get_team_absence", "get_team_absence_for",
-    "get_my_timesheet", "get_my_attendance", "get_my_appraisal_status",
-    "get_my_training_records", "get_my_expense_reports", "get_my_reimbursement_status",
-    "get_open_positions", "get_candidate_status",
-    "get_my_alchemy_skills", "get_alchemy_skills_overview",
-    "search_alchemy_skill_experts", "get_employee_availability",
-    # Document generation results are already formatted with the download tag — returning
-    # them through the summarizer causes the LLM to misread the tag as a policy excerpt.
-    "generate_hr_document",
-}
+from app.services.tool_registry import ToolRegistry as _ToolRegistry
 
+# Kept as thin shims so existing call sites in this file still work unchanged.
+# Both properties are computed live from the registry (dynamic connector ops included).
+class _PassthroughProxy:
+    def __contains__(self, item):
+        return _ToolRegistry.is_passthrough(item)
 
-# Tool results that are policy/insurance Q&A — answered with the strong model for grounding.
-_POLICY_SEARCH_TOOLS = {"search_hr_policies"}
+class _PolicyProxy:
+    def __contains__(self, item):
+        return _ToolRegistry.is_policy(item)
+
+_PASSTHROUGH_TOOLS = _PassthroughProxy()
+_POLICY_SEARCH_TOOLS = _PolicyProxy()
 
 
 async def summarizer(state: AgentState):
@@ -3189,6 +3291,77 @@ def disabled_agent(state: AgentState):
     return {"messages": [AIMessage(content=msg)]}
 
 
+async def connector_agent(state: AgentState):
+    """Generic ReAct agent for connector: domains.
+
+    Builds StructuredTools from published ConnectorOperations at runtime,
+    binds them to the agent LLM, and runs a ReAct loop (≤2 tool rounds).
+    Falls back to a friendly message if the connector registry is empty.
+    """
+    from app.connectors.registry import ConnectorRegistry
+    from app.connectors.tool_factory import build_tools_for_request
+
+    domain = state.get("domain", "")
+    user_email = state.get("user_email", "")
+    user_role = state.get("user_role", "employee")
+    department = state.get("department", "")
+    messages = list(state.get("messages", []))
+
+    slug = domain.removeprefix("connector:")
+
+    # Resolve connector + its operations
+    connector = await ConnectorRegistry.get_connector_by_slug(slug)
+    if connector is None:
+        return {"messages": [AIMessage(
+            content=f"The '{slug}' connector is not available. Please ask an admin to publish it."
+        )]}
+
+    ops = await ConnectorRegistry.list_operations_for_user(user_email, user_role, department)
+    ops = [o for o in ops if o["connector_id"] == connector["id"]]
+
+    if not ops:
+        return {"messages": [AIMessage(
+            content=f"No operations are available to you for the '{slug}' connector."
+        )]}
+
+    tools = build_tools_for_request(ops, user_email, max_tools=8)
+
+    llm = llm_controls.get_llm("agent", streaming=True)
+    agent_llm = llm.bind_tools(tools)
+
+    system_prompt = (
+        f"You are an AI assistant integrated with the {connector['name']} system. "
+        f"Use the provided tools to fulfil the user's request. "
+        f"Be concise. If a tool returns an error, explain it plainly and suggest next steps. "
+        f"Do not make up data — only use what the tools return."
+    )
+    full_messages = [SystemMessage(content=system_prompt)] + messages
+
+    # ReAct loop — max 2 tool rounds
+    for _ in range(2):
+        response = await agent_llm.ainvoke(full_messages)
+        full_messages.append(response)
+
+        if not (hasattr(response, "tool_calls") and response.tool_calls):
+            break
+
+        # Execute all tool calls
+        for tc in response.tool_calls:
+            tool_fn = next((t for t in tools if t.name == tc["name"]), None)
+            if tool_fn is None:
+                tool_result = f"Tool '{tc['name']}' not found."
+            else:
+                try:
+                    tool_result = await tool_fn.ainvoke(tc.get("args", {}))
+                except Exception as exc:
+                    tool_result = f"Tool error: {exc}"
+            full_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
+
+    # Return only the new messages (diff from original)
+    new_messages = full_messages[len(messages) + 1:]  # +1 for system message
+    return {"messages": new_messages}
+
+
 def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
     # IT kill-switch for individual domains — short-circuit before the agent runs.
@@ -3196,6 +3369,8 @@ def route_to_agent(state: AgentState):
         return "disabled_agent"
     if domain == "dynamic_form": return "dynamic_form_agent"
     if domain == "referral_choice": return "referral_choice_agent"
+    if domain.startswith("connector:"):
+        return "connector_agent"
     status = get_domain_status(domain)
     if domain == "deeplink": return "deeplink_agent"
     if domain == "pmo": return "pmo_agent"
@@ -3262,6 +3437,7 @@ workflow.add_node("placeholder_agent", placeholder_agent)
 workflow.add_node("disabled_agent", disabled_agent)
 workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
+workflow.add_node("connector_agent", connector_agent)
 
 workflow.set_entry_point("intent_router")
 # context_manager sits between router and feedback_lookup:
@@ -3286,5 +3462,6 @@ workflow.add_edge("doc_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 workflow.add_edge("disabled_agent", END)
+workflow.add_edge("connector_agent", END)
 
 app_agent = workflow.compile(checkpointer=checkpointer)

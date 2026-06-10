@@ -90,6 +90,7 @@
   from {
     background-position: 50% 50%, 50% 50%;
   }
+
   to {
     background-position: 350% 50%, 350% 50%;
   }
@@ -100,9 +101,11 @@
     transform: rotate(215deg) translateX(0);
     opacity: 1;
   }
+
   70% {
     opacity: 1;
   }
+
   100% {
     transform: rotate(215deg) translateX(-500px);
     opacity: 0;
@@ -110,117 +113,261 @@
 }
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px 0 rgba(27, 111, 200, 0.2); }
-  50% { box-shadow: 0 0 40px 8px rgba(27, 111, 200, 0.35); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 20px 0 rgba(27, 111, 200, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 40px 8px rgba(27, 111, 200, 0.35);
+  }
 }
 
 @keyframes gradient-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 @keyframes breathe {
-  0%, 100% { transform: scale(1); opacity: 0.8; }
-  50% { transform: scale(1.05); opacity: 1; }
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
 }
 
 @keyframes spin-slow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes progress-indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(200%); }
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(200%);
+  }
 }
 
 @keyframes banner-wave {
-  0%, 100% { transform: skewY(-1.5deg) translateY(0); }
-  50% { transform: skewY(1.5deg) translateY(-2px); }
+
+  0%,
+  100% {
+    transform: skewY(-1.5deg) translateY(0);
+  }
+
+  50% {
+    transform: skewY(1.5deg) translateY(-2px);
+  }
 }
 
 /* Unique: Hexagonal data-flow particle movement */
 @keyframes data-flow {
-  0% { transform: translateY(0) scale(1); opacity: 0.6; }
-  50% { transform: translateY(-15px) scale(1.1); opacity: 1; }
-  100% { transform: translateY(0) scale(1); opacity: 0.6; }
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0.6;
+  }
+
+  50% {
+    transform: translateY(-15px) scale(1.1);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.6;
+  }
 }
 
 /* Unique: Diagonal scan line */
 @keyframes scan-line {
-  0% { transform: translateX(-100%) rotate(20deg); }
-  100% { transform: translateX(200%) rotate(20deg); }
+  0% {
+    transform: translateX(-100%) rotate(20deg);
+  }
+
+  100% {
+    transform: translateX(200%) rotate(20deg);
+  }
 }
 
 /* Unique: Ripple out from center */
 @keyframes ripple-out {
-  0% { transform: scale(0.8); opacity: 1; }
-  100% { transform: scale(2.4); opacity: 0; }
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
 }
 
 /* Unique: Circuit path draw */
 @keyframes circuit-draw {
-  0% { stroke-dashoffset: 1000; }
-  100% { stroke-dashoffset: 0; }
+  0% {
+    stroke-dashoffset: 1000;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
 }
 
 /* Unique: Sidebar hex glow pulse */
 @keyframes hex-pulse {
-  0%, 100% { opacity: 0.15; }
-  50% { opacity: 0.35; }
+
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* Unique: Diamond rotate */
 @keyframes diamond-spin {
-  0% { transform: rotate(45deg) scale(1); }
-  50% { transform: rotate(45deg) scale(1.1); }
-  100% { transform: rotate(45deg) scale(1); }
+  0% {
+    transform: rotate(45deg) scale(1);
+  }
+
+  50% {
+    transform: rotate(45deg) scale(1.1);
+  }
+
+  100% {
+    transform: rotate(45deg) scale(1);
+  }
 }
 
 /* Unique: Nav indicator slide */
 @keyframes slide-in-left {
-  from { transform: scaleY(0); }
-  to { transform: scaleY(1); }
+  from {
+    transform: scaleY(0);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
 }
 
 /* Loading dots wave */
 @keyframes dot-wave {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1.2); opacity: 1; }
+
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
 }
 
 /* Typewriter cursor blink */
 @keyframes cursor-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
 }
 
 /* 4C tagline particle drift */
 @keyframes particle-drift {
-  0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+  0% {
+    transform: translateY(100vh) rotate(0deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  90% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-100px) rotate(360deg);
+    opacity: 0;
+  }
 }
 
 .animate-banner-wave {
@@ -250,11 +397,16 @@
   --primary-foreground: #ffffff;
 
   /* 4C Accent Palette */
-  --clarity: #6366f1;        /* Clarity: Indigo-500 */
-  --connectivity: #06b6d4;   /* Connectivity: Cyan-500 */
-  --collaboration: #10b981;  /* Collaboration: Emerald-500 */
-  --capacity: #ec4899;       /* Capacity: Pink-500 */
-  --accent-amber: #f59e0b;   /* Warm accent */
+  --clarity: #6366f1;
+  /* Clarity: Indigo-500 */
+  --connectivity: #06b6d4;
+  /* Connectivity: Cyan-500 */
+  --collaboration: #10b981;
+  /* Collaboration: Emerald-500 */
+  --capacity: #ec4899;
+  /* Capacity: Pink-500 */
+  --accent-amber: #f59e0b;
+  /* Warm accent */
 
   --secondary: #f1f5f9;
   --secondary-foreground: #09090b;
@@ -472,12 +624,10 @@
 
   /* Shimmer skeleton */
   .shimmer {
-    background: linear-gradient(
-      90deg,
-      var(--muted) 0%,
-      color-mix(in oklab, var(--muted) 70%, var(--clarity)) 50%,
-      var(--muted) 100%
-    );
+    background: linear-gradient(90deg,
+        var(--muted) 0%,
+        color-mix(in oklab, var(--muted) 70%, var(--clarity)) 50%,
+        var(--muted) 100%);
     background-size: 200% 100%;
     animation: shimmer 1.5s ease-in-out infinite;
   }
@@ -554,7 +704,7 @@
     padding-bottom: 1.5rem;
   }
 
-  .compact-mode .space-y-8 > :not([hidden]) ~ :not([hidden]) {
+  .compact-mode .space-y-8> :not([hidden])~ :not([hidden]) {
     --tw-space-y-reverse: 0;
     margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
     margin-bottom: calc(1rem * var(--tw-space-y-reverse));
@@ -627,12 +777,10 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(
-      105deg,
-      transparent 40%,
-      rgba(27, 111, 200, 0.06) 50%,
-      transparent 60%
-    );
+    background: linear-gradient(105deg,
+        transparent 40%,
+        rgba(27, 111, 200, 0.06) 50%,
+        transparent 60%);
     animation: scan-line 4s ease-in-out infinite;
     pointer-events: none;
   }
@@ -661,12 +809,10 @@
     content: "";
     position: absolute;
     inset: -8px -16px;
-    background: radial-gradient(
-      ellipse at center,
-      color-mix(in oklab, var(--clarity) 12%, transparent) 0%,
-      color-mix(in oklab, var(--connectivity) 6%, transparent) 40%,
-      transparent 70%
-    );
+    background: radial-gradient(ellipse at center,
+        color-mix(in oklab, var(--clarity) 12%, transparent) 0%,
+        color-mix(in oklab, var(--connectivity) 6%, transparent) 40%,
+        transparent 70%);
     filter: blur(20px);
     z-index: -1;
     border-radius: 50%;
@@ -674,12 +820,10 @@
   }
 
   .dark .text-glow::after {
-    background: radial-gradient(
-      ellipse at center,
-      color-mix(in oklab, var(--clarity) 18%, transparent) 0%,
-      color-mix(in oklab, var(--connectivity) 10%, transparent) 40%,
-      transparent 70%
-    );
+    background: radial-gradient(ellipse at center,
+        color-mix(in oklab, var(--clarity) 18%, transparent) 0%,
+        color-mix(in oklab, var(--connectivity) 10%, transparent) 40%,
+        transparent 70%);
   }
 
   /* ── Enhancement: Ambient glow ring behind composer ── */
@@ -702,8 +846,15 @@
   }
 
   @keyframes ambient-pulse {
-    0%, 100% { opacity: 0.06; }
-    50% { opacity: 0.14; }
+
+    0%,
+    100% {
+      opacity: 0.06;
+    }
+
+    50% {
+      opacity: 0.14;
+    }
   }
 
   .dark .ambient-glow::before {
@@ -711,8 +862,15 @@
   }
 
   @keyframes ambient-pulse-dark {
-    0%, 100% { opacity: 0.08; }
-    50% { opacity: 0.2; }
+
+    0%,
+    100% {
+      opacity: 0.08;
+    }
+
+    50% {
+      opacity: 0.2;
+    }
   }
 
   /* ── Enhancement: Live indicator dot on widget cards ── */
@@ -734,8 +892,15 @@
   }
 
   @keyframes live-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.4;
+    }
   }
 
   /* ── Enhancement: Section label with line accents ── */
