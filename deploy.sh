@@ -6,18 +6,18 @@
 #
 # Optional env vars:
 #   REMOTE_DIR — deployment dir on the server, relative to home or absolute
-#                (default: aurora-ui — matches existing aurora-ui-* container names)
+#                (default: centriq_ai)
 #   BRANCH     — A | B | C  (default: B — Phase 0 confirmed for this server)
 #                B = host nginx forwards hackathon.alignedautomation.com → :8090
 #
 # Branch B (current): just run this script for every deploy.
 # Branch A (we own 80/443): change docker-compose.yml ports to "80:80" first,
-#   then after first deploy run: ssh $SSH_HOST "cd ~/aurora-ui && bash first-deploy.sh"
+#   then after first deploy run: ssh $SSH_HOST "cd ~/centriq_ai && bash first-deploy.sh"
 
 set -euo pipefail
 
 SSH_HOST="${SSH_HOST:-}"
-REMOTE_DIR="${REMOTE_DIR:-/data/optimize/aurora-ui}"
+REMOTE_DIR="${REMOTE_DIR:-/data/optimize/centriq_ai}"
 BRANCH="${BRANCH:-B}"
 
 # ── guards ────────────────────────────────────────────────────────────────────
@@ -96,9 +96,7 @@ fi
 # Pull stable base images in background; build the nginx/backend images fresh.
 docker compose pull redis langfuse-db langfuse-server 2>/dev/null || true
 
-# --remove-orphans cleans up containers that are no longer in the compose file:
-# aurora-ui-frontend-1 (old Node server), aurora-ui-minio-1, aurora-ui-grafana-1,
-# aurora-ui-loki-1. Safe because nextchat-* are a different compose project.
+# --remove-orphans cleans up containers that are no longer in the compose file.
 docker compose up -d --build --remove-orphans
 
 echo ""

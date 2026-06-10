@@ -11,7 +11,7 @@ metadata:
 
 **Company:** Aligned Automation  
 **Product:** Centriq AI — enterprise internal AI assistant  
-**Repo root:** `/Users/sharmaji/aurora-ui/`  
+**Repo root:** `C:\Users\shivam.sharma\centriq_ai\`  
 **Backend port:** 8080  
 **Frontend port:** 3000 (Vite dev server, proxies `/api` → `http://127.0.0.1:8080`)  
 **Git branch:** `dev_sharmaji` → PR to `main`

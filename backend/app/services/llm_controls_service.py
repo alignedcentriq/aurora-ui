@@ -336,10 +336,9 @@ def get_llm(tier: str, *, default_timeout: Optional[float] = None,
         # Include token usage in the final streaming chunk (stream_options.include_usage).
         # Required for the observability token charts — without this, usage_metadata is None.
         stream_usage=True,
-        # Ask Ollama to keep this model in VRAM for 15 min after each call.
-        # Default is 5 min; extending it 3x dramatically reduces cold-reload
-        # evictions when the shared ml01 server is under concurrent load.
-        extra_body={"keep_alive": "15m"},
+        # Ask Ollama to keep this model in VRAM for 30 min after each call.
+        # Default is 5 min; 30m + 10min heartbeat ping = always resident, zero cold-reloads.
+        extra_body={"keep_alive": "30m"},
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens

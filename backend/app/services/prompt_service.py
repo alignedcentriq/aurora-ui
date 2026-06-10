@@ -12,6 +12,13 @@ from app.redis_config import get_redis_client
 _company_ctx_cache: dict = {"value": None, "ts": 0.0}
 _COMPANY_CTX_TTL = 60.0  # seconds
 
+# L1 in-process caches for system_prompt and guardrail — avoids a Redis round-trip on every
+# agent call (which can be 3-4 per request). TTL matches the Redis TTL so they stay consistent.
+_sysprompt_l1_cache: dict[str, tuple[str, float]] = {}
+_SYSPROMPT_L1_TTL = 30.0  # seconds
+_guardrail_l1_cache: dict[str, tuple[str, float]] = {}
+_GUARDRAIL_L1_TTL = 60.0  # seconds
+
 # Per-domain cache: does the domain have any custom (non-system_prompt, non-guardrail) context?
 _custom_ctx_exists_cache: dict[str, tuple[bool, float]] = {}
 _CUSTOM_CTX_TTL = 60.0  # seconds
@@ -151,13 +158,19 @@ def _get_context_llm():
 class PromptService:
     @staticmethod
     def get_system_prompt(domain: str, default_prompt: str = "") -> str:
-        # Redis fast-path: cache key includes domain only (default_prompt is constant per domain)
+        # L1: in-process cache (30s TTL) — zero network cost for the hot path
+        now_l1 = time.time()
+        _l1 = _sysprompt_l1_cache.get(domain)
+        if _l1 and now_l1 - _l1[1] < _SYSPROMPT_L1_TTL:
+            return _l1[0]
+        # L2: Redis fast-path: cache key includes domain only (default_prompt is constant per domain)
         _r = get_redis_client()
         _redis_key = f"sysprompt:{domain}"
         if _r:
             try:
                 cached = _r.get(_redis_key)
                 if cached:
+                    _sysprompt_l1_cache[domain] = (cached, now_l1)
                     return cached
             except Exception:
                 pass
@@ -220,6 +233,7 @@ class PromptService:
                 _r.setex(_redis_key, 60, result)
             except Exception:
                 pass
+        _sysprompt_l1_cache[domain] = (result, time.time())
         return result
 
     @staticmethod
@@ -373,7 +387,10 @@ class PromptService:
             )
             db.add(new_config)
             db.commit()
-            # Invalidate system prompt cache so next request picks up the new value
+            # Invalidate all caches so next request picks up the new value
+            _sysprompt_l1_cache.pop(domain, None)
+            _guardrail_l1_cache.pop(domain, None)
+            _guardrail_l1_cache.pop("global", None)
             _r = get_redis_client()
             if _r:
                 try:
@@ -390,14 +407,21 @@ class PromptService:
     @staticmethod
     def get_guardrail(domain: str = "") -> str:
         """Return the active guardrail for a domain, falling back to the universal guardrail."""
+        _key = domain or "global"
+        now_gl = time.time()
+        _gl = _guardrail_l1_cache.get(_key)
+        if _gl and now_gl - _gl[1] < _GUARDRAIL_L1_TTL:
+            return _gl[0]
         db = SessionLocal()
         try:
             config = db.query(PromptConfig).filter(
-                PromptConfig.agent_domain == (domain or "global"),
+                PromptConfig.agent_domain == _key,
                 PromptConfig.prompt_key == "guardrail",
                 PromptConfig.is_active == True,
             ).order_by(PromptConfig.version.desc()).first()
-            return config.prompt_value if config else UNIVERSAL_GUARDRAIL
+            result = config.prompt_value if config else UNIVERSAL_GUARDRAIL
+            _guardrail_l1_cache[_key] = (result, now_gl)
+            return result
         finally:
             db.close()
 

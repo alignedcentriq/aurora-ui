@@ -784,9 +784,10 @@ class RouterExample(Base):
     domain = Column(String, nullable=False, index=True)      # hr, admin, it_support, pmo, functional_manager, ms365, deeplink, general
     sub_intent = Column(String, nullable=False)
     entities = Column(JSON, nullable=True)                    # template entities for this intent (usually empty)
-    source = Column(String, default="seed")                  # seed | kw | prompt | feedback | manual
+    source = Column(String, default="seed")                  # seed | kw | prompt | feedback | manual | connector
     is_active = Column(Boolean, default=True, index=True)     # soft-disable a bad seed without deleting
     weight = Column(Float, default=1.0)
+    connector_operation_id = Column(Integer, ForeignKey(f"{SCHEMA}.connector_operations.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
@@ -1026,6 +1027,12 @@ class AiRequestLog(Base):
     model_name = Column(String, nullable=True)              # primary model used
     error = Column(Text, nullable=True)
     langfuse_trace_id = Column(String, nullable=True)       # link to Langfuse trace
+    # ── Latency SLO fields (Phase 0) ──────────────────────────────────────────
+    time_to_first_token_ms = Column(Integer, nullable=True)  # ms from request start to first SSE token
+    queue_wait_ms = Column(Integer, nullable=True)           # ms spent waiting for concurrency slot
+    gate_result = Column(String, nullable=True)              # direct / queued / busy
+    fallback_used = Column(Boolean, default=False)           # True if resilience layer used fallback model
+    served_from = Column(String, nullable=True)              # cache / semantic_router / llm_router / fastpath / agent
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     llm_calls = relationship("AiLlmCallLog", back_populates="request", cascade="all, delete-orphan")
@@ -1047,6 +1054,7 @@ class AiLlmCallLog(Base):
     is_tool_call = Column(Boolean, default=False)
     tool_names = Column(String, nullable=True)              # comma-separated
     error = Column(Text, nullable=True)
+    ttft_ms = Column(Integer, nullable=True)                 # ms to first token for this specific LLM call
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     request = relationship("AiRequestLog", back_populates="llm_calls")
@@ -1105,6 +1113,9 @@ class DocumentTemplate(Base):
     enabled = Column(Boolean, default=False, index=True)   # SharePoint-synced templates are enabled on sync
     requires_approval = Column(Boolean, default=True)  # approval-gated vs auto-release
     setup_status = Column(String, default="needs_review")  # needs_review | ready
+    source = Column(String, default="sharepoint")           # sharepoint | upload
+    created_by = Column(String, nullable=True)
+    category = Column(String, nullable=True, index=True)    # optional grouping tag
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -1475,3 +1486,234 @@ class LibraryDocument(Base):
     file_content = Column(LargeBinary, nullable=False)
     uploaded_by = Column(String, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PLATFORM TABLES — No-Code Integration Platform (M1+)
+# ════════════════════════════════════════════════════════════════════════════════
+
+class Connector(Base):
+    """A registered external system (API, portal, service). Source of ConnectorOperations."""
+    __tablename__ = "connectors"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String, unique=True, index=True, nullable=False)   # e.g. "zoho_people"
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    source_type = Column(String, nullable=False)                     # openapi | manual | mcp | native
+    base_url = Column(String, nullable=True)
+    spec_blob = Column(LargeBinary, nullable=True)                   # raw OpenAPI spec bytes
+    spec_url = Column(String, nullable=True)
+    status = Column(String, default="draft", index=True)             # draft | published | disabled
+    version = Column(Integer, default=1)                             # bump on edit → cache invalidation
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    operations = relationship("ConnectorOperation", back_populates="connector", cascade="all, delete-orphan")
+    auth = relationship("ConnectorAuth", back_populates="connector", uselist=False, cascade="all, delete-orphan")
+    scopes = relationship("ConnectorScope", back_populates="connector", cascade="all, delete-orphan")
+
+
+class ConnectorAuth(Base):
+    """Auth config for a connector. Secrets stored Fernet-encrypted in config_enc."""
+    __tablename__ = "connector_auths"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, ForeignKey(f"{SCHEMA}.connectors.id", ondelete="CASCADE"), unique=True)
+    auth_type = Column(String, nullable=False)        # none | api_key | bearer | basic | oauth2 | headless
+    auth_mode = Column(String, default="service")     # service | per_user
+    config_enc = Column(Text, nullable=True)          # Fernet-encrypted JSON (API key, client secret, etc.)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    connector = relationship("Connector", back_populates="auth")
+
+
+class ConnectorOperation(Base):
+    """A single callable operation (tool) exposed by a connector."""
+    __tablename__ = "connector_operations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, ForeignKey(f"{SCHEMA}.connectors.id", ondelete="CASCADE"), index=True)
+    name = Column(String, nullable=False)             # snake_case tool name, e.g. "get_leave_balance"
+    display_name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)         # LLM-enriched at import time
+    method = Column(String, nullable=True)            # GET | POST | PUT | DELETE
+    path_template = Column(String, nullable=True)     # e.g. "/api/leave/{employee_id}"
+    params_schema = Column(JSON, nullable=True)       # flat list of {name, type, location, required, description}
+    response_map = Column(JSON, nullable=True)        # dotted-path picks to trim large responses
+    requires_confirmation = Column(Boolean, default=False)  # mutating ops need user confirm
+    minutes_saved = Column(Float, default=0.0)        # used for ROI metrics
+    response_mode = Column(String, default="passthrough")  # passthrough | template | agent
+    template = Column(Text, nullable=True)            # Jinja2 template for response_mode=template
+    enabled = Column(Boolean, default=True)
+    version = Column(Integer, default=1)
+    python_ref = Column(String, nullable=True)        # dotted path for source_type=native
+    mcp_tool_name = Column(String, nullable=True)     # tool name for source_type=mcp
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    connector = relationship("Connector", back_populates="operations")
+    scopes = relationship("ConnectorScope", back_populates="operation", cascade="all, delete-orphan")
+    call_logs = relationship("ConnectorCallLog", back_populates="operation")
+
+
+class ConnectorScope(Base):
+    """Controls which personas/roles/departments can see a connector or specific operation."""
+    __tablename__ = "connector_scopes"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, ForeignKey(f"{SCHEMA}.connectors.id", ondelete="CASCADE"), index=True)
+    operation_id = Column(Integer, ForeignKey(f"{SCHEMA}.connector_operations.id", ondelete="CASCADE"), nullable=True, index=True)
+    persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"), nullable=True)
+    role = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+
+    connector = relationship("Connector", back_populates="scopes")
+    operation = relationship("ConnectorOperation", back_populates="scopes")
+
+
+class ConnectorCallLog(Base):
+    """One row per connector operation invocation — for usage metrics and ROI calculation."""
+    __tablename__ = "connector_call_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, ForeignKey(f"{SCHEMA}.connectors.id", ondelete="SET NULL"), nullable=True, index=True)
+    operation_id = Column(Integer, ForeignKey(f"{SCHEMA}.connector_operations.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_email = Column(String, nullable=True, index=True)
+    request_log_id = Column(Integer, ForeignKey(f"{SCHEMA}.ai_request_logs.id", ondelete="SET NULL"), nullable=True)
+    flow_run_id = Column(Integer, nullable=True)             # FK to flow_runs (defined below)
+    status = Column(String, default="success")               # success | error | timeout
+    latency_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    operation = relationship("ConnectorOperation", back_populates="call_logs")
+
+
+# ── Flow Engine (M3) ─────────────────────────────────────────────────────────
+
+class Flow(Base):
+    """A reusable automation workflow (trigger → steps → approvals → notifications)."""
+    __tablename__ = "flows"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    trigger = Column(JSON, nullable=True)             # {type: form_submitted|connector_op|schedule|manual, ref, filter}
+    definition = Column(JSON, nullable=True)          # {steps: [{id, type, params, next, on_reject}]}
+    is_active = Column(Boolean, default=False)
+    version = Column(Integer, default=1)
+    minutes_saved = Column(Float, default=0.0)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    runs = relationship("FlowRun", back_populates="flow")
+
+
+class FlowRun(Base):
+    """One execution of a Flow."""
+    __tablename__ = "flow_runs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    flow_id = Column(Integer, ForeignKey(f"{SCHEMA}.flows.id", ondelete="CASCADE"), index=True)
+    status = Column(String, default="running", index=True)  # running | waiting_approval | completed | failed | rejected
+    context = Column(JSON, nullable=True)                   # accumulated step outputs + trigger payload
+    current_step = Column(String, nullable=True)
+    started_by = Column(String, nullable=True)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    finished_at = Column(DateTime, nullable=True)
+
+    flow = relationship("Flow", back_populates="runs")
+    step_runs = relationship("FlowStepRun", back_populates="flow_run", cascade="all, delete-orphan")
+
+
+class FlowStepRun(Base):
+    """One step execution within a FlowRun."""
+    __tablename__ = "flow_step_runs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    flow_run_id = Column(Integer, ForeignKey(f"{SCHEMA}.flow_runs.id", ondelete="CASCADE"), index=True)
+    step_id = Column(String, nullable=True)
+    step_type = Column(String, nullable=True)   # connector_op | approval | notify_email | condition | llm_transform
+    status = Column(String, default="pending")  # pending | running | completed | failed | skipped
+    input = Column(JSON, nullable=True)
+    output = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+
+    flow_run = relationship("FlowRun", back_populates="step_runs")
+
+
+# ── Persona Layer (M2) ───────────────────────────────────────────────────────
+
+class Persona(Base):
+    """A user persona defined by role + department combination, controls visible features."""
+    __tablename__ = "personas"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    match_rules = Column(JSON, nullable=True)   # [{role: "hr", department: "HR"}, ...] — ordered, first match wins
+    priority = Column(Integer, default=0)       # lower = checked first
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    assignments = relationship("PersonaAssignment", back_populates="persona")
+    features = relationship("PersonaFeature", back_populates="persona", cascade="all, delete-orphan")
+
+
+class PersonaAssignment(Base):
+    """Explicit per-user persona override (overrides match_rules)."""
+    __tablename__ = "persona_assignments"
+    __table_args__ = (UniqueConstraint("user_email", name="uq_persona_assignment_email"), {"schema": SCHEMA})
+
+    id = Column(Integer, primary_key=True, index=True)
+    persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"))
+    user_email = Column(String, unique=True, nullable=False, index=True)
+    assigned_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    persona = relationship("Persona", back_populates="assignments")
+
+
+class PersonaFeature(Base):
+    """Maps a persona to the features/connectors/flows/forms it can access."""
+    __tablename__ = "persona_features"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"), index=True)
+    feature_type = Column(String, nullable=False)  # connector | operation | flow | form | quick_action | widget
+    feature_ref = Column(String, nullable=False)   # slug or ID string
+    config = Column(JSON, nullable=True)           # optional per-feature config (e.g. visible fields)
+    sort_order = Column(Integer, default=0)
+
+    persona = relationship("Persona", back_populates="features")
+
+
+# ── Dashboard (M5) ───────────────────────────────────────────────────────────
+
+class DashboardConfig(Base):
+    """Per-role or per-persona dashboard widget layout configuration."""
+    __tablename__ = "dashboard_configs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"), nullable=True)
+    role = Column(String, nullable=True)        # fallback if no persona_id
+    widgets = Column(JSON, nullable=True)       # ordered list of {widget_type, config}
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

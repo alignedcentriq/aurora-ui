@@ -34,6 +34,7 @@ import {
   ShieldCheck,
   TrendingUp,
   Newspaper,
+  Globe,
 } from "lucide-react";
 
 // Page components live outside the routes folder so they are code-split
@@ -48,6 +49,7 @@ import { PeoplePage } from "@/pages/PeoplePage";
 import { ConfigPage } from "@/pages/ConfigPage";
 import { UrlLibrary } from "@/pages/UrlLibrary";
 import { FormLibrary } from "@/pages/FormLibrary";
+import ConnectorStudio from "@/pages/ConnectorStudio";
 import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
@@ -79,7 +81,8 @@ type TabId =
   | "form-library"
   | "automation-hub"
   | "cabin-directory"
-  | "security-digest";
+  | "security-digest"
+  | "connector-studio";
 
 interface TabItem {
   id: TabId;
@@ -254,6 +257,15 @@ const TABS: TabItem[] = [
     requireScope: "form_library",
     component: FormLibrary,
   },
+  {
+    id: "connector-studio",
+    label: "Connector Studio",
+    category: "Assets & Config",
+    icon: Globe,
+    color: "#6366f1",
+    show: (role) => role === "Super Admin",
+    component: ConnectorStudio,
+  },
 ];
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
@@ -273,6 +285,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
   "form-library": "Submit custom forms, view request archives, and check statuses.",
   "security-digest": "Configure cybersecurity news digest — recipients, schedule, and news sources.",
+  "connector-studio": "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
 };
 
 const ROLE_META: Record<string, { icon: any; color: string; bg: string; label: string }> = {

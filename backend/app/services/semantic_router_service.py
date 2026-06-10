@@ -194,7 +194,8 @@ class SemanticRouterService:
     @staticmethod
     def add_example(utterance: str, domain: str, sub_intent: str,
                     entities: dict | None = None, source: str = "manual",
-                    embedding: list | None = None) -> bool:
+                    embedding: list | None = None,
+                    connector_operation_id: int | None = None) -> bool:
         """Idempotent upsert of one labeled example, keyed by normalised utterance.
 
         If ``embedding`` is supplied (e.g. ChatFeedback.user_message_embedding for a confirmed
@@ -222,6 +223,8 @@ class SemanticRouterService:
             row.entities = entities or {}
             row.source = source
             row.is_active = True
+            if connector_operation_id is not None:
+                row.connector_operation_id = connector_operation_id
             if embedding is not None:
                 row.embedding = embedding
             row.created_at = row.created_at or datetime.datetime.utcnow()

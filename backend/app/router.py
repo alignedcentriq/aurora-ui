@@ -5,7 +5,7 @@ Uses gpt-oss (or configured router model) for fast intent classification.
 Routes user messages to the correct domain agent.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -107,16 +107,43 @@ DOMAIN_REGISTRY = {
 
 # ── Structured Output Schema ──────────────────────────────────────────────────
 
+_HARDCODED_DOMAINS = frozenset({
+    "hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"
+})
+
+
 class RouterOutput(BaseModel):
     """Structured classification output from the intent router."""
-    domain: Literal["hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"]
+    domain: str = Field(description="Domain to route to — one of the listed options or connector:<slug>")
     confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence from 0.0 to 1.0")
     reasoning: str = Field(description="One-sentence explanation of the classification")
     sub_intent: str = Field(description="Short snake_case label for the specific action, e.g. software_install")
     entities: dict = Field(default_factory=dict, description="Key entities extracted from the message")
 
+    @field_validator("domain", mode="after")
+    @classmethod
+    def validate_domain(cls, v: str) -> str:
+        if v in _HARDCODED_DOMAINS or v.startswith("connector:"):
+            return v
+        return "general"
+
 
 # ── Router Prompt ─────────────────────────────────────────────────────────────
+
+def _get_connector_domain_descriptions() -> str:
+    """Return description lines for published connectors (best-effort, empty string on error)."""
+    try:
+        from app.connectors.registry import _cache
+        lines = []
+        for c in _cache.connectors.values():
+            slug = c.get("slug", "")
+            name = c.get("name", slug)
+            desc = c.get("description") or f"{name} integration"
+            lines.append(f'  - "connector:{slug}": {desc}')
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
 
 def _build_router_prompt() -> str:
     """Build the classification prompt dynamically from the domain registry."""
@@ -124,6 +151,9 @@ def _build_router_prompt() -> str:
         f"  - \"{domain}\": {info['description']}"
         for domain, info in DOMAIN_REGISTRY.items()
     )
+    connector_descriptions = _get_connector_domain_descriptions()
+    if connector_descriptions:
+        domain_descriptions += "\n" + connector_descriptions
     return f"""You are an intent classification engine for an enterprise AI assistant called Centriq.
 
 Classify the user's message into the correct domain.
@@ -231,7 +261,7 @@ async def classify_intent_async(user_message: str, candidate_domains: list[str] 
         result: RouterOutput = await _get_router_llm().ainvoke([system, human])
 
         domain = result.domain
-        if domain not in DOMAIN_REGISTRY:
+        if domain not in DOMAIN_REGISTRY and not domain.startswith("connector:"):
             domain = "general"
 
         entities = result.entities if isinstance(result.entities, dict) else {}
@@ -272,7 +302,7 @@ def classify_intent(user_message: str) -> dict:
         result: RouterOutput = _get_router_llm().invoke([system, human])
 
         domain = result.domain
-        if domain not in DOMAIN_REGISTRY:
+        if domain not in DOMAIN_REGISTRY and not domain.startswith("connector:"):
             domain = "general"
 
         entities = result.entities if isinstance(result.entities, dict) else {}
