@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-_ROOT = Path(__file__).resolve().parent.parent.parent  # aurora-ui/
+_ROOT = Path(__file__).resolve().parent.parent.parent  # centriq_ai/
 load_dotenv(_ROOT / ".env.local", override=True)
 load_dotenv()  # fallback: .env
 
