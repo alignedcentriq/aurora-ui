@@ -10,7 +10,7 @@ import socket
 import time
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
@@ -45,8 +45,8 @@ from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.app_links_routes import router as app_links_router, public_router as app_links_public_router
 from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.analytics_routes import router as analytics_router
 from app.routes.llm_controls_routes import router as llm_controls_router
-from app.routes.security_news_routes import router as security_news_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
@@ -167,8 +167,8 @@ app.include_router(app_links_router)
 app.include_router(app_links_public_router)
 app.include_router(form_library_router)
 app.include_router(observability_router)
+app.include_router(analytics_router)
 app.include_router(llm_controls_router)
-app.include_router(security_news_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
@@ -329,43 +329,6 @@ async def startup_event():
 
     asyncio.create_task(attendance_scheduler())
 
-    # Send a daily cybersecurity news digest once per day at SECURITY_NEWS_HOUR.
-    async def security_news_scheduler():
-        import datetime as _dt
-        _last_sent_date = None
-        while True:
-            await asyncio.sleep(300)  # check every 5 minutes
-            try:
-                from app.services.security_news_service import get_config, fetch_digest
-                cfg = get_config()
-                if not cfg.get("enabled", False):
-                    continue
-                recipients = cfg.get("recipients") or []
-                if not recipients:
-                    continue
-                sender = (
-                    settings.SECURITY_NEWS_SENDER
-                    or settings.PARKING_REMINDER_SENDER
-                    or settings.NOTIFY_TO_EMAIL
-                )
-                if not sender:
-                    continue
-                now = _dt.datetime.now()
-                today = now.date()
-                send_hour = int(cfg.get("hour", settings.SECURITY_NEWS_HOUR))
-                if today == _last_sent_date or now.hour < send_hour:
-                    continue
-                _last_sent_date = today
-                from app.services.email_service import send_security_news_digest
-                items = await asyncio.to_thread(fetch_digest, cfg)
-                if items:
-                    date_str = today.strftime("%B %d, %Y")
-                    await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
-            except Exception as _sne:
-                pass
-
-    asyncio.create_task(security_news_scheduler())
-
     # ── Model keep-alive heartbeat ─────────────────────────────────────────
     # Fires a 0-token ping at every heavy model tier every 10 minutes.
     # Combined with the 15-min keep_alive on every real request, this ensures
@@ -432,8 +395,33 @@ async def me(user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/health/llm")
 async def llm_health():
-    """Check whether the LLM service is reachable (VPN required from outside office)."""
-    return {"status": "ok"}
+    """Probe the shared Ollama server (3s timeout) and report per-tier breaker state.
+
+    status: "ok" (reachable, all breakers closed), "degraded" (reachable but at least
+    one tier's circuit breaker is open — fallback models are serving that tier), or
+    "down" (Ollama unreachable — VPN required from outside office)."""
+    from app.services.llm_resilience import get_breaker_status
+    import urllib.request
+
+    base = settings.AGENT_BASE_URL.rsplit("/v1", 1)[0]
+
+    def _probe() -> bool:
+        try:
+            req = urllib.request.Request(f"{base}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    reachable = await asyncio.to_thread(_probe)
+    breakers = get_breaker_status()
+    if not reachable:
+        status = "down"
+    elif any(state == "open" for state in breakers.values()):
+        status = "degraded"
+    else:
+        status = "ok"
+    return {"status": status, "ollama_reachable": reachable, "circuit_breakers": breakers}
 
 @app.get("/api/chat/load")
 async def chat_load():
@@ -999,7 +987,7 @@ async def serve_policy_image(image_id: int):
 
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
-_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup"}
+_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup", "form_builder_agent"}
 
 # Domains whose answers are safe & stable enough to serve from the semantic answer cache.
 # Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
@@ -1052,6 +1040,7 @@ _REFUSAL_RE = re.compile(
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
+_form_builder_re = re.compile(r'\[FORM_BUILDER_START\](.*?)\[FORM_BUILDER_END\]', re.DOTALL)
 _quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
 
@@ -1091,8 +1080,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             draft_data = json.loads(email_match.group(1))
             interactive = {"type": "email_draft", "data": draft_data}
             final_message = _email_draft_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse EMAIL_DRAFT marker JSON (widget dropped): %s; raw=%.200r", _e, email_match.group(1))
+            final_message = _email_draft_re.sub("", final_message).strip()
 
     # Extract dynamic form (Form Library) — must run BEFORE the JSON-blob stripping below so the
     # form schema JSON isn't mangled. The marker wraps the JSON, so it's gone before any blob regex.
@@ -1102,8 +1092,20 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             form_data = json.loads(form_match.group(1))
             interactive = {"type": "dynamic_form", "data": form_data}
             final_message = _dynamic_form_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse DYNAMIC_FORM marker JSON (widget dropped): %s; raw=%.200r", _e, form_match.group(1))
+            final_message = _dynamic_form_re.sub("", final_message).strip()
+
+    # Extract form builder draft (admin creates a NEW form template).
+    fb_match = _form_builder_re.search(final_message)
+    if fb_match:
+        try:
+            fb_data = json.loads(fb_match.group(1))
+            interactive = {"type": "form_builder", "data": fb_data}
+            final_message = _form_builder_re.sub("", final_message).strip()
+        except Exception as _e:
+            logger.warning("Failed to parse FORM_BUILDER marker JSON (widget dropped): %s; raw=%.200r", _e, fb_match.group(1))
+            final_message = _form_builder_re.sub("", final_message).strip()
 
     # Extract quick-choice card (zero-LLM choice widget).
     qc_match = _quick_choice_re.search(final_message)
@@ -1112,8 +1114,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             qc_data = json.loads(qc_match.group(1))
             interactive = {"type": "quick_choice", "data": qc_data}
             final_message = _quick_choice_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse QUICK_CHOICE marker JSON (widget dropped): %s; raw=%.200r", _e, qc_match.group(1))
+            final_message = _quick_choice_re.sub("", final_message).strip()
 
     # Extract download tag
     dl_match = _download_tag_re.search(final_message)
@@ -1511,6 +1514,7 @@ async def chat(
                         "manager_agent": "thinking",
                         "ms365_agent": "thinking",
                         "deeplink_agent": "automating",
+                        "form_builder_agent": "designing form",
                         "doc_agent": "generating document",
                         "general_agent": "thinking",
                         "connector_agent": "connecting",
@@ -1545,7 +1549,25 @@ async def chat(
 
         except Exception as exc:
             error_msg = str(exc)
-            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+            # Degraded mode: a connectivity-class failure means even the fallback model
+            # was unreachable (the resilience layer already retried). Tell the user what
+            # happened in plain language as a normal assistant message instead of
+            # surfacing a raw exception banner.
+            _low = error_msg.lower()
+            if any(k in _low for k in ("connection", "connect", "timed out", "timeout",
+                                       "refused", "unreachable", "name or service")):
+                friendly = (
+                    "I can't reach the AI model server right now — it may be restarting or "
+                    "under heavy load. Your message wasn't lost; please try again in a "
+                    "minute. If this keeps happening, contact IT support."
+                )
+                yield f"data: {json.dumps({'type': 'token', 'content': friendly})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': 'general', 'degraded': True})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+                # Always emit a done event after an error so the frontend can unlock the
+                # composer and stop showing the "composing" spinner.
+                yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain or 'general', 'error': True})}\n\n"
         finally:
             # Stop renewing and free the slot the moment generation ends.
             heartbeat_task.cancel()
@@ -2162,13 +2184,20 @@ async def submit_dynamic_form(req: FormSubmitRequest,
     return {"message": res["message"], "reference_id": res["reference_id"]}
 
 
+_MAX_FORM_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
 @app.post("/api/forms/upload-image")
 async def upload_form_image(
+    request: Request,
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Upload an image file for a form submission. Returns the URL."""
     import uuid
+    # Reject before reading the body when the client declares the size up front.
+    _cl = request.headers.get("content-length")
+    if _cl and int(_cl) > _MAX_FORM_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be under 10 MB.")
     allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, GIF, or WebP images are allowed.")
@@ -2179,8 +2208,8 @@ async def upload_form_image(
     forms_dir = os.path.join(_uploads_dir, "forms")
     os.makedirs(forms_dir, exist_ok=True)
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 10 MB.")
+    if len(content) > _MAX_FORM_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be under 10 MB.")
     with open(os.path.join(forms_dir, filename), "wb") as fh:
         fh.write(content)
     return {"url": f"/uploads/forms/{filename}"}

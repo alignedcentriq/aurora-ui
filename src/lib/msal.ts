@@ -1,4 +1,5 @@
 import { PublicClientApplication, Configuration, LogLevel } from "@azure/msal-browser";
+import { cleanUrlParams } from "./utils";
 
 const isBrowser = typeof window !== "undefined";
 
@@ -26,8 +27,14 @@ export const msalInstance = isBrowser
 // Ensure MSAL processes the redirect before TanStack Router can intercept the URL hash
 if (isBrowser && msalInstance) {
   msalInstance.initialize().then(() => {
-    msalInstance.handleRedirectPromise().catch(() => {
-      // redirect error handled silently
-    });
+    msalInstance.handleRedirectPromise()
+      .then(() => {
+        cleanUrlParams();
+      })
+      .catch(() => {
+        // redirect error handled silently
+        cleanUrlParams();
+      });
   });
 }
+

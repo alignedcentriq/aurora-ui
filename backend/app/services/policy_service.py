@@ -116,6 +116,19 @@ _QUERY_SYNONYMS: dict[str, str] = {
 }
 
 
+# Returned by _hybrid_search when the semantic veto fires (embeddings healthy, zero
+# in-scope chunks within the cosine floor). Both leading phrases are load-bearing for
+# downstream emptiness checks; RETRIEVAL_VETO_SENTINEL is the substring domain agents
+# use to recognise the veto in a ToolMessage and offer a re-route instead of a dead end.
+RETRIEVAL_VETO_SENTINEL = "no results in the available documents"
+RETRIEVAL_VETO_MESSAGE = (
+    "No policies found — no results in the available documents are "
+    "relevant to this question. Tell the user you couldn't find this "
+    "in the policy documents and suggest who to contact; do NOT answer "
+    "from unrelated documents or general knowledge."
+)
+
+
 # Common English words that must never be fuzzy-matched to an acronym.
 # (e.g. "any"/"can"/"van" share two chars with "uan" → 0.67 similarity.)
 _FUZZY_STOPWORDS: frozenset[str] = frozenset({
@@ -866,6 +879,26 @@ class PolicyService:
                 )
                 sem_rows = _apply_cat(sem_q).order_by(dist_expr).limit(20).all()
                 sem_ids = [r.id for r in sem_rows]
+
+                # ── Retrieval validator: semantic veto ─────────────────────────
+                # Embeddings are healthy and NOT ONE in-scope chunk is within the
+                # 0.65 cosine floor → the corpus has nothing relevant to this query.
+                # The BM25 and keyword fallbacks below match on bare word overlap
+                # ("wifi not WORKING" → "WORKING hours policy") and would hand the
+                # agent plausible-but-wrong excerpts to answer from. An honest
+                # "not found" beats a confident answer from the wrong document.
+                # Both fallbacks remain available when the embedding model is down
+                # (query_emb is None) — availability over strictness in that mode.
+                if not sem_ids:
+                    if did_you_mean:
+                        return (
+                            f"I couldn't find a policy matching your query. Did you mean "
+                            f"**{did_you_mean}**? Please try again with the correct term."
+                        )
+                    # Phrasing is load-bearing: callers detect emptiness via
+                    # '"No policies found" in result' (agent.py, hr_agent, skill routes)
+                    # and '"no results" in result.lower()' (pmo tools) — keep both.
+                    return RETRIEVAL_VETO_MESSAGE
 
             # ── 2. BM25 keyword search via tsvector ───────────────────────────
             try:

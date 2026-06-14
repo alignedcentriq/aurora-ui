@@ -724,7 +724,7 @@ export function FormLibrary() {
                 className="mt-1"
               />
               <p className="text-[11px] text-muted-foreground/70 mt-1">
-                Comma-separated. When a user's message contains any of these words, this form opens inline in chat automatically.
+                Comma-separated. When a user's message contains any of these words, this form opens inline in chat automatically. Use specific phrases (e.g. "visitor pass", "guest entry") — single generic words like "form", "requests", or "status" are not allowed and will be rejected.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">

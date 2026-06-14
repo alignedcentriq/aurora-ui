@@ -339,7 +339,7 @@ function LogsTab() {
       const token = await getApiToken();
       const res = await fetch(`/api/observability/logs/${id}/reveal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({}),
       });
       if (!res.ok) {

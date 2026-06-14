@@ -529,7 +529,7 @@ def my_requests(
     from app.models import (
         Leave, ParkingSticker, FacilityComplaint, Reimbursement,
         TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
-        HRQuery, Grievance, Escalation
+        HRQuery, Grievance, Escalation, FormSubmission, FormTemplate
     )
 
     db = SessionLocal()
@@ -546,7 +546,8 @@ def my_requests(
                 "udemy": [],
                 "hr_queries": [],
                 "grievances": [],
-                "escalations": []
+                "escalations": [],
+                "form_submissions": []
             }
 
         # 1. Leaves
@@ -578,6 +579,19 @@ def my_requests(
 
         # 10. Escalations
         escalations = db.query(Escalation).filter(Escalation.user_email == emp.email).order_by(Escalation.created_at.desc()).all()
+
+        # 11. Dynamic Form Library submissions (any admin-defined form, current or future).
+        #     Joined to the template so the UI can label + filter by the originating form.
+        form_subs = (
+            db.query(FormSubmission, FormTemplate)
+            .join(FormTemplate, FormSubmission.form_template_id == FormTemplate.id)
+            .filter(
+                (FormSubmission.employee_id == emp.id)
+                | (FormSubmission.employee_email == emp.email)
+            )
+            .order_by(FormSubmission.submitted_at.desc())
+            .all()
+        )
 
         return {
             "leaves": [
@@ -727,6 +741,21 @@ def my_requests(
                     "created_at": e.created_at.isoformat() if e.created_at else None,
                 }
                 for e in escalations
+            ],
+            "form_submissions": [
+                {
+                    "id": s.id,
+                    "reference_id": s.reference_id or f"FRM-{s.id}",
+                    "form_template_id": s.form_template_id,
+                    "form_name": t.name,
+                    "category": t.category or "",
+                    "field_values": s.field_values or {},
+                    "status": s.status or "Pending",
+                    "admin_remarks": s.admin_remarks or "",
+                    "reviewed_by": s.reviewed_by or "",
+                    "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+                }
+                for s, t in form_subs
             ]
         }
     finally:

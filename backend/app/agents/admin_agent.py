@@ -481,7 +481,7 @@ _SUB_INTENT_RE = _re.compile(r'\[SUB_INTENT:([^\]]+)\]')
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (router tier).
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 
 
 def admin_assistant(state: AdminState):
@@ -529,9 +529,11 @@ def admin_assistant(state: AdminState):
     # text from the pre-fetched context. Leaving tools bound causes weak models to emit
     # tool calls as JSON text instead of prose.
     if policy_already_injected or no_policy_found:
-        response = llm_controls.get_llm("service", default_timeout=120).invoke(messages)
+        response = resilient_invoke("service", messages, default_timeout=120)
     else:
-        response = llm_controls.get_llm("service", default_timeout=120).bind_tools(active_tools).invoke(messages)
+        response = resilient_invoke("service", messages,
+                                    build=lambda l: l.bind_tools(active_tools),
+                                    default_timeout=120)
 
     # If the model returned empty text with no tool calls, retry once with the tool result
     # explicitly in the prompt rather than dumping it raw.
@@ -549,7 +551,7 @@ def admin_assistant(state: AdminState):
                     f"using bullet points where appropriate: {user_q}"
                 )),
             ]
-            response = llm_controls.get_llm("service", default_timeout=60).invoke(retry_messages)
+            response = resilient_invoke("service", retry_messages, default_timeout=60)
             if not (response.content or "").strip():
                 response = AIMessage(content=last_tool.content)
 

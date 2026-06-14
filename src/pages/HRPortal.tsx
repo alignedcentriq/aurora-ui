@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   X,
   Clock,
@@ -144,7 +144,7 @@ export function HRPortal() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">HR Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
@@ -154,7 +154,7 @@ export function HRPortal() {
       </div>
 
       {/* Top tabs */}
-      <div className="flex gap-1 px-8 pt-4 pb-0 border-b border-[var(--border)] shrink-0">
+      <div className="flex gap-1 overflow-x-auto px-4 sm:px-8 pt-4 pb-0 border-b border-[var(--border)] shrink-0 no-scrollbar">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -312,7 +312,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     { key: "grievance", label: `Grievances (${counts.grievance})` },
   ];
 
-  const tableRows: JSX.Element[] = [];
+  const tableRows: React.ReactNode[] = [];
   filtered.forEach((item) => {
     const isExpanded = expanded === item.key;
     tableRows.push(
@@ -382,7 +382,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 px-8 py-4 shrink-0">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 px-4 py-4 sm:px-8 shrink-0">
         {STATS.map(({ type, label, icon: Icon, color, bg }) => (
           <button
             key={type}
@@ -404,7 +404,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
 
       {/* Filter pills + refresh */}
-      <div className="flex items-center justify-between px-8 pb-3 shrink-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-8 pb-3 shrink-0">
         <div className="flex gap-1.5 flex-wrap">
           {FILTER_PILLS.map(({ key, label }) => (
             <button
@@ -431,7 +431,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-8 pb-8">
+      <div className="flex-1 overflow-auto px-4 sm:px-8 pb-8">
         {loading ? (
           <TableLoader />
         ) : filtered.length === 0 ? (
@@ -555,7 +555,7 @@ function ActionPanel({
     ) : null;
 
   return (
-    <div className="flex gap-8 px-8 py-5 bg-muted/20 border-b border-[var(--border)]">
+    <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 px-4 py-4 sm:px-8 sm:py-5 bg-muted/20 border-b border-[var(--border)]">
       {/* Details */}
       <div className="flex-1 min-w-0 space-y-3">
         {item.type === "escalation" && (
@@ -594,7 +594,7 @@ function ActionPanel({
               <span className="text-[11px] font-semibold bg-sky-500/15 text-sky-400 rounded-full px-2.5 py-0.5">
                 {String(raw.category || "")}
               </span>
-              {raw.priority && (
+              {!!raw.priority && (
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
@@ -615,7 +615,7 @@ function ActionPanel({
                 <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-3 py-2 text-[12px] text-foreground/80 leading-relaxed">
                   {String(raw.response)}
                 </div>
-                {raw.responded_by && (
+                {!!raw.responded_by && (
                   <p className="text-[11px] text-muted-foreground/40 mt-1">
                     by {String(raw.responded_by)}
                     {raw.responded_at ? ` · ${String(raw.responded_at).slice(0, 10)}` : ""}
@@ -632,7 +632,7 @@ function ActionPanel({
               <span className="text-[11px] font-semibold bg-amber-500/15 text-amber-400 rounded-full px-2.5 py-0.5">
                 {String(raw.category || "")}
               </span>
-              {raw.is_anonymous && (
+              {!!raw.is_anonymous && (
                 <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5">
                   Anonymous
                 </span>
@@ -654,7 +654,7 @@ function ActionPanel({
       </div>
 
       {/* Action form */}
-      <div className="w-72 shrink-0 space-y-3">
+      <div className="w-full lg:w-72 shrink-0 space-y-3">
         {/* Escalation */}
         {item.type === "escalation" && (
           isFinal ? (

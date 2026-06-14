@@ -1,18 +1,18 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
-import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap, Briefcase, ShieldCheck, Wrench, Calendar, Mail, Users, MessageSquare, HelpCircle, Minus, Plus, Undo, Info, Newspaper, Trash2, Shield, Clock, Send, Globe, Rss } from "lucide-react";
+import { Check, X, Ticket, Package, Loader2, RefreshCw, ChevronDown, SlidersHorizontal, Power, RotateCcw, AlertTriangle, ShieldAlert, Cpu, Gauge, Zap, Briefcase, ShieldCheck, Wrench, Calendar, Users, MessageSquare, HelpCircle, Plus, Minus, Undo, Info, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { motion, AnimatePresence } from "framer-motion";
 
-type Tab = "tickets" | "software" | "security-digest";
+type Tab = "tickets" | "software";
 
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { FilterBar } from "@/components/ui/FilterBar";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
-import { Toggle } from "@/components/ui/Toggle";
+import { Toggle } from "@/components/ui/toggle";
 
 const PRIORITY_COLOR: Record<string, string> = {
   Low: "text-zinc-400",
@@ -27,7 +27,7 @@ export function ITPortal() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === "Super Admin";
   const isIT = user?.role === "IT";
-  const [tab, setTab] = useState<Tab>(isSuperAdmin && !isIT ? "security-digest" : "tickets");
+  const [tab, setTab] = useState<Tab>("tickets");
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -46,7 +46,6 @@ export function ITPortal() {
   const allTabs = [
     { id: "tickets" as Tab, label: "Support Tickets", icon: Ticket, adminOnly: false },
     { id: "software" as Tab, label: "Software Requests", icon: Package, adminOnly: false },
-    { id: "security-digest" as Tab, label: "Security Digest", icon: Shield, adminOnly: true },
   ];
 
   const visibleTabs = allTabs.filter(t => !t.adminOnly || isSuperAdmin);
@@ -83,7 +82,6 @@ export function ITPortal() {
       <div className="flex-1 overflow-auto px-8 py-6">
         {tab === "tickets" && <TicketsTab authHeaders={authHeaders} />}
         {tab === "software" && <SoftwareTab authHeaders={authHeaders} />}
-        {tab === "security-digest" && isSuperAdmin && <SecurityDigestTab authHeaders={authHeaders} />}
       </div>
     </div>
   );
@@ -382,264 +380,6 @@ const DOMAIN_DESCS: Record<string, string> = {
   ms365: "Integrates with outlook, emails, calendar events, and document search.",
   functional_manager: "Coordinates manager approvals, team workload, and feedback.",
 };
-
-// ── Security Digest Tab ────────────────────────────────────────────────────────
-
-interface SnSource { key: string; name: string; category: string; enabled: boolean; }
-interface SnConfig { enabled: boolean; hour: number; recipients: string[]; sources: Record<string, boolean>; }
-
-const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  "General News": Globe,
-  "Threat Intelligence": Shield,
-  "Enterprise Security": Briefcase,
-  "Malware & Threats": AlertTriangle,
-  "Vulnerabilities": ShieldAlert,
-};
-
-export function SecurityDigestTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [cfg, setCfg] = useState<SnConfig | null>(null);
-  const [catalog, setCatalog] = useState<SnSource[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [lastSend, setLastSend] = useState<{ type: "sent" | "no_news"; stories: number; at: string } | null>(null);
-  const [newEmail, setNewEmail] = useState("");
-  const [baseline, setBaseline] = useState<SnConfig | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/it/security-news/config", { headers: authHeaders });
-      if (!res.ok) throw new Error("Failed to load config");
-      const body = await res.json();
-      setCfg(body.config);
-      setBaseline(body.config);
-      setCatalog(body.sources_catalog);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Failed to load security digest config");
-    } finally {
-      setLoading(false);
-    }
-  }, [authHeaders]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const save = async () => {
-    if (!cfg) return;
-    setSaving(true);
-    try {
-      const res = await fetch("/api/it/security-news/config", {
-        method: "PUT", headers: authHeaders, body: JSON.stringify(cfg),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.detail || "Save failed");
-      setCfg(body.config);
-      setBaseline(body.config);
-      flyBanner("Security digest settings saved");
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const sendNow = async () => {
-    setSending(true);
-    try {
-      const res = await fetch("/api/it/security-news/send-now", { method: "POST", headers: authHeaders });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.detail || "Send failed");
-      if (body.status === "no_news") {
-        setLastSend({ type: "no_news", stories: 0, at: new Date().toLocaleTimeString() });
-        toast.info("No new stories in the last 24 hours — nothing to send.");
-      } else {
-        setLastSend({ type: "sent", stories: body.stories, at: new Date().toLocaleTimeString() });
-        flyBanner(`Digest sent — ${body.stories} stories to ${body.recipients.length} recipient${body.recipients.length !== 1 ? "s" : ""}`);
-      }
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Failed to send digest");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const addRecipient = () => {
-    const email = newEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) return;
-    if (cfg?.recipients.includes(email)) { toast.info("Already in list"); return; }
-    setCfg(c => c ? { ...c, recipients: [...c.recipients, email] } : c);
-    setNewEmail("");
-  };
-
-  const removeRecipient = (email: string) => {
-    setCfg(c => c ? { ...c, recipients: c.recipients.filter(r => r !== email) } : c);
-  };
-
-  const toggleSource = (key: string, val: boolean) => {
-    setCfg(c => c ? { ...c, sources: { ...c.sources, [key]: val } } : c);
-  };
-
-  if (loading || !cfg) {
-    return <div className="flex items-center justify-center h-40 text-muted-foreground text-[13px]"><Loader2 className="h-4 w-4 animate-spin mr-2" />Loading…</div>;
-  }
-
-  const dirty = JSON.stringify(cfg) !== JSON.stringify(baseline);
-
-  // Group sources by category
-  const byCategory: Record<string, SnSource[]> = {};
-  for (const s of catalog) {
-    (byCategory[s.category] ??= []).push({ ...s, enabled: cfg.sources[s.key] ?? true });
-  }
-
-  return (
-    <div className="max-w-3xl space-y-6">
-      {/* Status + toggle */}
-      <div className={cn(
-        "rounded-2xl border p-5 transition-all",
-        cfg.enabled ? "border-emerald-500/25 bg-emerald-500/[0.04]" : "border-[var(--border)]/60 bg-secondary/10"
-      )}>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", cfg.enabled ? "bg-emerald-500/15 text-emerald-400" : "bg-secondary text-muted-foreground")}>
-              <Newspaper className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-bold text-foreground">Daily Email Digest</span>
-                <span className={cn("flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border uppercase tracking-wider",
-                  cfg.enabled ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" : "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
-                )}>
-                  <span className={cn("h-1.5 w-1.5 rounded-full", cfg.enabled ? "bg-emerald-400 animate-pulse" : "bg-zinc-500")} />
-                  {cfg.enabled ? "Active" : "Paused"}
-                </span>
-              </div>
-              <p className="mt-0.5 text-[12px] text-muted-foreground">
-                {cfg.enabled ? "Digest is active — recipients will receive it daily at the configured hour." : "Digest is paused — no scheduled emails will go out."}
-              </p>
-            </div>
-          </div>
-          <Toggle on={cfg.enabled} onChange={(v) => setCfg({ ...cfg, enabled: v })} activeColor="bg-emerald-500" inactiveColor="bg-zinc-600" />
-        </div>
-
-        {/* Send hour */}
-        <div className="mt-4 pt-4 border-t border-[var(--border)]/30 flex items-center gap-3">
-          <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-[12px] text-muted-foreground">Send at</span>
-          <select
-            value={cfg.hour}
-            onChange={(e) => setCfg({ ...cfg, hour: Number(e.target.value) })}
-            className="rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[12px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {Array.from({ length: 24 }, (_, i) => (
-              <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
-            ))}
-          </select>
-          <span className="text-[12px] text-muted-foreground">server local time</span>
-        </div>
-
-        {/* Send now */}
-        <div className="mt-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="text-[11px] text-muted-foreground">
-            {lastSend?.type === "sent" ? (
-              <span className="flex items-center gap-1.5 text-emerald-400 font-medium"><Check className="h-3.5 w-3.5" />Sent {lastSend.stories} stories at {lastSend.at}</span>
-            ) : lastSend?.type === "no_news" ? (
-              <span className="flex items-center gap-1.5 text-amber-400 font-medium"><Minus className="h-3.5 w-3.5" />No new stories — checked at {lastSend.at}</span>
-            ) : (
-              <span>Manual trigger — bypasses schedule, sends only if there are new stories.</span>
-            )}
-          </div>
-          <button onClick={sendNow} disabled={sending} className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-card px-4 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none shrink-0">
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            {sending ? "Sending…" : "Send digest now"}
-          </button>
-        </div>
-      </div>
-
-      {/* Recipients */}
-      <div className="rounded-2xl border border-[var(--border)] bg-card p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <Mail className="h-4 w-4 text-primary" />
-          <span className="text-[13px] font-semibold text-foreground">Recipients</span>
-          <span className="ml-auto text-[11px] text-muted-foreground">{cfg.recipients.length} address{cfg.recipients.length !== 1 ? "es" : ""}</span>
-        </div>
-        <div className="space-y-1.5">
-          {cfg.recipients.length === 0 && (
-            <p className="text-[12px] text-muted-foreground italic">No recipients — add at least one to enable the digest.</p>
-          )}
-          {cfg.recipients.map((email) => (
-            <div key={email} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/30 px-3 py-2">
-              <span className="text-[12px] text-foreground font-mono">{email}</span>
-              <button onClick={() => removeRecipient(email)} className="text-muted-foreground hover:text-rose-400 transition-colors">
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-2 pt-1">
-          <input
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addRecipient()}
-            placeholder="email@company.com"
-            className="flex-1 rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-          />
-          <button onClick={addRecipient} className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-secondary px-3 py-2 text-[12px] font-semibold text-foreground hover:bg-secondary/80 active:scale-95 transition-all">
-            <Plus className="h-3.5 w-3.5" />Add
-          </button>
-        </div>
-      </div>
-
-      {/* Sources by category */}
-      <div className="rounded-2xl border border-[var(--border)] bg-card p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Rss className="h-4 w-4 text-primary" />
-          <span className="text-[13px] font-semibold text-foreground">News Sources</span>
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            {Object.values(cfg.sources).filter(Boolean).length} / {catalog.length} enabled
-          </span>
-        </div>
-        {Object.entries(byCategory).map(([cat, sources]) => {
-          const CatIcon = CATEGORY_ICONS[cat] ?? Globe;
-          return (
-            <div key={cat}>
-              <div className="flex items-center gap-1.5 mb-2">
-                <CatIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{cat}</span>
-              </div>
-              <div className="space-y-1.5 pl-5">
-                {sources.map((src) => (
-                  <div key={src.key} className="flex items-center justify-between gap-3 rounded-lg bg-secondary/20 px-3 py-2.5">
-                    <span className="text-[12px] font-medium text-foreground">{src.name}</span>
-                    <Toggle
-                      on={cfg.sources[src.key] ?? true}
-                      onChange={(v) => toggleSource(src.key, v)}
-                      activeColor="bg-emerald-500"
-                      inactiveColor="bg-zinc-600"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Save bar */}
-      {dirty && (
-        <div className="sticky bottom-4 rounded-2xl border border-amber-500/30 bg-background/90 px-5 py-3 shadow-xl backdrop-blur-md flex items-center justify-between gap-4">
-          <span className="text-[12px] text-amber-500 font-semibold flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping" />
-            Unsaved changes
-          </span>
-          <button onClick={save} disabled={saving} className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-[12px] font-semibold text-primary-foreground hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 interface CapCheck {
   checking: boolean;

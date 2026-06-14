@@ -13,14 +13,52 @@ DocumentTemplate field shape: [{name,label,type,required,options?,placeholder?}]
 """
 
 import datetime
+import logging
 
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Employee, FormSubmission, FormTemplate
 from app.services.policy_service import PolicyService
 
+_logger = logging.getLogger(__name__)
+
 # Field input types the dynamic renderer + validator understand.
 _FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"}
+
+# Single generic words that admins sometimes use as "shortcuts" but that match almost every user
+# message (e.g. saving "requests" as a keyword causes ManageEngine to appear for "submit my
+# reimbursement requests"). Multi-word phrases are always allowed.
+_GENERIC_KW_DENYLIST = frozenset({
+    "request", "requests", "report", "reports", "form", "forms",
+    "ticket", "tickets", "apply", "status", "help", "issue", "issues",
+    "new", "portal", "app", "submit", "open", "view", "my",
+})
+
+
+def validate_trigger_keywords(raw: str) -> tuple[bool, str]:
+    """Validate a comma-separated trigger keyword string.
+
+    Returns (True, sanitized_string) on success or (False, error_message) on failure.
+    Single-word entries that are too generic (like 'requests', 'form', 'status') are rejected
+    because they fire for nearly every user message, drowning the intended target.
+    Multi-word phrases are always allowed.
+    """
+    if not raw or not raw.strip():
+        return True, ""
+    bad: list[str] = []
+    for kw in raw.split(","):
+        kw = kw.strip()
+        if not kw:
+            continue
+        if " " not in kw and kw.lower() in _GENERIC_KW_DENYLIST:
+            bad.append(kw)
+    if bad:
+        quoted = ", ".join(f'"{b}"' for b in bad)
+        return False, (
+            f"These single-word trigger keywords are too generic and would match almost every "
+            f"message — please use more specific phrases instead: {quoted}"
+        )
+    return True, raw.strip()
 
 
 # Migration bridge: the seeded "Visitor Pass" / "Parking Request" forms are now rendered through
@@ -174,6 +212,9 @@ class FormLibraryService:
         trigger_keywords = (trigger_keywords or "").strip()
         if not name or not description:
             return {"status": "error", "message": "name and description are required."}
+        kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+        if not kw_ok:
+            return {"status": "error", "message": kw_err}
         ok, err = FormLibraryService._validate_fields(fields)
         if not ok:
             return {"status": "error", "message": err}
@@ -229,6 +270,9 @@ class FormLibraryService:
             if category is not None:
                 row.category = category.strip() or None
             if trigger_keywords is not None:
+                kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+                if not kw_ok:
+                    return {"status": "error", "message": kw_err}
                 row.trigger_keywords = trigger_keywords.strip() or None
             if fields is not None:
                 ok, err = FormLibraryService._validate_fields(fields)
@@ -310,7 +354,8 @@ class FormLibraryService:
 
         query_emb = PolicyService._get_embedding(query)
         if not query_emb:
-            return None  # embedding model unavailable — fall through silently
+            _logger.warning("[FormLibrary.match] Embedding model unavailable — form matching disabled for this request")
+            return None
 
         max_dist = 1.0 - threshold
         db = SessionLocal()
@@ -334,6 +379,7 @@ class FormLibraryService:
             d["similarity"] = round(1.0 - float(dist), 4)
             return d
         except Exception as e:
+            _logger.warning("[FormLibrary.match] DB query failed: %s", e)
             return None
         finally:
             db.close()
@@ -423,11 +469,13 @@ class FormLibraryService:
             db.commit()
 
             # Notify (fail-soft) — explicit notify_email wins, else the default admin inbox.
+            _notified = False
             try:
                 from app.services.email_service import send_form_submission_email
+                import logging as _logging
                 email_rows = [(f.get("label") or f.get("name"), cleaned.get(f.get("name"), ""))
                               for f in (tpl.fields or [])]
-                send_form_submission_email(
+                _notified = send_form_submission_email(
                     user_email=employee_email if not anonymous else "anonymous@form",
                     employee_name="Anonymous" if anonymous else (emp.name if emp else employee_email),
                     employee_email="—" if anonymous else (emp.email if emp else employee_email),
@@ -436,14 +484,17 @@ class FormLibraryService:
                     rows=email_rows,
                     to=tpl.notify_email or None,
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("[form_submit] notification email failed: %s", _e)
 
+            _notif_note = " The team has been notified." if _notified else \
+                " (Note: the admin notification email could not be sent — your submission is recorded.)"
             return {
                 "status": "ok",
                 "reference_id": reference_id,
                 "message": (f"Your **{tpl.name}** request has been submitted. "
-                            f"**Reference: {reference_id}**. The team has been notified."),
+                            f"**Reference: {reference_id}**." + _notif_note),
             }
         except Exception as e:
             db.rollback()

@@ -105,26 +105,26 @@ function BooksCatalog() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-8 py-4 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground flex items-center gap-2">
+          <h1 className="text-[18px] sm:text-[20px] font-semibold text-foreground flex items-center gap-2">
             <BookOpen className="h-5 w-5 text-primary" /> Company Library
           </h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">
+          <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
             Browse available titles and request what you'd like to borrow.
           </p>
         </div>
         <Link
           to="/my-library"
-          className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/10 transition-colors"
+          className="self-start sm:self-auto rounded-lg px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/10 transition-colors"
         >
           My Library →
         </Link>
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 px-8 py-3 border-b border-[var(--border)] shrink-0">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3 border-b border-[var(--border)] shrink-0">
+        <div className="relative flex-1 min-w-[160px] max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
@@ -145,7 +145,7 @@ function BooksCatalog() {
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-2 text-[13px] text-muted-foreground cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-[12px] sm:text-[13px] text-muted-foreground cursor-pointer select-none">
           <input
             type="checkbox"
             checked={availableOnly}
@@ -160,11 +160,11 @@ function BooksCatalog() {
           title="Refresh"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-4 sm:px-8 py-4 sm:py-6">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading catalog…

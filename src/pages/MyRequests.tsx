@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Loader2,
   RefreshCw,
@@ -21,10 +21,14 @@ import {
   Receipt,
   GraduationCap,
   DollarSign,
+  Search,
+  X,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,7 +43,8 @@ type RequestType =
   | "expense"
   | "travel_request"
   | "travel_expense"
-  | "udemy";
+  | "udemy"
+  | "form";
 
 interface RequestItem {
   key: string;
@@ -51,36 +56,26 @@ interface RequestItem {
   priority?: string;
   created_at: string;
   raw: Record<string, unknown>;
+  /** Set only for `type === "form"` — identifies the originating Form Library template. */
+  formTemplateId?: number;
+  formName?: string;
 }
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-const TYPE_BADGE: Record<RequestType, string> = {
-  escalation: "bg-rose-500/15 text-rose-400 border border-rose-500/20",
-  document: "bg-violet-500/15 text-violet-400 border border-violet-500/20",
-  query: "bg-sky-500/15 text-sky-400 border border-sky-500/20",
-  grievance: "bg-amber-500/15 text-amber-400 border border-amber-500/20",
-  facility: "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20",
-  parking: "bg-teal-500/15 text-teal-400 border border-teal-500/20",
-  leave: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
-  expense: "bg-indigo-500/15 text-indigo-400 border border-indigo-500/20",
-  travel_request: "bg-blue-500/15 text-blue-400 border border-blue-500/20",
-  travel_expense: "bg-fuchsia-500/15 text-fuchsia-400 border border-fuchsia-500/20",
-  udemy: "bg-orange-500/15 text-orange-400 border border-orange-500/20",
-};
+// ── Constants & Mappings ──────────────────────────────────────────────────────
 
 const TYPE_LABEL: Record<RequestType, string> = {
   escalation: "Escalation",
-  document: "Document",
+  document: "Document Request",
   query: "HR Query",
   grievance: "Grievance",
-  facility: "Facility Complaint",
-  parking: "Parking Sticker",
+  facility: "Facility Issue",
+  parking: "Parking Permit",
   leave: "Leave Request",
   expense: "Expense Claim",
   travel_request: "Travel Request",
   travel_expense: "Travel Expense",
   udemy: "Udemy License",
+  form: "Form Submission",
 };
 
 const TYPE_ICON: Record<RequestType, React.ElementType> = {
@@ -95,13 +90,35 @@ const TYPE_ICON: Record<RequestType, React.ElementType> = {
   travel_request: Plane,
   travel_expense: Receipt,
   udemy: GraduationCap,
+  form: ClipboardList,
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
-  Low: "bg-zinc-500/15 text-zinc-400",
-  Normal: "bg-zinc-500/15 text-zinc-400",
-  Medium: "bg-amber-500/15 text-amber-400",
-  High: "bg-rose-500/15 text-rose-400",
+  Low: "bg-zinc-500/10 text-zinc-400 border border-zinc-500/15",
+  Normal: "bg-zinc-500/10 text-zinc-400 border border-zinc-500/15",
+  Medium: "bg-amber-500/10 text-amber-500 border border-amber-500/15",
+  High: "bg-rose-500/10 text-rose-500 border border-rose-500/15",
+};
+
+// 4C Domains mapping for requests
+const COLOR_4C: Record<RequestType, { name: string; color: string; border: string; bg: string; text: string }> = {
+  leave: { name: "Collaboration", color: "text-emerald-500", border: "border-l-4 border-l-emerald-500", bg: "bg-emerald-500/10", text: "text-emerald-500" },
+  grievance: { name: "Collaboration", color: "text-emerald-500", border: "border-l-4 border-l-emerald-500", bg: "bg-emerald-500/10", text: "text-emerald-500" },
+  
+  travel_request: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
+  travel_expense: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
+  facility: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
+  parking: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
+  
+  expense: { name: "Capacity", color: "text-pink-500", border: "border-l-4 border-l-pink-500", bg: "bg-pink-500/10", text: "text-pink-500" },
+  udemy: { name: "Capacity", color: "text-pink-500", border: "border-l-4 border-l-pink-500", bg: "bg-pink-500/10", text: "text-pink-500" },
+  
+  escalation: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
+  document: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
+  query: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
+
+  // Admin-defined Form Library submissions — Capacity domain, distinct violet accent.
+  form: { name: "Capacity", color: "text-violet-500", border: "border-l-4 border-l-violet-500", bg: "bg-violet-500/10", text: "text-violet-500" },
 };
 
 type StatusFilter = "all" | "open" | "closed" | "in-progress";
@@ -142,9 +159,25 @@ export function MyRequests() {
   const { user } = useAuth();
   const [items, setItems] = useState<RequestItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<RequestType | "all">("all");
+  // "all" | a static RequestType | `form-<templateId>` for a specific Form Library form.
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
+
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close type dropdown on click outside
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(e.target as Node)) {
+        setTypeDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   // Listen for deep-link filter events dispatched by the chat intercept
   useEffect(() => {
@@ -168,16 +201,15 @@ export function MyRequests() {
     if (!user?.email) return;
     setLoading(true);
     try {
-      // Fetch all request types from the unified endpoint and documents in parallel
       const [reqsRes, docRes] = await Promise.all([
         fetch("/api/employees/me/requests", { headers: authHeaders }),
         fetch("/api/documents/list", { headers: authHeaders }),
       ]);
 
-      const [reqsData, docData] = await Promise.all([
+      const [reqsData, docData] = (await Promise.all([
         reqsRes.ok ? reqsRes.json() : {},
         docRes.ok ? docRes.json() : { results: [] },
-      ]);
+      ])) as [any, any];
 
       const userEmail = user.email.toLowerCase();
 
@@ -194,7 +226,7 @@ export function MyRequests() {
           created_at: String(e.created_at ?? ""),
           raw: e,
         })),
-        // Documents — filter to user-generated or subject
+        // Documents
         ...(docData.results ?? [])
           .filter(
             (d: Record<string, unknown>) =>
@@ -312,6 +344,27 @@ export function MyRequests() {
           created_at: String(u.created_at ?? ""),
           raw: u,
         })),
+        // Dynamic Form Library submissions — one entry per submission, labelled by its form.
+        ...(reqsData.form_submissions ?? []).map((s: Record<string, unknown>) => {
+          const values = (s.field_values ?? {}) as Record<string, unknown>;
+          const preview = Object.values(values)
+            .map((v) => (Array.isArray(v) ? v.join(", ") : String(v ?? "")))
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(" · ");
+          return {
+            key: `form-${s.id}`,
+            type: "form" as RequestType,
+            reference_id: String(s.reference_id ?? `FRM-${s.id}`),
+            subject: String(s.form_name ?? "Form Submission"),
+            description: preview || "No details provided",
+            status: String(s.status ?? "Pending"),
+            created_at: String(s.submitted_at ?? ""),
+            raw: s,
+            formTemplateId: typeof s.form_template_id === "number" ? s.form_template_id : undefined,
+            formName: String(s.form_name ?? "Form Submission"),
+          };
+        }),
       ];
 
       normalized.sort(
@@ -319,7 +372,7 @@ export function MyRequests() {
       );
       setItems(normalized);
     } catch {
-      toast.error("Failed to load your requests");
+      toast.error("Failed to load requests dashboard");
     } finally {
       setLoading(false);
     }
@@ -329,14 +382,28 @@ export function MyRequests() {
     fetchAll();
   }, [fetchAll]);
 
-  // Filtered items
+  // Filtered items (by Type, Status, and Search Query)
   const filtered = useMemo(() => {
     return items.filter((i) => {
-      if (typeFilter !== "all" && i.type !== typeFilter) return false;
+      if (typeFilter !== "all") {
+        if (typeFilter.startsWith("form-")) {
+          // A specific Form Library form selected.
+          if (!(i.type === "form" && `form-${i.formTemplateId}` === typeFilter)) return false;
+        } else if (i.type !== typeFilter) {
+          return false;
+        }
+      }
       if (!matchesStatusFilter(i.status, statusFilter)) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const subjectMatch = i.subject.toLowerCase().includes(q);
+        const refMatch = i.reference_id.toLowerCase().includes(q);
+        const descMatch = i.description.toLowerCase().includes(q);
+        if (!subjectMatch && !refMatch && !descMatch) return false;
+      }
       return true;
     });
-  }, [items, typeFilter, statusFilter]);
+  }, [items, typeFilter, statusFilter, searchQuery]);
 
   // Type counts
   const counts = {
@@ -352,7 +419,22 @@ export function MyRequests() {
     travel_request: items.filter((i) => i.type === "travel_request").length,
     travel_expense: items.filter((i) => i.type === "travel_expense").length,
     udemy: items.filter((i) => i.type === "udemy").length,
+    form: items.filter((i) => i.type === "form").length,
   };
+
+  // Distinct Form Library forms the user has submitted — each becomes its own filter option,
+  // so any new admin-defined form shows up here automatically once it's been submitted.
+  const formGroups = useMemo(() => {
+    const m = new Map<number, { id: number; name: string; count: number }>();
+    for (const i of items) {
+      if (i.type === "form" && typeof i.formTemplateId === "number") {
+        const g = m.get(i.formTemplateId);
+        if (g) g.count += 1;
+        else m.set(i.formTemplateId, { id: i.formTemplateId, name: i.formName || "Form", count: 1 });
+      }
+    }
+    return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [items]);
 
   // Status counts
   const statusCounts = {
@@ -362,228 +444,320 @@ export function MyRequests() {
     closed: items.filter((i) => matchesStatusFilter(i.status, "closed")).length,
   };
 
-  // Stat cards
-  const STATS: {
-    type: RequestType;
-    label: string;
-    icon: React.ElementType;
-    color: string;
-    bg: string;
-  }[] = [
-    { type: "leave", label: "Leaves", icon: CalendarDays, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-    { type: "travel_request", label: "Travel Requests", icon: Plane, color: "text-blue-400", bg: "bg-blue-500/10" },
-    { type: "travel_expense", label: "Travel Expenses", icon: Receipt, color: "text-fuchsia-400", bg: "bg-fuchsia-500/10" },
-    { type: "expense", label: "Expense Claims", icon: DollarSign, color: "text-indigo-400", bg: "bg-indigo-500/10" },
-    { type: "udemy", label: "Udemy Licenses", icon: GraduationCap, color: "text-orange-400", bg: "bg-orange-500/10" },
-    { type: "facility", label: "Facility", icon: Wrench, color: "text-cyan-400", bg: "bg-cyan-500/10" },
-    { type: "parking", label: "Parking", icon: Car, color: "text-teal-400", bg: "bg-teal-500/10" },
-    { type: "query", label: "HR Queries", icon: MessageSquare, color: "text-sky-400", bg: "bg-sky-500/10" },
-  ];
-
-  const TYPE_PILLS: { key: RequestType | "all"; label: string }[] = [
-    { key: "all", label: `All (${counts.all})` },
+  const TYPE_OPTIONS: { key: string; label: string }[] = [
+    { key: "all", label: `All Requests (${counts.all})` },
     { key: "leave", label: `Leaves (${counts.leave})` },
     { key: "travel_request", label: `Travel Requests (${counts.travel_request})` },
     { key: "travel_expense", label: `Travel Expenses (${counts.travel_expense})` },
     { key: "expense", label: `Expense Claims (${counts.expense})` },
-    { key: "udemy", label: `Udemy (${counts.udemy})` },
-    { key: "facility", label: `Facility (${counts.facility})` },
-    { key: "parking", label: `Parking (${counts.parking})` },
+    { key: "udemy", label: `Udemy Licenses (${counts.udemy})` },
+    { key: "facility", label: `Facility Issues (${counts.facility})` },
+    { key: "parking", label: `Parking Permits (${counts.parking})` },
     { key: "query", label: `HR Queries (${counts.query})` },
     { key: "escalation", label: `Escalations (${counts.escalation})` },
     { key: "grievance", label: `Grievances (${counts.grievance})` },
     { key: "document", label: `Documents (${counts.document})` },
+    // One option per Form Library form the user has submitted (added automatically).
+    ...formGroups.map((g) => ({ key: `form-${g.id}`, label: `${g.name} (${g.count})` })),
   ];
 
-  // Table rows
-  const tableRows: JSX.Element[] = [];
-  filtered.forEach((item) => {
-    const isExpanded = expanded === item.key;
-    const TIcon = TYPE_ICON[item.type];
-    tableRows.push(
-      <tr
-        key={item.key}
-        onClick={() => setExpanded(isExpanded ? null : item.key)}
-        className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors cursor-pointer"
-      >
-        <td className="py-3.5 pr-4">
-          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1", TYPE_BADGE[item.type])}>
-            <TIcon className="h-3 w-3" />
-            {TYPE_LABEL[item.type]}
-          </span>
-        </td>
-        <td className="py-3.5 pr-4 text-[12px] text-foreground/60 font-mono whitespace-nowrap">
-          {item.reference_id || "—"}
-        </td>
-        <td className="py-3.5 pr-4 max-w-[280px]">
-          <div className="text-[13px] font-medium text-foreground truncate">{item.subject}</div>
-          {item.description && (
-            <div className="text-[11px] text-muted-foreground truncate">{item.description}</div>
-          )}
-        </td>
-        <td className="py-3.5 pr-4">
-          {item.priority ? (
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                PRIORITY_BADGE[item.priority] ?? "bg-zinc-500/15 text-zinc-400"
-              )}
-            >
-              {item.priority}
-            </span>
-          ) : (
-            <span className="text-muted-foreground/30 text-[13px]">—</span>
-          )}
-        </td>
-        <td className="py-3.5 pr-4">
-          <StatusBadge status={item.status} />
-        </td>
-        <td className="py-3.5 pr-4 text-[12px] text-muted-foreground/60 whitespace-nowrap">
-          {item.created_at ? item.created_at.slice(0, 10) : "—"}
-        </td>
-        <td className="py-3.5 pr-2 text-muted-foreground/50">
-          <ChevronDown
-            className={cn("h-3.5 w-3.5 transition-transform duration-150", isExpanded && "rotate-180")}
-          />
-        </td>
-      </tr>
-    );
-    if (isExpanded) {
-      tableRows.push(
-        <tr key={`${item.key}-panel`}>
-          <td colSpan={7} className="p-0">
-            <DetailPanel item={item} />
-          </td>
-        </tr>
-      );
-    }
-  });
+  // Label shown on the collapsed dropdown button for the active type filter.
+  const activeTypeLabel =
+    typeFilter === "all"
+      ? "All Request Types"
+      : (TYPE_OPTIONS.find((o) => o.key === typeFilter)?.label.split(" (")[0] ??
+        TYPE_LABEL[typeFilter as RequestType] ??
+        "Filtered");
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden relative select-none">
+      
+      {/* Decorative corporate hex mesh overlay */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent pointer-events-none -z-10" />
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.02] -z-10"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0 L60 15 L60 45 L30 60 L0 45 L0 15 Z' fill='none' stroke='currentColor' stroke-width='1'/%3E%3C/svg%3E")`,
+          backgroundSize: "60px 60px",
+        }}
+      />
+
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-8 py-4 sm:py-6 border-b border-border/40 shrink-0 gap-4">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground">My Requests</h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">
-            Track all your submitted requests, leaves, travel, expenses, and facility queries
+          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-foreground">My Requests</h1>
+          <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground mt-0.5 font-medium">
+            Monitor and track your leaves, expenses, travel bookings, and support tickets in one place.
           </p>
         </div>
         <button
           onClick={fetchAll}
-          className="flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] text-muted-foreground hover:bg-secondary transition-colors shrink-0 border border-[var(--border)]"
+          className="self-start sm:self-auto flex items-center gap-2 rounded-xl px-3 py-1.5 sm:px-4 sm:py-2 text-xs font-semibold text-foreground/80 hover:text-foreground bg-muted/40 hover:bg-muted/70 transition-all border border-border/50 shadow-sm cursor-pointer"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
+          <span>Refresh</span>
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 px-8 py-4 shrink-0 overflow-x-auto">
-        {STATS.map(({ type, label, icon: Icon, color, bg }) => (
-          <button
-            key={type}
-            onClick={() => setTypeFilter(typeFilter === type ? "all" : type)}
-            className={cn(
-              "rounded-xl border border-[var(--border)] bg-card/40 px-4 py-3 flex items-center gap-3 text-left transition-colors hover:bg-card/70 shrink-0 min-w-[130px]",
-              typeFilter === type && "ring-2 ring-primary/30 bg-primary/5"
+      {/* Redesigned Unified Control Row */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between px-4 sm:px-8 py-4 shrink-0 gap-4 border-b border-border/30 bg-muted/5">
+        
+        {/* Left Side: Status Tabs (All, Open, In Progress, Closed) */}
+        <div className="flex overflow-x-auto no-scrollbar flex-nowrap gap-1 bg-muted/40 p-1 rounded-2xl border border-border/40 w-full lg:w-auto relative select-none">
+          {STATUS_FILTERS.map((f) => {
+            const active = statusFilter === f.key;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setStatusFilter(f.key)}
+                className={cn(
+                  "relative flex-initial flex items-center justify-center gap-1 sm:gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 whitespace-nowrap",
+                  active
+                    ? "text-primary shadow-sm bg-background border border-border/60"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <f.icon className="h-3.5 w-3.5 shrink-0 hidden sm:inline-block" />
+                <span>{f.key === "in-progress" ? <><span className="hidden sm:inline">In </span>Progress</> : f.label}</span>
+                <span className={cn(
+                  "text-[9px] font-black rounded-full px-1.5 py-0.5 shrink-0",
+                  active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                )}>
+                  {statusCounts[f.key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right Side: Search Input + Custom Popover Filter Dropdown */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
+          {/* Search Field */}
+          <div className="relative flex items-center w-full sm:w-64">
+            <Search className="absolute left-3.5 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search request ID or title..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-muted/30 border border-border/50 hover:border-primary/20 focus:border-primary/45 focus:bg-background text-xs text-foreground placeholder:text-muted-foreground/60 rounded-xl pl-9.5 pr-8.5 py-2.5 focus:outline-none transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 p-1 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-all cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             )}
-          >
-            <div className={cn("rounded-lg p-2 shrink-0", bg, color)}>
-              <Icon className="h-4 w-4" />
-            </div>
-            <div>
-              <p className={cn("text-[18px] font-bold leading-tight", color)}>
-                {counts[type]}
-              </p>
-              <p className="text-[10px] text-muted-foreground leading-tight truncate">{label}</p>
-            </div>
-          </button>
-        ))}
-      </div>
+          </div>
 
-      {/* Filters */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between px-8 pb-3 gap-3 shrink-0">
-        <div className="flex gap-1.5 flex-wrap">
-          {TYPE_PILLS.map(({ key, label }) => (
+          {/* Type popover dropdown */}
+          <div className="relative w-full sm:w-56" ref={typeDropdownRef}>
             <button
-              key={key}
-              onClick={() => setTypeFilter(key)}
-              className={cn(
-                "rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
-                typeFilter === key
-                  ? "bg-primary/15 text-primary"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              )}
+              onClick={() => setTypeDropdownOpen(!typeDropdownOpen)}
+              className="w-full flex items-center justify-between gap-2.5 rounded-xl border border-border/60 bg-card/45 hover:bg-muted/40 px-4 py-2.5 text-xs font-semibold text-foreground/80 hover:text-foreground transition-all cursor-pointer shadow-sm"
             >
-              {label}
+              <div className="flex items-center gap-2 truncate">
+                <Filter className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span className="truncate">{activeTypeLabel}</span>
+              </div>
+              <ChevronDown className={cn("h-3.5 w-3.5 opacity-55 transition-transform duration-200", typeDropdownOpen && "rotate-180")} />
             </button>
-          ))}
+
+            <AnimatePresence>
+              {typeDropdownOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute right-0 mt-2 w-full sm:w-64 z-20 rounded-2xl border border-border/60 bg-popover/95 backdrop-blur-xl p-2 shadow-2xl max-h-72 overflow-y-auto no-scrollbar"
+                >
+                  <div className="px-3.5 py-1.5 border-b border-border/40 mb-1 flex items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
+                      Filter by Category
+                    </span>
+                  </div>
+
+                  {TYPE_OPTIONS.map((opt) => {
+                    const active = typeFilter === opt.key;
+                    const TIcon =
+                      opt.key === "all"
+                        ? Filter
+                        : opt.key.startsWith("form-")
+                          ? ClipboardList
+                          : TYPE_ICON[opt.key as RequestType];
+
+                    return (
+                      <button
+                        key={opt.key}
+                        onClick={() => {
+                          setTypeFilter(opt.key);
+                          setTypeDropdownOpen(false);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between gap-2 px-3 py-2 text-xs rounded-xl transition-all text-left",
+                          active
+                            ? "bg-primary/10 text-primary font-bold"
+                            : "text-foreground/75 hover:bg-muted/65 hover:text-foreground"
+                        )}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <TIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground/70")} />
+                          <span className="truncate">{opt.label.split(" (")[0]}</span>
+                        </div>
+                        <span className={cn(
+                          "text-[9px] font-black rounded-full px-1.5 py-0.5",
+                          active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                        )}>
+                          {opt.label.includes("(") ? opt.label.match(/\((\d+)\)/)?.[1] : counts.all}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        {/* Status filter */}
-        <div className="flex gap-1 items-center self-end md:self-auto">
-          {STATUS_FILTERS.map(({ key, label, icon: SIcon }) => (
-            <button
-              key={key}
-              onClick={() => setStatusFilter(key)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors",
-                statusFilter === key
-                  ? "bg-primary/15 text-primary border border-primary/20"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground border border-transparent"
-              )}
-            >
-              <SIcon className="h-3 w-3" />
-              {label}
-              <span className={cn(
-                "text-[9px] font-bold rounded-full px-1.5 py-0.5 min-w-[16px] text-center",
-                statusFilter === key
-                  ? "bg-primary/20 text-primary"
-                  : "bg-secondary text-muted-foreground"
-              )}>
-                {statusCounts[key]}
-              </span>
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto px-8 pb-8">
+      {/* Redesigned Cards Grid List */}
+      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 sm:py-6 no-scrollbar">
         {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="flex h-56 items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col h-40 items-center justify-center gap-2 text-muted-foreground">
-            <Inbox className="h-5 w-5" />
-            <span className="text-[13px]">
+          <div className="flex flex-col h-56 items-center justify-center gap-2 text-muted-foreground/60">
+            <Inbox className="h-7 w-7 opacity-75" />
+            <span className="text-xs font-semibold">
               {items.length === 0
                 ? "You haven't submitted any requests yet"
-                : "No requests match the current filters"}
+                : "No requests matching the active filters"}
             </span>
           </div>
         ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {["Type", "Reference", "Subject", "Priority", "Status", "Date", ""].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
+          <div className="space-y-4 max-w-6xl mx-auto pb-12">
+            {filtered.map((item) => {
+              const isExpanded = expanded === item.key;
+              const meta4C = COLOR_4C[item.type];
+              const TIcon = TYPE_ICON[item.type];
+
+              return (
+                <div
+                  key={item.key}
+                  className={cn(
+                    "border border-border/40 bg-card/45 backdrop-blur-md rounded-2xl overflow-hidden transition-all duration-200",
+                    isExpanded
+                      ? "shadow-xl border-primary/20 ring-1 ring-primary/5 bg-card/85"
+                      : "hover:scale-[1.008] hover:bg-card/75 hover:shadow-md"
+                  )}
+                >
+                  {/* Card Main Summary Header */}
+                  <div
+                    onClick={() => setExpanded(isExpanded ? null : item.key)}
+                    className={cn(
+                      "p-4 md:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer select-none",
+                      meta4C?.border
+                    )}
                   >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>{tableRows}</tbody>
-          </table>
+                    {/* Left Details */}
+                    <div className="flex items-center gap-4 min-w-0 flex-1">
+                      <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner", meta4C?.bg)}>
+                        <TIcon className={cn("h-5 w-5", meta4C?.color)} />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className={cn("text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full border", badgeClass(meta4C.name))}>
+                            {meta4C.name} • {TYPE_LABEL[item.type]}
+                          </span>
+                          <span className="text-[10px] font-bold text-muted-foreground font-mono">
+                            {item.reference_id}
+                          </span>
+                          {item.priority && (
+                            <span className={cn("rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider md:hidden", PRIORITY_BADGE[item.priority])}>
+                              {item.priority}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-[13px] md:text-sm font-bold text-foreground truncate">{item.subject}</h3>
+                        <p className="text-xs text-muted-foreground truncate font-medium">{item.description}</p>
+                      </div>
+                    </div>
+
+                    {/* Middle: Priority & Theme Info */}
+                    <div className="hidden md:flex items-center gap-3 shrink-0">
+                      {item.priority ? (
+                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", PRIORITY_BADGE[item.priority])}>
+                          {item.priority}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/30 text-xs font-semibold">—</span>
+                      )}
+                    </div>
+
+                    {/* Right: Status, Date & Chevron */}
+                    <div className="flex items-center justify-between md:justify-end gap-5 shrink-0 border-t md:border-t-0 border-border/30 pt-3.5 md:pt-0">
+                      <div className="text-left md:text-right space-y-0.5">
+                        <StatusBadge status={item.status} className="px-2.5 py-0.5 text-[11px] font-bold shadow-xs" />
+                        <p className="text-[10px] text-muted-foreground/70 font-semibold">
+                          {item.created_at ? item.created_at.slice(0, 10) : "—"}
+                        </p>
+                      </div>
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 text-muted-foreground/50 transition-all duration-200 shrink-0",
+                          isExpanded && "rotate-180 text-primary"
+                        )}
+                      />
+                    </div>
+
+                  </div>
+
+                  {/* Expanded Detail Panel */}
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2, ease: "easeInOut" }}
+                        className="border-t border-border/40"
+                      >
+                        <DetailPanel item={item} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
+
     </div>
   );
+}
+
+// Turn a stored snake_case field name into a readable label ("vehicle_number" → "Vehicle Number").
+function humanizeFieldName(name: string): string {
+  return name
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// 4C pill color codes helpers
+function badgeClass(domainName: string) {
+  if (domainName === "Collaboration") return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
+  if (domainName === "Connectivity") return "bg-cyan-500/10 text-cyan-500 border-cyan-500/20";
+  if (domainName === "Capacity") return "bg-pink-500/10 text-pink-500 border-pink-500/20";
+  return "bg-indigo-500/10 text-indigo-500 border-indigo-500/20";
 }
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
@@ -594,19 +768,21 @@ function DetailPanel({ item }: { item: RequestItem }) {
 
   const Detail = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value ? (
-      <div>
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-0.5">{label}</p>
-        <p className="text-[13px] text-foreground leading-relaxed">{value}</p>
+      <div className="space-y-0.5">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">{label}</p>
+        <p className="text-xs font-semibold text-foreground leading-relaxed">{value}</p>
       </div>
     ) : null;
 
   return (
-    <div className="flex gap-8 px-8 py-5 bg-muted/20 border-b border-[var(--border)]">
-      <div className="flex-1 min-w-0 space-y-3">
+    <div className="flex flex-col md:flex-row gap-6 p-5 md:p-6 bg-muted/15 border-t border-border/20 select-none">
+      
+      {/* Detailed Fields */}
+      <div className="flex-1 min-w-0 space-y-4">
         {item.type === "escalation" && (
           <>
             {raw.error_type && (
-              <span className="inline-block rounded-full bg-rose-500/15 text-rose-400 px-2.5 py-0.5 text-[11px] font-semibold capitalize">
+              <span className="inline-block rounded-full bg-rose-500/15 text-rose-400 px-2.5 py-0.5 text-[11px] font-semibold capitalize border border-rose-500/20">
                 {String(raw.error_type).replace(/_/g, " ")}
               </span>
             )}
@@ -631,10 +807,10 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "query" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-sky-500/15 text-sky-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-sky-500/15 text-sky-400 rounded-full px-2.5 py-0.5 border border-sky-500/20">
                 {String(raw.category || "")}
               </span>
-              {raw.priority && (
+              {!!raw.priority && (
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
@@ -648,15 +824,15 @@ function DetailPanel({ item }: { item: RequestItem }) {
             <Detail label="Subject" value={String(raw.subject || "")} />
             <Detail label="Description" value={String(raw.description || "")} />
             {raw.response && (
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-bold mb-1">
                   Response
                 </p>
-                <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-3 py-2 text-[12px] text-foreground/80 leading-relaxed">
+                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/15 px-3.5 py-2.5 text-xs text-foreground/80 leading-relaxed font-semibold">
                   {String(raw.response)}
                 </div>
-                {raw.responded_by && (
-                  <p className="text-[11px] text-muted-foreground/40 mt-1">
+                {!!raw.responded_by && (
+                  <p className="text-[10px] text-muted-foreground/50 mt-1 font-semibold">
                     by {String(raw.responded_by)}
                     {raw.responded_at ? ` · ${String(raw.responded_at).slice(0, 10)}` : ""}
                   </p>
@@ -669,22 +845,22 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "grievance" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-amber-500/15 text-amber-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-amber-500/15 text-amber-400 rounded-full px-2.5 py-0.5 border border-amber-500/20">
                 {String(raw.category || "")}
               </span>
-              {raw.is_anonymous && (
-                <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5">
+              {!!raw.is_anonymous && (
+                <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5 border border-zinc-500/20">
                   Anonymous
                 </span>
               )}
             </div>
             <Detail label="Description" value={String(raw.description || "")} />
             {raw.resolution_notes && (
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-bold">
                   Resolution Notes
                 </p>
-                <div className="rounded-lg bg-white/5 border border-[var(--border)] px-3 py-2 text-[12px] text-foreground/80 leading-relaxed">
+                <div className="rounded-xl bg-card border border-border/50 px-3.5 py-2.5 text-xs text-foreground/85 leading-relaxed font-semibold">
                   {String(raw.resolution_notes)}
                 </div>
               </div>
@@ -695,10 +871,10 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "facility" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-cyan-500/15 text-cyan-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-cyan-500/15 text-cyan-400 rounded-full px-2.5 py-0.5 border border-cyan-500/20">
                 {String(raw.category || "General")}
               </span>
-              {raw.priority && (
+              {!!raw.priority && (
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
@@ -712,11 +888,11 @@ function DetailPanel({ item }: { item: RequestItem }) {
             <Detail label="Location" value={String(raw.location || "—")} />
             <Detail label="Description" value={String(raw.description || "—")} />
             {raw.resolution_notes && (
-              <div>
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-bold">
                   Resolution Notes
                 </p>
-                <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-3 py-2 text-[12px] text-foreground/80 leading-relaxed">
+                <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/15 px-3.5 py-2.5 text-xs text-foreground/80 leading-relaxed font-semibold">
                   {String(raw.resolution_notes)}
                 </div>
               </div>
@@ -727,17 +903,17 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "parking" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-teal-500/15 text-teal-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-teal-500/15 text-teal-400 rounded-full px-2.5 py-0.5 border border-teal-500/20">
                 {String(raw.vehicle_type || "Vehicle")}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="Vehicle Details" value={`${raw.vehicle_make || ""} ${raw.vehicle_model || ""}`.trim() || "—"} />
               <Detail label="Vehicle Number" value={String(raw.vehicle_number || "—")} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="Sticker Number" value={String(raw.sticker_number || "Pending")} />
-              {raw.valid_from && (
+              {!!raw.valid_from && (
                 <Detail
                   label="Validity Period"
                   value={`${String(raw.valid_from).slice(0, 10)} to ${raw.valid_until ? String(raw.valid_until).slice(0, 10) : "—"}`}
@@ -750,14 +926,14 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "leave" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 rounded-full px-2.5 py-0.5 border border-emerald-500/20">
                 {String(raw.leave_type || "Leave")}
               </span>
-              <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5">
-                {raw.days} Day(s)
+              <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5 border border-zinc-500/20">
+                {String(raw.days ?? "")} Day(s)
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="Start Date" value={raw.start_date ? String(raw.start_date).slice(0, 10) : "—"} />
               <Detail label="End Date" value={raw.end_date ? String(raw.end_date).slice(0, 10) : "—"} />
             </div>
@@ -768,11 +944,11 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "expense" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-indigo-500/15 text-indigo-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-indigo-500/15 text-indigo-400 rounded-full px-2.5 py-0.5 border border-indigo-500/20">
                 {String(raw.type || "Reimbursement")}
               </span>
-              <span className="text-[11px] font-bold bg-white/5 border border-[var(--border)] rounded-full px-2.5 py-0.5">
-                ${raw.amount}
+              <span className="text-[11px] font-bold bg-white/5 border border-border/50 rounded-full px-2.5 py-0.5">
+                ${String(raw.amount ?? "")}
               </span>
             </div>
             <Detail label="Reason" value={String(raw.reason || "—")} />
@@ -785,38 +961,38 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "travel_request" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={cn("text-[11px] font-semibold rounded-full px-2.5 py-0.5", raw.is_international ? "bg-fuchsia-500/15 text-fuchsia-400" : "bg-blue-500/15 text-blue-400")}>
+              <span className={cn("text-[11px] font-semibold rounded-full px-2.5 py-0.5 border", raw.is_international ? "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20" : "bg-blue-500/15 text-blue-400 border-blue-500/20")}>
                 {raw.is_international ? "International Travel" : "Domestic Travel"}
               </span>
-              <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5 border border-zinc-500/20">
                 Mode: {String(raw.mode_of_travel || "—")}
               </span>
-              {raw.accommodation_required && (
-                <span className="text-[11px] bg-cyan-500/15 text-cyan-400 rounded-full px-2.5 py-0.5">
+              {!!raw.accommodation_required && (
+                <span className="text-[11px] bg-cyan-500/15 text-cyan-400 rounded-full px-2.5 py-0.5 border border-cyan-500/20">
                   Hotel Required
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="From" value={String(raw.from_location || "—")} />
               <Detail label="Destination" value={String(raw.to_destination || "—")} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="Travel Date" value={raw.travel_date ? String(raw.travel_date).slice(0, 10) : "—"} />
               <Detail label="Return Date" value={raw.return_date ? String(raw.return_date).slice(0, 10) : "—"} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Detail label="Estimated Cost" value={raw.estimated_cost ? `$${raw.estimated_cost}` : "—"} />
               <Detail label="Expense Limit Allocated" value={raw.expense_limit ? `${raw.expense_limit_currency || "INR"} ${raw.expense_limit.toLocaleString()}` : "—"} />
             </div>
             {raw.notes && <Detail label="Travel Justification/Notes" value={String(raw.notes)} />}
             {(raw.ticket_details || raw.hotel_details || raw.visa_status) && (
-              <div className="border-t border-[var(--border)] pt-2.5 mt-2 space-y-2">
-                <p className="text-[11px] font-semibold text-foreground">Travel Booking Details</p>
-                <div className="grid grid-cols-3 gap-4">
+              <div className="border-t border-border/40 pt-3 mt-1.5 space-y-2">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">Booking Details</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-muted/40 p-3 rounded-xl border border-border/40">
                   <Detail label="Ticket Details" value={String(raw.ticket_details || "—")} />
                   <Detail label="Hotel Details" value={String(raw.hotel_details || "—")} />
-                  {raw.visa_required && (
+                  {!!raw.visa_required && (
                     <Detail label="Visa Status" value={String(raw.visa_status || "Pending")} />
                   )}
                 </div>
@@ -828,13 +1004,13 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "travel_expense" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-fuchsia-500/15 text-fuchsia-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-fuchsia-500/15 text-fuchsia-400 rounded-full px-2.5 py-0.5 border border-fuchsia-500/20">
                 Travel Expense Claim
               </span>
-              <span className="text-[11px] font-bold bg-white/5 border border-[var(--border)] rounded-full px-2.5 py-0.5">
-                Claim Amount: ${raw.amount}
+              <span className="text-[11px] font-bold bg-white/5 border border-border/50 rounded-full px-2.5 py-0.5">
+                Claim Amount: ${String(raw.amount ?? "")}
               </span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-[11px] text-muted-foreground font-semibold">
                 Req ID: {String(raw.travel_request_id || "—")}
               </span>
             </div>
@@ -846,8 +1022,8 @@ function DetailPanel({ item }: { item: RequestItem }) {
               <Detail label="Approved/Processed By" value={String(raw.approved_by)} />
             )}
             {raw.rejection_reason && (
-              <div className="rounded-lg bg-rose-500/5 border border-rose-500/15 px-3 py-2 text-[12px] text-rose-400 mt-2">
-                <p className="text-[10px] uppercase tracking-wide text-rose-400/60 mb-0.5">Rejection Reason</p>
+              <div className="rounded-xl bg-rose-500/5 border border-rose-500/15 p-3.5 text-xs text-rose-500 mt-2 font-semibold">
+                <p className="text-[10px] uppercase tracking-wide text-rose-500/60 mb-1 font-bold">Rejection Reason</p>
                 {String(raw.rejection_reason)}
               </div>
             )}
@@ -857,7 +1033,7 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "udemy" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-400 rounded-full px-2.5 py-0.5">
+              <span className="text-[11px] font-semibold bg-orange-500/15 text-orange-400 rounded-full px-2.5 py-0.5 border border-orange-500/20">
                 {String(raw.platform || "Udemy")}
               </span>
             </div>
@@ -867,32 +1043,76 @@ function DetailPanel({ item }: { item: RequestItem }) {
               <Detail label="Decided By" value={String(raw.decided_by)} />
             )}
             {raw.decision_reason && (
-              <div className="rounded-lg bg-white/5 border border-[var(--border)] px-3 py-2 text-[12px] text-foreground/80 leading-relaxed mt-2">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-0.5">Decision Details</p>
+              <div className="rounded-xl bg-card border border-border/50 p-3.5 text-xs text-foreground/80 leading-relaxed mt-2 font-semibold">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1 font-bold">Decision Details</p>
                 {String(raw.decision_reason)}
+              </div>
+            )}
+          </>
+        )}
+
+        {item.type === "form" && (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-semibold bg-violet-500/15 text-violet-400 rounded-full px-2.5 py-0.5 border border-violet-500/20">
+                {String(raw.form_name || "Form")}
+              </span>
+              {!!raw.category && (
+                <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5 border border-zinc-500/20">
+                  {String(raw.category)}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {Object.entries((raw.field_values ?? {}) as Record<string, unknown>).map(
+                ([k, v]) => (
+                  <Detail
+                    key={k}
+                    label={humanizeFieldName(k)}
+                    value={Array.isArray(v) ? v.join(", ") : String(v ?? "—")}
+                  />
+                ),
+              )}
+            </div>
+            {!!raw.admin_remarks && (
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-bold">
+                  Admin Remarks
+                </p>
+                <div className="rounded-xl bg-card border border-border/50 px-3.5 py-2.5 text-xs text-foreground/85 leading-relaxed font-semibold">
+                  {String(raw.admin_remarks)}
+                  {!!raw.reviewed_by && (
+                    <p className="text-[10px] text-muted-foreground/50 mt-1 font-semibold">
+                      by {String(raw.reviewed_by)}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* Status indicator on right side */}
-      <div className="w-48 shrink-0 flex flex-col items-start gap-2">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60">Current Status</p>
-        <StatusBadge status={item.status} className="px-3 py-1.5 text-[12px]" />
+      {/* Right side: Status and Submission Time stamps */}
+      <div className="w-full md:w-48 shrink-0 flex flex-col items-start gap-3 border-t md:border-t-0 md:border-l border-border/20 pt-4 md:pt-0 md:pl-6">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-1">Current Status</p>
+          <StatusBadge status={item.status} className="px-3 py-1 text-xs font-bold shadow-xs" />
+        </div>
         {isFinal && (
-          <div className="flex items-center gap-1.5 text-emerald-400 text-[12px] mt-1">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            <span>This request has been resolved</span>
+          <div className="flex items-center gap-1.5 text-emerald-500 text-xs mt-1 font-semibold">
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Resolved</span>
           </div>
         )}
         {item.created_at && (
-          <div className="mt-2">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-0.5">Submitted</p>
-            <p className="text-[12px] text-foreground/70">{item.created_at.slice(0, 10)}</p>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-0.5">Submitted On</p>
+            <p className="text-xs text-foreground/75 font-semibold">{item.created_at.slice(0, 10)}</p>
           </div>
         )}
       </div>
+
     </div>
   );
 }

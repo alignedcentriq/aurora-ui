@@ -24,6 +24,8 @@ import { TravelRequestForm } from "./TravelRequestForm";
 import { TravelExpenseForm } from "./TravelExpenseForm";
 import { DynamicFormWidget } from "./DynamicFormWidget";
 import { ChoiceWidget } from "./ChoiceWidget";
+import { QuickChoicePanel } from "./QuickChoicePanel";
+import { FormBuilderWidget } from "./FormBuilderWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { CancelLeaveWidget } from "./CancelLeaveWidget";
@@ -45,7 +47,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
 
-import type { Turn } from "@/lib/chat-store";
+import type { Turn, DynamicFormField } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
 import { useQuickQueries } from "@/hooks/useQuickQueries";
 import { Search } from "lucide-react";
@@ -166,7 +168,7 @@ const DOC_GEN_RE = /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:
 const MY_REQUESTS_VIEW_RE = /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
 
 export function AssistantView() {
-  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread, togglePrivate } =
+  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
   // The active chat is "thinking" only if it is the thread currently generating a response
   // (pre-first-token phase — drives the ThinkingBuddy bubble).
@@ -184,7 +186,10 @@ export function AssistantView() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   // URL Library links — pre-fetched once so the leave intercept can resolve a Zoho URL synchronously.
   const urlLinksRef = useRef<{ name: string; url: string; purpose?: string; trigger_keywords?: string }[]>([]);
-  const formsRef = useRef<{ id: number; name: string; description: string; fields: unknown[]; trigger_keywords?: string }[]>([]);
+  const formsRef = useRef<{ id: number; name: string; description: string; fields: DynamicFormField[]; trigger_keywords?: string }[]>([]);
+  // Last form created/edited via the assistant this session — lets follow-up edit requests
+  // ("add a phone field", "make email required") target it without the admin naming it.
+  const lastFormRef = useRef<{ id: number; name: string } | null>(null);
   const [showDocModal, setShowDocModal] = useState(false);
   const [docType, setDocType] = useState("project_status_report");
   const [docTitle, setDocTitle] = useState("");
@@ -302,6 +307,16 @@ export function AssistantView() {
 
 
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
+
+  // The newest unanswered quick-choice — rendered as a panel docked above the composer
+  // (Claude-style) instead of a card buried in the message stream. Once the user replies,
+  // the turn is no longer last and the options collapse back into the history bubble.
+  const lastTurn =
+    activeThread.turns.length > 0 ? activeThread.turns[activeThread.turns.length - 1] : undefined;
+  const pendingChoice =
+    lastTurn?.role === "ai" && lastTurn.interactive?.type === "quick_choice" && lastTurn.interactive.data
+      ? (lastTurn.interactive.data as import("@/lib/chat-store").QuickChoiceData)
+      : null;
 
   // Scroll handling
   useEffect(() => {
@@ -722,10 +737,185 @@ export function AssistantView() {
         return;
       }
 
+      // Information-style questions ("what is the process for reporting…", "how do I…",
+      // "what's the policy on…") must reach the backend so the policy/HR agents can actually
+      // answer them. The leave/URL-link interceptors below are for ACTION intents only —
+      // hijacking a question with an "Open X portal?" card is a misroute.
+      const isInfoQuery =
+        /\bwhat(?:'s|\s+is|\s+are)?\s|\bhow\s+(?:do|can|does|should|to)\b|\bwhy\b|\bexplain\b|\btell\s+me\b|\bprocess\s+(?:for|of|to)\b|\bpolic(?:y|ies)\b|\bprocedure\b|\bguidelines?\b|\bsteps?\s+(?:for|to)\b/i.test(
+          text,
+        );
+
+      // Suffix appended when the user picks "Let the assistant handle it" — prevents
+      // re-interception of the follow-up message. Using endsWith prevents a natural phrase
+      // mid-sentence from accidentally matching.
+      const ASSISTANT_HANDOFF_SUFFIX = " via the assistant";
+
+      // Single-word generic keywords that are too broad to safely trigger a URL/form intercept.
+      // Multi-word phrases are always allowed. This is evaluated by keywordMatches() below.
+      const GENERIC_KEYWORDS = new Set([
+        "request", "requests", "report", "reports", "form", "forms",
+        "ticket", "tickets", "apply", "status", "help", "issue", "issues",
+        "new", "portal", "app", "submit", "my",
+      ]);
+
+      // Shared keyword matcher used by both the URL Library and Form Library intercepts.
+      // Skips single-word keywords that are too generic to safely hijack a message.
+      const keywordMatches = (triggerKeywords: string | undefined, msgText: string): boolean => {
+        if (!triggerKeywords) return false;
+        return triggerKeywords
+          .split(",")
+          .map((k) => k.trim().toLowerCase())
+          .filter(Boolean)
+          .filter((kw) => kw.includes(" ") || (kw.length >= 4 && !GENERIC_KEYWORDS.has(kw)))
+          .some((kw) =>
+            new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(msgText),
+          );
+      };
+
+      // Create-form intent — hoist detection so the intercept block can run BEFORE URL/form
+      // intercepts. Without this, a generic keyword like "requests" on a URL Library link
+      // would hijack "create a form for gym membership reimbursement requests".
+      const isCreateFormIntent =
+        /\b(create|make|build|generate|set\s*up|add|design)\b[\s\S]{0,60}?\bform\b/i.test(text) &&
+        !/\b(fill|submit|open)\b/i.test(text);
+
+      // Edit-an-existing-form intent — admin only. Targets a form the message names, or the
+      // one most recently created/edited this session. Runs BEFORE the create intercept so
+      // "add a date field to the form" revises it rather than spawning a brand-new draft.
+      const editVerb =
+        /\b(add|remove|delete|drop|rename|change|make|set|mark|update|include|require|reorder|move)\b/i.test(text);
+      const fieldSignal =
+        /\bfield\b/i.test(text) ||
+        /\b(required|optional|mandatory)\b/i.test(text) ||
+        /\b(this|that|the)\s+form\b/i.test(text);
+      // A form explicitly named in the message wins over the last-touched one.
+      const namedForm = formsRef.current.find(
+        (f) =>
+          f.name &&
+          new RegExp(`\\b${f.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text),
+      );
+      const editTarget = namedForm ? { id: namedForm.id, name: namedForm.name } : lastFormRef.current;
+      const isEditFormIntent =
+        role === "admin" &&
+        !isInfoQuery &&
+        editVerb &&
+        fieldSignal &&
+        !!editTarget &&
+        !/\b(fill|submit|open)\b/i.test(text) &&
+        !/\bcreate\b|\bnew\s+form\b/i.test(text);
+
+      if (isEditFormIntent && editTarget) {
+        const capturedId = activeId;
+        addTurn(capturedId, { role: "user", text });
+        setInput("");
+        addTurn(capturedId, { role: "ai", text: `Updating **"${editTarget.name}"** — one moment…` });
+        const editHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (user?.email) editHeaders["X-User-Email"] = user.email;
+        if (user?.role) editHeaders["X-User-Role"] = user.role.toLowerCase();
+        fetch("/api/admin/form-library/generate-edit", {
+          method: "POST",
+          headers: editHeaders,
+          credentials: "include",
+          body: JSON.stringify({ form_id: editTarget.id, instruction: text }),
+        })
+          .then((res) =>
+            res.json().then((data) => {
+              if (res.ok) {
+                const d = data as import("@/lib/chat-store").FormBuilderDraft;
+                if (typeof d.id === "number") lastFormRef.current = { id: d.id, name: d.name };
+                addTurn(capturedId, {
+                  role: "ai",
+                  text: `Here's the revised **"${d.name}"** — review the changes and save when ready.`,
+                  interactive: { type: "form_builder", data: d },
+                });
+              } else {
+                addTurn(capturedId, {
+                  role: "ai",
+                  text: `Could not update the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                  isError: true,
+                });
+              }
+            }),
+          )
+          .catch(() => {
+            addTurn(capturedId, {
+              role: "ai",
+              text: "Could not reach the server. Please try again.",
+              isError: true,
+            });
+          });
+        return;
+      }
+
+      // Create-form intercept — admin only. Runs BEFORE leave/URL/form intercepts so a
+      // generic trigger keyword can't steal this intent. Any "create/make/build a form …"
+      // phrasing is accepted: the strict command syntax is parsed locally, everything else
+      // is drafted by the LLM. Either way the admin reviews an editable preview before
+      // anything is created — no silent misinterpretation.
+      if (role === "admin" && isCreateFormIntent && !isInfoQuery) {
+        const capturedId = activeId;
+        addTurn(capturedId, { role: "user", text });
+        setInput("");
+        const parsed = parseFormCommand(text);
+        if (parsed && parsed.fields.length > 0) {
+          addTurn(capturedId, {
+            role: "ai",
+            text: `Here's the draft for **"${parsed.name}"** — review the fields and create it when ready.`,
+            interactive: {
+              type: "form_builder",
+              data: parsed as import("@/lib/chat-store").FormBuilderDraft,
+            },
+          });
+          return;
+        }
+        // Free-form request → let the LLM design the fields, then show the same preview.
+        addTurn(capturedId, { role: "ai", text: "Designing your form — one moment…" });
+        const genHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (user?.email) genHeaders["X-User-Email"] = user.email;
+        if (user?.role) genHeaders["X-User-Role"] = user.role.toLowerCase();
+        fetch("/api/admin/form-library/generate", {
+          method: "POST",
+          headers: genHeaders,
+          credentials: "include",
+          body: JSON.stringify({ prompt: text }),
+        })
+          .then((res) =>
+            res.json().then((data) => {
+              if (res.ok) {
+                addTurn(capturedId, {
+                  role: "ai",
+                  text: `Here's a draft of **"${(data as { name: string }).name}"** — edit anything you like, then create it.`,
+                  interactive: {
+                    type: "form_builder",
+                    data: data as import("@/lib/chat-store").FormBuilderDraft,
+                  },
+                });
+              } else {
+                addTurn(capturedId, {
+                  role: "ai",
+                  text: `Could not draft the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                  isError: true,
+                });
+              }
+            }),
+          )
+          .catch(() => {
+            addTurn(capturedId, {
+              role: "ai",
+              text: "Could not reach the server. Please try again.",
+              isError: true,
+            });
+          });
+        return;
+      }
+
       // Intercept leave application intent — offer self-serve vs. assistant-handled choice.
-      // The "through the assistant" suffix on the continuation message prevents re-interception.
+      // The handoff suffix on the continuation message prevents re-interception.
       const isLeaveApplication =
-        !text.includes("via the assistant") && (
+        !isInfoQuery &&
+        !isCreateFormIntent &&
+        !text.endsWith(ASSISTANT_HANDOFF_SUFFIX) && (
           /\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(text) ||
           /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
           /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(text)
@@ -755,7 +945,7 @@ export function AssistantView() {
                 {
                   label: "Let the assistant handle it",
                   action: "message",
-                  value: `${text} via the assistant`,
+                  value: `${text}${ASSISTANT_HANDOFF_SUFFIX}`,
                   icon: "sparkles",
                 },
               ],
@@ -767,17 +957,10 @@ export function AssistantView() {
       }
 
       // Generic URL Library intercept — fire for any active link with matching trigger_keywords.
-      // Skipped when the user chose "Let the assistant handle it" (suffix guard).
-      if (!text.includes("via the assistant")) {
-        const lowerText = text.toLowerCase();
-        const triggeredLink = urlLinksRef.current.find((l) => {
-          if (!l.trigger_keywords) return false;
-          return l.trigger_keywords
-            .split(",")
-            .map((k) => k.trim().toLowerCase())
-            .filter(Boolean)
-            .some((kw) => lowerText.includes(kw));
-        });
+      // Skipped for create-form, handoff continuations, and information-style questions.
+      // Uses keywordMatches() which filters out single generic words like "requests".
+      if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
+        const triggeredLink = urlLinksRef.current.find((l) => keywordMatches(l.trigger_keywords, text));
         if (triggeredLink) {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
@@ -797,7 +980,7 @@ export function AssistantView() {
                   {
                     label: "Let the assistant handle it",
                     action: "message",
-                    value: `${text} via the assistant`,
+                    value: `${text}${ASSISTANT_HANDOFF_SUFFIX}`,
                     icon: "sparkles",
                   },
                 ],
@@ -809,64 +992,10 @@ export function AssistantView() {
         }
       }
 
-      // Create-form command intercept — admin only, no LLM needed.
-      if (role === "admin") {
-        const parsed = parseFormCommand(text);
-        if (parsed) {
-          const capturedId = activeId;
-          addTurn(capturedId, { role: "user", text });
-          setInput("");
-          const createHeaders: Record<string, string> = { "Content-Type": "application/json" };
-          if (user?.email) createHeaders["X-User-Email"] = user.email;
-          fetch("/api/admin/form-library", {
-            method: "POST",
-            headers: createHeaders,
-            credentials: "include",
-            body: JSON.stringify(parsed),
-          })
-            .then((res) =>
-              res.json().then((data) => {
-                if (res.ok) {
-                  addTurn(capturedId, {
-                    role: "ai",
-                    text: `Form **"${parsed.name}"** created successfully with ${parsed.fields.length} field(s). It's now live in the Form Library.`,
-                  });
-                  // Refresh forms cache so new trigger keywords work immediately
-                  fetch("/api/forms/list", createHeaders)
-                    .then((r) => r.ok ? r.json() : [])
-                    .then((d) => { if (Array.isArray(d)) formsRef.current = d; })
-                    .catch(() => {});
-                } else {
-                  addTurn(capturedId, {
-                    role: "ai",
-                    text: `Could not create the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
-                    isError: true,
-                  });
-                }
-              })
-            )
-            .catch(() => {
-              addTurn(capturedId, {
-                role: "ai",
-                text: "Could not reach the server. Please try again.",
-                isError: true,
-              });
-            });
-          return;
-        }
-      }
-
       // Form Library intercept — open the matched form inline without going through the LLM.
-      if (!text.includes("via the assistant")) {
-        const lowerText = text.toLowerCase();
-        const triggeredForm = formsRef.current.find((f) => {
-          if (!f.trigger_keywords) return false;
-          return f.trigger_keywords
-            .split(",")
-            .map((k) => k.trim().toLowerCase())
-            .filter(Boolean)
-            .some((kw) => lowerText.includes(kw));
-        });
+      // Uses keywordMatches() with the same specificity rules as URL Library.
+      if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
+        const triggeredForm = formsRef.current.find((f) => keywordMatches(f.trigger_keywords, text));
         if (triggeredForm) {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
@@ -945,7 +1074,7 @@ export function AssistantView() {
           history,
           session_id: threadId,
           preferences: {},
-          is_private: threads[threadId]?.isPrivate || false,
+          is_private: false,
         }),
       })
         .then(async (res) => {
@@ -1015,7 +1144,12 @@ export function AssistantView() {
               updateLastAITurn(threadId, {
                 streaming: false,
                 domain: (evt.domain as string) ?? undefined,
-                interactive: (evt.interactive as Turn["interactive"]) ?? undefined,
+                interactive:
+                  evt.interactive &&
+                  typeof (evt.interactive as { type?: unknown }).type === "string" &&
+                  (evt.interactive as { type?: unknown }).type
+                    ? (evt.interactive as Turn["interactive"])
+                    : undefined,
                 downloadUrl: (evt.download_url as string) ?? undefined,
                 images:
                   Array.isArray(evt.images) && evt.images.length > 0
@@ -1071,6 +1205,10 @@ export function AssistantView() {
             updateLastAITurn(threadId, { streaming: false });
             return;
           }
+
+          // Network drop mid-stream: the AI turn may already exist with streaming:true.
+          // Clear it so the input unlocks; then add the error turn below.
+          updateLastAITurn(threadId, { streaming: false });
 
           const isTimeout = err.name === "AbortError";
 
@@ -1348,7 +1486,7 @@ export function AssistantView() {
         >
           <div className={cn(
             "mx-auto w-full max-w-5xl px-4 sm:px-8 flex flex-col",
-            activeThread.turns.length === 0 ? "min-h-full justify-center py-8" : "py-8",
+            activeThread.turns.length === 0 ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12" : "pt-4 md:pt-8 pb-6 md:pb-12",
           )}>
             {activeThread.turns.length === 0 ? (
               /* ──── Empty State ──── */
@@ -1356,7 +1494,7 @@ export function AssistantView() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.6 }}
-                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-[500px]"
+                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-0 py-2 sm:py-4"
               >
                 <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
                   <SparklesCore id="chat-sparkles" minSize={0.4} maxSize={1.0} particleDensity={60} speed={0.4} particleColor="#3B8FE8" />
@@ -1369,7 +1507,7 @@ export function AssistantView() {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-                        className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-2 text-glow"
+                        className="text-2xl sm:text-4xl font-extrabold tracking-tight md:text-5xl mb-1 sm:mb-2 text-glow"
                       >
                         <span className="text-gradient">{heading}</span>
                       </motion.h1>
@@ -1377,7 +1515,7 @@ export function AssistantView() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.2 }}
-                        className="text-base text-muted-foreground mb-8"
+                        className="text-xs sm:text-base text-muted-foreground mb-4 sm:mb-8"
                       >
                         {subheading}
                       </motion.p>
@@ -1390,7 +1528,7 @@ export function AssistantView() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.5, delay: 0.3 }}
-                  className="w-full max-w-4xl mb-6"
+                  className="w-full max-w-4xl mb-4 sm:mb-6 hidden sm:block"
                 >
                   <SmartWidgets onAction={(prompt) => !busy && send(prompt)} />
                 </motion.div>
@@ -1400,10 +1538,10 @@ export function AssistantView() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, delay: 0.4 }}
-                  className="w-full max-w-4xl mb-5"
+                  className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
                 >
                   <div className="try-asking-container">
-                    <p className="text-[11px] text-muted-foreground font-semibold mb-3 text-center tracking-wide">Try asking…</p>
+                    <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">Try asking…</p>
                     <AnimatePresence mode="wait">
                       <motion.div
                         key={starterPage}
@@ -1411,7 +1549,7 @@ export function AssistantView() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -6 }}
                         transition={{ duration: 0.3 }}
-                        className="flex flex-wrap justify-center gap-2.5"
+                        className="flex flex-wrap justify-center gap-2"
                       >
                         {queries.slice(
                           starterPage * STARTER_PAGE_SIZE,
@@ -1422,10 +1560,10 @@ export function AssistantView() {
                             <button
                               key={q.prompt}
                               onClick={() => !busy && send(q.prompt)}
-                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-4 py-2 text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
                             >
-                              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                                <IconComponent className={`h-3 w-3 ${q.iconColor}`} />
+                              <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
                               </span>
                               {q.label}
                             </button>
@@ -1434,32 +1572,6 @@ export function AssistantView() {
                       </motion.div>
                     </AnimatePresence>
                   </div>
-                </motion.div>
-
-                {/* Composer */}
-                <motion.div
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.45 }}
-                  className="w-full max-w-4xl ambient-glow"
-                >
-                  <VoiceOrb />
-                  <Composer
-                    value={input}
-                    onChange={setInput}
-                    onSubmit={() => send()}
-                    disabled={busy}
-                    busy={busy}
-                    onStop={stop}
-                    onAttach={() =>
-                      toast("Attachments", { description: "This feature is currently in preview." })
-                    }
-                    onQuickAction={(p) => !busy && send(p)}
-                    suggestions={suggestions}
-                    onSuggestionSelect={(t) => !busy && send(t)}
-                    isPrivate={activeThread.isPrivate || false}
-                    onPrivateToggle={() => activeId && togglePrivate(activeId)}
-                  />
                 </motion.div>
               </motion.section>
             ) : (
@@ -1478,7 +1590,7 @@ export function AssistantView() {
                         <UserMessage
                           initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
                           text={t.text}
-                          onSaveQuickSearch={activeThread.isPrivate ? undefined : handleOpenSavePrompt}
+                          onSaveQuickSearch={handleOpenSavePrompt}
                         >
                           {t.text}
                         </UserMessage>
@@ -1508,7 +1620,6 @@ export function AssistantView() {
                               ? activeThread.turns[i - 1].text
                               : undefined
                           }
-                          isPrivate={activeThread.isPrivate || false}
                         >
                           <div className="space-y-4">
                             {t.text && (() => {
@@ -1647,7 +1758,27 @@ export function AssistantView() {
                                 }
                               />
                             )}
-                            {t.interactive?.type === "quick_choice" && t.interactive.data && (
+                            {t.interactive?.type === "form_builder" && t.interactive.data && (
+                              <FormBuilderWidget
+                                draft={t.interactive.data as import("@/lib/chat-store").FormBuilderDraft}
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || ""}
+                                onCreated={(msg, form) => {
+                                  if (activeId) addTurn(activeId, { role: "ai", text: msg });
+                                  // Remember this form so a follow-up "add a field…" edits it.
+                                  if (form) lastFormRef.current = form;
+                                  // Refresh forms cache so new trigger keywords work immediately.
+                                  const h: Record<string, string> = {};
+                                  if (user?.email) h["X-User-Email"] = user.email;
+                                  fetch("/api/forms/list", { headers: h })
+                                    .then((r) => (r.ok ? r.json() : []))
+                                    .then((d) => { if (Array.isArray(d)) formsRef.current = d; })
+                                    .catch(() => {});
+                                }}
+                              />
+                            )}
+                            {t.interactive?.type === "quick_choice" && t.interactive.data &&
+                              i !== activeThread.turns.length - 1 && (
                               <ChoiceWidget
                                 data={t.interactive.data as import("@/lib/chat-store").QuickChoiceData}
                                 onMessage={(text) => send(text)}
@@ -1759,7 +1890,7 @@ export function AssistantView() {
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ type: "spring", stiffness: 300, damping: 30 }}
                     >
-                      <AIMessage live isPrivate={activeThread.isPrivate || false}>
+                      <AIMessage live>
                         <ThinkingBuddy activity={activity} />
                       </AIMessage>
                     </motion.div>
@@ -1779,7 +1910,7 @@ export function AssistantView() {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
                 onClick={scrollToBottom}
-                className="fixed bottom-28 right-8 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-card border border-border shadow-lg text-muted-foreground hover:text-foreground transition-colors"
+                className="fixed bottom-44 right-4 md:bottom-28 md:right-8 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-card border border-border shadow-lg text-muted-foreground hover:text-foreground transition-colors"
               >
                 <ArrowDown className="h-4 w-4" />
               </motion.button>
@@ -1787,36 +1918,41 @@ export function AssistantView() {
           </AnimatePresence>
         </div>
 
-        {/* Input Area — visible when there are messages */}
-        {activeThread.turns.length > 0 && (
-          <motion.footer
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="relative border-t border-border bg-background/60 backdrop-blur-xl px-4 pb-6 pt-4 sm:px-8"
-          >
-            <div className="mx-auto w-full max-w-4xl space-y-4">
-              <VoiceOrb />
-              <Composer
-                value={input}
-                onChange={setInput}
-                onSubmit={() => send()}
-                disabled={busy}
-                busy={busy}
-                onStop={stop}
-                onAttach={() =>
-                  toast("Attachments", { description: "This feature is currently in preview." })
-                }
-                onQuickAction={(p) => !busy && send(p)}
-                onGenerateDoc={openDocModal}
-                suggestions={suggestions}
-                onSuggestionSelect={(t) => !busy && send(t)}
-                isPrivate={activeThread.isPrivate || false}
-                onPrivateToggle={() => activeId && togglePrivate(activeId)}
-              />
-            </div>
-          </motion.footer>
-        )}
+        {/* Input Area */}
+        <motion.footer
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="relative border-t border-border bg-background/60 backdrop-blur-xl px-3 pb-3 pt-3 sm:px-8 md:pb-8 md:pt-4 shrink-0"
+        >
+          <div className="mx-auto w-full max-w-4xl space-y-3">
+            <AnimatePresence>
+              {pendingChoice && !thinking && !busy && (
+                <QuickChoicePanel
+                  data={pendingChoice}
+                  onMessage={(text) => send(text)}
+                  hotkeysEnabled={!input}
+                />
+              )}
+            </AnimatePresence>
+            <VoiceOrb />
+            <Composer
+              value={input}
+              onChange={setInput}
+              onSubmit={() => send()}
+              disabled={busy}
+              busy={busy}
+              onStop={stop}
+              onAttach={() =>
+                toast("Attachments", { description: "This feature is currently in preview." })
+              }
+              onQuickAction={(p) => !busy && send(p)}
+              onGenerateDoc={activeThread.turns.length > 0 ? openDocModal : undefined}
+              suggestions={suggestions}
+              onSuggestionSelect={(t) => !busy && send(t)}
+            />
+          </div>
+        </motion.footer>
       </main>
 
       {/* Document Generation Modal */}

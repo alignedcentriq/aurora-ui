@@ -44,10 +44,178 @@ class ReviewPayload(BaseModel):
     remarks: str = ""
 
 
+class GenerateFormRequest(BaseModel):
+    prompt: str
+
+
+class EditFormRequest(BaseModel):
+    form_id: int
+    instruction: str
+
+
+_GENERATE_FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"}
+
+
+def _sanitize_generated_fields(raw_fields: list) -> list[dict]:
+    """Coerce LLM-drafted fields into the strict shape FormLibraryService expects."""
+    fields: list[dict] = []
+    used: set[str] = set()
+    for f in raw_fields:
+        if not isinstance(f, dict):
+            continue
+        label = str(f.get("label") or f.get("name") or "").strip()
+        if not label:
+            continue
+        base = "".join(c if c.isalnum() else "_" for c in label.lower()).strip("_") or "field"
+        name, suffix = base, 2
+        while name in used:
+            name, suffix = f"{base}_{suffix}", suffix + 1
+        used.add(name)
+        ftype = str(f.get("type", "text")).strip().lower()
+        if ftype not in _GENERATE_FIELD_TYPES:
+            ftype = "text"
+        options = [str(o).strip() for o in (f.get("options") or []) if str(o).strip()]
+        if ftype == "select" and not options:
+            ftype = "text"
+        field: dict = {"name": name, "label": label, "type": ftype, "required": bool(f.get("required"))}
+        if ftype == "select":
+            field["options"] = options
+        placeholder = str(f.get("placeholder") or "").strip()
+        if placeholder:
+            field["placeholder"] = placeholder
+        fields.append(field)
+    return fields
+
+
 # ── Templates ─────────────────────────────────────────────────────────────────
 @router.get("")
 async def list_forms(_: CurrentUser = Depends(require_admin)):
     return FormLibraryService.list_all(include_disabled=True)
+
+
+@router.post("/generate")
+async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends(require_admin)):
+    """LLM-draft a form template (name, description, fields) from a natural-language request.
+
+    Returns a DRAFT only — nothing is persisted. The client shows a preview the admin can
+    edit and confirm, which then goes through the normal POST create endpoint.
+    """
+    import json
+    import re
+
+    from app.services import llm_controls_service as llm_controls
+
+    text = (req.prompt or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Describe the form you want to create.")
+
+    model = llm_controls.get_llm("general", default_timeout=60)
+    prompt = (
+        "You are a form designer for an employee self-service portal. From the request below, "
+        "design a fillable form.\n\n"
+        f"Request: {text}\n\n"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+        '{"name": "Short Form Name", "description": "One sentence on what this form is for.", '
+        '"category": "HR|Admin|IT|Finance|General", "fields": [{"label": "Field Label", '
+        '"type": "text|textarea|date|select|number|email|checkbox|user|image", "required": true, '
+        '"options": ["only for select"], "placeholder": "optional hint"}]}\n\n'
+        "Rules:\n"
+        "- 3 to 8 fields, ordered logically. Mark genuinely essential fields required.\n"
+        "- Use 'select' with sensible options for categorical answers, 'textarea' for descriptions, "
+        "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
+        "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
+    )
+    try:
+        response = model.invoke(prompt)
+        raw = (response.content or "").strip()
+    except Exception:
+        raise HTTPException(status_code=503, detail="The model is unavailable right now — try again shortly.")
+
+    # Models occasionally wrap JSON in fences or prepend chatter — extract the outermost object.
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=502, detail="Couldn't draft the form — the model returned no usable JSON.")
+    try:
+        draft = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Couldn't draft the form — the model returned invalid JSON.")
+
+    fields = _sanitize_generated_fields(draft.get("fields") or [])
+    if not fields:
+        raise HTTPException(status_code=502, detail="Couldn't draft any form fields from that description — try rephrasing.")
+
+    return {
+        "name": str(draft.get("name") or "Untitled Form").strip()[:120],
+        "description": str(draft.get("description") or "").strip()[:500],
+        "category": str(draft.get("category") or "General").strip()[:50],
+        "fields": fields,
+    }
+
+
+@router.post("/generate-edit")
+async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(require_admin)):
+    """LLM-revise an EXISTING form's fields from a natural-language instruction.
+
+    Loads the current form, asks the model to apply the requested change to its fields,
+    and returns a revised DRAFT (including the form id) — nothing is persisted. The client
+    shows the same editable preview, which the admin confirms via the PUT update endpoint.
+    """
+    import json
+    import re
+
+    from app.services import llm_controls_service as llm_controls
+
+    instruction = (req.instruction or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=422, detail="Describe the change you want to make.")
+
+    current = FormLibraryService.get(req.form_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Form not found.")
+
+    model = llm_controls.get_llm("general", default_timeout=60)
+    prompt = (
+        "You are editing an existing fillable form for an employee self-service portal. "
+        "Apply the requested change and return the COMPLETE revised form (not just the change).\n\n"
+        f"Current form (JSON):\n{json.dumps({'name': current['name'], 'description': current['description'], 'category': current.get('category') or 'General', 'fields': current.get('fields') or []})}\n\n"
+        f"Change requested: {instruction}\n\n"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+        '{"name": "Short Form Name", "description": "One sentence on what this form is for.", '
+        '"category": "HR|Admin|IT|Finance|General", "fields": [{"label": "Field Label", '
+        '"type": "text|textarea|date|select|number|email|checkbox|user|image", "required": true, '
+        '"options": ["only for select"], "placeholder": "optional hint"}]}\n\n'
+        "Rules:\n"
+        "- Preserve all existing fields and their order unless the change implies removing or reordering them.\n"
+        "- Only modify what the instruction asks for; keep everything else identical.\n"
+        "- Use 'select' with sensible options for categorical answers, 'textarea' for descriptions, "
+        "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
+        "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
+    )
+    try:
+        response = model.invoke(prompt)
+        raw = (response.content or "").strip()
+    except Exception:
+        raise HTTPException(status_code=503, detail="The model is unavailable right now — try again shortly.")
+
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=502, detail="Couldn't revise the form — the model returned no usable JSON.")
+    try:
+        draft = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Couldn't revise the form — the model returned invalid JSON.")
+
+    fields = _sanitize_generated_fields(draft.get("fields") or [])
+    if not fields:
+        raise HTTPException(status_code=502, detail="That change would leave the form with no fields — try rephrasing.")
+
+    return {
+        "id": current["id"],
+        "name": str(draft.get("name") or current.get("name") or "Untitled Form").strip()[:120],
+        "description": str(draft.get("description") or current.get("description") or "").strip()[:500],
+        "category": str(draft.get("category") or current.get("category") or "General").strip()[:50],
+        "fields": fields,
+    }
 
 
 @router.post("")

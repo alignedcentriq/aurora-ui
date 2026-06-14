@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { HoverEffect } from "@/components/ui/card-hover-effect";
@@ -21,19 +21,13 @@ import {
   ShieldAlert,
   Zap,
   Building2,
-  Search,
   LayoutDashboard,
   ChevronDown,
   ArrowRight,
   Lock,
   CheckCircle2,
-  Crown,
-  Briefcase,
-  Wrench,
-  ClipboardList,
   ShieldCheck,
   TrendingUp,
-  Newspaper,
   Globe,
 } from "lucide-react";
 
@@ -51,10 +45,11 @@ import { UrlLibrary } from "@/pages/UrlLibrary";
 import { FormLibrary } from "@/pages/FormLibrary";
 import ConnectorStudio from "@/pages/ConnectorStudio";
 import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
+import { RoiDashboard } from "@/pages/RoiDashboard";
+import { AnalyticsStudio } from "@/pages/AnalyticsStudio";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
 import { CabinDirectory } from "@/pages/CabinDirectory";
-import { SecurityDigestPage } from "@/pages/SecurityDigestPage";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -67,6 +62,8 @@ export const Route = createFileRoute("/_layout/control-hub")({
 
 type TabId =
   | "dashboard"
+  | "roi"
+  | "analytics-studio"
   | "observability"
   | "llm-controls"
   | "role-control"
@@ -81,7 +78,6 @@ type TabId =
   | "form-library"
   | "automation-hub"
   | "cabin-directory"
-  | "security-digest"
   | "connector-studio";
 
 interface TabItem {
@@ -107,6 +103,24 @@ const TABS: TabItem[] = [
     show: (role) => role === "Admin",
     requireScope: "announcements",
     component: AdminDashboard,
+  },
+  {
+    id: "roi",
+    label: "ROI Dashboard",
+    category: "System & Ops",
+    icon: TrendingUp,
+    color: "#10B981",
+    show: (role) => role !== "Employee",
+    component: RoiDashboard,
+  },
+  {
+    id: "analytics-studio",
+    label: "Analytics Studio",
+    category: "System & Ops",
+    icon: LayoutDashboard,
+    color: "#6366F1",
+    show: (role) => role !== "Employee",
+    component: AnalyticsStudio,
   },
   {
     id: "role-control",
@@ -178,15 +192,6 @@ const TABS: TabItem[] = [
     show: (role) => role === "IT",
     requireScope: "it_support",
     component: ITPortal,
-  },
-  {
-    id: "security-digest",
-    label: "Security Digest",
-    category: "Management Portals",
-    icon: Newspaper,
-    color: "#F59E0B",
-    show: (role) => role === "Super Admin",
-    component: SecurityDigestPage,
   },
   {
     id: "pmo-portal",
@@ -270,6 +275,8 @@ const TABS: TabItem[] = [
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   dashboard: "Broadcast alerts, policy changes, and official events to the workspace.",
+  roi: "See time saved, ticket deflection, and cost — the assistant's business value.",
+  "analytics-studio": "Build charts in plain English or dropdowns, then save dashboards.",
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
@@ -284,21 +291,8 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
   "form-library": "Submit custom forms, view request archives, and check statuses.",
-  "security-digest": "Configure cybersecurity news digest — recipients, schedule, and news sources.",
   "connector-studio": "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
 };
-
-const ROLE_META: Record<string, { icon: any; color: string; bg: string; label: string }> = {
-  Employee:          { icon: Briefcase,    color: "#3B8FE8", bg: "rgba(59, 143, 232, 0.08)", label: "Employee" },
-  HR:                { icon: Users,        color: "#22C55E", bg: "rgba(34, 197, 94, 0.08)", label: "Human Resources" },
-  IT:                { icon: Wrench,       color: "#14B8A6", bg: "rgba(20, 184, 166, 0.08)", label: "IT Support" },
-  PMO:               { icon: ClipboardList,color: "#4F6FEF", bg: "rgba(79, 111, 239, 0.08)", label: "Project Management" },
-  Admin:             { icon: ShieldCheck,  color: "#3B8FE8", bg: "rgba(59, 143, 232, 0.08)", label: "Administrator" },
-  "Functional Manager": { icon: UserCog,   color: "#22C55E", bg: "rgba(34, 197, 94, 0.08)", label: "Functional Manager" },
-  "Super Admin":     { icon: Crown,        color: "#F59E0B", bg: "rgba(245, 158, 11, 0.08)", label: "Super Admin" },
-};
-
-const CATEGORIES = ["All", "System & Ops", "Management Portals", "Assets & Config"] as const;
 
 interface ControlHubOverviewProps {
   allowedTabs: TabItem[];
@@ -307,29 +301,8 @@ interface ControlHubOverviewProps {
 }
 
 function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOverviewProps) {
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
-  const [searchQuery, setSearchQuery] = useState("");
-
-  const roleInfo = ROLE_META[user.role] || {
-    icon: ShieldCheck,
-    color: "#1B6FC8",
-    bg: "rgba(27, 111, 200, 0.08)",
-    label: user.role,
-  };
-  const RoleIcon = roleInfo.icon;
-
-  const filteredTabs = useMemo(() => {
-    return allowedTabs.filter((t) => {
-      const matchesCategory = selectedCategory === "All" || t.category === selectedCategory;
-      const matchesSearch =
-        t.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (TAB_DESCRIPTIONS[t.id] || "").toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesCategory && matchesSearch;
-    });
-  }, [allowedTabs, selectedCategory, searchQuery]);
-
   return (
-    <div className="flex-1 h-full overflow-y-auto bg-gradient-to-br from-[#f5f7fa] to-[#e8eef8] dark:from-[#020d1a] dark:to-[#071428] mesh-accent px-8 py-6 select-none relative">
+    <div className="flex-1 h-full overflow-y-auto bg-gradient-to-br from-[#f5f7fa] to-[#e8eef8] dark:from-[#020d1a] dark:to-[#071428] mesh-accent px-4 sm:px-8 py-5 sm:py-6 select-none relative">
       {/* Glow highlight in background */}
       <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[400px] h-[150px] bg-gradient-to-r from-primary/10 to-[#00a29a]/10 rounded-full blur-[80px] pointer-events-none" />
 
@@ -339,7 +312,7 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
           <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-primary dark:text-[#00c4bb] mb-1.5 block">
             Operational Hub
           </span>
-          <h1 className="text-[26px] font-black tracking-tight text-glow text-4c mb-1">
+          <h1 className="text-[22px] sm:text-[26px] font-black tracking-tight text-glow text-4c mb-1">
             Command Center
           </h1>
           <p className="text-[13px] text-muted-foreground">
@@ -348,7 +321,7 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
         </div>
 
         {/* Live Nominals Tracker Card */}
-        <div className="flex items-center gap-3 rounded-2xl bg-white/70 dark:bg-card/70 border border-[#e2e8f0] dark:border-white/[0.06] backdrop-blur-md p-3.5 pr-5 max-w-xs shadow-sm relative overflow-hidden">
+        <div className="flex items-center gap-3 rounded-2xl bg-white/70 dark:bg-card/70 border border-[#e2e8f0] dark:border-white/[0.06] backdrop-blur-md p-3.5 pr-5 w-full md:max-w-xs shadow-sm relative overflow-hidden">
           <div className="absolute inset-0 z-0">
             <Meteors number={8} />
           </div>
@@ -364,121 +337,28 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
         </div>
       </div>
 
-      {/* ── Grid: Telemetry Banner & Actions ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* User Role Card */}
-        <div className="rounded-2xl border border-[#e2e8f0] dark:border-[#3b8fe8]/12 bg-white dark:bg-card/50 p-5 shadow-sm flex items-center justify-between select-none">
-          <div className="flex items-center gap-4">
-            <div
-              className="flex h-12 w-12 items-center justify-center rounded-2xl shrink-0"
-              style={{ background: roleInfo.bg }}
-            >
-              <RoleIcon className="h-6 w-6" style={{ color: roleInfo.color }} />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Authorized Profile</p>
-              <p className="text-base font-bold text-foreground mt-0.5">{user.name}</p>
-              <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold mt-1 text-white"
-                style={{ backgroundColor: roleInfo.color }}
-              >
-                {roleInfo.label}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Access Level Card */}
-        <div className="rounded-2xl border border-[#e2e8f0] dark:border-[#3b8fe8]/12 bg-white dark:bg-card/50 p-5 shadow-sm flex items-center justify-between select-none">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Access Level</p>
-            <p className="text-base font-bold text-foreground mt-0.5">
-              {user.scopes && user.scopes.length > 0 ? `${user.scopes.length} Scoped Rules` : "Full Administrative"}
-            </p>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              {user.scopes && user.scopes.length > 0 ? "Permissions bound by AD group scopes" : "Inherited implicit superuser access"}
-            </p>
-          </div>
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <ShieldCheck className="h-5 w-5 text-primary" />
-          </div>
-        </div>
-
-        {/* Telemetry quick status Card */}
-        <div className="rounded-2xl border border-[#e2e8f0] dark:border-[#3b8fe8]/12 bg-white dark:bg-card/50 p-5 shadow-sm flex items-center justify-between select-none">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Available Services</p>
-            <p className="text-base font-bold text-foreground mt-0.5">
-              {allowedTabs.length} Portals Gated
-            </p>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Active workspaces matched to your roles
-            </p>
-          </div>
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#00a29a]/10 shrink-0">
-            <TrendingUp className="h-5 w-5 text-[#00a29a]" />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Filter & Search Controls ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        {/* Categories Tabs Selector */}
-        <div className="flex flex-wrap rounded-xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white/50 dark:bg-background/50 p-1 select-none w-fit">
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold relative transition-all cursor-pointer ${
-                selectedCategory === cat
-                  ? "text-primary dark:text-[#00c4bb] bg-white dark:bg-card shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        {/* Search Input */}
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search portals..."
-            className="w-full h-9 rounded-xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white/50 dark:bg-card/50 pl-10 pr-4 text-xs outline-none focus:bg-white dark:focus:bg-card focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/75"
-          />
-        </div>
-      </div>
+      {/* Telemetry Banner cards removed per user request */}
 
       {/* ── Directory Grid ── */}
-      <AnimatePresence mode="popLayout">
-        {filteredTabs.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="text-center py-12 rounded-2xl border border-dashed border-[#e2e8f0] dark:border-white/[0.06] bg-white/30 dark:bg-card/10 w-full"
-          >
-            <p className="text-sm text-muted-foreground">No portals match your criteria.</p>
-          </motion.div>
-        ) : (
-          <HoverEffect
-            items={filteredTabs.map((tab) => {
-              const TabIcon = tab.icon;
-              return {
-                title: tab.label,
-                description: TAB_DESCRIPTIONS[tab.id] || "Workspace management portal.",
-                onClick: () => onTabChange(tab.id),
-                icon: <TabIcon className="h-5 w-5" style={{ color: tab.color }} />,
-                color: tab.color,
-              };
-            })}
-          />
-        )}
-      </AnimatePresence>
+      {allowedTabs.length === 0 ? (
+        <div className="text-center py-12 rounded-2xl border border-dashed border-[#e2e8f0] dark:border-white/[0.06] bg-white/30 dark:bg-card/10 w-full">
+          <p className="text-sm text-muted-foreground">No portals are available for your role.</p>
+        </div>
+      ) : (
+        <HoverEffect
+          items={allowedTabs.map((tab) => {
+            const TabIcon = tab.icon;
+            return {
+              title: tab.label,
+              description: TAB_DESCRIPTIONS[tab.id] || "Workspace management portal.",
+              category: tab.category,
+              onClick: () => onTabChange(tab.id),
+              icon: <TabIcon className="h-5 w-5" style={{ color: tab.color }} />,
+              color: tab.color,
+            };
+          })}
+        />
+      )}
     </div>
   );
 }
@@ -569,28 +449,28 @@ function ControlHubPage() {
             ) : ActiveComponent ? (
               <div className="flex-1 h-full overflow-hidden flex flex-col bg-background">
                 {/* Sleek Breadcrumb/Sub-navigation Header */}
-                <div className="flex items-center justify-between border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white/80 dark:bg-background/80 backdrop-blur-md px-6 py-2.5 shrink-0 select-none">
-                  <div className="flex items-center gap-2 text-[11px]">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white/80 dark:bg-background/80 backdrop-blur-md px-4 py-2 sm:px-6 sm:py-2.5 shrink-0 select-none">
+                  <div className="flex items-center gap-2 text-[11px] min-w-0">
                     <button
                       onClick={() => handleTabChange("overview")}
-                      className="text-muted-foreground hover:text-foreground transition-colors font-semibold hover:underline cursor-pointer"
+                      className="text-muted-foreground hover:text-foreground transition-colors font-semibold hover:underline cursor-pointer shrink-0"
                     >
                       Control Hub
                     </button>
                     <span className="text-muted-foreground/35">/</span>
-                    <span className="text-foreground font-semibold flex items-center gap-1.5">
+                    <span className="text-foreground font-semibold flex items-center gap-1.5 min-w-0">
                       {activeTab && (
                         <activeTab.icon
                           className="h-3.5 w-3.5 shrink-0"
                           style={{ color: activeTab.color }}
                         />
                       )}
-                      {activeTab?.label}
+                      <span className="truncate">{activeTab?.label}</span>
                     </span>
                   </div>
 
                   {/* Actions & Portal Quick Switcher */}
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 self-end sm:self-auto">
                     <button
                       onClick={() => handleTabChange("overview")}
                       className="flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted px-2.5 py-1.5 rounded-lg transition-all cursor-pointer border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card shadow-sm"

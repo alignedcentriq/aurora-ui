@@ -116,11 +116,14 @@ def create(user_email: str, user_role: str, payload: dict) -> dict:
             day_of_month=payload.get("day_of_month"),
             hour=int(payload.get("hour") or 9),
             minute=int(payload.get("minute") or 0),
+            automation_kind=payload.get("automation_kind") or "email",
+            extra_config=payload.get("extra_config"),
             email_subject=payload["email_subject"],
             email_body=payload["email_body"],
             recipients_json=payload.get("recipients_json") or [],
             co_owners_json=[],
-            is_active=True,
+            # Default on for plain email rules; roi_digest rules ship OFF until the user enables.
+            is_active=bool(payload["is_active"]) if "is_active" in payload else True,
         )
         rule.next_run = compute_next_run(
             rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour,
@@ -263,6 +266,48 @@ def _build_html(subject: str, body_text: str) -> str:
     return _email_shell(subject, intro, "")
 
 
+def _render_roi_digest(rule: AutomationRule) -> tuple[str, dict | None]:
+    """For a roi_digest rule, compute the live ROI summary and return (html_body, files).
+
+    files is the {filename: (base64, content_type)} attachment dict for _send_html, or None.
+    The summary is computed for the rule creator's role so scoping matches the dashboard."""
+    import base64
+    from app.database import SessionLocal as _SL
+    from app.services import analytics_service as _an
+
+    period = (rule.extra_config or {}).get("period", "30d")
+    db = _SL()
+    try:
+        summary = _an.roi_summary(db, period=period, role=rule.created_by_role or "super admin")
+    finally:
+        db.close()
+
+    cur = summary.get("currency", "INR")
+    sym = "₹" if cur == "INR" else "$"
+    sat = summary.get("satisfaction_pct")
+    lines = [
+        rule.email_body or "",
+        "",
+        f"Period: {period}",
+        f"Hours saved: {summary.get('hours_saved', 0):,}",
+        f"Estimated value: {sym}{summary.get('value_saved', 0):,.0f}",
+        f"Infra cost (period): {sym}{summary.get('infra_cost', 0):,.0f}",
+        f"Net value: {sym}{summary.get('net_value', 0):,.0f}",
+        f"Requests handled (deflected): {summary.get('requests_handled', 0):,}",
+        f"Satisfaction: {sat}%" if sat is not None else "Satisfaction: —",
+    ]
+    html_body = _build_html(rule.email_subject, "\n".join(lines))
+
+    files = None
+    try:
+        pdf = _an.roi_pdf_bytes(summary)
+        b64 = base64.b64encode(pdf).decode("ascii")
+        files = {f"roi-summary-{period}.pdf": (b64, "application/pdf")}
+    except Exception:
+        files = None  # email still sends without the attachment
+    return html_body, files
+
+
 def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
     """Send an automation email immediately (test / on-demand).
     Only creator or Super Admin may trigger this."""
@@ -277,8 +322,12 @@ def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
         emails = _extract_emails(rule.recipients_json)
         if not emails:
             return {"success": False, "error": "no_recipients"}
-        html_body = _build_html(rule.email_subject, rule.email_body)
-        ok = _send_html(sender_email, emails, rule.email_subject, html_body)
+        if rule.automation_kind == "roi_digest":
+            html_body, files = _render_roi_digest(rule)
+            ok = _send_html(sender_email, emails, rule.email_subject, html_body, files=files)
+        else:
+            html_body = _build_html(rule.email_subject, rule.email_body)
+            ok = _send_html(sender_email, emails, rule.email_subject, html_body)
         return {"success": ok, "sent_to": emails}
     finally:
         db.close()
@@ -307,8 +356,12 @@ def run_due() -> int:
             try:
                 emails = _extract_emails(rule.recipients_json)
                 if emails:
-                    html_body = _build_html(rule.email_subject, rule.email_body)
-                    ok = _send_html(rule.created_by, emails, rule.email_subject, html_body)
+                    if rule.automation_kind == "roi_digest":
+                        html_body, files = _render_roi_digest(rule)
+                        ok = _send_html(rule.created_by, emails, rule.email_subject, html_body, files=files)
+                    else:
+                        html_body = _build_html(rule.email_subject, rule.email_body)
+                        ok = _send_html(rule.created_by, emails, rule.email_subject, html_body)
                     rule.last_status = "sent" if ok else "failed:send_error"
                 else:
                     rule.last_status = "failed:no_recipients"
@@ -343,6 +396,8 @@ def _rule_dict(r: AutomationRule, user_email: str = "", user_role: str = "") -> 
         "description": r.description,
         "created_by": r.created_by,
         "created_by_role": r.created_by_role,
+        "automation_kind": r.automation_kind or "email",
+        "extra_config": r.extra_config or {},
         "frequency": r.frequency,
         "day_of_week": r.day_of_week,
         "day_of_month": r.day_of_month,

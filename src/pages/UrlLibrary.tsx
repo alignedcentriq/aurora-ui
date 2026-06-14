@@ -480,7 +480,7 @@ export function UrlLibrary() {
                 className="mt-1"
               />
               <p className="text-[11px] text-muted-foreground/70 mt-1">
-                Comma-separated. When a user's message contains any of these words, the assistant will offer to open this portal directly.
+                Comma-separated. When a user's message contains any of these words, the assistant will offer to open this portal directly. Use specific phrases (e.g. "payslip", "salary slip") — single generic words like "requests", "form", or "status" are not allowed and will be rejected.
               </p>
             </div>
           </div>

@@ -165,16 +165,16 @@ function MyLibrary() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-8 py-4 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground flex items-center gap-2">
+          <h1 className="text-[18px] sm:text-[20px] font-semibold text-foreground flex items-center gap-2">
             <Library className="h-5 w-5 text-primary" /> My Library
           </h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">
+          <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
             Track your borrows, requests, and extensions.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 self-start sm:self-auto">
           <Link
             to="/books"
             className="rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/15 transition-colors"
@@ -187,12 +187,12 @@ function MyLibrary() {
             title="Refresh"
           >
             <RefreshCw className="h-3.5 w-3.5 inline mr-1.5" />
-            Refresh
+            <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6 space-y-8">
+      <div className="flex-1 overflow-auto px-4 sm:px-8 py-4 sm:py-6 space-y-8">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…

@@ -1,6 +1,43 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
+import { cleanUrlParams } from "./utils";
+
+// Fast wrapper for fetch timeout
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 2000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    throw error;
+  }
+};
+
+// Fast wrapper for promise timeout
+const timeoutPromise = <T,>(promise: Promise<T>, ms: number, errorMsg = "Timeout"): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(errorMsg));
+    }, ms);
+
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+};
 
 export type Role = "Employee" | "HR" | "IT" | "PMO" | "Admin" | "Functional Manager" | "Super Admin";
 
@@ -65,6 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Only update user state when not in the middle of an interaction
       if (inProgress === InteractionStatus.None) {
         if (accounts.length > 0) {
+          cleanUrlParams();
           const account = accounts[0];
           const idTokenClaims = account.idTokenClaims as any;
           const msalRole = idTokenClaims?.roles?.[0] || idTokenClaims?.extension_Role || "Employee";
@@ -72,9 +110,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Verify the user is on the backend allowlist before granting access.
           try {
-            const res = await fetch("/api/me", {
+            const res = await fetchWithTimeout("/api/me", {
               headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
-            });
+            }, 2000);
             if (res.status === 403) {
               setAccessDenied(true);
               setIsLoading(false);
@@ -88,9 +126,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
           let scopes: string[] = [];
           try {
-            const accessRes = await fetch("/api/access/me", {
+            const accessRes = await fetchWithTimeout("/api/access/me", {
               headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
-            });
+            }, 2000);
             if (accessRes.ok) {
               const accessData = await accessRes.json();
               if (accessData.has_override && accessData.role) {
@@ -119,7 +157,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (!hasAutoRedirected.current) {
           hasAutoRedirected.current = true;
           try {
-            await instance.ssoSilent(loginRequest);
+            await timeoutPromise(instance.ssoSilent(loginRequest), 2500, "SSO Silent Timeout");
             // accounts will update, triggering another render
           } catch {
             try {

@@ -666,7 +666,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
         variants={container}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full items-stretch"
+        className="flex lg:grid lg:grid-cols-4 overflow-x-auto no-scrollbar flex-nowrap lg:flex-wrap gap-3 w-full items-stretch pb-1"
       >
         <AnimatePresence mode="popLayout">
           {activeCards.map((id) => {
@@ -677,7 +677,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 variants={item}
                 layout
                 exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-                className="relative h-full"
+                className="relative h-full w-[145px] sm:w-[170px] lg:w-auto shrink-0 lg:shrink"
               >
                 {/* Remove button — visible in edit mode */}
                 <AnimatePresence>
@@ -719,7 +719,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
               variants={item}
               layout
               exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-              className="relative h-full"
+              className="relative h-full w-[145px] sm:w-[170px] lg:w-auto shrink-0 lg:shrink"
             >
               <div ref={addRef} className="h-full">
                 <button

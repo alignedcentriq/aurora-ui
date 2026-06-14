@@ -18,6 +18,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import AppLink
 from app.services.answer_cache_service import AnswerCacheService
+from app.services.form_library_service import validate_trigger_keywords
 from app.services.policy_service import PolicyService
 
 # Answer-cache domains whose stored answers might embed an app link via the nudge; cleared on
@@ -51,6 +52,9 @@ class AppDirectoryService:
         trigger_keywords = (trigger_keywords or "").strip()
         if not name or not url or not purpose:
             return {"status": "error", "message": "name, url and purpose are required."}
+        kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+        if not kw_ok:
+            return {"status": "error", "message": kw_err}
 
         db = SessionLocal()
         try:
@@ -94,6 +98,9 @@ class AppDirectoryService:
             if capabilities is not None:
                 row.capabilities = capabilities.strip() or None
             if trigger_keywords is not None:
+                kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+                if not kw_ok:
+                    return {"status": "error", "message": kw_err}
                 row.trigger_keywords = trigger_keywords.strip() or None
             if is_active is not None:
                 row.is_active = is_active

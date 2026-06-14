@@ -177,7 +177,7 @@ export function AdminDashboard() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white/80 dark:bg-background/80 backdrop-blur-xl px-8 py-5">
+      <div className="sticky top-0 z-20 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white/80 dark:bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">

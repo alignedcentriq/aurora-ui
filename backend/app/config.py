@@ -130,6 +130,12 @@ class Config:
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
 
+    # ── Routing clarification gate (wrong-answer prevention) ──
+    # When the LLM router's confidence is below this, the assistant shows a quick-choice
+    # card asking the user to pick the domain instead of guessing. A clarifying question
+    # costs one click; a confident wrong-domain answer costs trust.
+    CLARIFY_CONF_THRESHOLD = float(os.getenv("CLARIFY_CONF_THRESHOLD", "0.6"))
+
     # ── Semantic Answer Cache (instant repeat-question answers, zero LLM) ──
     ANSWER_CACHE_ENABLED = os.getenv("ANSWER_CACHE_ENABLED", "true").lower() == "true"
     # Cosine similarity required to serve a cached answer. High by design — a near-miss must
@@ -151,6 +157,11 @@ class Config:
     # agent handling — so the gate is deliberately high: only a confident match should trigger a
     # form, otherwise a vaguely-similar message falls through to normal routing untouched.
     FORM_MATCH_SIM_THRESHOLD = float(os.getenv("FORM_MATCH_SIM_THRESHOLD", "0.62"))
+    # Higher gate for info-phrased queries ("how do I…", "what is the process for…") that have no
+    # action verb — only a very strong embedding match should short-circuit to a form there,
+    # because the question may genuinely need a policy/HR answer, not just a form widget.
+    # When an action verb IS present (submit, apply, request, book…), the normal threshold applies.
+    FORM_MATCH_INFO_SIM_THRESHOLD = float(os.getenv("FORM_MATCH_INFO_SIM_THRESHOLD", "0.80"))
 
     # ── Semantic Intent Router (embedding nearest-neighbour domain classification) ──
     # Closed-set routing: the message is matched against labeled seed utterances by cosine
@@ -244,17 +255,6 @@ class Config:
     # Nexus Library mock server — single source of truth for book inventory
     NEXUS_LIBRARY_URL = os.getenv("NEXUS_LIBRARY_URL", "http://localhost:8092")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
-
-    # ── Cybersecurity News Digest ─────────────────────────────────────────────
-    # Comma-separated recipient emails. Leave empty to disable the digest.
-    SECURITY_NEWS_RECIPIENTS = os.getenv("SECURITY_NEWS_RECIPIENTS", "")
-    # Sender mailbox (must have a connected MS365 delegated token). Falls back to
-    # PARKING_REMINDER_SENDER then NOTIFY_TO_EMAIL.
-    SECURITY_NEWS_SENDER = os.getenv("SECURITY_NEWS_SENDER", "")
-    # Hour of day (server local time, 24h) to send the digest. Default: 9 AM.
-    SECURITY_NEWS_HOUR = int(os.getenv("SECURITY_NEWS_HOUR", "9"))
-    # Master switch — set to false to pause without removing recipients.
-    SECURITY_NEWS_ENABLED = os.getenv("SECURITY_NEWS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
     # Power Automate — SharePoint/PowerApps complaint sync
     # Set this to the HTTP trigger URL from your Power Automate flow.

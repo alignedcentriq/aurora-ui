@@ -17,6 +17,7 @@ export function HoverBorderGradient({
   as?: React.ElementType;
   duration?: number;
   hovered?: boolean;
+  disabled?: boolean;
 }) {
   const [hover, setHover] = useState(hovered);
   const [direction, setDirection] = useState<Direction>("TOP");

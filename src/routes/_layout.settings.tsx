@@ -23,7 +23,7 @@ export const Route = createFileRoute("/_layout/settings")({
   component: SettingsPage,
 });
 
-import { Toggle } from "@/components/ui/Toggle";
+import { Toggle } from "@/components/ui/toggle";
 
 interface SettingRowProps {
   icon: LucideIcon;
@@ -41,7 +41,7 @@ function SettingRow({
   children,
 }: SettingRowProps) {
   return (
-    <div className="flex items-center justify-between gap-6 py-4">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-6 py-4">
       <div className="flex items-center gap-4 min-w-0">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--muted)] shrink-0">
           <Icon className={cn("h-[18px] w-[18px]", iconColor)} />
@@ -51,7 +51,7 @@ function SettingRow({
           <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
         </div>
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 pl-14 sm:pl-0">{children}</div>
     </div>
   );
 }
@@ -227,18 +227,18 @@ function ConnectedAccounts({ userEmail }: { userEmail: string }) {
                 : "border-[var(--border)] hover:border-[var(--border-strong)]",
             )}
           >
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--muted)] shrink-0">
                   <Icon className="h-5 w-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-[13px] font-semibold text-foreground">{meta.name}</p>
                   <p className="text-[11px] text-muted-foreground">{meta.description}</p>
                   {isConnected && conn?.email && (
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <CheckCircle2 className="h-3 w-3 text-green-500" />
-                      <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">
+                    <div className="flex items-center gap-1.5 mt-1.5 min-w-0">
+                      <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
+                      <span className="text-[11px] text-green-600 dark:text-green-400 font-medium break-all">
                         {conn.email}
                       </span>
                     </div>
@@ -255,12 +255,12 @@ function ConnectedAccounts({ userEmail }: { userEmail: string }) {
                   </div>
                 </div>
               </div>
-              <div className="shrink-0">
+              <div className="shrink-0 flex justify-end sm:block">
                 {isConnected ? (
                   <button
                     onClick={() => handleDisconnect(key)}
                     disabled={disconnecting === key}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-3 py-1.5 text-[11px] font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-3 py-1.5 text-[11px] font-medium text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/50 transition-colors disabled:opacity-50 w-full sm:w-auto"
                   >
                     {disconnecting === key ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -273,7 +273,7 @@ function ConnectedAccounts({ userEmail }: { userEmail: string }) {
                   <button
                     onClick={() => handleConnect(key)}
                     disabled={connecting === key}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 w-full sm:w-auto"
                   >
                     {connecting === key ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -316,7 +316,7 @@ function SettingsPage() {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-        className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5"
+        className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5"
       >
         <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight">Settings</h1>
         <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">

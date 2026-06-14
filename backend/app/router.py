@@ -10,7 +10,7 @@ from typing import Literal
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.config import settings
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke, resilient_ainvoke
 from app.services.policy_service import _expand_query
 
 # ── Domain Registry ──────────────────────────────────────────────────────────
@@ -24,7 +24,10 @@ DOMAIN_REGISTRY = {
                        "parents insurance, health cover, ESI/ESIC, insurance claim process, claim forms, "
                        "onboarding, offboarding, "
                        "referral bonuses, PIP, work from home policy, holidays, comp-off, "
-                       "grievances, HR document generation (experience certificate, NOC, salary letter), "
+                       "grievances, workplace incident reporting — questions about the process for reporting "
+                       "workplace incidents, misconduct, harassment, safety concerns, or how to raise a grievance "
+                       "('what is the process for reporting workplace incidents', 'how do I report harassment'), "
+                       "HR document generation (experience certificate, NOC, salary letter), "
                        "employee directory, org chart, announcements. "
                        "Also handles personal Zoho People data: my timesheet, work hours logged, "
                        "my attendance summary (present/absent/WFH/late), my appraisal status and cycle, "
@@ -95,11 +98,23 @@ DOMAIN_REGISTRY = {
                        "(2) Checking leave balance — 'how many leaves do I have', 'my leave balance', 'remaining leaves', "
                        "'leave status' — fetches live data from Zoho People (headless); "
                        "(3) Raising/filing/submitting/logging a complaint or ticket in the PowerApps Admin Action Tracker — "
-                       "any message where the user wants to formally raise a complaint, report a premises/facility/office issue, "
-                       "or submit a ticket; "
+                       "ONLY when the user explicitly wants to take the action of raising a ticket about a premises/facility/"
+                       "office infrastructure issue (AC, electrical, housekeeping, cafeteria, parking area). "
+                       "Do NOT use for informational questions about processes or policies "
+                       "('what is the process for…', 'how do I report…', 'what is the policy on…') — those go to hr or admin; "
                        "(4) Retrieving a payslip from the payroll portal; "
                        "(5) Setup commands: 'setup zoho session', 'setup powerapps session', 'setup payroll session'. "
                        "This is the ONLY domain for all Zoho People interactions (leave applications AND leave balance).",
+        "status": "active",
+    },
+    "form_builder": {
+        "description": "Form Builder (ADMIN capability only) — creating or designing a NEW fillable "
+                       "form template for the Form Library: 'create a form for X', 'build a survey', "
+                       "'design a registration form', 'add a form to the form library'. "
+                       "Do NOT use when the user wants to FILL, SUBMIT, or OPEN an existing form "
+                       "(e.g. 'submit the visitor pass form', 'fill the reimbursement form' — those go "
+                       "to the relevant domain or dynamic_form). Also do NOT use when the user simply "
+                       "asks about a process ('what is the process for reimbursement' → admin).",
         "status": "active",
     },
 }
@@ -108,7 +123,8 @@ DOMAIN_REGISTRY = {
 # ── Structured Output Schema ──────────────────────────────────────────────────
 
 _HARDCODED_DOMAINS = frozenset({
-    "hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general"
+    "hr", "admin", "it_support", "pmo", "functional_manager", "ms365", "deeplink", "general",
+    "form_builder",
 })
 
 
@@ -218,18 +234,20 @@ EXAMPLES:
 - "how do I file a mediclaim insurance claim" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "insurance claim process"}}
 - "is my parents insurance covered" → domain: hr, sub_intent: policy_query, entities: {{"policy_topic": "parents insurance"}}
 - "hi" → domain: general, sub_intent: greeting, entities: {{}}
+- "create a form for gym membership reimbursement requests" → domain: form_builder, sub_intent: create_form, entities: {{"form_topic": "gym membership reimbursement"}}
+- "build a form to collect event registrations" → domain: form_builder, sub_intent: create_form, entities: {{"form_topic": "event registrations"}}
+- "design a feedback form for cafeteria" → domain: form_builder, sub_intent: create_form, entities: {{"form_topic": "cafeteria feedback"}}
+- "add a new form to the form library for travel reimbursement" → domain: form_builder, sub_intent: create_form, entities: {{"form_topic": "travel reimbursement"}}
+- "submit the visitor pass form" → NOT form_builder — that is filling an existing form, use dynamic_form or admin
 """
 
 
 # ── Router LLM ───────────────────────────────────────────────────────────────
 
-def _get_router_llm():
-    """Router LLM with structured output, built from the live IT-tunable params
-    (model / temperature / max_tokens / timeout). Cached by the factory; rebuilt
-    only when IT changes a value."""
-    return llm_controls.get_llm(
-        "router", default_timeout=30, default_max_tokens=256
-    ).with_structured_output(RouterOutput)
+def _router_build(llm):
+    """Adapt the bare router model for structured output — passed to the resilient
+    wrappers so the breaker/fallback path gets the same RouterOutput schema."""
+    return llm.with_structured_output(RouterOutput)
 
 
 def _hint_suffix(candidate_domains: list[str] | None) -> str:
@@ -258,7 +276,10 @@ async def classify_intent_async(user_message: str, candidate_domains: list[str] 
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = await _get_router_llm().ainvoke([system, human])
+        result: RouterOutput = await resilient_ainvoke(
+            "router", [system, human], build=_router_build,
+            default_timeout=30, default_max_tokens=256,
+        )
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY and not domain.startswith("connector:"):
@@ -299,7 +320,10 @@ def classify_intent(user_message: str) -> dict:
     human = HumanMessage(content=expanded_message)
 
     try:
-        result: RouterOutput = _get_router_llm().invoke([system, human])
+        result: RouterOutput = resilient_invoke(
+            "router", [system, human], build=_router_build,
+            default_timeout=30, default_max_tokens=256,
+        )
 
         domain = result.domain
         if domain not in DOMAIN_REGISTRY and not domain.startswith("connector:"):

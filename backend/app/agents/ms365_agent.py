@@ -541,7 +541,7 @@ tools = [
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (agent tier).
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 
 
 def ms365_assistant(state: MS365State):
@@ -588,8 +588,10 @@ def ms365_assistant(state: MS365State):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("agent", default_timeout=60).bind_tools(tools)
-    return {"messages": [llm.invoke(messages)]}
+    response = resilient_invoke("agent", messages,
+                                build=lambda l: l.bind_tools(tools),
+                                default_timeout=60)
+    return {"messages": [response]}
 
 
 def should_continue(state: MS365State):

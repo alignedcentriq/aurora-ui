@@ -51,7 +51,29 @@ def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: s
         )
         return json.dumps({"success": True, "message": result_msg})
     except Exception as exc:
-        pass
+        import logging as _logging
+        _logging.getLogger(__name__).warning("[deeplink] submit_zoho_leave failed: %s", exc)
+        # Fall through to the portal-link fallback — but return an honest error so the LLM
+        # doesn't claim the leave was applied when it wasn't.
+        def _fmt_err(iso: str) -> str:
+            try:
+                return _dt.strptime(iso, "%Y-%m-%d").strftime("%d %b %Y")
+            except Exception:
+                return iso
+        return json.dumps({
+            "success": False,
+            "fallback": True,
+            "link": zoho_link,
+            "leave_type": leave_type,
+            "start_date": start_date,
+            "end_date": end_date,
+            "error": str(exc),
+            "message": (
+                f"The leave could not be submitted automatically ({exc}). "
+                f"Please apply your {leave_type} leave ({_fmt_err(start_date)} to {_fmt_err(end_date)}) "
+                "directly in Zoho People using the link below."
+            ),
+        })
 
     # API not configured or failed — return fallback link
     def _fmt(iso: str) -> str:
@@ -291,14 +313,16 @@ _compiled_agent = None
 
 
 def _build_graph(tools):
-    from app.services import llm_controls_service as llm_controls
+    from app.services.llm_resilience import resilient_invoke
     tool_node = ToolNode(tools)
 
     def deeplink_assistant(state: DeeplinkState):
         # Built per call from the live IT-tunable params (agent tier).
-        llm = llm_controls.get_llm("agent", default_timeout=45).bind_tools(tools)
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + state["messages"]
-        return {"messages": [llm.invoke(messages)]}
+        response = resilient_invoke("agent", messages,
+                                    build=lambda l: l.bind_tools(tools),
+                                    default_timeout=45)
+        return {"messages": [response]}
 
     def should_continue(state: DeeplinkState):
         last = state["messages"][-1]

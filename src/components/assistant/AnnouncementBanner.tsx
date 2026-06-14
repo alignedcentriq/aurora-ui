@@ -9,6 +9,7 @@ import { useSettings } from "@/lib/settings-store";
 import { getBuddyGender } from "@/components/assistant/GreetingBot";
 import { speakNotification } from "@/lib/speech";
 import { openFormById } from "@/lib/form-trigger";
+import { DynamicFormField } from "@/lib/chat-store";
 
 interface ImageAction { type: "url" | "form" | "app"; value: string; label: string }
 
@@ -163,7 +164,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
       const formId = Number(action.value);
       const authH = { "x-user-email": user?.email || "", "x-user-role": (user?.role || "employee").toLowerCase() };
       try {
-        const data: { id: number; name: string; description: string; fields: object[] }[] =
+        const data: { id: number; name: string; description: string; fields: DynamicFormField[] }[] =
           await fetch("/api/forms/list", { headers: authH }).then((r) => r.json());
         const form = data.find((f) => f.id === formId);
         if (form) {

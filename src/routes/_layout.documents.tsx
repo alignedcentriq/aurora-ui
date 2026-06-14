@@ -383,8 +383,8 @@ function DocumentsPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header band */}
-      <div className="shrink-0 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
-        <div className="flex items-center justify-between gap-3">
+      <div className="shrink-0 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div
               className="flex h-10 w-10 items-center justify-center rounded-xl shadow-sm"
@@ -402,7 +402,7 @@ function DocumentsPage() {
             </div>
           </div>
 
-          <div className="flex rounded-xl border border-[var(--border)] bg-card p-1">
+          <div className="flex rounded-xl border border-[var(--border)] bg-card p-1 overflow-x-auto no-scrollbar max-w-full shrink-0">
             <PillTab active={mode === "generate"} onClick={() => setMode("generate")}>
               <FileText className="mr-1.5 h-3.5 w-3.5" /> Generate
             </PillTab>
@@ -428,7 +428,7 @@ function DocumentsPage() {
         ) : mode === "library" ? (
           <DocumentLibrary authHeaders={authHeaders} isLibraryAdmin={isLibraryAdmin} />
         ) : (
-          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-8 py-6 lg:grid-cols-2">
+          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-4 sm:px-8 py-6 lg:grid-cols-2">
             {/* ── Form ── */}
             <div className="space-y-5">
               <motion.div
@@ -520,7 +520,7 @@ function DocumentsPage() {
                   ) : null}
 
                   {employee && (
-                    <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-muted/30 p-3">
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-muted/30 p-3">
                       <Field label="Name" value={employee.name} />
                       <Field label="Employee ID" value={employee.employee_id || "—"} />
                       <Field label="Department" value={employee.department || "—"} />
@@ -557,7 +557,7 @@ function DocumentsPage() {
                     onClick={handleGenerate}
                     disabled={!canGenerate}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all",
+                      "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all w-full sm:w-auto",
                       canGenerate ? "hover:opacity-90" : "cursor-not-allowed opacity-40",
                     )}
                     style={{ background: "var(--gradient-primary)" }}
@@ -571,7 +571,7 @@ function DocumentsPage() {
                     <button
                       onClick={() => handleApprove(documentId)}
                       disabled={approving}
-                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-emerald-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-emerald-700 w-full sm:w-auto"
                     >
                       {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       Approve &amp; release
@@ -583,7 +583,7 @@ function DocumentsPage() {
                     <button
                       onClick={() => handleDownload(documentId)}
                       disabled={downloading}
-                      className="inline-flex items-center gap-2 rounded-xl border border-[var(--connectivity)] px-4 py-2.5 text-[13px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)]"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--connectivity)] px-4 py-2.5 text-[13px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)] w-full sm:w-auto"
                     >
                       {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                       Download PDF
@@ -592,7 +592,7 @@ function DocumentsPage() {
 
                   {/* Employee draft: awaiting approval note */}
                   {documentId != null && docStatus === "draft" && !canApprove && (
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-600 dark:text-amber-400">
+                    <span className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-600 dark:text-amber-400 w-full sm:w-auto text-center">
                       <Clock className="h-3.5 w-3.5" /> Sent for approval — downloadable once released
                     </span>
                   )}
@@ -647,7 +647,7 @@ function DocumentsPage() {
 
               <div className="relative min-h-[520px] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
                 {/* Letterhead */}
-                <div className="flex items-center justify-between border-b-2 border-[#00D4AA] px-8 py-4">
+                <div className="flex items-center justify-between border-b-2 border-[#00D4AA] px-4 sm:px-8 py-4">
                   <span className="text-[15px] font-bold text-[#0A2540]">Aligned Automation</span>
                   <span className="text-[11px] font-bold uppercase tracking-wide text-[#00D4AA]">
                     {selected?.label || "Document"}
@@ -655,12 +655,12 @@ function DocumentsPage() {
                 </div>
 
                 {envelopeId && (
-                  <div className="flex items-center justify-between border-b border-slate-100 px-8 py-1.5 text-[10px] text-slate-400">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 sm:px-8 py-1.5 text-[10px] text-slate-400">
                     <span>Document ID: {envelopeId}</span>
                   </div>
                 )}
 
-                <div className="px-8 py-6">
+                <div className="px-4 sm:px-8 py-6 overflow-x-auto">
                   {previewHtml ? (
                     <div
                       className="aa-doc-preview text-[13px] leading-relaxed text-[#1E293B]"
@@ -868,8 +868,8 @@ function ManageTemplates({
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-6">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="mx-auto max-w-4xl px-4 sm:px-8 py-6">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">Document templates</h2>
           <p className="text-[12px] text-muted-foreground">
@@ -880,7 +880,7 @@ function ManageTemplates({
         <button
           onClick={sync}
           disabled={syncing}
-          className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-semibold text-foreground hover:bg-muted/60"
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-semibold text-foreground hover:bg-muted/60 w-full sm:w-auto shrink-0"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
           Sync from SharePoint
@@ -925,7 +925,7 @@ function ManageTemplates({
             <button
               onClick={saveApprovers}
               disabled={savingApprovers}
-              className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90"
+              className="inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 w-full sm:w-auto"
               style={{ background: "var(--gradient-primary)" }}
             >
               {savingApprovers ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -988,46 +988,54 @@ function ManageTemplates({
                     <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Detected fields
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {t.fields.map((f) => (
-                        <div key={f.name} className="flex flex-wrap items-center gap-2">
-                          <span className="w-40 shrink-0 truncate font-mono text-[11px] text-muted-foreground">
+                        <div
+                          key={f.name}
+                          className="flex flex-col gap-2 p-2.5 rounded-xl bg-card border border-[var(--border)]/30 sm:flex-row sm:items-center sm:bg-transparent sm:border-0 sm:p-0 sm:gap-2"
+                        >
+                          <span className="w-full sm:w-40 shrink-0 truncate font-mono text-[11px] text-muted-foreground">
                             {`{{${f.name}}}`}
                           </span>
-                          <Input
-                            value={f.label}
-                            onChange={(e) => patchField(t.id, f.name, { label: e.target.value })}
-                            className="h-8 flex-1 text-[12px]"
-                          />
-                          <select
-                            value={f.type}
-                            onChange={(e) => patchField(t.id, f.name, { type: e.target.value as FieldType })}
-                            className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px]"
-                          >
-                            <option value="text">text</option>
-                            <option value="textarea">textarea</option>
-                            <option value="date">date</option>
-                            <option value="select">select</option>
-                          </select>
-                          <select
-                            value={f.source}
-                            onChange={(e) =>
-                              patchField(t.id, f.name, { source: e.target.value as "auto" | "user" })
-                            }
-                            className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px]"
-                            title="auto = filled from employee record; user = entered at generation"
-                          >
-                            <option value="user">user-entered</option>
-                            <option value="auto">auto-filled</option>
-                          </select>
-                          <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <input
-                              type="checkbox"
-                              checked={f.required}
-                              onChange={(e) => patchField(t.id, f.name, { required: e.target.checked })}
+                          <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-1 sm:items-center">
+                            <Input
+                              value={f.label}
+                              onChange={(e) => patchField(t.id, f.name, { label: e.target.value })}
+                              className="h-8 w-full text-[12px]"
                             />
-                            required
-                          </label>
+                            <div className="flex flex-col gap-2 w-full sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
+                              <select
+                                value={f.type}
+                                onChange={(e) => patchField(t.id, f.name, { type: e.target.value as FieldType })}
+                                className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[85px]"
+                              >
+                                <option value="text">text</option>
+                                <option value="textarea">textarea</option>
+                                <option value="date">date</option>
+                                <option value="select">select</option>
+                              </select>
+                              <select
+                                value={f.source}
+                                onChange={(e) =>
+                                  patchField(t.id, f.name, { source: e.target.value as "auto" | "user" })
+                                }
+                                className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[110px]"
+                                title="auto = filled from employee record; user = entered at generation"
+                              >
+                                <option value="user">user-entered</option>
+                                <option value="auto">auto-filled</option>
+                              </select>
+                              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0 select-none px-1 w-full sm:w-auto">
+                                <input
+                                  type="checkbox"
+                                  checked={f.required}
+                                  onChange={(e) => patchField(t.id, f.name, { required: e.target.checked })}
+                                  className="rounded border-[var(--border)] text-primary focus:ring-primary h-3.5 w-3.5"
+                                />
+                                required
+                              </label>
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1039,7 +1047,7 @@ function ManageTemplates({
                     onClick={() => save(t0)}
                     disabled={!isDirty(t.id) || saving === t.id}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all",
+                      "inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all w-full sm:w-auto",
                       isDirty(t.id) ? "hover:opacity-90" : "cursor-not-allowed opacity-40",
                     )}
                     style={{ background: "var(--gradient-primary)" }}
@@ -1086,7 +1094,7 @@ function DocList({
           {docs.map((d) => {
             const verified = d.status === "verified";
             return (
-              <div key={d.id} className="flex items-center gap-3 rounded-xl border border-[var(--border)] p-3">
+              <div key={d.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-medium text-foreground">{d.label}</div>
                   <div className="truncate text-[11px] text-muted-foreground">
@@ -1094,39 +1102,41 @@ function DocList({
                     {d.created_at ? new Date(d.created_at).toLocaleString() : ""}
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                    verified
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto sm:self-auto shrink-0 justify-end">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold mr-auto sm:mr-0",
+                      verified
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                    )}
+                  >
+                    {verified ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                    {verified ? "Released" : "Draft"}
+                  </span>
+                  <button
+                    onClick={() => onView(d)}
+                    className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted/60 flex-1 sm:flex-none text-center"
+                  >
+                    View
+                  </button>
+                  {canApprove && !verified && onApprove && (
+                    <button
+                      onClick={() => onApprove(d.id)}
+                      className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700 flex-1 sm:flex-none text-center"
+                    >
+                      Approve
+                    </button>
                   )}
-                >
-                  {verified ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
-                  {verified ? "Released" : "Draft"}
-                </span>
-                <button
-                  onClick={() => onView(d)}
-                  className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted/60"
-                >
-                  View
-                </button>
-                {canApprove && !verified && onApprove && (
-                  <button
-                    onClick={() => onApprove(d.id)}
-                    className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
-                  >
-                    Approve
-                  </button>
-                )}
-                {verified && (
-                  <button
-                    onClick={() => onDownload(d.id, d.label)}
-                    className="rounded-lg border border-[var(--connectivity)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)]"
-                  >
-                    Download
-                  </button>
-                )}
+                  {verified && (
+                    <button
+                      onClick={() => onDownload(d.id, d.label)}
+                      className="rounded-lg border border-[var(--connectivity)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)] flex-1 sm:flex-none text-center"
+                    >
+                      Download
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1312,10 +1322,10 @@ function DocumentLibrary({
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-6">
+    <div className="mx-auto max-w-5xl px-4 sm:px-8 py-6">
       {/* Toolbar */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative flex-1 min-w-[200px] w-full">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchQ}
@@ -1326,7 +1336,7 @@ function DocumentLibrary({
         </div>
         {categories.length > 0 && (
           <Select value={filterCat || "_all"} onValueChange={(v) => setFilterCat(v === "_all" ? "" : v)}>
-            <SelectTrigger className="h-9 w-44 text-[13px]">
+            <SelectTrigger className="h-9 text-[13px] w-full sm:w-44">
               <Tag className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
@@ -1341,7 +1351,7 @@ function DocumentLibrary({
         {isLibraryAdmin && (
           <button
             onClick={() => setUploadOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white"
+            className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white w-full sm:w-auto"
             style={{ background: "var(--gradient-primary)" }}
           >
             <Upload className="h-4 w-4" /> Upload document
@@ -1409,11 +1419,11 @@ function DocumentLibrary({
               )}
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
             <button
               onClick={handleUpload}
               disabled={uploading}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 w-full sm:w-auto"
               style={{ background: "var(--gradient-primary)" }}
             >
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -1421,7 +1431,7 @@ function DocumentLibrary({
             </button>
             <button
               onClick={() => setUploadOpen(false)}
-              className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+              className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground w-full sm:w-auto text-center animate-none"
             >
               Cancel
             </button>
@@ -1525,7 +1535,7 @@ function PillTab({
     <button
       onClick={onClick}
       className={cn(
-        "inline-flex items-center rounded-lg px-3.5 py-1.5 text-[12px] font-semibold transition-colors",
+        "inline-flex items-center rounded-lg px-3.5 py-1.5 text-[12px] font-semibold transition-colors whitespace-nowrap shrink-0",
         active ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground",
       )}
     >

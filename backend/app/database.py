@@ -64,6 +64,8 @@ from app.models import (
     PersonaAssignment,
     PersonaFeature,
     DashboardConfig,
+    SavedDashboard,
+    AutomationRule,
     SCHEMA,
 )
 from app.config import settings
@@ -343,6 +345,11 @@ def init_db():
                 f'  started_at TIMESTAMP, finished_at TIMESTAMP'
                 f')',
                 f'CREATE INDEX IF NOT EXISTS idx_flow_step_runs_run ON "{SCHEMA}".flow_step_runs(flow_run_id)',
+                # ROI / Analytics Studio: user-built dashboards (create_all handles the table; index is additive)
+                f'CREATE INDEX IF NOT EXISTS idx_saved_dashboards_owner ON "{SCHEMA}".saved_dashboards(owner_email)',
+                # roi_digest automation: kind + period config on automation_rules
+                f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS automation_kind VARCHAR DEFAULT \'email\'',
+                f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS extra_config JSON',
             ]:
                 try:
                     conn.execute(text(stmt))

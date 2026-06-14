@@ -1,10 +1,10 @@
-/** Pub-sub bridge: announcement banner → AssistantView form panel. */
+import { DynamicFormField } from "./chat-store";
 
 export interface FormTriggerDetail {
   formId: number;
   name: string;
   description: string;
-  fields: object[];
+  fields: DynamicFormField[];
   submitEndpoint: string;
 }
 

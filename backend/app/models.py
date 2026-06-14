@@ -1382,6 +1382,11 @@ class AutomationRule(Base):
     hour = Column(Integer, default=9)                         # local hour of day, 0..23
     minute = Column(Integer, default=0)                       # minute of hour, 0..59
 
+    # Kind: "email" (default static body) | "roi_digest" (body rendered from live ROI metrics at send).
+    # roi_digest rules carry their period in extra_config and attach the ROI PDF when sent.
+    automation_kind = Column(String, default="email")
+    extra_config = Column(JSON, nullable=True)                 # roi_digest: {"period": "30d"}
+
     # Email
     email_subject = Column(String, nullable=False)
     email_body = Column(Text, nullable=False)                 # plain text; wrapped in branded shell at send
@@ -1399,6 +1404,25 @@ class AutomationRule(Base):
     last_run = Column(DateTime, nullable=True)
     last_status = Column(String, nullable=True)               # sent | failed:<reason>
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SavedDashboard(Base):
+    """A user-built analytics board from the Analytics Studio. Holds one or more chart
+    widgets, each naming entries from the server-side metric catalog (never raw SQL).
+
+    Access: the creator always sees their boards; role_visibility (a JSON list of role
+    names) optionally shares a board read-only with other non-employee roles."""
+    __tablename__ = "saved_dashboards"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    owner_email = Column(String, index=True, nullable=False)
+    role_visibility = Column(JSON, nullable=True)             # list[str] of roles | null = owner only
+    # widgets: list of {title, metric, dimension, period, chart_type, layout:{x,y,w,h}}
+    widgets = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 class WelcomeResource(Base):

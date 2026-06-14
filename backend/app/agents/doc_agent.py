@@ -19,7 +19,7 @@ from app.database import SessionLocal
 from app.document_generation.generator import generate_pdf
 from app.document_store import store_pdf
 from app.models import Employee, EmployeeZohoProfile
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 from app.services.document_service import DOC_TEMPLATES, build_messages, generate_stream
 from app.services.prompt_service import PromptService
 
@@ -151,8 +151,10 @@ def doc_assistant(state: DocState):
     system_prompt = base_prompt + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("agent", default_timeout=60).bind_tools(_tools)
-    return {"messages": [llm.invoke(messages)]}
+    response = resilient_invoke("agent", messages,
+                                build=lambda l: l.bind_tools(_tools),
+                                default_timeout=60)
+    return {"messages": [response]}
 
 
 def _should_continue(state: DocState):

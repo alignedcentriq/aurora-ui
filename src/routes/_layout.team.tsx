@@ -193,7 +193,7 @@ function TeamPage() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {/* Header */}
-      <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
+      <div className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-8 py-5">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-foreground tracking-tight">

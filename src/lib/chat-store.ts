@@ -68,6 +68,17 @@ export interface DynamicFormData {
   submit_endpoint: string;
 }
 
+// LLM-drafted form template shown for admin review/editing before it's actually created.
+// When `id` is present the draft revises an existing form (PUT/update); otherwise it's a new
+// form (POST/create).
+export interface FormBuilderDraft {
+  id?: number;
+  name: string;
+  description: string;
+  category?: string;
+  fields: DynamicFormField[];
+}
+
 export interface QuickChoiceOption {
   label: string;
   /** "message" → inject into chat; "link" → open in new tab */
@@ -96,11 +107,12 @@ export interface InteractivePayload {
     | "attendance_schedule"
     | "my_attendance"
     | "dynamic_form"
+    | "form_builder"
     | "quick_choice"
     | "travel_request_form"
     | "travel_expense_form"
     | "cancel_leave_form";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData;
+  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData | FormBuilderDraft;
 }
 
 export interface Turn {

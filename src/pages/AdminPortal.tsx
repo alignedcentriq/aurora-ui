@@ -103,7 +103,7 @@ export function AdminPortal() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-5 border-b border-[#e2e8f0] dark:border-white/[0.08] shrink-0 bg-white dark:bg-card">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-5 border-b border-[#e2e8f0] dark:border-white/[0.08] shrink-0 bg-white dark:bg-card">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
             Management Portals
@@ -114,14 +114,14 @@ export function AdminPortal() {
       </div>
 
       {/* Tabs — only show sections this admin is scoped to */}
-      <div className="px-8 py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex">
-        <div className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex flex-wrap gap-1.5 w-max max-w-full shadow-sm">
+      <div className="px-4 py-3 sm:px-8 sm:py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex overflow-x-auto no-scrollbar">
+        <div className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex gap-1.5 w-max shrink-0 shadow-sm">
           {allowedTabs.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
               className={cn(
-                "flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200",
+                "flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 shrink-0",
                 tab === id
                   ? "bg-[#00a29a] text-white shadow-sm"
                   : "text-[#64748b] dark:text-white/50 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.04] hover:text-[#0f172a] dark:hover:text-white"
@@ -302,67 +302,70 @@ function ParkingTab({ authHeaders, canManage }: { authHeaders: Record<string, st
     <div>
       <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Active", "Surrendered", "All"]} onRefresh={fetch_} />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="parking stickers" /> : (
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-[var(--border)]">
-              {["Employee", "Vehicle", "Type", "Sticker #", "Valid Until", "Status", "Actions"].map((h) => (
-                <th key={h} className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((s) => (
-              <tr key={s.id} className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors">
-                <td className="py-3.5 pr-4">
-                  <div className="font-medium text-foreground">{s.employee_name}</div>
-                  <div className="text-[11px] text-muted-foreground">{s.employee_email}</div>
-                </td>
-                <td className="py-3.5 pr-4">
-                  <div className="font-medium text-foreground">{s.vehicle_number}</div>
-                  {(s.vehicle_make || s.vehicle_model) && (
-                    <div className="text-[11px] text-muted-foreground">{[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ")}</div>
-                  )}
-                </td>
-                <td className="py-3.5 pr-4 text-foreground/80 capitalize">{s.vehicle_type}</td>
-                <td className="py-3.5 pr-4 text-foreground/80 font-mono">{s.sticker_number || "—"}</td>
-                <td className="py-3.5 pr-4 text-foreground/50">{s.valid_until || "—"}</td>
-                <td className="py-3.5 pr-4"><StatusBadge status={s.status} /></td>
-                <td className="py-3.5">
-                  {!canManage ? (
-                    <span className="text-muted-foreground/40 text-[12px]">View only</span>
-                  ) : s.status === "Pending" ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Sticker #"
-                        value={stickerInputs[s.id] ?? ""}
-                        onChange={(e) => setStickerInputs((p) => ({ ...p, [s.id]: e.target.value }))}
-                        className="w-24 rounded-lg border border-[var(--border)] bg-secondary/50 px-2 py-1 text-[12px] text-foreground outline-none focus:border-primary/50"
-                      />
-                      <button
-                        onClick={() => approve(s.id)}
-                        disabled={acting === s.id}
-                        className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-                      >
-                        {acting === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                        Issue
-                      </button>
-                    </div>
-                  ) : s.status === "Active" ? (
-                    <button
-                      onClick={() => revoke(s.id)}
-                      disabled={acting === s.id}
-                      className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
-                    >
-                      <X className="h-3 w-3" />
-                      Revoke
-                    </button>
-                  ) : <span className="text-muted-foreground/40 text-[12px]">—</span>}
-                </td>
+        <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
+          <table className="w-full min-w-[900px] text-[13px]">
+            <thead>
+              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
+                <th className="py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">Employee</th>
+                {["Vehicle", "Type", "Sticker #", "Valid Until", "Status", "Actions"].map((h) => (
+                  <th key={h} className="text-left py-3 px-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((s) => (
+                <tr key={s.id} className="border-b border-[#f1f5f9] dark:border-white/[0.05] last:border-0 hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors">
+                  <td className="py-3.5 px-5">
+                    <div className="font-semibold text-foreground">{s.employee_name}</div>
+                    <div className="text-[11px] text-muted-foreground">{s.employee_email}</div>
+                  </td>
+                  <td className="py-3.5 px-4">
+                    <div className="font-medium text-foreground">{s.vehicle_number}</div>
+                    {(s.vehicle_make || s.vehicle_model) && (
+                      <div className="text-[11px] text-muted-foreground">{[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ")}</div>
+                    )}
+                  </td>
+                  <td className="py-3.5 px-4 text-foreground/80 capitalize">{s.vehicle_type}</td>
+                  <td className="py-3.5 px-4 text-foreground/80 font-mono">{s.sticker_number || "—"}</td>
+                  <td className="py-3.5 px-4 text-foreground/50">{s.valid_until || "—"}</td>
+                  <td className="py-3.5 px-4"><StatusBadge status={s.status} /></td>
+                  <td className="py-3.5 px-4">
+                    {!canManage ? (
+                      <span className="text-muted-foreground/40 text-[12px]">View only</span>
+                    ) : s.status === "Pending" ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Sticker #"
+                          value={stickerInputs[s.id] ?? ""}
+                          onChange={(e) => setStickerInputs((p) => ({ ...p, [s.id]: e.target.value }))}
+                          className="w-24 rounded-lg border border-[var(--border)] bg-secondary/50 px-2 py-1 text-[12px] text-foreground outline-none focus:border-primary/50"
+                        />
+                        <button
+                          onClick={() => approve(s.id)}
+                          disabled={acting === s.id}
+                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {acting === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          Issue
+                        </button>
+                      </div>
+                    ) : s.status === "Active" ? (
+                      <button
+                        onClick={() => revoke(s.id)}
+                        disabled={acting === s.id}
+                        className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+                      >
+                        <X className="h-3 w-3" />
+                        Revoke
+                      </button>
+                    ) : <span className="text-muted-foreground/40 text-[12px]">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -952,7 +955,7 @@ function BookshelfTab({ authHeaders, canManage }: { authHeaders: Record<string, 
   return (
     <div>
       {/* Sub-navigation */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between mb-5">
         <div className="flex gap-1 flex-wrap">
           {(["dashboard", "requests", "extensions", "assignments", "books"] as const).map((v) => (
             <button key={v} onClick={() => setView(v)}
@@ -966,17 +969,19 @@ function BookshelfTab({ authHeaders, canManage }: { authHeaders: Record<string, 
             </button>
           ))}
         </div>
-        {view === "books" && canManage && (
-          <button onClick={() => setShowBookForm(true)}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
-            <Plus className="h-3.5 w-3.5" /> Add Book
-          </button>
-        )}
-        {view === "dashboard" && (
-          <button onClick={fetchDashboard} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
-        )}
+        <div className="flex items-center gap-2 self-end sm:self-auto">
+          {view === "books" && canManage && (
+            <button onClick={() => setShowBookForm(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
+              <Plus className="h-3.5 w-3.5" /> Add Book
+            </button>
+          )}
+          {view === "dashboard" && (
+            <button onClick={fetchDashboard} className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors">
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Dashboard ── */}
@@ -984,7 +989,7 @@ function BookshelfTab({ authHeaders, canManage }: { authHeaders: Record<string, 
         loadingDash ? <TableLoader /> : !dashboard ? <TableEmpty label="dashboard data" /> : (
           <div className="space-y-6">
             {/* Metrics Grid */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
               {[
                 { label: "Total Books", value: dashboard.metrics.total_books, color: "text-foreground" },
                 { label: "Available", value: dashboard.metrics.available_copies, color: "text-emerald-400" },
@@ -1000,13 +1005,13 @@ function BookshelfTab({ authHeaders, canManage }: { authHeaders: Record<string, 
                 { label: "Damaged", value: dashboard.metrics.damaged_books, color: "text-orange-400" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="rounded-xl border border-[var(--border)] bg-card p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</p>
-                  <p className={cn("text-[28px] font-bold leading-none", color)}>{value}</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{label}</p>
+                  <p className={cn("text-[22px] md:text-[28px] font-bold leading-none", color)}>{value}</p>
                 </div>
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Popular Books */}
               <div className="rounded-xl border border-[var(--border)] bg-card p-4">
                 <h3 className="text-[13px] font-semibold text-foreground mb-3">Most Requested Books</h3>
@@ -1766,6 +1771,12 @@ const TRAVEL_STATUS_BADGE: Record<string, string> = {
   completed:     "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border border-zinc-500/20",
 };
 
+const EXPENSE_STATUS_BADGE: Record<string, string> = {
+  Pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  Approved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  Rejected: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+};
+
 const TRAVEL_STATUS_LABEL: Record<string, string> = {
   pending_rm:    "Pending RM Approval",
   rm_approved:   "RM Approved — Pending Admin",
@@ -2140,7 +2151,7 @@ function TravelExpensesSubTab({ authHeaders, canApprove }: { authHeaders: Record
                       {item.over_limit_reason && <div className="text-[11px] text-amber-600 mt-0.5 truncate" title={item.over_limit_reason}>Reason: {item.over_limit_reason}</div>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={cn("px-2 py-1 rounded-full text-[11px] font-semibold", STATUS_BADGE[item.status] || "bg-zinc-100 text-zinc-500")}>
+                      <span className={cn("px-2 py-1 rounded-full text-[11px] font-semibold", EXPENSE_STATUS_BADGE[item.status] || "bg-zinc-100 text-zinc-500")}>
                         {item.status}
                       </span>
                       {item.rejection_reason && (

@@ -357,6 +357,16 @@ _RAW: list[tuple[str, str, str]] = [
     ("get my payslip", "deeplink", "payslip"),
     ("setup zoho session", "deeplink", "setup_session"),
     ("setup powerapps session", "deeplink", "setup_session"),
+
+    # ── form_builder: admin creates a NEW form template (role enforced server-side) ──
+    ("create a form for gym membership reimbursement requests", "form_builder", "create_form"),
+    ("create a new form", "form_builder", "create_form"),
+    ("build a feedback form for the cafeteria", "form_builder", "create_form"),
+    ("make a form to collect laptop upgrade requests", "form_builder", "create_form"),
+    ("add a form to the form library", "form_builder", "create_form"),
+    ("design a survey form for employees", "form_builder", "create_form"),
+    ("set up a registration form for the offsite event", "form_builder", "create_form"),
+    ("generate a form for travel reimbursement", "form_builder", "create_form"),
 ]
 
 

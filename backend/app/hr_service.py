@@ -192,6 +192,7 @@ class HRService:
             db.refresh(new_leave)
 
             # Send Reporting Manager approval email with clickable links
+            _manager_notified = False
             try:
                 manager_email = HRService._find_manager_email(db, emp)
                 expires = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
@@ -206,7 +207,7 @@ class HRService:
                     action="reject", approver_email=manager_email, employee_email=emp.email, expires_at=expires,
                 ))
                 db.commit()
-                send_leave_approval_request(
+                _manager_notified = send_leave_approval_request(
                     user_email=emp.email,
                     employee_name=emp.name, employee_email=emp.email,
                     leave_type=leave_type, start_date=start_date, end_date=end_date,
@@ -216,7 +217,8 @@ class HRService:
                     manager_email=manager_email, leave_id=new_leave.id,
                 )
             except Exception as e:
-                pass
+                import logging as _logging
+                _logging.getLogger(__name__).warning("[leave] Failed to send manager approval email: %s", e)
 
             # Send FYI notification to Functional Manager (no approve/reject links)
             try:
@@ -229,11 +231,19 @@ class HRService:
                         reason=reason, functional_manager_email=fm_email,
                     )
             except Exception as e:
-                pass
+                import logging as _logging
+                _logging.getLogger(__name__).warning("[leave] Failed to send FM FYI email: %s", e)
 
+            _notif_note = (
+                " Your reporting manager has been notified for approval."
+                if _manager_notified
+                else " Note: the notification to your reporting manager could not be sent right now "
+                     "(Microsoft 365 may not be connected) — your leave is recorded and your manager "
+                     "can still review it from the portal."
+            )
             return (
-                f"Your {leave_type} leave request from {start_date} to {end_date} has been submitted. "
-                f"Your reporting manager has been notified for approval and your functional manager has been informed."
+                f"Your {leave_type} leave request from {start_date} to {end_date} has been submitted."
+                + _notif_note
             )
         finally:
             db.close()

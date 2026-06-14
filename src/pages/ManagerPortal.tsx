@@ -238,27 +238,29 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
       {/* Controls */}
       <div className="mb-5 mt-6 flex flex-wrap items-center gap-2">
         <select value={month} onChange={e => setMonth(Number(e.target.value))}
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
+          className="rounded-xl border border-border bg-background px-3 py-2 text-sm flex-1 sm:flex-none">
           {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
         </select>
         <select value={year} onChange={e => setYear(Number(e.target.value))}
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm">
+          className="rounded-xl border border-border bg-background px-3 py-2 text-sm flex-1 sm:flex-none">
           {[year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i).map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <button onClick={loadReport}
-          className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted">
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted flex-1 sm:flex-none">
           <RefreshCw className="h-3.5 w-3.5" /> Refresh
         </button>
-        <div className="flex-1" />
-        <button onClick={downloadCsv} disabled={!report?.success}
-          className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50">
-          <Download className="h-3.5 w-3.5" /> CSV
-        </button>
-        <button onClick={emailNow} disabled={!report?.success || emailing}
-          className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
-          {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-          Email me the report
-        </button>
+        <div className="hidden sm:block flex-1" />
+        <div className="flex w-full sm:w-auto items-center gap-2 mt-1 sm:mt-0">
+          <button onClick={downloadCsv} disabled={!report?.success}
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50">
+            <Download className="h-3.5 w-3.5" /> CSV
+          </button>
+          <button onClick={emailNow} disabled={!report?.success || emailing}
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 whitespace-nowrap">
+            {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+            Email me the report
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -361,12 +363,13 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
 
   return (
     <div className="mb-6">
-      <div className="mb-3 flex items-center gap-2">
-        <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
-        <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Email Automations</h2>
-        <div className="flex-1" />
+      <div className="mb-3 flex flex-row items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-2">
+          <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
+          <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Email Automations</h2>
+        </div>
         <button onClick={() => setShowForm(v => !v)}
-          className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted">
+          className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted shrink-0">
           <Plus className="h-3.5 w-3.5" /> New automation
         </button>
       </div>
@@ -380,12 +383,12 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
       ) : (
         <div className="space-y-2">
           {schedules.map(s => (
-            <div key={s.id} className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card/50 px-4 py-3">
+            <div key={s.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-border bg-card/50 px-4 py-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-foreground">{describeCadence(s)}</span>
-                  {!s.active && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">Paused</span>}
-                  {s.period_mode === "prev_period" && <span className="rounded-full bg-[var(--collaboration)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--collaboration)]">Prev. period</span>}
+                  {!s.active && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground shrink-0">Paused</span>}
+                  {s.period_mode === "prev_period" && <span className="rounded-full bg-[var(--collaboration)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--collaboration)] shrink-0">Prev. period</span>}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[11px] text-muted-foreground">
                   <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> Next: {fmtDateTime(s.next_run)}</span>
@@ -393,7 +396,7 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
                   {s.last_status && <span>Last: {s.last_status} ({fmtDateTime(s.last_run)})</span>}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex shrink-0 items-center gap-1.5 justify-end sm:justify-start">
                 <button onClick={() => toggle(s)} title={s.active ? "Pause" : "Resume"}
                   className={cn("flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-semibold",
                     s.active ? "border-border hover:bg-muted" : "border-emerald-500/30 bg-emerald-500/5 text-emerald-600")}>

@@ -219,7 +219,7 @@ pmo_tools = [
 ]
 
 # LLM built on demand from the live IT-tunable params (router tier).
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -398,8 +398,10 @@ def pmo_assistant(state: PMOState):
         feedback_ctx = state.get("feedback_context") or ""
         messages = [SystemMessage(content=base_prompt + guardrail + feedback_ctx)] + messages
     try:
-        llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(pmo_tools)
-        return {"messages": [llm.invoke(messages)]}
+        response = resilient_invoke("service", messages,
+                                    build=lambda l: l.bind_tools(pmo_tools),
+                                    default_timeout=120)
+        return {"messages": [response]}
     except Exception as exc:
         return {"messages": [AIMessage(content="PMO Agent is temporarily unavailable. Please try again.")]}
 

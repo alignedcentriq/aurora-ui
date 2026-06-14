@@ -14,7 +14,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import InjectedState, ToolNode
 
 from app.config import settings
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 from app.hr_service import HRService
 from app.services.policy_service import PolicyService
 from app.services.prompt_service import PromptService
@@ -164,8 +164,10 @@ def hr_assistant(state: HRState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("agent", default_timeout=45).bind_tools(_tools)
-    return {"messages": [llm.invoke(messages)]}
+    response = resilient_invoke("agent", messages,
+                                build=lambda l: l.bind_tools(_tools),
+                                default_timeout=45)
+    return {"messages": [response]}
 
 
 def _should_continue(state: HRState):

@@ -34,6 +34,7 @@ from langchain_core.tools import tool
 from app.hr_service import HRService
 from app.config import settings
 from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke, resilient_ainvoke
 from app.router import classify_intent, classify_intent_async, get_domain_status, get_placeholder_response
 from app.services.semantic_router_service import SemanticRouterService
 from app.agents.pmo_agent import pmo_agent
@@ -172,11 +173,16 @@ def _draft_key(state: AgentState) -> str:
     return state.get("session_id") or state.get("user_email") or settings.DEFAULT_USER_EMAIL
 
 
+_CONFIRMATION_RE = re.compile(
+    r'^(yes|y|yep|yeah|yup|sure|ok|okay|k|confirm|go\s+ahead|sounds\s+good|'
+    r'send|send\s+it|submit|submit\s+it|do\s+it|do\s+that|proceed|please\s+send|'
+    r'yes\s+send|yes[,\s]+please|please\s+go\s+ahead|yes[,\s]+go\s+ahead)[\s!.]*$',
+    re.I,
+)
+
 def _is_confirmation(text: str) -> bool:
-    normalized = text.strip().lower()
-    return normalized in {"yes", "y", "ok", "okay", "confirm", "send", "send it", "yes send it"} or (
-        "yes" in normalized and "send" in normalized
-    )
+    normalized = text.strip()
+    return bool(_CONFIRMATION_RE.match(normalized))
 
 
 def _is_cancellation(text: str) -> bool:
@@ -301,13 +307,15 @@ async def _summarize_conversation_async(thread_id: str, messages_to_summarize, d
             "Preserve: key facts, dates, employee names, leave types, ticket IDs, "
             "requests made, and decisions reached. Be concise and factual."
         )
-        summary_response = await llm_controls.get_llm("summarizer", default_timeout=25).ainvoke(
+        summary_response = await resilient_ainvoke(
+            "summarizer",
             [
                 SystemMessage(content=summary_prompt),
                 HumanMessage(content="\n".join(
                     f"{m.type}: {getattr(m, 'content', '')}" for m in messages_to_summarize
                 )),
-            ]
+            ],
+            default_timeout=25,
         )
         summary_text = summary_response.content.strip()
         if summary_text:
@@ -1455,9 +1463,24 @@ _KW_ADMIN_VISITOR = re.compile(
 # Employee Referral Form). Action-style queries ("I need a X", "request a X") keep the
 # default lower threshold.
 _INFO_QUERY_RE = re.compile(
-    r'\bhow\s+(do\s+i|can\s+i|to)\b|\bwhat\s+(is|are)\b|\btell\s+me\b|\bexplain\b',
+    r'\bhow\s+(do\s+i|can\s+i|to)\b|\bwhat\s+(is|are)\b|\btell\s+me\b|\bexplain\b|'
+    r'\bprocess\s+(for|of|to)\b|\bpolic(y|ies)\b|\bprocedure\b|\bguidelines?\b|\bsteps?\s+(for|to)\b',
     re.I,
 )
+# Action verbs that signal intent to DO something rather than just learn about it.
+# When present in an info-phrased message, the normal (lower) form-match threshold applies.
+_ACTION_VERB_RE = re.compile(
+    r'\b(submit|apply|request|raise|book|register|file|get|need|want|fill)\b',
+    re.I,
+)
+
+# Form Builder — admin creates a NEW form template. Must run before admin-reimbursement keyword
+# so "create a form for gym membership reimbursement requests" routes here, not to admin.
+_KW_FORM_BUILDER = re.compile(
+    r'\b(create|make|build|generate|set\s*up|add|design|draft)\b[\s\S]{0,60}?\b(?:a\s+|new\s+)?form\b',
+    re.I,
+)
+_KW_FORM_FILL = re.compile(r'\b(fill|submit|open|complete)\b', re.I)
 
 _KW_BOOKSHELF_RETURN = re.compile(
     r'\b(return\s+(my\s+|the\s+|a\s+)?book|'
@@ -1761,6 +1784,14 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "general", "confidence": 1.0,
                 "reasoning": "Keyword: greeting/social",
                 "sub_intent": "greeting", "entities": {}}
+
+    # Form Builder — admin creates a NEW form template. Checked very early (confidence=1.0 →
+    # fast-exit before the semantic high-tier) so messages like "create a form for gym membership
+    # reimbursement requests" can't be stolen by admin-reimbursement or deeplink keyword matches.
+    if _KW_FORM_BUILDER.search(text) and not _KW_FORM_FILL.search(text):
+        return {"domain": "form_builder", "confidence": 1.0,
+                "reasoning": "Keyword: create/design a new form (form builder)",
+                "sub_intent": "create_form", "entities": {}}
 
     # Fixed answer: salary credit date
     if _KW_SALARY_CREDIT.search(text):
@@ -2200,6 +2231,26 @@ def _last_ai_message(messages: list) -> str:
     return ""
 
 
+# ── Routing clarification gate (wrong-answer prevention) ──────────────────────
+# When the router can't pick a domain confidently, the clarify node shows a quick-choice
+# card. Clicking an option sends "<Label>: <original question>" back as the next message,
+# which the regex below routes deterministically (confidence 1.0, zero LLM).
+_CLARIFY_DOMAIN_LABELS = {
+    "hr": "HR",
+    "it_support": "IT Support",
+    "admin": "Admin & Facilities",
+    "pmo": "PMO / Projects",
+    "functional_manager": "Manager",
+    "ms365": "Microsoft 365",
+    "general": "General",
+}
+_CLARIFY_LABEL_TO_DOMAIN = {v.lower(): k for k, v in _CLARIFY_DOMAIN_LABELS.items()}
+_CLARIFY_REPLY_RE = re.compile(
+    r'^\s*(' + '|'.join(re.escape(v) for v in _CLARIFY_DOMAIN_LABELS.values()) + r')\s*:\s*(.+)$',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 async def intent_router(state: AgentState):
     """Entry node — classifies intent, extracts sub-intent + entities, routes to domain."""
     last_human = None
@@ -2211,6 +2262,20 @@ async def intent_router(state: AgentState):
     if not last_human:
         return {"domain": "general", "route_confidence": 0.0, "route_reasoning": "No user message found",
                 "sub_intent": "unknown", "entities": {}}
+
+    # Clarification reply — the user picked a domain from the clarify card. Deterministic,
+    # runs before every other layer: an explicit user choice outranks all heuristics.
+    _clarify_m = _CLARIFY_REPLY_RE.match(last_human)
+    if _clarify_m:
+        _chosen = _CLARIFY_LABEL_TO_DOMAIN.get(_clarify_m.group(1).lower())
+        if _chosen:
+            return {
+                "domain": _chosen,
+                "route_confidence": 1.0,
+                "route_reasoning": "User selected this domain on the clarification card.",
+                "sub_intent": "unknown",
+                "entities": {},
+            }
 
     draft_key = _draft_key(state)
     if draft_key in PENDING_IT_EMAIL_DRAFTS:
@@ -2288,15 +2353,21 @@ async def intent_router(state: AgentState):
     )
     if existing_domain in _STICKY_DOMAINS and not keyword_overrides_sticky and not semantic_overrides_sticky:
         last_ai = _last_ai_message(state.get("messages", []))
+        # Turn-count decay: after many turns the conversation may have wandered far from the
+        # original domain (e.g. an HR query from yesterday leaves the session sticky to "hr",
+        # and today's "what's the status?" gets misrouted). More than 12 messages (6 full turns)
+        # have passed since the domain was set, so require explicit continuation signals only —
+        # a short terse message alone no longer keeps stickiness.
+        all_msgs = state.get("messages", [])
+        _human_msg_count = sum(1 for m in all_msgs if isinstance(m, HumanMessage))
+        _stale_sticky = _human_msg_count > 6
+
         # Priority 1 — a fresh signal pointing to a different domain is a topic switch: never sticky.
         # Priority 2 — a genuine follow-up (references prior context / terse ack / AI just asked):
-        #   stay in the sticky domain. Length is NOT a factor.
+        #   stay in the sticky domain unless the conversation is stale (decay).
         # Otherwise — a self-standing new request with no usable away-signal (tier low/unavailable):
-        #   fall through to normal classification. This is the key fix: when the classifier could
-        #   not even look (tier == "unavailable", e.g. ml01 saturated) a substantive message is no
-        #   longer pinned to the stale domain — the router stops getting *more* confident as it
-        #   knows *less*. Only true continuations stay sticky through an outage.
-        if not topic_switch and _is_continuation(last_human, last_ai):
+        #   fall through to normal classification.
+        if not topic_switch and _is_continuation(last_human, last_ai) and not _stale_sticky:
             return {
                 "domain": existing_domain,
                 "route_confidence": 0.95,
@@ -2370,10 +2441,16 @@ async def intent_router(state: AgentState):
     # Stickiness is already handled by the early-return above, so a follow-up never lands here.
     try:
         from app.services.form_library_service import FormLibraryService
-        _form_threshold = 0.80 if _INFO_QUERY_RE.search(last_human) else None
+        # Info-style questions without action verbs deserve a real agent answer, not just a form
+        # widget — use a higher similarity gate so "how do I submit a parking request?" (which HAS
+        # an action verb) still routes to the form, but "what is the process for reporting
+        # incidents?" (no action verb) requires a much stronger match before short-circuiting.
+        _is_info_no_action = _INFO_QUERY_RE.search(last_human) and not _ACTION_VERB_RE.search(last_human)
+        _form_threshold = settings.FORM_MATCH_INFO_SIM_THRESHOLD if _is_info_no_action else None
         # match() calls the embedding model — run in thread to avoid blocking the event loop.
         form_match = await asyncio.to_thread(FormLibraryService.match, last_human, _form_threshold)
     except Exception as e:  # noqa: BLE001
+        log.warning("[intent_router] FormLibraryService.match raised unexpectedly: %s", e)
         form_match = None
     if form_match:
         return {
@@ -2405,6 +2482,30 @@ async def intent_router(state: AgentState):
     except APIConnectionError:
         return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
                 "sub_intent": "unknown", "entities": {}}
+
+    # Clarification gate: below the confidence threshold a route is a guess, and a confident
+    # wrong-domain answer is the worst failure mode. Offer the LLM's pick plus the semantic
+    # shortlist as a quick-choice card instead. "general" is always the escape hatch. Only
+    # fires with >=2 real alternatives — a one-option card would be noise.
+    if result["confidence"] < settings.CLARIFY_CONF_THRESHOLD and result["domain"] != "general":
+        clarify_domains: list[str] = []
+        for d in [result["domain"]] + (candidate_domains or []):
+            if (d in _CLARIFY_DOMAIN_LABELS and d not in clarify_domains
+                    and llm_controls.is_domain_enabled(d)):
+                clarify_domains.append(d)
+        if "general" not in clarify_domains:
+            clarify_domains.append("general")
+        if len(clarify_domains) >= 2:
+            return {
+                "domain": "domain_clarify",
+                "route_confidence": result["confidence"],
+                "route_reasoning": (
+                    f"Routing confidence {result['confidence']:.2f} is below "
+                    f"{settings.CLARIFY_CONF_THRESHOLD} — asking the user to pick the domain."
+                ),
+                "sub_intent": "domain_clarify",
+                "entities": {"clarify_domains": clarify_domains[:4], "clarify_question": last_human},
+            }
 
     return {
         "domain": result["domain"],
@@ -2520,7 +2621,20 @@ async def feedback_lookup(state: AgentState) -> dict:
                 _feedback_result_cache.pop(k, None)
         return fb_ctx
 
-    app_nudge, fb_ctx = await asyncio.gather(_get_nudge(), _get_feedback())
+    # Skip the AppDirectory nudge for terminal zero-LLM domains — the nudge context is never
+    # read by those nodes, and the 0.62 cosine threshold often injects misleading app suggestions
+    # (e.g. ManageEngine "All Requests" being suggested for "create a form…"). Also saves one
+    # embedding call per request on these fast-path routes.
+    _NUDGE_SKIP_DOMAINS = {"dynamic_form", "form_builder", "referral_choice", "domain_clarify", "deeplink"}
+    _skip_nudge = state.get("domain") in _NUDGE_SKIP_DOMAINS
+
+    async def _noop():
+        return ""
+
+    app_nudge, fb_ctx = await asyncio.gather(
+        _noop() if _skip_nudge else _get_nudge(),
+        _get_feedback(),
+    )
 
     combined = (fb_ctx or "") + (app_nudge or "")
     return {"feedback_context": combined} if combined else {}
@@ -2644,7 +2758,9 @@ def hr_agent(state: AgentState):
     # cuts ~3-4k prompt tokens per call and improves tool selection on small models.
     _bound_tools = _hr_tools_for(sub_intent)
     try:
-        response = llm_controls.get_llm("agent", default_timeout=45).bind_tools(_bound_tools).invoke(messages)
+        response = resilient_invoke("agent", messages,
+                                    build=lambda l: l.bind_tools(_bound_tools),
+                                    default_timeout=45)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now — please try again in a moment.")]}
 
@@ -2757,6 +2873,79 @@ async def dynamic_form_agent_node(state: AgentState):
     return {"messages": [AIMessage(content=content)]}
 
 
+FORM_BUILDER_START = "[FORM_BUILDER_START]"
+FORM_BUILDER_END = "[FORM_BUILDER_END]"
+
+
+async def form_builder_agent_node(state: AgentState):
+    """Form Builder node — drafts a new FormTemplate for admin review via LLM, then emits
+    the draft inside [FORM_BUILDER_START]…[FORM_BUILDER_END] markers for _postprocess to
+    turn into the `form_builder` interactive widget. Role-gated: non-admins get a polite
+    redirect without calling the LLM."""
+    role = (state.get("user_role") or "employee").lower()
+    if role not in {"admin", "super admin"}:
+        return {"messages": [AIMessage(content=(
+            "Creating new forms is an admin capability. If you need a specific form that "
+            "doesn't exist yet, please ask your admin team — or tell me what you're trying "
+            "to request and I'll point you to the right existing process."
+        ))]}
+
+    last_human = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+    )
+
+    import json as _json
+    import re as _re
+    from app.services import llm_controls_service as llm_controls
+
+    try:
+        model = llm_controls.get_llm("general", default_timeout=60)
+        prompt = (
+            "You are a form designer for an employee self-service portal. From the request below, "
+            "design a fillable form.\n\n"
+            f"Request: {last_human}\n\n"
+            "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+            '{"name": "Short Form Name", "description": "One sentence on what this form is for.", '
+            '"category": "HR|Admin|IT|Finance|General", "fields": [{"label": "Field Label", '
+            '"type": "text|textarea|date|select|number|email|checkbox|user|image", "required": true, '
+            '"options": ["only for select"], "placeholder": "optional hint"}]}\n\n'
+            "Rules:\n"
+            "- 3 to 8 fields, ordered logically. Mark genuinely essential fields required.\n"
+            "- Use 'select' with sensible options for categorical answers, 'textarea' for descriptions, "
+            "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
+            "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
+        )
+        response = await asyncio.to_thread(model.invoke, prompt)
+        raw = (response.content or "").strip()
+        m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+        if not m:
+            raise ValueError("Model returned no JSON")
+        draft = _json.loads(m.group(0))
+
+        # Sanitize fields using the same helper as the HTTP route.
+        from app.routes.form_library_routes import _sanitize_generated_fields
+        fields = _sanitize_generated_fields(draft.get("fields") or [])
+        if not fields:
+            raise ValueError("No fields generated")
+
+        payload = {
+            "name": str(draft.get("name") or "Untitled Form").strip()[:120],
+            "description": str(draft.get("description") or "").strip()[:500],
+            "category": str(draft.get("category") or "General").strip()[:50],
+            "fields": fields,
+        }
+        intro = f"Here's a draft of **\"{payload['name']}\"** — edit anything you like, then create it."
+        content = f"{intro}\n{FORM_BUILDER_START}{_json.dumps(payload)}{FORM_BUILDER_END}"
+    except Exception as exc:
+        log.warning("form_builder_agent_node draft generation failed: %s", exc)
+        return {"messages": [AIMessage(content=(
+            "I couldn't draft that form right now (the model may be busy). "
+            "Please try again, or create it manually from the Form Library page."
+        ))]}
+
+    return {"messages": [AIMessage(content=content)]}
+
+
 async def referral_choice_agent_node(state: AgentState):
     """Zero-LLM quick-choice card for employee referral queries.
     Looks up the Zoho Recruit portal URL via a plain DB keyword search — no embeddings,
@@ -2802,6 +2991,91 @@ async def referral_choice_agent_node(state: AgentState):
     payload = {"question": "What would you like to do?", "options": options}
     content = f"Here's what I can help with for employee referrals:\n{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
     return {"messages": [AIMessage(content=content)]}
+
+
+async def domain_clarify_agent_node(state: AgentState):
+    """Zero-LLM clarification card — terminal node for low-confidence routes.
+    Asking beats guessing: the user picks the area, the option's value comes back as
+    "<Label>: <original question>", and the router's clarify-reply regex routes it
+    deterministically on the next turn."""
+    entities = state.get("entities") or {}
+    question = (entities.get("clarify_question") or "").strip()
+    domains = entities.get("clarify_domains") or []
+
+    options = [
+        {
+            "label": _CLARIFY_DOMAIN_LABELS[d],
+            "action": "message",
+            "value": f"{_CLARIFY_DOMAIN_LABELS[d]}: {question}",
+        }
+        for d in domains if d in _CLARIFY_DOMAIN_LABELS
+    ]
+    if not question or len(options) < 2:
+        return {"messages": [AIMessage(
+            content="I'm not sure I understood that — could you rephrase with a bit more detail?"
+        )]}
+
+    payload = {
+        "question": "Which area is this about? I want to answer from the right team.",
+        "options": options,
+    }
+    content = (
+        "I want to make sure I route this correctly.\n"
+        f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+    )
+    return {"messages": [AIMessage(content=content)]}
+
+
+def _reroute_card_on_empty_retrieval(state: AgentState, result_messages: list, current_domain: str):
+    """Reversible routing — returns an AIMessage clarify card, or None to keep the agent's answer.
+
+    Fires only when BOTH hold:
+      1. The route was an LLM-router guess (route_confidence < 0.8). Deterministic,
+         exact-match, semantic-high, and user-clarified routes keep their honest
+         not-found answer — second-guessing those would loop.
+      2. This agent's policy retrieval hit the semantic veto (RETRIEVAL_VETO_SENTINEL
+         in a ToolMessage) — the scoped corpus has nothing relevant, so the domain
+         pick itself is the prime suspect.
+    The card offers the other major domains; a click re-enters the router on the
+    deterministic clarify-reply path."""
+    from app.services.policy_service import RETRIEVAL_VETO_SENTINEL
+    try:
+        if (state.get("route_confidence") or 1.0) >= 0.8:
+            return None
+        veto_hit = any(
+            isinstance(m, ToolMessage) and RETRIEVAL_VETO_SENTINEL in (m.content or "")
+            for m in result_messages
+        )
+        if not veto_hit:
+            return None
+        question = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        ).strip()
+        if not question:
+            return None
+        candidates = [
+            d for d in ("hr", "it_support", "admin", "general")
+            if d != current_domain and llm_controls.is_domain_enabled(d)
+        ]
+        options = [
+            {"label": _CLARIFY_DOMAIN_LABELS[d], "action": "message",
+             "value": f"{_CLARIFY_DOMAIN_LABELS[d]}: {question}"}
+            for d in candidates
+        ]
+        if len(options) < 2:
+            return None
+        current_label = _CLARIFY_DOMAIN_LABELS.get(current_domain, current_domain)
+        payload = {
+            "question": "Should I check one of these areas instead?",
+            "options": options,
+        }
+        return AIMessage(content=(
+            f"I couldn't find anything about this in the {current_label} documents — "
+            f"it may belong to a different area.\n"
+            f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+        ))
+    except Exception:
+        return None  # never let the reroute check break a working answer
 
 
 async def pmo_agent_node(state: AgentState):
@@ -2889,7 +3163,8 @@ async def admin_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Admin request.")
-    return {"messages": [last_ai]}
+    reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "admin")
+    return {"messages": [reroute or last_ai]}
 
 
 async def it_agent_node(state: AgentState):
@@ -2948,7 +3223,8 @@ async def it_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process IT request.")
-    return {"messages": [last_ai]}
+    reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "it_support")
+    return {"messages": [reroute or last_ai]}
 
 
 async def manager_agent_node(state: AgentState):
@@ -3136,7 +3412,9 @@ def general_agent(state: AgentState):
     feedback_ctx = state.get("feedback_context") or ""
     messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + state["messages"]
     try:
-        response = llm_controls.get_llm("general", default_timeout=20).bind_tools(general_tools).invoke(messages)
+        response = resilient_invoke("general", messages,
+                                    build=lambda l: l.bind_tools(general_tools),
+                                    default_timeout=20)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
 
@@ -3207,6 +3485,12 @@ async def summarizer(state: AgentState):
     if tool_name in _PASSTHROUGH_TOOLS:
         return {"messages": [AIMessage(content=str(tool_output).strip())]}
 
+    # Reversible routing (HR path): retrieval hit the semantic veto on an LLM-guessed
+    # route — offer a re-route card instead of summarizing a not-found message.
+    reroute = _reroute_card_on_empty_retrieval(state, [tool_message], "hr")
+    if reroute:
+        return {"messages": [reroute]}
+
     # The summarizer must ANSWER THE QUESTION, not blindly paraphrase the tool output.
     # Without the question, a weak model paraphrases whatever text it's handed — e.g. turning
     # policy claim-process language into a fabricated "your claim is approved" letter. Pass the
@@ -3242,7 +3526,7 @@ RULES:
         # strong agent model, not the weak summarizer (which paraphrases and drifts). Other tool
         # results stay on the cheap summarizer tier to spare the GPU.
         _tier = "agent" if tool_name in _POLICY_SEARCH_TOOLS else "summarizer"
-        response = await llm_controls.get_llm(_tier, default_timeout=30).ainvoke(prompt)
+        response = await resilient_ainvoke(_tier, prompt, default_timeout=30)
         content = response.content.strip()
 
         # Belt-and-braces: strip a leaked meta-preamble the weak summarizer model sometimes
@@ -3326,9 +3610,6 @@ async def connector_agent(state: AgentState):
 
     tools = build_tools_for_request(ops, user_email, max_tools=8)
 
-    llm = llm_controls.get_llm("agent", streaming=True)
-    agent_llm = llm.bind_tools(tools)
-
     system_prompt = (
         f"You are an AI assistant integrated with the {connector['name']} system. "
         f"Use the provided tools to fulfil the user's request. "
@@ -3339,7 +3620,9 @@ async def connector_agent(state: AgentState):
 
     # ReAct loop — max 2 tool rounds
     for _ in range(2):
-        response = await agent_llm.ainvoke(full_messages)
+        response = await resilient_ainvoke("agent", full_messages,
+                                           build=lambda l: l.bind_tools(tools),
+                                           default_timeout=45)
         full_messages.append(response)
 
         if not (hasattr(response, "tool_calls") and response.tool_calls):
@@ -3368,7 +3651,9 @@ def route_to_agent(state: AgentState):
     if domain in llm_controls.disabled_domains():
         return "disabled_agent"
     if domain == "dynamic_form": return "dynamic_form_agent"
+    if domain == "form_builder": return "form_builder_agent"
     if domain == "referral_choice": return "referral_choice_agent"
+    if domain == "domain_clarify": return "domain_clarify_agent"
     if domain.startswith("connector:"):
         return "connector_agent"
     status = get_domain_status(domain)
@@ -3427,7 +3712,9 @@ workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
+workflow.add_node("form_builder_agent", form_builder_agent_node)
 workflow.add_node("referral_choice_agent", referral_choice_agent_node)
+workflow.add_node("domain_clarify_agent", domain_clarify_agent_node)
 workflow.add_node("ms365_agent", ms365_agent_node)
 workflow.add_node("doc_agent", doc_agent_node)
 workflow.add_node("general_agent", general_agent)
@@ -3456,7 +3743,9 @@ workflow.add_edge("it_agent", END)
 workflow.add_edge("manager_agent", END)
 workflow.add_edge("deeplink_agent", END)
 workflow.add_edge("dynamic_form_agent", END)
+workflow.add_edge("form_builder_agent", END)
 workflow.add_edge("referral_choice_agent", END)
+workflow.add_edge("domain_clarify_agent", END)
 workflow.add_edge("ms365_agent", END)
 workflow.add_edge("doc_agent", END)
 workflow.add_edge("dummy_test_agent", END)

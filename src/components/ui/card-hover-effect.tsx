@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
+import { ArrowUpRight } from "lucide-react";
 
 export const HoverEffect = ({
   items,
@@ -9,6 +10,7 @@ export const HoverEffect = ({
   items: {
     title: string;
     description: string;
+    category?: string;
     onClick?: () => void;
     icon?: React.ReactNode;
     color?: string;
@@ -54,18 +56,36 @@ export const HoverEffect = ({
             )}
           </AnimatePresence>
           <Card color={item.color} className="relative z-10">
-            {item.icon && (
-              <div
-                className="flex h-10 w-10 items-center justify-center rounded-xl mb-4 transition-transform duration-300 group-hover:scale-110"
+            <div className="flex items-start justify-between gap-3">
+              {item.icon && (
+                <div
+                  className="flex h-11 w-11 items-center justify-center rounded-2xl transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3"
+                  style={{
+                    backgroundColor: item.color ? `color-mix(in oklab, ${item.color} 12%, transparent)` : "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  {item.icon}
+                </div>
+              )}
+              <span
+                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0"
                 style={{
                   backgroundColor: item.color ? `color-mix(in oklab, ${item.color} 12%, transparent)` : "rgba(255,255,255,0.06)",
+                  color: item.color,
                 }}
               >
-                {item.icon}
-              </div>
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </span>
+            </div>
+            <div className="mt-4">
+              <CardTitle>{item.title}</CardTitle>
+              <CardDescription>{item.description}</CardDescription>
+            </div>
+            {item.category && (
+              <span className="mt-4 inline-flex items-center rounded-full border border-[#e2e8f0] dark:border-white/[0.08] bg-muted/40 px-2.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                {item.category}
+              </span>
             )}
-            <CardTitle>{item.title}</CardTitle>
-            <CardDescription>{item.description}</CardDescription>
           </Card>
         </div>
       ))}
