@@ -458,42 +458,7 @@ class EmployeeAllocation(Base):
     functional_manager = Column(String, nullable=True)
     function = Column(String, nullable=True)
     status = Column(String, nullable=True)              # Active / Inactive
-    expected_end_date = Column(Date, nullable=True)     # set by approved biweekly project-update drafts
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-
-
-# ── Biweekly Project-Update Submission (audited draft → main allocation) ──────
-class ProjectUpdateSubmission(Base):
-    """An employee's biweekly self-report of what they're working on.
-
-    This is an AUDITED DRAFT — it never writes to employee_allocations directly.
-    It becomes real allocation data only after the Reporting Manager approves it
-    (see app.main._finalize_decision, entity_type="project_update").
-    """
-    __tablename__ = "project_update_submissions"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, index=True)           # employees.id
-    employee_email = Column(String, index=True)
-    employee_name = Column(String)
-    period_start = Column(Date, nullable=True)          # the fortnight covered
-    period_end = Column(Date, nullable=True)
-    activity_type = Column(String)                      # Project | Learning | PoC (PMO-configurable)
-    project_name = Column(String, nullable=True)        # required when activity_type == "Project"
-    expected_end_date = Column(Date, nullable=True)     # parsed "how long" answer
-    duration_text = Column(String, nullable=True)       # free-text "how long" answer
-    details = Column(Text, nullable=True)
-    # audit: who filled
-    filled_by_email = Column(String)
-    filled_at = Column(DateTime, default=datetime.datetime.utcnow)
-    status = Column(String, default="submitted")        # submitted | approved | rejected
-    # audit: who approved
-    approved_by_email = Column(String, nullable=True)
-    approved_at = Column(DateTime, nullable=True)
-    decision_reason = Column(Text, nullable=True)
-    allocation_id = Column(Integer, nullable=True)      # employee_allocations row written on approval
+    expected_end_date = Column(Date, nullable=True)     # optional end date for the allocation
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 

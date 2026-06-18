@@ -458,6 +458,128 @@ def notify_teams(
     ).start()
 
 
+# ── Teams Activity-feed notifications ─────────────────────────────────────────
+
+import re as _re
+
+
+def _html_to_preview(title: str, body_html: str, limit: int = 150) -> str:
+    """Flatten a notification title + HTML body into short plain text for the
+    Activity-feed previewText (Graph truncates ~150 chars; we strip tags & collapse)."""
+    text = f"{title} — {body_html}" if body_html else title
+    text = text.replace("<br>", " ").replace("<br/>", " ").replace("<br />", " ")
+    text = _re.sub(r"<[^>]+>", "", text)          # drop remaining tags
+    text = html.unescape(_re.sub(r"\s+", " ", text)).strip()
+    return text[:limit]
+
+
+def _send_activity_notification(
+    sender_email: str,
+    recipient_email: str,
+    preview_text: str,
+    topic_value: str = "Centriq AI",
+    web_url: str | None = None,
+) -> bool:
+    """Ping a recipient's Teams Activity feed (the bell) via Graph
+    sendActivityNotification, sent with the sender's own delegated token.
+
+    No-op (returns False) unless TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED is set — the API
+    requires the Centriq Teams app installed for the recipient, the TeamsActivity.Send
+    scope, admin consent, and the activityType declared in the app manifest. Any failure
+    is logged and swallowed so it never blocks the (already-sent) email.
+    """
+    if not settings.TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED:
+        return False
+    token = _get_graph_token(sender_email)
+    if not token:
+        logger.warning("[teams-activity] No Graph token for %s — activity ping skipped.", sender_email)
+        return False
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        r = httpx.get(
+            f"https://graph.microsoft.com/v1.0/users/{recipient_email}",
+            headers=headers, timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        recipient_id = r.json()["id"]
+    except Exception as exc:
+        logger.warning("[teams-activity] Cannot resolve recipient %s: %s", recipient_email, exc)
+        return False
+
+    body = {
+        "topic": {
+            "source": "text",
+            "value": topic_value,
+            "webUrl": web_url or settings.APP_BASE_URL,
+        },
+        "activityType": settings.TEAMS_ACTIVITY_TYPE,
+        "previewText": {"content": (preview_text or "")[:150]},
+        "recipient": {
+            "@odata.type": "microsoft.graph.aadUserNotificationRecipient",
+            "userId": recipient_id,
+        },
+    }
+    try:
+        r = httpx.post(
+            f"https://graph.microsoft.com/v1.0/users/{recipient_id}/teamwork/sendActivityNotification",
+            headers=headers, json=body, timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        logger.info("[teams-activity] sent from=%s to=%s", sender_email, recipient_email)
+        return True
+    except httpx.HTTPStatusError as exc:
+        logger.error("[teams-activity] send failed: %s %s", exc.response.status_code, exc.response.text[:300])
+        return False
+    except Exception as exc:
+        logger.error("[teams-activity] send error: %s", exc)
+        return False
+
+
+def notify_teams_activity(
+    sender_email: str,
+    recipient_email: str,
+    title: str,
+    body_html: str = "",
+    web_url: str | None = None,
+) -> None:
+    """Fire-and-forget Teams Activity-feed ping — runs in a daemon thread.
+
+    Mirrors notify_teams' signature so emailed notices (decisions, reminders, info)
+    can surface in the recipient's Teams Activity feed. The email remains the record;
+    this just rings the bell. The HTML body is flattened to a short preview.
+    """
+    import threading
+    preview = _html_to_preview(title, body_html)
+    threading.Thread(
+        target=_send_activity_notification,
+        args=(sender_email, recipient_email, preview),
+        kwargs={"web_url": web_url},
+        daemon=True,
+    ).start()
+
+
+def _send_approval_via_teams_or_email(
+    sender_email: str,
+    recipient_email: str,
+    teams_title: str,
+    teams_body_html: str,
+    subject: str,
+    email_html_body: str,
+    files: "dict | None" = None,
+) -> bool:
+    """Approval requests (approve/reject) go to Teams chat; email is sent ONLY as a
+    fallback when the chat can't be delivered (e.g. the approver has no connected
+    MS365/Teams token) — so approvals never silently vanish.
+
+    Returns True if the chat was delivered, else the result of the email fallback.
+    """
+    if recipient_email and _send_teams_message(sender_email, recipient_email, teams_title, teams_body_html):
+        return True
+    logger.info("[approval] Teams chat undelivered for %s — falling back to email.", recipient_email)
+    return _send_html(sender_email, recipient_email, subject, email_html_body, files=files)
+
+
 # ── Software Install ──────────────────────────────────────────────────────────
 
 def send_software_install_email(
@@ -711,7 +833,18 @@ def send_reimbursement_email(
     ]) + _note("Submitted via Centriq AI. Reply to respond directly to the employee.")
     html_body = _email_shell("Reimbursement Request", intro, body_html,
                              preheader=f"{reimbursement_type} · INR {amount:,.2f}")
-    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    if settings.NOTIFY_TO_EMAIL:
+        teams_body = (
+            f"<b>Employee:</b> {html.escape(employee_name)} ({html.escape(employee_email)})<br>"
+            f"<b>Type:</b> {html.escape(reimbursement_type)}<br>"
+            f"<b>Amount:</b> INR {amount:,.2f}<br>"
+            f"<b>Request:</b> #{reimbursement_id}<br>"
+            f"<b>Reason:</b> {html.escape(reason)}"
+        )
+        notify_teams_activity(user_email, settings.NOTIFY_TO_EMAIL,
+                     "💰 Reimbursement Request — Pending Approval", teams_body)
+    return result
 
 
 # ── Bookshelf Buddy ───────────────────────────────────────────────────────────
@@ -759,16 +892,14 @@ def send_book_request_email(
         body_html += _note("Submitted via Centriq AI.")
     html_body = _email_shell("Bookshelf Buddy — Book Issue Request", intro, body_html,
                              preheader=f"{book_title} · {employee_name}")
-    result = _send_html(user_email, to, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)} ({html.escape(employee_email)})<br>"
         f"<b>Book:</b> {html.escape(book_title)} — {html.escape(book_author)}<br>"
         f"<b>Ticket:</b> {html.escape(ticket_id)}"
         + (f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>" if approve_url and reject_url else "")
     )
-    if to:
-        notify_teams(user_email, to, "📚 Bookshelf Request — Pending Approval", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, to, "📚 Bookshelf Request — Pending Approval", teams_body, subject, html_body)
 
 
 def send_book_decision_email(
@@ -813,7 +944,7 @@ def send_book_decision_email(
         + (f"<br><b>Return By:</b> {html.escape(due_date)}" if decision == "Approved" and due_date else "")
         + (f"<br><b>Note:</b> {html.escape(admin_remarks)}" if admin_remarks else "")
     )
-    notify_teams(user_email, employee_email, f"📚 Book Request {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"📚 Book Request {decision}", teams_body)
     return result
 
 
@@ -878,16 +1009,14 @@ def send_extension_request_email(
         body_html += _note("Submitted via Centriq AI.")
     html_body = _email_shell("Bookshelf Buddy — Extension Request", intro, body_html,
                              preheader=f"{book_title} · +{int(additional_days)} days")
-    result = _send_html(user_email, to, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)}<br>"
         f"<b>Book:</b> {html.escape(book_title)} ({html.escape(ticket_id)})<br>"
         f"<b>Current Due:</b> {html.escape(current_due_date)} · <b>Extra Days:</b> {additional_days}"
         + (f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>" if approve_url and reject_url else "")
     )
-    if to:
-        notify_teams(user_email, to, "📚 Bookshelf Extension — Pending Approval", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, to, "📚 Bookshelf Extension — Pending Approval", teams_body, subject, html_body)
 
 
 def send_extension_decision_email(
@@ -925,7 +1054,7 @@ def send_extension_decision_email(
         + (f"<br><b>New Due Date:</b> {html.escape(new_due_date)}" if decision == "Approved" and new_due_date else "")
         + (f"<br><b>Note:</b> {html.escape(admin_remarks)}" if admin_remarks else "")
     )
-    notify_teams(user_email, employee_email, f"📚 Extension {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"📚 Extension {decision}", teams_body)
     return result
 
 
@@ -964,7 +1093,6 @@ def send_leave_approval_request(
                        "Reply to contact the employee directly.")
     html_body = _email_shell("Leave Approval Request", intro, body_html,
                              preheader=f"{employee_name} · {leave_type} · {start_date}–{end_date}")
-    result = _send_html(user_email, manager_email, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)}<br>"
         f"<b>Leave Type:</b> {html.escape(leave_type)}<br>"
@@ -972,8 +1100,8 @@ def send_leave_approval_request(
         f"<b>Reason:</b> {html.escape(reason)}<br><br>"
         f"<a href='{html.escape(approve_url)}'>✓ Approve Leave</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject Leave</a>"
     )
-    notify_teams(user_email, manager_email, "🏖️ Leave Approval Request", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, manager_email, "🏖️ Leave Approval Request", teams_body, subject, html_body)
 
 
 def send_leave_decision_notification(
@@ -1012,7 +1140,7 @@ def send_leave_decision_notification(
         f"<b>Actioned by:</b> {html.escape(decided_by)}"
         + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
     )
-    notify_teams(user_email, employee_email, f"🏖️ Leave {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"🏖️ Leave {decision}", teams_body)
     return result
 
 
@@ -1048,7 +1176,7 @@ def send_leave_fyi_notification(
         f"<b>Period:</b> {html.escape(start_date)} → {html.escape(end_date)}<br>"
         f"<i>For your information — the reporting manager will approve or reject this.</i>"
     )
-    notify_teams(user_email, functional_manager_email, "🏖️ Leave Notice (FYI)", teams_body)
+    notify_teams_activity(user_email, functional_manager_email, "🏖️ Leave Notice (FYI)", teams_body)
     return result
 
 
@@ -1091,122 +1219,7 @@ def send_leave_cancellation_notification(
         f"<b>Status:</b> {html.escape(status_label)}"
         + ("<br><i>Leave balance restored.</i>" if was_approved else "")
     )
-    notify_teams(user_email, manager_email, "🚫 Leave Cancelled", teams_body)
-    return result
-
-
-# ── Biweekly Project Update ───────────────────────────────────────────────────
-
-def send_project_update_form_email(
-    user_email: str,
-    employee_name: str,
-    employee_email: str,
-    form_link: str,
-    period: str,
-) -> bool:
-    """Biweekly nudge asking an employee to confirm what they're working on."""
-    subject = f"[Action Needed] Confirm what you're working on — {period}"
-    intro = (f'<p>{_status_pill("Action Needed", _C_AMBER)}</p>'
-             f"<p>Hi {html.escape(employee_name)},</p>"
-             f"<p>To keep your project allocation up to date, please take a moment to tell us "
-             f"what you're currently working on for <strong>{html.escape(period)}</strong> — "
-             f"a project, learning, or a PoC.</p>")
-    body_html = _button_row([("Open the form", form_link, _C_OK)])
-    body_html += _note("Your reporting manager reviews each submission before it updates your "
-                       "allocation. Submitted via Centriq AI.")
-    html_body = _email_shell("What are you working on?", intro, body_html,
-                             preheader=f"Confirm your project allocation · {period}")
-    return _send_html(user_email, employee_email, subject, html_body)
-
-
-def send_project_update_approval_request(
-    user_email: str,
-    approver_email: str,
-    employee_name: str,
-    employee_email: str,
-    activity_type: str,
-    project_name: str,
-    duration_text: str,
-    details: str,
-    period: str,
-    approve_url: str,
-    reject_url: str,
-    submission_id: int,
-) -> bool:
-    subject = f"[Project Update Approval] {employee_name} — {activity_type}"
-    intro = (f'<p>{_status_pill("Pending Approval", _C_AMBER)}</p>'
-             f"<p>Hi,</p>"
-             f"<p><strong>{html.escape(employee_name)}</strong> submitted a project update that "
-             f"needs your approval before it updates the allocation data.</p>")
-    rows = [
-        ("Update ID", f"#{submission_id}"),
-        ("Employee", f"{html.escape(employee_name)} ({html.escape(employee_email)})"),
-        ("Period", html.escape(period)),
-        ("Activity", html.escape(activity_type)),
-    ]
-    if project_name:
-        rows.append(("Project", html.escape(project_name)))
-    if duration_text:
-        rows.append(("How long", html.escape(duration_text)))
-    if details:
-        rows.append(("Details", _nl2br(details)))
-    body_html = _detail_rows(rows)
-    body_html += _button_row([
-        ("✓ Approve", approve_url, _C_OK),
-        ("✗ Reject", reject_url, _C_NO),
-    ])
-    body_html += _note("Approving writes this into the allocation data with a timestamp. "
-                       "These links expire in 24 hours. Submitted via Centriq AI.")
-    html_body = _email_shell("Project Update Approval", intro, body_html,
-                             preheader=f"{employee_name} · {activity_type} · {period}")
-    result = _send_html(user_email, approver_email, subject, html_body)
-    teams_body = (
-        f"<b>Employee:</b> {html.escape(employee_name)}<br>"
-        f"<b>Period:</b> {html.escape(period)}<br>"
-        f"<b>Activity:</b> {html.escape(activity_type)}"
-        + (f"<br><b>Project:</b> {html.escape(project_name)}" if project_name else "")
-        + f"<br><br><a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>"
-    )
-    notify_teams(user_email, approver_email, "📋 Project Update — Pending Approval", teams_body)
-    return result
-
-
-def send_project_update_decision_notification(
-    user_email: str,
-    employee_email: str,
-    employee_name: str,
-    activity_type: str,
-    project_name: str,
-    decision: str,
-    decided_by: str,
-    reason: str = "",
-) -> bool:
-    color = _C_OK if decision == "Approved" else _C_NO
-    subject = f"[Project Update {decision}] {activity_type}"
-    intro = (f'<p>{_status_pill(decision, color)}</p>'
-             f"<p>Hi {html.escape(employee_name)},</p>"
-             f'<p>Your project update has been '
-             f'<strong style="color:{color};">{html.escape(decision)}</strong>.</p>')
-    rows = [("Activity", html.escape(activity_type))]
-    if project_name:
-        rows.append(("Project", html.escape(project_name)))
-    rows += [
-        ("Decision", f'<strong style="color:{color};">{html.escape(decision)}</strong>'),
-        ("Actioned by", html.escape(decided_by)),
-    ]
-    if reason:
-        rows.append(("Reason for Rejection", _nl2br(reason)))
-    body_html = _detail_rows(rows) + _note("This is an automated notification from Centriq AI.")
-    html_body = _email_shell(f"Project Update {decision}", intro, body_html,
-                             preheader=f"{activity_type} · {decision}")
-    result = _send_html(user_email, employee_email, subject, html_body)
-    teams_body = (
-        f"<b>Activity:</b> {html.escape(activity_type)}"
-        + (f"<br><b>Project:</b> {html.escape(project_name)}" if project_name else "")
-        + f"<br><b>Decision:</b> {html.escape(decision)}<br><b>Actioned by:</b> {html.escape(decided_by)}"
-        + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
-    )
-    notify_teams(user_email, employee_email, f"📋 Project Update {decision}", teams_body)
+    notify_teams_activity(user_email, manager_email, "🚫 Leave Cancelled", teams_body)
     return result
 
 
@@ -1249,7 +1262,7 @@ def send_document_decision_email(
         f"<b>Actioned by:</b> {html.escape(decided_by)}"
         + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
     )
-    notify_teams(user_email, employee_email, f"📄 Document {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"📄 Document {decision}", teams_body)
     return result
 
 
@@ -1548,7 +1561,6 @@ def send_udemy_request_email(
     body_html += _note("These links expire in 24 hours. Decline opens a reason form. Submitted via Centriq AI.")
     html_body = _email_shell(f"{platform} License Request", intro, body_html,
                              preheader=f"{employee_name} · {course_name or f'{platform} license'}")
-    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)}<br>"
         f"<b>Platform:</b> {html.escape(platform)}<br>"
@@ -1556,9 +1568,9 @@ def send_udemy_request_email(
         f"<b>Justification:</b> {html.escape(justification) or '—'}<br><br>"
         f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Decline</a>"
     )
-    if settings.NOTIFY_TO_EMAIL:
-        notify_teams(user_email, settings.NOTIFY_TO_EMAIL, f"🎓 {platform} License Request — Pending", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, settings.NOTIFY_TO_EMAIL, f"🎓 {platform} License Request — Pending",
+        teams_body, subject, html_body)
 
 
 def send_udemy_decision_email(
@@ -1596,7 +1608,7 @@ def send_udemy_decision_email(
         f"<b>Decision:</b> {html.escape(decision)}"
         + (f"<br><b>{'Reason' if decision == 'Rejected' else 'Note'}:</b> {html.escape(reason)}" if reason else "")
     )
-    notify_teams(user_email, employee_email, f"🎓 {platform} License {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"🎓 {platform} License {decision}", teams_body)
     return result
 
 
@@ -1629,16 +1641,15 @@ def send_desk_key_request_email(
                        "These links expire in 24 hours. Submitted via Centriq AI.")
     html_body = _email_shell("Desk Key Request", intro, body_html,
                              preheader=f"{employee_name} · Desk {desk_number}")
-    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)}<br>"
         f"<b>Desk:</b> {html.escape(desk_number)}<br>"
         f"<b>Reason:</b> {html.escape(reason) or '—'}<br><br>"
         f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; <a href='{html.escape(reject_url)}'>✗ Reject</a>"
     )
-    if settings.NOTIFY_TO_EMAIL:
-        notify_teams(user_email, settings.NOTIFY_TO_EMAIL, "🔑 Desk Key Request — Pending Approval", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, settings.NOTIFY_TO_EMAIL, "🔑 Desk Key Request — Pending Approval",
+        teams_body, subject, html_body)
 
 
 def send_desk_key_decision_email(
@@ -1670,7 +1681,7 @@ def send_desk_key_decision_email(
         f"<b>Decision:</b> {html.escape(decision)}"
         + (f"<br><b>Reason:</b> {html.escape(reason)}" if reason else "")
     )
-    notify_teams(user_email, employee_email, f"🔑 Desk Key {decision}", teams_body)
+    notify_teams_activity(user_email, employee_email, f"🔑 Desk Key {decision}", teams_body)
     return result
 
 
@@ -1802,7 +1813,22 @@ def send_team_attendance_report(
     if xlsx:
         fname, b64 = xlsx
         files = {fname: (b64, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-    return _send_html(user_email, recipients, subject, html_body, files=files)
+    result = _send_html(user_email, recipients, subject, html_body, files=files)
+    # Teams can't carry the .xlsx — send a text summary + pointer to the emailed report.
+    t = report["totals"]
+    teams_body = (
+        f"<b>Period:</b> {html.escape(report['period'])}<br>"
+        f"<b>Headcount:</b> {report['headcount']}<br>"
+        f"<b>Present:</b> {t.get('present', 0)} · <b>Absent:</b> {t.get('absent', 0)} · "
+        f"<b>WFH:</b> {t.get('wfh', 0)} · <b>Late:</b> {t.get('late', 0)} · "
+        f"<b>Half-day:</b> {t.get('half_day', 0)}<br>"
+        "📎 Full per-employee breakdown is in the emailed Excel report."
+    )
+    title = "📊 Team Attendance Report"
+    for rcpt in ([recipients] if isinstance(recipients, str) else recipients):
+        if rcpt:
+            notify_teams_activity(user_email, rcpt, title, teams_body)
+    return result
 
 
 # ── Travel Management Emails ───────────────────────────────────────────────────
@@ -1858,7 +1884,6 @@ def send_travel_rm_approval_email(
                        "Reply to contact the employee directly.")
     html_body = _email_shell("Travel Approval Request", intro, body_html,
                              preheader=f"{employee_name} · {from_location}→{to_destination}")
-    result = _send_html(user_email, manager_email, subject, html_body)
     teams_body = (
         f"<b>Employee:</b> {html.escape(employee_name)}<br>"
         f"<b>Route:</b> {html.escape(from_location)} → {html.escape(to_destination)}<br>"
@@ -1867,8 +1892,8 @@ def send_travel_rm_approval_email(
         f"<a href='{html.escape(approve_url)}'>✓ Approve</a> &nbsp; "
         f"<a href='{html.escape(reject_url)}'>✗ Reject</a>"
     )
-    notify_teams(user_email, manager_email, "✈️ Travel Approval Request", teams_body)
-    return result
+    return _send_approval_via_teams_or_email(
+        user_email, manager_email, "✈️ Travel Approval Request", teams_body, subject, html_body)
 
 
 def send_travel_decision_email(
@@ -1955,7 +1980,7 @@ def send_travel_admin_pending_email(
     html_body = _email_shell("Travel Request — Action Required", intro, body_html,
                              preheader=f"{employee_name} · {from_location}→{to_destination}")
     result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
-    notify_teams(user_email, settings.NOTIFY_TO_EMAIL, "✈️ Travel: Admin Action Needed",
+    notify_teams_activity(user_email, settings.NOTIFY_TO_EMAIL, "✈️ Travel: Admin Action Needed",
                  f"<b>{html.escape(employee_name)}</b> travel request {html.escape(ref_id)} needs admin action (RM approved).")
     return result
 
@@ -2118,7 +2143,18 @@ def send_onboarding_request_email(
     rows.append(("Initiated By", html.escape(manager_name)))
     body_html = _detail_rows(rows) + _note("Please coordinate with the employee and client to complete the onboarding steps.")
     html_body = _email_shell("Client Onboarding Request", intro, body_html, preheader=f"{ref_id} · {employee_name}")
-    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    if settings.NOTIFY_TO_EMAIL:
+        teams_body = (
+            f"<b>Reference:</b> {html.escape(ref_id)}<br>"
+            f"<b>Employee:</b> {html.escape(employee_name)} ({html.escape(employee_email or '—')})<br>"
+            f"<b>Steps:</b> {', '.join(selected) or 'None selected'}<br>"
+            f"<b>Initiated By:</b> {html.escape(manager_name)}"
+            + (f"<br><b>Client:</b> {html.escape(client_name)}" if client_name else "")
+        )
+        notify_teams_activity(user_email, settings.NOTIFY_TO_EMAIL,
+                     "🧭 Client Onboarding Request — Action Needed", teams_body)
+    return result
 
 
 # ── Manager → PMO: VDI / Revoke Request ────────────────────────────────────────
@@ -2150,4 +2186,15 @@ def send_pmo_team_request_email(
         rows.append(("Details", _nl2br(details)))
     body_html = _detail_rows(rows) + _note("Please action this request and update the status in the PMO portal.")
     html_body = _email_shell(f"PMO Request: {type_label}", intro, body_html, preheader=f"{ref_id} · {employee_name}")
-    return _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    result = _send_html(user_email, settings.NOTIFY_TO_EMAIL, subject, html_body)
+    if settings.NOTIFY_TO_EMAIL:
+        teams_body = (
+            f"<b>Reference:</b> {html.escape(ref_id)}<br>"
+            f"<b>Request Type:</b> {html.escape(type_label)}<br>"
+            f"<b>Employee:</b> {html.escape(employee_name)} ({html.escape(employee_email or '—')})<br>"
+            f"<b>Requested By:</b> {html.escape(manager_name)}"
+            + (f"<br><b>Details:</b> {html.escape(details)}" if details else "")
+        )
+        notify_teams_activity(user_email, settings.NOTIFY_TO_EMAIL,
+                     f"🖥️ PMO Request: {html.escape(type_label)} — Action Needed", teams_body)
+    return result

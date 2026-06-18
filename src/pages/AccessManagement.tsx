@@ -99,8 +99,8 @@ const ROLE_SCOPES: Record<string, ScopeGroup[]> = {
       actions: [{ id: "read", label: "View", description: "View prompt configs" }, { id: "write", label: "Edit", description: "Edit prompt templates" }] },
   ],
   pmo: [
-    { id: "pmo_portal",      label: "PMO Portal",          description: "Udemy licenses, project updates, and PMO workflows",
-      actions: [{ id: "read", label: "View", description: "View licenses and updates" }, { id: "manage", label: "Manage", description: "Approve licenses, configure PMO settings" }] },
+    { id: "pmo_portal",      label: "PMO Portal",          description: "Udemy licenses and PMO workflows",
+      actions: [{ id: "read", label: "View", description: "View licenses" }, { id: "manage", label: "Manage", description: "Approve licenses, configure PMO settings" }] },
     { id: "people_directory",label: "People Directory",    description: "Employee directory",
       actions: [{ id: "read", label: "View", description: "Search and view employee profiles" }] },
     { id: "email_automation",label: "Email Automation Hub",description: "Automated email workflows",

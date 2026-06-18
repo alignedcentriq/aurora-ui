@@ -25,6 +25,7 @@ import {
   ClipboardCheck,
   Sun,
   Moon,
+  PlayCircle,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -32,6 +33,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
+import { useIntroStore } from "@/lib/intro-store";
 import { useAuth, Role } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
 import { cn } from "@/lib/utils";
@@ -258,33 +260,13 @@ function LayoutComponent() {
 
   const { threads, activeId, setActiveId, createThread, deleteThread } = useChatStore();
   const activeThread = activeId ? threads[activeId] : null;
-  const isChatOpen = location.pathname === "/" && activeThread && activeThread.turns.length > 0;
-  const showHeaderNav = location.pathname === "/";
-  const [dockPosition, setDockPosition] = useState<"top" | "bottom" | "left" | "right">("top");
   const { user, logout, setRole } = useAuth();
   const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"] } = useSettings();
+  const openIntro = useIntroStore((s) => s.open);
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [clocksOverlayOpen, setClocksOverlayOpen] = useState(false);
-
-  const handleDragEnd = (event: any, info: any) => {
-    const x = info.point.x;
-    const y = info.point.y;
-    const w = typeof window !== "undefined" ? window.innerWidth : 1000;
-    const h = typeof window !== "undefined" ? window.innerHeight : 800;
-
-    // Snapping thresholds (e.g., within 220px of sides, 180px of bottom)
-    if (x < 220) {
-      setDockPosition("left");
-    } else if (x > w - 220) {
-      setDockPosition("right");
-    } else if (y > h - 180) {
-      setDockPosition("bottom");
-    } else {
-      setDockPosition("top");
-    }
-  };
 
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -429,25 +411,40 @@ function LayoutComponent() {
           </Link>
         </div>
 
-        {/* Center: navigation dock during conversations (desktop), Office Clocks otherwise.
-            During a chat the nav lives here — visible but out of the conversation's way —
-            instead of the old floating pill pinned to the left edge of the screen. */}
+        {/* Center: always-visible nav */}
         <div className="flex min-w-0 items-center justify-center">
-          <button
-            onClick={() => setClocksOverlayOpen(true)}
-            className={cn(
-              "hidden sm:flex group relative items-center gap-2 rounded-full border border-border/50 bg-muted/40 hover:bg-muted/70 hover:border-primary/30 px-3 sm:px-3.5 py-1 text-xs font-semibold text-foreground/80 hover:text-foreground transition-all shrink-0 cursor-pointer shadow-sm hover:shadow-md",
-              showHeaderNav && "md:hidden"
-            )}
-          >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <Globe className="h-4 w-4 text-primary animate-spin-slow group-hover:scale-110 transition-transform" style={{ animationDuration: '12s' }} />
-            <span className="hidden sm:inline">Office Clocks</span>
-            <ChevronDown className="h-3 w-3 opacity-60 group-hover:translate-y-0.5 transition-transform" />
-          </button>
+          <nav className="hidden md:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1">
+            {navItems.filter((n) => n.show).map((item) => {
+              const Icon = item.icon;
+              const active = isActive(item.to);
+              const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={cn(
+                    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
+                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                  )}
+                  style={active ? {
+                    background: `color-mix(in oklab, ${accentColor} 14%, var(--background))`,
+                    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
+                  } : undefined}
+                >
+                  {active && (
+                    <motion.div
+                      layoutId="header-nav-active-dot"
+                      className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded-full"
+                      style={{ background: accentColor }}
+                      transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                    />
+                  )}
+                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: active ? accentColor : "inherit" }} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
         </div>
 
         {/* Right Side: Theme, Announcement, History drawer toggle, User profile role switcher */}
@@ -457,16 +454,23 @@ function LayoutComponent() {
             <AnnouncementBanner variant="topbar" />
           </div>
 
-          {/* Compact Office Clocks — only while the chat nav occupies the header center */}
-          {showHeaderNav && (
-            <button
-              onClick={() => setClocksOverlayOpen(true)}
-              className="hidden md:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
-              title="Office Clocks"
-            >
-              <Globe className="h-4 w-4 text-primary" />
-            </button>
-          )}
+          {/* Watch intro tour */}
+          <button
+            onClick={openIntro}
+            className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+            title="Watch intro tour"
+          >
+            <PlayCircle className="h-4 w-4 text-primary" />
+          </button>
+
+          {/* Office Clocks */}
+          <button
+            onClick={() => setClocksOverlayOpen(true)}
+            className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+            title="Office Clocks"
+          >
+            <Globe className="h-4 w-4 text-primary" />
+          </button>
 
           {/* Theme Toggle */}
           <button
@@ -695,55 +699,6 @@ function LayoutComponent() {
         )}
       </AnimatePresence>
 
-      {/* --- DESKTOP NAVIGATION DOCK ---
-          During conversations the nav lives in the header center instead — no floating pill
-          competing with the chat. */}
-      {!showHeaderNav && (
-        /* Horizontal floating dock at bottom center (when landing screen or other pages) */
-        <div className="hidden md:flex fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-background/85 backdrop-blur-xl border border-border/60 shadow-2xl rounded-2xl px-4 py-2.5 items-center gap-3 select-none">
-          {navItems
-            .filter((n) => n.show)
-            .map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.to);
-              const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  title={item.label}
-                  className={cn(
-                    "group relative flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer",
-                    active ? "text-foreground font-bold" : "text-muted-foreground hover:text-foreground"
-                  )}
-                  style={active ? {
-                    background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
-                    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
-                  } : undefined}
-                >
-                  {active && (
-                    <motion.div
-                      layoutId="dock-active-dot-desktop"
-                      className="absolute -top-1.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full"
-                      style={{
-                        background: accentColor,
-                        boxShadow: `0 0 8px ${accentColor}`,
-                      }}
-                      transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                    />
-                  )}
-                  <Icon
-                    className="h-[18px] w-[18px] shrink-0 transition-transform duration-200 group-hover:scale-110"
-                    style={{ color: active ? accentColor : "inherit" }}
-                  />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-        </div>
-      )}
-
       {/* --- BOTTOM FLOATING NAVIGATION DOCK (MOBILE) --- */}
       <div className="flex md:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)' }}>
         {navItems
@@ -858,87 +813,6 @@ function LayoutComponent() {
         </div>
       )}
 
-      {/* --- DRAGGABLE DESKTOP NAVIGATION DOCK FOR HOME PAGE --- */}
-      {showHeaderNav && (
-        <div className={cn(
-          "hidden md:flex fixed z-50 pointer-events-none",
-          dockPosition === "top" && "top-[72px] left-0 right-0 justify-center",
-          dockPosition === "bottom" && "bottom-6 left-0 right-0 justify-center",
-          dockPosition === "left" && "left-3 top-0 bottom-0 items-center",
-          dockPosition === "right" && "right-3 top-0 bottom-0 items-center"
-        )}>
-          <motion.nav
-            drag
-            dragMomentum={false}
-            dragElastic={0.05}
-            onDragEnd={handleDragEnd}
-            animate={{ x: 0, y: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 28 }}
-            whileDrag={{ scale: 1.03, cursor: "grabbing", opacity: 0.95 }}
-            className={cn(
-              "flex border border-border/60 bg-background/85 backdrop-blur-xl p-1 cursor-grab active:cursor-grabbing pointer-events-auto select-none shadow-xl hover:shadow-2xl transition-shadow rounded-2xl gap-1",
-              (dockPosition === "top" || dockPosition === "bottom") ? "flex-row items-center" : "flex-col py-2 items-stretch"
-            )}
-          >
-            {/* Drag handle indicator */}
-            <div className={cn(
-              "flex items-center justify-center opacity-30 shrink-0",
-              (dockPosition === "top" || dockPosition === "bottom") ? "w-4 h-4" : "w-4 h-4 mx-auto"
-            )}>
-              <div className={cn(
-                "rounded-full bg-foreground/60",
-                (dockPosition === "top" || dockPosition === "bottom") ? "w-1 h-5" : "w-5 h-1"
-              )} />
-            </div>
-
-            {navItems
-              .filter((n) => n.show)
-              .map((item) => {
-                const Icon = item.icon;
-                const active = isActive(item.to);
-                const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-                const isVertical = dockPosition === "left" || dockPosition === "right";
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    className={cn(
-                      "group relative flex items-center gap-2 rounded-xl transition-all duration-200 cursor-pointer shrink-0 select-none",
-                      isVertical ? "flex-row px-3 py-2 justify-start" : "flex-row px-3 h-8",
-                      active ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-muted/65"
-                    )}
-                    style={active ? {
-                      background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
-                      boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
-                    } : undefined}
-                  >
-                    {active && (
-                      <motion.div
-                        layoutId="dock-active-dot-desktop"
-                        className={cn(
-                          "absolute rounded-full",
-                          (dockPosition === "top" || dockPosition === "bottom") && "-bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1",
-                          dockPosition === "left" && "-left-0.5 top-1/2 -translate-y-1/2 h-1 w-1",
-                          dockPosition === "right" && "-right-0.5 top-1/2 -translate-y-1/2 h-1 w-1"
-                        )}
-                        style={{
-                          background: accentColor,
-                          boxShadow: `0 0 8px ${accentColor}`,
-                        }}
-                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                      />
-                    )}
-                    <Icon
-                      className="h-3.5 w-3.5 shrink-0 transition-transform duration-200 group-hover:scale-110"
-                      style={{ color: active ? accentColor : "inherit" }}
-                    />
-                    <span className="text-[11px] tracking-tight whitespace-nowrap">{item.label}</span>
-                  </Link>
-                );
-              })}
-          </motion.nav>
-        </div>
-      )}
 
       {/* --- COMMAND PALETTE --- */}
       <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />

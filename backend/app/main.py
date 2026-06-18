@@ -38,7 +38,6 @@ from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
-from app.routes.project_update_routes import router as project_update_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
@@ -159,7 +158,6 @@ app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
-app.include_router(project_update_router)
 app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
@@ -304,18 +302,13 @@ async def startup_event():
 
     # Run any due attendance-report automations every minute (schedules persist in DB).
     async def attendance_scheduler():
-        from app.services import attendance_schedule_service, project_update_service
+        from app.services import attendance_schedule_service
         while True:
             await asyncio.sleep(60)
             try:
                 fired = await asyncio.to_thread(attendance_schedule_service.run_due)
                 if fired:
                     pass
-            except Exception as e:
-                pass
-            # Biweekly project-update form — cadence gating lives inside run_due().
-            try:
-                await asyncio.to_thread(project_update_service.run_due)
             except Exception as e:
                 pass
             # Automation Hub — custom recurring email rules created by managers/HR/IT/PMO.
@@ -546,7 +539,6 @@ _REJECT_LABELS = {
     "book_extension": "Reject Extension Request",
     "udemy_license": "Decline Training License",
     "desk_key": "Reject Desk Key Request",
-    "project_update": "Reject Project Update",
 }
 
 
@@ -909,59 +901,6 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
             color,
         ))
 
-    if tok.entity_type == "project_update":
-        from app.services import project_update_service
-        from app.services.email_service import send_project_update_decision_notification
-        # Invalidate the sibling token
-        db.query(ApprovalToken).filter(
-            ApprovalToken.entity_type == "project_update",
-            ApprovalToken.entity_id == tok.entity_id,
-            ApprovalToken.token != tok.token,
-            ApprovalToken.used == False,
-        ).update({"used": True})
-        try:
-            if decision == "Approved":
-                sub = project_update_service.approve(db, tok.entity_id, approved_by=tok.approver_email)
-            else:
-                sub = project_update_service.reject(db, tok.entity_id, approved_by=tok.approver_email, reason=reject_note)
-            if sub is None:
-                return HTMLResponse(_approval_html(
-                    "Not Found", "This project update no longer exists.", "#dc2626",
-                ), status_code=404)
-            activity_type = sub.activity_type
-            project_name = sub.project_name or ""
-            employee_email = sub.employee_email
-            employee_name = sub.employee_name
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            return HTMLResponse(_approval_html(
-                "Action Failed", f"We couldn't update the project update: {html.escape(str(e))}", "#dc2626",
-            ), status_code=502)
-
-        try:
-            send_project_update_decision_notification(
-                user_email=tok.approver_email,
-                employee_email=employee_email,
-                employee_name=employee_name,
-                activity_type=activity_type,
-                project_name=project_name,
-                decision=decision,
-                decided_by=tok.approver_email,
-                reason=reject_note,
-            )
-        except Exception as e:
-            pass
-
-        color = "#16A34A" if decision == "Approved" else "#dc2626"
-        applied = " The allocation data has been updated." if decision == "Approved" else ""
-        return HTMLResponse(_approval_html(
-            f"Project Update {decision}",
-            f"The project update has been <strong>{decision}</strong>.{applied} "
-            f"The employee has been notified by email.{reason_block}",
-            color,
-        ))
-
     db.commit()
     return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
@@ -987,7 +926,7 @@ async def serve_policy_image(image_id: int):
 
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
-_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup", "form_builder_agent"}
+_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup", "context_gate", "form_builder_agent"}
 
 # Domains whose answers are safe & stable enough to serve from the semantic answer cache.
 # Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).

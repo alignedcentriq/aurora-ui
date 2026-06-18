@@ -106,7 +106,7 @@ ZOHO_ACCOUNTS_URL = settings.ZOHO_ACCOUNTS_URL  # https://accounts.zoho.com
 
 
 def _callback_url(provider: str) -> str:
-    base = settings.APP_BASE_URL.rstrip("/")
+    base = settings.OAUTH_REDIRECT_BASE_URL.rstrip("/")
     return f"{base}/api/integrations/callback/{provider}"
 
 
@@ -228,13 +228,20 @@ async def _microsoft_profile(access_token: str) -> dict:
 ZOHO_SCOPES = os.getenv(
     "ZOHO_OAUTH_SCOPES",
     # Zoho uses ONE unified OAuth (accounts.zoho.com) across all products, so a single
-    # connection can carry People + Expense + Recruit scopes. Exact scope names depend on
-    # the org's Zoho edition; these are the read-only defaults. After changing this, the
-    # user must RECONNECT Zoho so the new scopes are consented (existing tokens won't have
-    # them — they return OAUTH_SCOPE_MISMATCH / code 57).
-    "ZohoPeople.forms.ALL,ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,ZohoPeople.timetracker.ALL,ZohoPeople.performance.ALL,ZohoPeople.employee.ALL,"
-    "ZohoExpense.expensereport.READ,ZohoExpense.reports.READ,ZohoExpense.organizations.READ,"
-    "ZohoRecruit.modules.READ,ZohoRecruit.settings.READ",
+    # connection can carry People + Expense + Recruit scopes. BUT Zoho rejects the WHOLE
+    # consent with INVALID_OAUTH_SCOPE if any single scope is unknown to the org's edition
+    # or names a product the org isn't subscribed to (Expense/Recruit).
+    #
+    # Default below is the minimal People set needed for leave/attendance. Add Expense /
+    # Recruit scopes back via the ZOHO_OAUTH_SCOPES env var ONLY if the org subscribes to
+    # those products, e.g.:
+    #   ZohoExpense.expensereport.READ,ZohoExpense.reports.READ,ZohoExpense.organizations.READ,
+    #   ZohoRecruit.modules.READ,ZohoRecruit.settings.READ
+    # (timetracker.ALL / performance.ALL were dropped — not valid in all People editions.)
+    #
+    # After changing this, the user must RECONNECT Zoho so the new scopes are consented
+    # (existing tokens won't have them — they return OAUTH_SCOPE_MISMATCH / code 57).
+    "ZohoPeople.leave.ALL,ZohoPeople.attendance.ALL,ZohoPeople.employee.ALL,ZohoPeople.forms.ALL",
 )
 
 

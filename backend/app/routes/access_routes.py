@@ -134,9 +134,9 @@ SCOPE_CATALOGUE = {
     },
     # ── PMO portal sections ────────────────────────────────────────────────────
     "pmo_portal": {
-        "label": "PMO Portal", "description": "Udemy licenses, project updates, and PMO workflows",
+        "label": "PMO Portal", "description": "Udemy licenses and PMO workflows",
         "actions": [
-            {"id": "read",   "label": "View",   "description": "View license requests and project updates"},
+            {"id": "read",   "label": "View",   "description": "View license requests"},
             {"id": "manage", "label": "Manage", "description": "Approve licenses, configure PMO settings"},
         ],
     },

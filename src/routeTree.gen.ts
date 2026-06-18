@@ -13,7 +13,6 @@ import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
-import { Route as LayoutProjectUpdateRouteImport } from './routes/_layout.project-update'
 import { Route as LayoutMyRequestsRouteImport } from './routes/_layout.my-requests'
 import { Route as LayoutMyLibraryRouteImport } from './routes/_layout.my-library'
 import { Route as LayoutDocumentsRouteImport } from './routes/_layout.documents'
@@ -37,11 +36,6 @@ const LayoutTeamRoute = LayoutTeamRouteImport.update({
 const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
-  getParentRoute: () => LayoutRoute,
-} as any)
-const LayoutProjectUpdateRoute = LayoutProjectUpdateRouteImport.update({
-  id: '/project-update',
-  path: '/project-update',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutMyRequestsRoute = LayoutMyRequestsRouteImport.update({
@@ -77,7 +71,6 @@ export interface FileRoutesByFullPath {
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
   '/my-requests': typeof LayoutMyRequestsRoute
-  '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
 }
@@ -87,7 +80,6 @@ export interface FileRoutesByTo {
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
   '/my-requests': typeof LayoutMyRequestsRoute
-  '/project-update': typeof LayoutProjectUpdateRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
   '/': typeof LayoutIndexRoute
@@ -100,7 +92,6 @@ export interface FileRoutesById {
   '/_layout/documents': typeof LayoutDocumentsRoute
   '/_layout/my-library': typeof LayoutMyLibraryRoute
   '/_layout/my-requests': typeof LayoutMyRequestsRoute
-  '/_layout/project-update': typeof LayoutProjectUpdateRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
   '/_layout/': typeof LayoutIndexRoute
@@ -114,7 +105,6 @@ export interface FileRouteTypes {
     | '/documents'
     | '/my-library'
     | '/my-requests'
-    | '/project-update'
     | '/settings'
     | '/team'
   fileRoutesByTo: FileRoutesByTo
@@ -124,7 +114,6 @@ export interface FileRouteTypes {
     | '/documents'
     | '/my-library'
     | '/my-requests'
-    | '/project-update'
     | '/settings'
     | '/team'
     | '/'
@@ -136,7 +125,6 @@ export interface FileRouteTypes {
     | '/_layout/documents'
     | '/_layout/my-library'
     | '/_layout/my-requests'
-    | '/_layout/project-update'
     | '/_layout/settings'
     | '/_layout/team'
     | '/_layout/'
@@ -174,13 +162,6 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof LayoutSettingsRouteImport
-      parentRoute: typeof LayoutRoute
-    }
-    '/_layout/project-update': {
-      id: '/_layout/project-update'
-      path: '/project-update'
-      fullPath: '/project-update'
-      preLoaderRoute: typeof LayoutProjectUpdateRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/my-requests': {
@@ -227,7 +208,6 @@ interface LayoutRouteChildren {
   LayoutDocumentsRoute: typeof LayoutDocumentsRoute
   LayoutMyLibraryRoute: typeof LayoutMyLibraryRoute
   LayoutMyRequestsRoute: typeof LayoutMyRequestsRoute
-  LayoutProjectUpdateRoute: typeof LayoutProjectUpdateRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
@@ -239,7 +219,6 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutDocumentsRoute: LayoutDocumentsRoute,
   LayoutMyLibraryRoute: LayoutMyLibraryRoute,
   LayoutMyRequestsRoute: LayoutMyRequestsRoute,
-  LayoutProjectUpdateRoute: LayoutProjectUpdateRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,
   LayoutIndexRoute: LayoutIndexRoute,

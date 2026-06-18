@@ -111,7 +111,9 @@ export interface InteractivePayload {
     | "quick_choice"
     | "travel_request_form"
     | "travel_expense_form"
-    | "cancel_leave_form";
+    | "cancel_leave_form"
+    | "leave_application_form"
+    | "document_generation_form";
   data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData | FormBuilderDraft;
 }
 

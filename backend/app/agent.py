@@ -1160,6 +1160,37 @@ def get_employee_availability(name_or_email: str) -> str:
         db.close()
 
 
+@tool
+def match_resources(
+    skills: str,
+    min_years: Optional[float] = None,
+    available_by: str = "",
+    count: int = 5,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Staff a new or upcoming project: rank employees who fit a requirement by skill
+    match, current availability (free capacity / when they roll off their project), and
+    experience. Use for 'I need 2 React developers with 3+ years free by July', 'who is
+    available for a new data project?', 'find an AWS engineer who isn't fully allocated',
+    'who can fit a new automation project?'.
+
+    PREFER THIS over search_alchemy_skill_experts / get_employee_availability whenever the
+    user wants candidates for a project (a headcount, an experience floor, a needed-by date,
+    or availability is part of the ask) — it combines all three signals and ranks them.
+
+    skills: required skill(s), comma-separated, inferred from the request (e.g. "React, Node, AWS").
+    min_years: minimum years of experience, ONLY if the user stated one (else leave null).
+    available_by: date needed by in YYYY-MM-DD, ONLY if the user gave one (else blank).
+    count: how many candidates to return (default 5; use the user's number if they asked for N).
+    Never invent skills, experience, or dates the user did not mention."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    from app.services.resource_matching_service import ResourceMatchingService
+    return ResourceMatchingService.match(
+        skills=skills, min_years=min_years, available_by=available_by,
+        count=count, user_email=email,
+    )
+
+
 hr_tools = [
     get_leave_balance, apply_leave, get_my_leaves, cancel_leave, search_hr_policies,
     search_employee_directory, get_employee_profile, get_org_chart,
@@ -1178,6 +1209,7 @@ hr_tools = [
     get_open_positions, get_candidate_status,
     get_my_alchemy_skills, get_alchemy_skills_overview,
     search_alchemy_skill_experts, get_employee_availability,
+    match_resources,
 ]
 hr_tool_node = ToolNode(hr_tools)
 
@@ -1194,6 +1226,7 @@ _HR_TOOL_GROUPS: dict[str, list] = {
     "employee_search":    [search_alchemy_skill_experts, search_employee_directory,
                            get_employee_profile, get_org_chart, get_team_roster,
                            get_department_headcount, get_employee_availability, find_skills_expert],
+    "resource_match":     [match_resources, search_alchemy_skill_experts, get_employee_availability],
     "grievance":          [submit_grievance, submit_grievance_for, search_hr_policies],
     "apply_leave":        [apply_leave, get_leave_balance, get_my_leaves, cancel_leave],
     "submit_leave":       [apply_leave, get_leave_balance, get_my_leaves, cancel_leave],
@@ -1375,6 +1408,90 @@ _KW_SKILL_PHRASING = re.compile(
     r'\b(skilled|proficient|proficiency|expertise|experienced|hands[- ]on|'
     r'good\s+at|strong\s+in|worked\s+(with|on)|knows?)\b', re.I
 )
+
+# Resource-matching / staffing intent — finding people to STAFF a (usually new/upcoming)
+# project, where availability/experience is part of the ask, not just "who knows X". This
+# is distinct from a bare skill lookup ("find python developers") which keeps its simple
+# expert-list behaviour. Triggers on an explicit staffing signal: staffing verbs, "for a
+# (new) project", "who can fit", "free/available by <date>", or "N <role>" headcount.
+_KW_HR_RESOURCE_MATCH = re.compile(
+    r'\b(staff(?:ing|ed)?|resourc\w*)\b'
+    r'|who\s+(?:can|could|would|might)\s+(?:fit|be\s+a\s+(?:good\s+)?fit|work\s+on)'
+    r'|\b(?:for|on|to\s+staff)\s+(?:a|an|the|my|our|this)?\s*(?:new|upcoming)?\s*project'
+    r'|\b(?:free|available)\s+(?:by|from|for\s+(?:a|an|the|this|new))\b'
+    r'|\b\d+\s+(?:[a-z.+#]+\s+){0,3}?(?:developers?|engineers?|devs?|programmers?|'
+    r'designers?|testers?|qa|analysts?|architects?|specialists?|consultants?|'
+    r'scientists?|resources?|people|persons?)\b', re.I
+)
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _extract_resource_match_args(text: str) -> tuple[str, Optional[float], str, int]:
+    """Pull (skills, min_years, available_by 'YYYY-MM-DD', count) from a staffing query.
+    Best-effort: any value the user didn't state comes back empty/None so the matcher
+    treats it as 'no constraint'."""
+    import datetime as _dt
+    low = (text or "").lower()
+
+    # headcount: "2 react developers", "need 3 people"
+    count = 5
+    m = re.search(r'\b(\d{1,2})\s+(?:[a-z.+#]+\s+){0,3}?'
+                  r'(?:developers?|engineers?|devs?|programmers?|designers?|testers?|qa|'
+                  r'analysts?|architects?|specialists?|consultants?|scientists?|'
+                  r'resources?|people|persons?)\b', low)
+    if m:
+        count = max(1, min(int(m.group(1)), 25))
+
+    # experience floor: "3+ years", "5 yrs experience", "at least 4 years"
+    min_years: Optional[float] = None
+    m = re.search(r'(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b', low)
+    if m:
+        min_years = float(m.group(1))
+
+    # needed-by date: explicit ISO / DMY, or "by <Month> [year]" / "by end of <Month>"
+    available_by = ""
+    m = re.search(r'\b(\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b', text or "")
+    if m:
+        available_by = m.group(1)
+    else:
+        m = re.search(r'\bby\s+(?:end\s+of\s+|the\s+end\s+of\s+|mid[- ])?'
+                      r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*'
+                      r'(?:\s+(\d{4}))?', low)
+        if m:
+            mon = _MONTHS[m.group(1)]
+            today = _dt.date.today()
+            year = int(m.group(2)) if m.group(2) else (
+                today.year if mon >= today.month else today.year + 1)
+            available_by = _dt.date(year, mon, 1).isoformat()
+
+    # skills: reuse the skill-term extractor, then drop numbers / month words / staffing
+    # fillers so only real skill tokens remain (e.g. "react", "aws", "data engineering").
+    raw = _extract_skill_term(text)
+    full_months = {"january", "february", "march", "april", "may", "june", "july",
+                   "august", "september", "october", "november", "december"}
+    drop = set(_MONTHS) | full_months | {
+        "project", "projects", "new", "upcoming", "by", "from", "end", "mid", "free",
+        "available", "availability", "years", "year", "yrs", "yr", "plus",
+        "can", "could", "would", "might", "should", "fit", "fits", "work", "working",
+        "worked", "on", "this", "that", "my", "our", "us", "we", "month", "months",
+        "week", "weeks", "role", "roles", "position", "positions", "slot", "slots",
+        "requirement", "requirements", "upcoming", "staff", "staffing",
+        "at", "least", "minimum", "min", "around", "about", "over", "more", "than",
+    }
+    skill_tokens = []
+    for t in raw.split():
+        t = t.strip("+.-")                      # "3+" -> "3", "node." -> "node"
+        if not t or len(t) < 2:
+            continue
+        if t in drop or re.fullmatch(r'\d+(?:\.\d+)?', t):
+            continue
+        skill_tokens.append(t)
+    skills = ", ".join(skill_tokens)
+    return skills, min_years, available_by, count
 
 
 _KW_ADMIN_REIMB = re.compile(
@@ -1828,6 +1945,14 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.95,
                 "reasoning": "Keyword: HR grievance",
                 "sub_intent": "grievance", "entities": {}}
+
+    # HR — resource matching / staffing a project. Checked before the single-person
+    # availability and generic people-search gates, because a requirement like "I need
+    # 2 React devs free by July" overlaps both but should reach the ranked matcher.
+    if _KW_HR_RESOURCE_MATCH.search(text):
+        return {"domain": "hr", "confidence": 0.9,
+                "reasoning": "Keyword: resource matching / staffing",
+                "sub_intent": "resource_match", "entities": {}}
 
     # HR — availability / staffing (project-allocation lookup). Checked before the
     # generic people search so "are they available for work" reaches the HR agent
@@ -2708,6 +2833,27 @@ def hr_agent(state: AgentState):
 
     user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
 
+    # ── Deterministic resource-matching (staffing) ──────────────────────────────
+    # "I need 2 React devs with 3+ yrs free by July", "who can fit a new data project?".
+    # Ranks candidates by skill + availability + experience. Done deterministically (not
+    # left to the weak agent model) so the multi-signal extraction and ranking are
+    # reliable; only fires when a skill term actually resolves, else falls through.
+    if isinstance(user_question, str) and (
+        state.get("sub_intent") == "resource_match"
+        or _KW_HR_RESOURCE_MATCH.search(user_question)
+    ):
+        _skills, _min_yrs, _avail_by, _cnt = _extract_resource_match_args(user_question)
+        if _skills:
+            from app.services.resource_matching_service import ResourceMatchingService
+            try:
+                _res = ResourceMatchingService.match(
+                    skills=_skills, min_years=_min_yrs, available_by=_avail_by,
+                    count=_cnt, user_email=user_email)
+                if _res:
+                    return {"messages": [AIMessage(content=_res.strip())]}
+            except Exception as _exc:
+                log.warning("[resource_match] failed for %r: %s", user_question, _exc)
+
     # ── Deterministic skill-expert search ───────────────────────────────────────
     # "find python developers", "who knows react", "people skilled in AWS" must hit the
     # Alchemy skills portal (honouring ALCHEMY_SKILL_SEARCH_ENABLED) and return a clean,
@@ -2736,23 +2882,9 @@ def hr_agent(state: AgentState):
                 return {"messages": [AIMessage(content=result.strip())]}
     # ────────────────────────────────────────────────────────────────────────────
 
-    # Skip context gate for action-oriented requests — they need tools, not cached answers.
-    _action_sub = state.get("sub_intent") or ""
-    _action_text_re = re.compile(
-        r'\b(generate|create|make|give|get me|issue|draft|submit|apply|file)\b'
-        r'.{0,40}\b(certificate|letter|noc|document|pdf|report|grievance|complaint|leave)\b', re.I
-    )
-    _skip_ctx = (_action_sub in {"document_request", "grievance", "onboarding", "offboarding",
-                                  "apply_leave", "timesheet", "attendance", "appraisal",
-                                  "training", "alchemy_my_skills", "alchemy_skills_overview"}
-                 or bool(_action_text_re.search(user_question)))
-    if not _skip_ctx:
-        try:
-            context_answer = PromptService.check_context_relevance("hr", user_question)
-            if context_answer:
-                return {"messages": [AIMessage(content=context_answer)]}
-        except Exception:
-            pass  # non-fatal — fall through to normal agent
+    # NOTE: the custom-context gate now runs once for every domain in the shared
+    # `context_gate` graph node (between feedback_lookup and the agents) — it is no
+    # longer wired per-agent here.
 
     # Bind only the sub-intent-relevant tool group (≤8 schemas) instead of all 38 —
     # cuts ~3-4k prompt tokens per call and improves tool selection on small models.
@@ -3368,7 +3500,7 @@ def _greeting_response(state: AgentState) -> str:
     else:
         period = "Good evening"
     greeting = f"{period}{', ' + name if name else ''}!"
-    return f"{greeting} I'm Centriq, your workplace assistant. I can help you with HR policies, leave management, reimbursements, IT tickets, parking, project updates, and more. What do you need help with?"
+    return f"{greeting} I'm Centriq, your workplace assistant. I can help you with HR policies, leave management, reimbursements, IT tickets, parking, and more. What do you need help with?"
 
 
 _OFF_TOPIC_RESPONSES = [
@@ -3645,6 +3777,65 @@ async def connector_agent(state: AgentState):
     return {"messages": new_messages}
 
 
+# ── Shared custom-context gate ─────────────────────────────────────────────────
+# Real conversational-assistant domains whose admins can configure custom context.
+# Action/UI-flow pseudo-domains (forms, connectors, deeplink, clarify) are never gated.
+_CONTEXT_GATED_DOMAINS = {
+    "hr", "pmo", "admin", "it_support", "functional_manager", "ms365",
+    "document", "general",
+}
+
+# Action-oriented sub-intents that must reach their tools, never a cached context answer.
+_CTX_SKIP_SUBINTENTS = {
+    "document_request", "grievance", "onboarding", "offboarding",
+    "apply_leave", "submit_leave", "zoho_leave_fastpath", "leave_balance",
+    "timesheet", "attendance", "appraisal", "training",
+    "alchemy_my_skills", "alchemy_skills_overview",
+    "generate_report", "download_report", "pdf_report", "export_report", "create_report",
+}
+
+# Action phrasings (verb + object) that should always run live against tools.
+_CTX_ACTION_TEXT_RE = re.compile(
+    r'\b(generate|create|make|give|get me|issue|draft|submit|apply|file)\b'
+    r'.{0,40}\b(certificate|letter|noc|document|pdf|report|grievance|complaint|leave)\b',
+    re.I,
+)
+
+
+def context_gate(state: AgentState) -> dict:
+    """Single graph node: for the routed domain, short-circuit with an admin-configured
+    custom-context answer when one directly covers the question. Replaces the old
+    per-agent gate so every domain behaves identically. Falls through (returns {}) for
+    action requests, ungated domains, or when no context matches."""
+    domain = (state.get("domain") or "general").strip()
+    if domain not in _CONTEXT_GATED_DOMAINS:
+        return {}
+    if (state.get("sub_intent") or "") in _CTX_SKIP_SUBINTENTS:
+        return {}
+    user_question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+    )
+    if not isinstance(user_question, str) or not user_question:
+        return {}
+    if _CTX_ACTION_TEXT_RE.search(user_question):
+        return {}
+    try:
+        answer = PromptService.check_context_relevance(domain, user_question)
+        if answer:
+            return {"messages": [AIMessage(content=answer)]}
+    except Exception:
+        pass  # non-fatal — fall through to the routed agent
+    return {}
+
+
+def route_after_context_gate(state: AgentState):
+    """If the gate produced an answer (last message is now an AIMessage), end the turn;
+    otherwise route to the domain agent exactly as before."""
+    if isinstance(state["messages"][-1], AIMessage):
+        return END
+    return route_to_agent(state)
+
+
 def route_to_agent(state: AgentState):
     domain = state.get("domain", "general")
     # IT kill-switch for individual domains — short-circuit before the agent runs.
@@ -3705,6 +3896,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("intent_router", intent_router)
 workflow.add_node("context_manager", context_manager_node)
 workflow.add_node("feedback_lookup", feedback_lookup)
+workflow.add_node("context_gate", context_gate)
 workflow.add_node("hr_agent", hr_agent)
 workflow.add_node("pmo_agent", pmo_agent_node)
 workflow.add_node("admin_agent", admin_agent_node)
@@ -3731,7 +3923,10 @@ workflow.set_entry_point("intent_router")
 # intent_router -> context_manager (compress if >6000 tokens) -> feedback_lookup -> domain agent
 workflow.add_edge("intent_router", "context_manager")
 workflow.add_edge("context_manager", "feedback_lookup")
-workflow.add_conditional_edges("feedback_lookup", route_to_agent)
+# Shared custom-context gate runs once for the routed domain; either answers and ends
+# the turn, or falls through to the domain agent.
+workflow.add_edge("feedback_lookup", "context_gate")
+workflow.add_conditional_edges("context_gate", route_after_context_gate)
 workflow.add_conditional_edges("hr_agent", should_continue_hr)
 workflow.add_conditional_edges("general_agent", should_continue_general)
 workflow.add_edge("hr_tools", "summarizer")

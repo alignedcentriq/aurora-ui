@@ -28,6 +28,7 @@ Rules:
 6. Summarize tool results concisely. Never add examples or suggestions from your own knowledge.
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
 8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
+9. For a staffing / resourcing question — finding people for a new or upcoming project ('I need 2 React devs with 3+ years', 'who is free for a new project?', 'find an AWS engineer who isn't fully allocated') — call 'match_resources'. Infer the skills, minimum experience, needed-by date, and headcount from the user's message; never invent any value they did not state. Present the returned candidates verbatim.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -180,6 +181,33 @@ def search_people_directory(query: str):
 
 
 @tool
+def match_resources(
+    skills: str,
+    min_years: Optional[float] = None,
+    available_by: str = "",
+    count: int = 5,
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Find employees who could be staffed on a new/upcoming project, ranked by skill
+    match, current availability (free capacity / when they roll off their project), and
+    experience. Use for staffing/resourcing questions like 'I need 2 React developers
+    with 3+ years free by July', 'who is available for a new data-engineering project?',
+    'find me an AWS person who isn't fully allocated'.
+
+    skills: the required skill(s), comma-separated, inferred from the request (e.g. "React, Node, AWS").
+    min_years: minimum years of experience, ONLY if the user stated one (else leave null).
+    available_by: the date the resource is needed by in YYYY-MM-DD, ONLY if the user gave one (else blank).
+    count: how many candidates to return (default 5; use the user's number if they asked for N people).
+    Never invent skills, experience, or dates the user did not mention."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    from app.services.resource_matching_service import ResourceMatchingService
+    return ResourceMatchingService.match(
+        skills=skills, min_years=min_years, available_by=available_by,
+        count=count, user_email=email,
+    )
+
+
+@tool
 def search_pmo_docs(query: str):
     """Search PMO process / governance documents for how-to / process / policy questions
     (project onboarding, governance, change-request process, PMO templates). Call for any
@@ -214,6 +242,7 @@ pmo_tools = [
     generate_project_report,
     generate_multi_project_report,
     search_people_directory,
+    match_resources,
     search_pmo_docs,
     request_training_license,
 ]
@@ -416,6 +445,7 @@ def pmo_assistant(state: PMOState):
 _PASSTHROUGH_TOOLS = {
     "generate_project_report", "generate_multi_project_report",
     "get_project_status", "get_project_achievements", "search_people_directory",
+    "match_resources",
     # Training-license confirmation is display-ready; passing it through avoids the
     # LLM reflexively refusing ("can't help get a discounted Udemy/Coursera license").
     "request_training_license",

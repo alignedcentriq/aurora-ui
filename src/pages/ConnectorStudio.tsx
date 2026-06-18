@@ -85,13 +85,45 @@ interface UsageRow {
   total_minutes_saved: number;
 }
 
+// ─── Display helpers ──────────────────────────────────────────────────────────
+
+// Title-case a raw status/value so user-facing text is consistently capitalized
+// (the API returns lowercase tokens like "published", "draft", "disabled").
+const titleCase = (s: string) =>
+  s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+// Friendly labels for the lowercase enum tokens stored in the DB. Anything not
+// listed falls back to a title-cased version of the raw value.
+const AUTH_TYPE_LABELS: Record<string, string> = {
+  none: "None",
+  api_key: "API Key",
+  bearer: "Bearer Token",
+  basic: "Basic Auth",
+  oauth2: "OAuth 2.0",
+};
+
+const RESPONSE_MODE_LABELS: Record<string, string> = {
+  passthrough: "Passthrough",
+  template: "Template",
+  agent: "Agent",
+};
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
+
+// Identity headers for the role-gated /api/admin/connectors endpoints.
+// Populated by the component from the logged-in user; the backend trusts
+// x-user-email / x-user-role (same pattern as every other admin page).
+let authHeaders: Record<string, string> = {};
 
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+      ...(options?.headers as Record<string, string> | undefined),
+    },
+    credentials: "include",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -104,6 +136,12 @@ async function apiFetch(path: string, options?: RequestInit) {
 
 export default function ConnectorStudio() {
   const { user } = useAuth();
+  // Keep the module-level auth headers in sync with the logged-in user so every
+  // apiFetch (and the spec-upload fetch) carries identity to the role-gated API.
+  authHeaders = {
+    "x-user-email": user?.email ?? "",
+    "x-user-role": (user?.role ?? "").toLowerCase(),
+  };
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ConnectorDetail | null>(null);
@@ -201,7 +239,7 @@ export default function ConnectorStudio() {
       s === "disabled"  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
                           "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
     )}>
-      {s}
+      {titleCase(s)}
     </span>
   );
 
@@ -337,12 +375,14 @@ export default function ConnectorStudio() {
                             {op.name}
                           </span>
                           {op.requires_confirmation && (
-                            <span className="text-xs text-orange-500 flex items-center gap-1">
-                              <AlertCircle className="h-3 w-3" /> confirm
+                            <span className="text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <AlertCircle className="h-3 w-3" /> Confirm
                             </span>
                           )}
                           {!op.enabled && (
-                            <span className="text-xs text-gray-400">disabled</span>
+                            <span className="text-xs font-medium text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
+                              Disabled
+                            </span>
                           )}
                           <div className="flex gap-1 ml-2" onClick={e => e.stopPropagation()}>
                             <Button
@@ -385,8 +425,8 @@ export default function ConnectorStudio() {
                               </div>
                             )}
                             <div className="flex gap-4 text-xs text-gray-500">
-                              <span>Mode: <strong>{op.response_mode}</strong></span>
-                              <span>Min saved: <strong>{op.minutes_saved}</strong></span>
+                              <span>Response mode: <strong className="text-gray-700 dark:text-gray-300">{RESPONSE_MODE_LABELS[op.response_mode] ?? titleCase(op.response_mode)}</strong></span>
+                              <span>Minutes saved: <strong className="text-gray-700 dark:text-gray-300">{op.minutes_saved}</strong></span>
                             </div>
                           </div>
                         )}
@@ -666,7 +706,7 @@ function AuthDialog({
               value={authType}
               onChange={e => setAuthType(e.target.value)}
             >
-              {AUTH_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              {AUTH_TYPES.map(t => <option key={t} value={t}>{AUTH_TYPE_LABELS[t] ?? titleCase(t)}</option>)}
             </select>
           </div>
           {authType !== "none" && (
@@ -717,6 +757,8 @@ function ImportSpecDialog({
       const res = await fetch(`/api/admin/connectors/${connectorId}/import-spec`, {
         method: "POST",
         body: fd,
+        // No Content-Type: the browser sets the multipart boundary itself.
+        headers: { ...authHeaders },
         credentials: "include",
       });
       if (!res.ok) {
@@ -947,7 +989,7 @@ function EditOpDialog({
                 value={form.response_mode}
                 onChange={e => setForm(f => ({ ...f, response_mode: e.target.value }))}
               >
-                {["passthrough", "template", "agent"].map(m => <option key={m} value={m}>{m}</option>)}
+                {["passthrough", "template", "agent"].map(m => <option key={m} value={m}>{RESPONSE_MODE_LABELS[m] ?? titleCase(m)}</option>)}
               </select>
             </div>
           </div>

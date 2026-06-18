@@ -29,6 +29,8 @@ import { FormBuilderWidget } from "./FormBuilderWidget";
 import { RoomBookingWidget } from "./RoomBookingWidget";
 import { CancelBookingWidget } from "./CancelBookingWidget";
 import { CancelLeaveWidget } from "./CancelLeaveWidget";
+import { LeaveApplicationWidget } from "./LeaveApplicationWidget";
+import { DocumentGenerationWidget } from "./DocumentGenerationWidget";
 import { MyScheduleWidget } from "./MyScheduleWidget";
 import { SkillsEditorWidget } from "./SkillsEditorWidget";
 import { AnnouncementWidget } from "./AnnouncementWidget";
@@ -459,10 +461,11 @@ export function AssistantView() {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
-          text: "Opening **Document Generation** — select the document type and I'll prepare it for you.\n\n<<NAV:/documents|Open Documents>>",
+          text: "Zoho People handles document generation. Pick your template and fill it in below — you'll generate, download, or e-sign it directly in Zoho.",
+          interactive: { type: "document_generation_form" },
+          domain: "hr",
         });
         setInput("");
-        window.setTimeout(() => navigate({ to: "/documents" }), 400);
         return;
       }
 
@@ -607,6 +610,27 @@ export function AssistantView() {
           role: "ai",
           text: "Here are your pending and approved leaves — select one to cancel.",
           interactive: { type: "cancel_leave_form" },
+        });
+        setInput("");
+        return;
+      }
+
+      // Intercept leave *application* requests → embed the Zoho People apply-leave form.
+      // Placed AFTER cancellation so "cancel my leave" still wins. Excludes balance/policy
+      // questions ("how many leaves", "leave balance", "leave policy") which aren't form actions.
+      const leaveLower = text.toLowerCase();
+      const isApplyLeave =
+        (/\b(apply|book|take|request|submit|put in|raise|file)\b.{0,30}\b(leave|time[- ]?off|day off|days off|vacation|pto)\b/i.test(text) ||
+          /\b(leave|time[- ]?off|vacation|pto)\b.{0,20}\b(application|request)\b/i.test(text) ||
+          /\bi\s+(want|need|would like|wish)\s+(to\s+)?(take|apply|book|request)\b.{0,20}\b(leave|time[- ]?off|day off|vacation)\b/i.test(text)) &&
+        !/\b(balance|how many|remaining|left|available|status|policy|cancel|withdraw|revoke|recall)\b/i.test(text);
+      if (isApplyLeave) {
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: "Let's apply for your leave. Fill in the Zoho People leave form below and submit it there.",
+          interactive: { type: "leave_application_form" },
+          domain: "hr",
         });
         setInput("");
         return;
@@ -1819,6 +1843,18 @@ export function AssistantView() {
                                 onCancelled={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
+                              />
+                            )}
+                            {t.interactive?.type === "leave_application_form" && (
+                              <LeaveApplicationWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
+                              />
+                            )}
+                            {t.interactive?.type === "document_generation_form" && (
+                              <DocumentGenerationWidget
+                                userEmail={user?.email || ""}
+                                userRole={user?.role || "employee"}
                               />
                             )}
                             {t.interactive?.type === "my_schedule" && (

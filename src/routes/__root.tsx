@@ -13,12 +13,14 @@ import { Logo } from "../components/Logo";
 import { BrandName } from "../components/BrandName";
 import { AnimatedBackground } from "../components/AnimatedBackground";
 import { FlyingBanner } from "../components/FlyingBanner";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { LoadingCharacterDisplay, LoadingDots } from "../components/LoadingCharacter";
 import { useSettings, useBuddyColors } from "../lib/settings-store";
 import GreetingBot from "../components/assistant/GreetingBot";
 import { useBuddyStore } from "../lib/buddy-store";
 import { SplashOverlay } from "../components/assistant/SplashOverlay";
+import { IntroTour } from "../components/intro/IntroTour";
+import { useIntroStore } from "../lib/intro-store";
 import { AuroraBackground } from "../components/ui/aurora-background";
 import { SparklesCore } from "../components/ui/sparkles";
 import { HoverBorderGradient } from "../components/ui/hover-border-gradient";
@@ -789,8 +791,16 @@ function AccessDeniedView() {
 function AuthenticatedApp() {
   const { user, isLoading, accessDenied } = useAuth();
   const { updateActiveTime } = useBuddyStore();
+  const { isOpen: introOpen, maybeAutoPlay: maybeAutoPlayIntro, close: closeIntro } = useIntroStore();
   const [showSplash, setShowSplash] = React.useState(true);
   const [ssoCompleted, setSsoCompleted] = React.useState(false);
+
+  // Auto-play the guided intro once, after the splash overlay finishes.
+  React.useEffect(() => {
+    if (!showSplash && user && !accessDenied) {
+      maybeAutoPlayIntro();
+    }
+  }, [showSplash, user, accessDenied, maybeAutoPlayIntro]);
 
   React.useEffect(() => {
     if (!isLoading && user && !accessDenied) {
@@ -854,6 +864,9 @@ function AuthenticatedApp() {
       <FlyingBanner />
       {!showSplash && <GreetingBot />}
       {showSplash && <SplashOverlay onComplete={() => setShowSplash(false)} />}
+      <AnimatePresence>
+        {introOpen && <IntroTour onComplete={closeIntro} />}
+      </AnimatePresence>
     </>
   );
 }

@@ -247,14 +247,19 @@ class Config:
     # Mailbox used as the SENDER for unattended/background emails (parking reminders).
     # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
     PARKING_REMINDER_SENDER = os.getenv("PARKING_REMINDER_SENDER", "")
-    # Mailbox used as the SENDER for the unattended biweekly project-update form email.
-    # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
-    PROJECT_UPDATE_SENDER = os.getenv("PROJECT_UPDATE_SENDER", "")
     # Bookshelf Buddy — book request notifications go to this admin
     BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     # Nexus Library mock server — single source of truth for book inventory
     NEXUS_LIBRARY_URL = os.getenv("NEXUS_LIBRARY_URL", "http://localhost:8092")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
+
+    # Base URL used ONLY for OAuth redirect URIs and the connect-popup postMessage
+    # origin. Falls back to APP_BASE_URL. Set this to the browser-facing origin
+    # (e.g. http://localhost:3000 in local dev) when it differs from APP_BASE_URL,
+    # which also drives email/deep links. The provider callback is
+    # {OAUTH_REDIRECT_BASE_URL}/api/integrations/callback/{provider} and must be
+    # registered verbatim in the Microsoft / Zoho app console.
+    OAUTH_REDIRECT_BASE_URL = os.getenv("OAUTH_REDIRECT_BASE_URL", "") or APP_BASE_URL
 
     # Power Automate — SharePoint/PowerApps complaint sync
     # Set this to the HTTP trigger URL from your Power Automate flow.
@@ -294,13 +299,33 @@ class Config:
         "Chat.Read Chat.ReadWrite "
         "Place.Read.All "
         "Team.ReadBasic.All Channel.ReadBasic.All "
-        "ChannelMessage.Read.All ChannelMessage.Send",
+        "ChannelMessage.Read.All ChannelMessage.Send "
+        # Teams Activity-feed notifications (sendActivityNotification). Inert until the
+        # Centriq Teams app is installed per user + admin consent is granted; users must
+        # reconnect MS365 after this scope is added so the new consent is captured.
+        "TeamsActivity.Send",
     )
+
+    # ── Teams Activity-feed notifications ─────────────────────────────────────
+    # Decisions, reminders and info notices are emailed AND pinged to the recipient's
+    # Teams Activity feed (the bell) via Graph sendActivityNotification. This stays a
+    # no-op until the prerequisites are provisioned (Centriq Teams app installed for the
+    # user, TeamsActivity.Send consented, activityType declared in the app manifest).
+    TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED = os.getenv(
+        "TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    # activityType must match an entry declared in the Teams app manifest's
+    # activities.activityTypes (Graph rejects undeclared types with 400).
+    TEAMS_ACTIVITY_TYPE = os.getenv("TEAMS_ACTIVITY_TYPE", "centriqNotification")
     # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
     TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
 
     # ── External Portal Automation (Playwright MCP) ───────────────────────────
     ZOHO_PEOPLE_URL    = os.getenv("ZOHO_PEOPLE_URL", "")
+    # Deep-link to the Zoho People document/letter generation area (employees fill it
+    # there). The exact hash route varies per org — override this env var with the
+    # confirmed URL. Falls back to ZOHO_PEOPLE_URL / people.zoho.com when unset.
+    ZOHO_PEOPLE_DOCS_URL = os.getenv("ZOHO_PEOPLE_DOCS_URL", "")
     # Zoho OAuth2 API (replaces session-file scraping)
     ZOHO_CLIENT_ID     = os.getenv("ZOHO_CLIENT_ID", "")
     ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")

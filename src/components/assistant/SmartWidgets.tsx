@@ -666,7 +666,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
         variants={container}
         initial="hidden"
         animate="show"
-        className="flex lg:grid lg:grid-cols-4 overflow-x-auto no-scrollbar flex-nowrap lg:flex-wrap gap-3 w-full items-stretch pb-1"
+        className="flex lg:grid lg:grid-cols-4 overflow-x-auto lg:overflow-visible no-scrollbar flex-nowrap lg:flex-wrap gap-3 w-full items-stretch px-1.5 pt-2 pb-1 -mx-1.5"
       >
         <AnimatePresence mode="popLayout">
           {activeCards.map((id) => {
@@ -688,10 +688,12 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                       exit={{ scale: 0, opacity: 0 }}
                       transition={{ type: "spring", stiffness: 400, damping: 20 }}
                       onClick={() => removeCard(id)}
-                      className="absolute -top-1.5 -right-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-sm"
+                      whileHover={{ scale: 1.12 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="absolute -top-2 -right-2 z-30 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md ring-2 ring-background hover:bg-destructive/90"
                       aria-label={`Remove ${def.label}`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </motion.button>
                   )}
                 </AnimatePresence>
@@ -734,11 +736,11 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 <AnimatePresence>
                   {addOpen && (
                     <motion.div
-                      initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                      exit={{ opacity: 0, y: 6, scale: 0.97 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute top-full mt-1 left-0 z-20 w-52 rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
+                      className="absolute bottom-full mb-1.5 left-0 z-40 w-52 max-w-[80vw] rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
                     >
                       {availableToAdd.length === 0 ? (
                         <p className="px-3 py-2.5 text-[12px] text-muted-foreground">
