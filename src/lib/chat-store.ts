@@ -57,6 +57,8 @@ export interface DynamicFormField {
   required?: boolean;
   options?: string[];
   placeholder?: string;
+  // Identity attribute this field pre-fills from (e.g. "department", "manager"). Empty = manual.
+  autofill?: "name" | "email" | "employee_id" | "department" | "designation" | "location" | "manager";
 }
 
 // Schema the backend sends for an admin-defined form matched in chat.
@@ -66,6 +68,8 @@ export interface DynamicFormData {
   description?: string;
   fields: DynamicFormField[];
   submit_endpoint: string;
+  // {field_name: value} resolved from the logged-in user's profile for autofill-bound fields.
+  prefill?: Record<string, string>;
 }
 
 // LLM-drafted form template shown for admin review/editing before it's actually created.

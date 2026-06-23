@@ -50,6 +50,9 @@ from app.models import (
     WelcomeResource,
     WelcomeLog,
     OnboardingRequest,
+    OnboardingJourney,
+    OnboardingStepProgress,
+    OnboardingDocSubmission,
     PMOTeamRequest,
     Appreciation,
     Connector,
@@ -66,6 +69,7 @@ from app.models import (
     DashboardConfig,
     SavedDashboard,
     AutomationRule,
+    PendingAction,
     SCHEMA,
 )
 from app.config import settings
@@ -350,6 +354,11 @@ def init_db():
                 # roi_digest automation: kind + period config on automation_rules
                 f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS automation_kind VARCHAR DEFAULT \'email\'',
                 f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS extra_config JSON',
+                # Feedback-triage flywheel: mark a thumbs-down once an admin has acted on it
+                # (promoted a curated answer / routing fix / dismissed) so it leaves the queue.
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_at TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_action VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_by VARCHAR',
             ]:
                 try:
                     conn.execute(text(stmt))

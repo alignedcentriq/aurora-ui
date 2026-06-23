@@ -306,6 +306,59 @@ class Config:
         "TeamsActivity.Send",
     )
 
+    # ── Proactive Nudge layer (system-initiated, deterministic — zero LLM) ────
+    # A background scan turns the assistant from reactive → proactive: it detects
+    # actionable situations (leaves about to lapse, an approval the manager hasn't
+    # actioned) and surfaces a one-click nudge in the in-app feed. Detection is
+    # pure DB look-ups; the LLM is NOT in the loop (messages are templated).
+    # The in-app feed is the source of truth; Teams/email push is best-effort and
+    # gated OFF by default (stays silent until Azure/Teams is provisioned).
+    NUDGE_SCAN_INTERVAL_MIN = int(os.getenv("NUDGE_SCAN_INTERVAL_MIN", "30"))
+    # Earned/non-carry-forward leaves with a remaining balance lapse at the FINANCIAL
+    # year-end. The company follows the Indian financial year (ends 31 March), so the
+    # default is "03-31". There is no fiscal-year concept in the schema, hence it's
+    # defined here as MM-DD. NOTE: LeaveBalance is calendar-year-bucketed throughout
+    # the app — but the expiry window (LEAVE_EXPIRY_WINDOW_DAYS before 31 Mar) always
+    # lands in Jan–Mar, the same calendar year as that 31 Mar, so the detector's
+    # current-calendar-year balance lookup lines up with what the user sees.
+    FISCAL_YEAR_END = os.getenv("FISCAL_YEAR_END", "03-31")
+    LEAVE_EXPIRY_WINDOW_DAYS = int(os.getenv("LEAVE_EXPIRY_WINDOW_DAYS", "45"))
+    # A leave left "Pending" longer than this many days is treated as stale → the
+    # employee gets a one-click "nudge manager" to re-send the approval request.
+    STALE_APPROVAL_DAYS = int(os.getenv("STALE_APPROVAL_DAYS", "3"))
+    # A nudge auto-expires (drops off the feed) this many days after creation.
+    NUDGE_TTL_DAYS = int(os.getenv("NUDGE_TTL_DAYS", "14"))
+    # Minimum gap between successive "nudge manager" re-sends for the same request,
+    # so a manager can't be spammed by repeated clicks.
+    NUDGE_MANAGER_COOLDOWN_HOURS = int(os.getenv("NUDGE_MANAGER_COOLDOWN_HOURS", "24"))
+    # Master switch for best-effort Teams/email push of new nudges. OFF until Azure
+    # is set up (see "Teams notification model"); the in-app feed works regardless.
+    NUDGE_PUSH_ENABLED = os.getenv("NUDGE_PUSH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+    # ── Employee onboarding journey ───────────────────────────────────────────
+    # A new hire (joining_date within this many days) gets a guided, tracked
+    # onboarding flow: a personal step-by-step page, proactive nudges for the next
+    # step, and an HR tracking view. See services/onboarding_service.py.
+    ONBOARDING_WINDOW_DAYS = int(os.getenv("ONBOARDING_WINDOW_DAYS", "60"))
+    # A journey with no step completed in this many days is flagged "stalled" in the
+    # HR tracker so HR can follow up.
+    ONBOARDING_STALL_DAYS = int(os.getenv("ONBOARDING_STALL_DAYS", "7"))
+    # Filled joining documents are emailed to this address (the HR inbox). Falls back
+    # to NOTIFY_TO_EMAIL. Uploads are recorded regardless of whether the email sends.
+    ONBOARDING_HR_EMAIL = os.getenv("ONBOARDING_HR_EMAIL", "") or os.getenv("NOTIFY_TO_EMAIL", "")
+    # Induction video shown in the journey's video step. A direct URL the in-app HTML5
+    # player can load (e.g. a SharePoint/Stream/CDN MP4). Chapters let the hire seek.
+    INDUCTION_VIDEO_URL = os.getenv("INDUCTION_VIDEO_URL", "")
+    INDUCTION_VIDEO_TITLE = os.getenv("INDUCTION_VIDEO_TITLE", "Welcome to the team")
+
+    # ── Action receipts + undo ────────────────────────────────────────────────
+    # Every executed write action emits a durable ActionReceipt. For actions whose
+    # downstream still allows reversal (a freshly-created IT ticket / HR query that no
+    # one has actioned yet), the receipt carries a one-click undo link valid for this
+    # many minutes after execution. 0 disables the time window (undo allowed until the
+    # downstream itself closes the door, e.g. the ticket leaves "Open").
+    RECEIPT_UNDO_WINDOW_MIN = int(os.getenv("RECEIPT_UNDO_WINDOW_MIN", "120"))
+
     # ── Teams Activity-feed notifications ─────────────────────────────────────
     # Decisions, reminders and info notices are emailed AND pinged to the recipient's
     # Teams Activity feed (the bell) via Graph sendActivityNotification. This stays a
@@ -353,6 +406,16 @@ class Config:
     #   true  → query the authoritative Alchemy Skills Portal (skill name → id → users)
     #   false → fall back to the internal DB directory (dummy/demo data)
     ALCHEMY_SKILL_SEARCH_ENABLED = os.getenv("ALCHEMY_SKILL_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+
+    # ── TechElevate Training Portal (Azure AD-secured, same App ID as Alchemy) ─
+    TECHELEVATE_BASE_URL = os.getenv("TECHELEVATE_BASE_URL", "https://training.alignedautomation.com/api")
+    TECHELEVATE_ENABLED  = os.getenv("TECHELEVATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    # Service account for server-side token mint (ROPC). When set, the backend
+    # fetches TechElevate data without any per-user connect flow.
+    TECHELEVATE_SA_EMAIL    = os.getenv("TECHELEVATE_SA_EMAIL", "")
+    TECHELEVATE_SA_PASSWORD = os.getenv("TECHELEVATE_SA_PASSWORD", "")
+    # Dev bypass: set to a raw TechElevate JWT to skip all auth in local dev.
+    TECHELEVATE_DEV_JWT  = os.getenv("TECHELEVATE_DEV_JWT", "")
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

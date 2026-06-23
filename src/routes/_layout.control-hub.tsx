@@ -4,7 +4,6 @@ import { useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { HoverEffect } from "@/components/ui/card-hover-effect";
-import { Meteors } from "@/components/ui/meteors";
 import {
   Megaphone,
   Car,
@@ -22,13 +21,14 @@ import {
   Zap,
   Building2,
   LayoutDashboard,
-  ChevronDown,
   ArrowRight,
   Lock,
   CheckCircle2,
   ShieldCheck,
   TrendingUp,
   Globe,
+  Network,
+  Rocket,
 } from "lucide-react";
 
 // Page components live outside the routes folder so they are code-split
@@ -50,6 +50,9 @@ import { AnalyticsStudio } from "@/pages/AnalyticsStudio";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
 import { CabinDirectory } from "@/pages/CabinDirectory";
+import { OrgHierarchy } from "@/pages/OrgHierarchy";
+import { TechElevatePortal } from "@/pages/TechElevatePortal";
+import { OnboardingTracker } from "@/pages/OnboardingTracker";
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -69,10 +72,13 @@ type TabId =
   | "role-control"
   | "admin-portal"
   | "hr-portal"
+  | "onboarding-tracker"
   | "it-portal"
   | "pmo-portal"
+  | "techelevate"
   | "manager-portal"
   | "people"
+  | "org-hierarchy"
   | "config"
   | "url-library"
   | "form-library"
@@ -184,6 +190,15 @@ const TABS: TabItem[] = [
     component: HRPortal,
   },
   {
+    id: "onboarding-tracker",
+    label: "Onboarding Tracker",
+    category: "Management Portals",
+    icon: Rocket,
+    color: "#7C3AED",
+    show: (role) => ["HR", "Admin", "Super Admin"].includes(role),
+    component: OnboardingTracker,
+  },
+  {
     id: "it-portal",
     label: "IT Support & Control",
     category: "Management Portals",
@@ -202,6 +217,15 @@ const TABS: TabItem[] = [
     show: (role) => role === "PMO",
     requireScope: "pmo_portal",
     component: PMOPortal,
+  },
+  {
+    id: "techelevate",
+    label: "TechElevate",
+    category: "Management Portals",
+    icon: GraduationCap,
+    color: "#7C3AED",
+    show: () => true,
+    component: TechElevatePortal,
   },
   {
     id: "manager-portal",
@@ -223,6 +247,16 @@ const TABS: TabItem[] = [
     show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
     requireScope: "people_directory",
     component: PeoplePage,
+  },
+  {
+    id: "org-hierarchy",
+    label: "Org Hierarchy",
+    category: "Assets & Config",
+    icon: Network,
+    color: "#6366F1",
+    show: (role) =>
+      ["HR", "PMO", "Admin", "Functional Manager", "Super Admin"].includes(role),
+    component: OrgHierarchy,
   },
   {
     id: "config",
@@ -283,15 +317,19 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "automation-hub": "Automate email sequences, rule actions, and triggers.",
   "admin-portal": "Submit transport claims, desk keys, parking stickers, and library books.",
   "hr-portal": "Request leave, review pending approvals, and download payroll reports.",
+  "onboarding-tracker": "Track every new joiner's onboarding progress, steps, and joining documents.",
   "it-portal": "Open IT tickets, view device status, and check active support incidents.",
   "pmo-portal": "Monitor project delivery status, milestones, and training compliance.",
   "manager-portal": "Review attendance check-ins, hierarchy status, and shift reports.",
   people: "Browse team directories, organization hierarchy, and contact cards.",
+  "org-hierarchy":
+    "Visualize the live Microsoft 365 reporting graph — managers, reports, and teams.",
   config: "Customize base templates, instructions, and system guardrails.",
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
   "form-library": "Submit custom forms, view request archives, and check statuses.",
   "connector-studio": "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
+  techelevate: "View training assignments, level progress, study materials, and exam results.",
 };
 
 interface ControlHubOverviewProps {
@@ -318,22 +356,6 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
           <p className="text-[13px] text-muted-foreground">
             A centralized directory of all operational systems, configurations, and tools.
           </p>
-        </div>
-
-        {/* Live Nominals Tracker Card */}
-        <div className="flex items-center gap-3 rounded-2xl bg-white/70 dark:bg-card/70 border border-[#e2e8f0] dark:border-white/[0.06] backdrop-blur-md p-3.5 pr-5 w-full md:max-w-xs shadow-sm relative overflow-hidden">
-          <div className="absolute inset-0 z-0">
-            <Meteors number={8} />
-          </div>
-          <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse shrink-0 relative z-10" />
-          <div className="text-left relative z-10">
-            <p className="text-[11px] font-bold text-foreground flex items-center gap-1">
-              All Systems Operational
-            </p>
-            <p className="text-[10px] text-muted-foreground/85 mt-0.5">
-              Secure TLS connection • latency nominal
-            </p>
-          </div>
         </div>
       </div>
 
@@ -467,48 +489,6 @@ function ControlHubPage() {
                       )}
                       <span className="truncate">{activeTab?.label}</span>
                     </span>
-                  </div>
-
-                  {/* Actions & Portal Quick Switcher */}
-                  <div className="flex items-center gap-2.5 self-end sm:self-auto">
-                    <button
-                      onClick={() => handleTabChange("overview")}
-                      className="flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted px-2.5 py-1.5 rounded-lg transition-all cursor-pointer border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card shadow-sm"
-                    >
-                      <LayoutDashboard className="h-3.5 w-3.5" />
-                      <span>Overview</span>
-                    </button>
-
-                    <div className="relative group">
-                      <button className="flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted px-2.5 py-1.5 rounded-lg transition-all cursor-pointer border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card shadow-sm">
-                        <span>Switch Portal</span>
-                        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-                      </button>
-                      <div className="absolute right-0 top-full mt-1.5 w-56 bg-[#0c1222]/95 border border-white/[0.08] dark:border-white/[0.08] backdrop-blur-xl shadow-2xl rounded-xl p-1.5 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50">
-                        <div className="px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-white/35">
-                          Allowed Portals
-                        </div>
-                        <div className="max-h-60 overflow-y-auto space-y-0.5 no-scrollbar mt-1">
-                          {allowedTabs.map((t) => {
-                            const TIcon = t.icon;
-                            return (
-                              <button
-                                key={t.id}
-                                onClick={() => handleTabChange(t.id)}
-                                className={`flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-all text-left ${
-                                  t.id === activeTabId
-                                    ? "text-white bg-[#00a29a]/20 font-semibold"
-                                    : "text-white/60 hover:text-white hover:bg-white/5"
-                                }`}
-                              >
-                                <TIcon className="h-3.5 w-3.5 opacity-65 shrink-0" style={{ color: t.color }} />
-                                <span className="truncate flex-1">{t.label}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </div>
 

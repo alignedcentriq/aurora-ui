@@ -25,6 +25,12 @@ _logger = logging.getLogger(__name__)
 # Field input types the dynamic renderer + validator understand.
 _FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"}
 
+# Identity attributes an admin can bind a field to via its optional `autofill` source, so the
+# field pre-fills from the logged-in user's profile at chat time and they only confirm (see
+# FormLibraryService.build_prefill). Empty/absent means the field is filled by hand as before.
+# These map onto Employee columns; "manager" is special-cased via the self-referential FK.
+_AUTOFILL_SOURCES = {"name", "email", "employee_id", "department", "designation", "location", "manager"}
+
 # Single generic words that admins sometimes use as "shortcuts" but that match almost every user
 # message (e.g. saving "requests" as a keyword causes ManageEngine to appear for "submit my
 # reimbursement requests"). Multi-word phrases are always allowed.
@@ -159,6 +165,9 @@ class FormLibraryService:
                 opts = f.get("options")
                 if not isinstance(opts, list) or not [o for o in opts if str(o).strip()]:
                     return False, f"Select field '{name}' needs at least one option."
+            af = (f.get("autofill") or "").strip()
+            if af and af not in _AUTOFILL_SOURCES:
+                return False, f"Unknown auto-fill source '{af}' for '{name}'."
         return True, ""
 
     @staticmethod
@@ -177,6 +186,9 @@ class FormLibraryService:
                 entry["placeholder"] = str(f["placeholder"]).strip()
             if ftype == "select":
                 entry["options"] = [str(o).strip() for o in (f.get("options") or []) if str(o).strip()]
+            af = (f.get("autofill") or "").strip()
+            if af in _AUTOFILL_SOURCES:
+                entry["autofill"] = af
             out.append(entry)
         return out
 
@@ -339,6 +351,148 @@ class FormLibraryService:
             return None
         finally:
             db.close()
+
+    # ── Identity pre-fill ─────────────────────────────────────────────────────────
+    @staticmethod
+    def build_prefill(fields: list, employee_email: str) -> dict:
+        """Resolve {field_name: value} for fields bound to an identity source via `autofill`,
+        from the logged-in user's Employee profile, so the form opens pre-populated and the user
+        only confirms. Fail-soft: returns {} on any error or unknown user (the form still renders,
+        just empty) — never raises.
+
+        Caller must NOT pass anonymous-form fields here: pre-filling identity into an anonymous
+        form would record the submitter in field_values and defeat the anonymity promise.
+        """
+        email = (employee_email or "").strip()
+        if not email or not fields:
+            return {}
+        bound = [
+            (f.get("name"), (f.get("autofill") or "").strip())
+            for f in fields
+            if isinstance(f, dict) and f.get("name") and (f.get("autofill") or "").strip() in _AUTOFILL_SOURCES
+        ]
+        if not bound:
+            return {}
+        db = SessionLocal()
+        try:
+            emp = db.query(Employee).filter(Employee.email == email).first()
+            if not emp:
+                return {}
+            manager_name = None
+            if any(src == "manager" for _, src in bound) and emp.manager_id:
+                mgr = db.query(Employee).filter(Employee.id == emp.manager_id).first()
+                manager_name = mgr.name if mgr else None
+            resolvers = {
+                "name": emp.name,
+                "email": emp.email,
+                "employee_id": emp.employee_id,
+                "department": emp.department,
+                "designation": emp.designation,
+                "location": emp.location,
+                "manager": manager_name,
+            }
+            out: dict = {}
+            for name, src in bound:
+                val = resolvers.get(src)
+                if val:
+                    out[name] = str(val)
+            return out
+        except Exception as e:
+            _logger.warning("[FormLibrary.build_prefill] failed: %s", e)
+            return {}
+        finally:
+            db.close()
+
+    # ── Conversational fill: extract field values from natural language ────────────
+    @staticmethod
+    def extract_values(message: str, fields: list, skip: set | None = None) -> dict:
+        """Pull {field_name: value} that the user's message clearly provides, for the
+        conversational form-fill flow. Targets only fields not in `skip` (already collected).
+        Deterministic option-matching for selects, then a conservative, hard-sanitized LLM JSON
+        pass for the rest. Fail-soft: returns {} when the model is down or output is unusable —
+        the flow then just asks for the field — and never raises. The user always confirms the
+        full set before submission, so conservative over-extraction is caught downstream.
+        """
+        import json
+        import re
+
+        message = (message or "").strip()
+        skip = skip or set()
+        if not message or not fields:
+            return {}
+        targets = [
+            f for f in fields
+            if isinstance(f, dict) and f.get("name") and f["name"] not in skip
+            and f.get("type") != "image"  # images can't be extracted from text
+        ]
+        if not targets:
+            return {}
+
+        out: dict = {}
+        msg_low = message.lower()
+
+        # 1) Deterministic: a select whose option text appears verbatim (and unambiguously).
+        remaining = []
+        for f in targets:
+            if f.get("type") == "select":
+                hits = [o for o in (f.get("options") or []) if o and o.lower() in msg_low]
+                if len(hits) == 1:
+                    out[f["name"]] = hits[0]
+                    continue
+            remaining.append(f)
+        if not remaining:
+            return out
+
+        # 2) Conservative LLM JSON extraction for the rest.
+        try:
+            from app.services import llm_controls_service as llm_controls
+            schema_lines = []
+            for f in remaining:
+                line = f"- {f['name']} ({f.get('type', 'text')})"
+                if f.get("type") == "select" and f.get("options"):
+                    line += f" — one of: {', '.join(f['options'])}"
+                line += f" — {f.get('label') or f['name']}"
+                schema_lines.append(line)
+            prompt = (
+                "Extract form field values from the user's message. Return ONLY a JSON object "
+                "mapping field name to the value the user explicitly provided. OMIT any field the "
+                "user did not clearly answer — never guess. Use ISO dates (YYYY-MM-DD) for date "
+                "fields and digits only for number fields.\n\n"
+                f"Fields:\n{chr(10).join(schema_lines)}\n\n"
+                f"User message: {message}\n\nJSON:"
+            )
+            model = llm_controls.get_llm("general", default_timeout=30)
+            raw = (model.invoke(prompt).content or "").strip()
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = json.loads(m.group(0)) if m else {}
+        except Exception as e:
+            _logger.warning("[FormLibrary.extract_values] LLM extraction failed: %s", e)
+            parsed = {}
+
+        # 3) Hard-sanitize the model output against the schema.
+        by_name = {f["name"]: f for f in remaining}
+        if isinstance(parsed, dict):
+            for name, val in parsed.items():
+                f = by_name.get(name)
+                if not f or val is None:
+                    continue
+                ftype = f.get("type", "text")
+                if ftype == "checkbox":
+                    out[name] = val if isinstance(val, bool) else \
+                        str(val).strip().lower() in ("true", "yes", "1", "y")
+                    continue
+                sval = str(val).strip()
+                if not sval:
+                    continue
+                if ftype == "select":
+                    match = next((o for o in (f.get("options") or []) if o.lower() == sval.lower()), None)
+                    if not match:
+                        continue
+                    sval = match
+                elif ftype == "number" and not any(ch.isdigit() for ch in sval):
+                    continue
+                out[name] = sval
+        return out
 
     # ── Matching (used by the router) ─────────────────────────────────────────────
     @staticmethod

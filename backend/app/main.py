@@ -64,6 +64,8 @@ from app.routes.skill_hr_routes import router as skill_hr_router
 from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
 from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
+from app.routes.techelevate_routes import router as techelevate_router
+from app.routes.onboarding_routes import router as onboarding_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -189,6 +191,8 @@ app.include_router(skill_it_router)
 app.include_router(skill_doc_router)
 app.include_router(connector_admin_router)
 app.include_router(connector_invoke_router)
+app.include_router(techelevate_router)
+app.include_router(onboarding_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(_uploads_dir, exist_ok=True)
@@ -359,6 +363,22 @@ async def startup_event():
             await asyncio.sleep(6 * 3600)  # every 6 hours
 
     asyncio.create_task(chat_retention_scheduler())
+
+    # ── Proactive nudge scan ───────────────────────────────────────────────
+    # Turns the assistant proactive: deterministic detectors (zero LLM) surface
+    # actionable nudges (expiring leaves, stale approvals) into the in-app feed.
+    # Best-effort Teams/email push stays OFF until NUDGE_PUSH_ENABLED is set.
+    async def proactive_nudge_scheduler():
+        from app.services import nudge_service
+        await asyncio.sleep(45)  # let startup settle
+        while True:
+            try:
+                await asyncio.to_thread(nudge_service.run_due)
+            except Exception:
+                pass
+            await asyncio.sleep(max(1, settings.NUDGE_SCAN_INTERVAL_MIN) * 60)
+
+    asyncio.create_task(proactive_nudge_scheduler())
 
     get_deeplink_agent()
 
@@ -590,6 +610,48 @@ def _reject_reason_form(token: str, subtitle: str, error: str = "") -> str:
       <label for="reason">Reason for rejection</label>
       <textarea id="reason" name="reason" required placeholder="e.g. Insufficient leave balance — please discuss with your manager before re-applying."></textarea>
       <button type="submit">Confirm Rejection</button>
+    </form>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p>
+    </div></div></body></html>
+    """
+
+
+def _undo_confirm_form(token: str, summary: str, system: str) -> str:
+    """Branded confirm page for undoing an action. The reversal runs ONLY on the POST this
+    page submits — so a GET (or a link prefetcher like SafeLinks / a chat unfurler) can never
+    silently undo the action."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:60px;height:60px;display:block;margin:0 auto 10px;">'
+        if _BUDDY_B64 else ""
+    )
+    where = f" in {html.escape(system)}" if system else ""
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Undo action</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:24px;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:28px 36px 32px;}}
+    h1{{color:#0d1b2e;font-size:21px;margin:0 0 8px;}}
+    p.sub{{color:#64748b;font-size:14.5px;margin:0 0 20px;line-height:1.55;}}
+    button{{width:100%;background:#dc2626;color:#fff;border:0;border-radius:25px;padding:14px;font:700 15px 'Segoe UI',Arial,sans-serif;cursor:pointer;}}
+    button:hover{{background:#b91c1c;}}
+    .foot{{margin-top:16px;font-size:12px;color:#94a3b8;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body">
+    <h1>Undo this action?</h1>
+    <p class="sub">This will reverse <strong>{html.escape(summary)}</strong>{where}. You can only undo while it hasn't been picked up yet.</p>
+    <form method="post" action="/api/receipts/undo/{token}">
+      <button type="submit">Yes, undo it</button>
     </form>
     <p class="foot">Centriq AI &mdash; Aligned Automation</p>
     </div></div></body></html>
@@ -926,7 +988,7 @@ async def serve_policy_image(image_id: int):
 
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
-_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup", "context_gate", "form_builder_agent"}
+_SKIP_STREAMING_NODES = {"followup_resolver", "intent_router", "context_manager", "feedback_lookup", "context_gate", "state_tracker", "form_builder_agent"}
 
 # Domains whose answers are safe & stable enough to serve from the semantic answer cache.
 # Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
@@ -1534,19 +1596,30 @@ async def chat(
             if accumulated_text:
                 yield f"data: {json.dumps({'type': 'token', 'content': accumulated_text})}\n\n"
 
-        # Post-process the accumulated text
-        post = _postprocess(accumulated_text, final_messages, routed_domain, start_time)
-        final_message = post["final_message"]
-
-        # If post-processing changed the text (HTML stripped, markers removed), patch the frontend
-        if final_message != accumulated_text:
-            yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
+        # Post-process the accumulated text. These finalization steps run AFTER the answer
+        # has already streamed to the user, so a failure here must NEVER turn a delivered
+        # answer into an error bubble — guard them and fall back to the raw answer.
+        latency_ms = int((time.time() - start_time) * 1000)
+        post = {
+            "final_message": accumulated_text, "download_url": None,
+            "interactive": None, "images": None, "processing_time": latency_ms,
+        }
+        final_message = accumulated_text
+        try:
+            post = _postprocess(accumulated_text, final_messages, routed_domain, start_time)
+            final_message = post["final_message"]
+            # If post-processing changed the text (HTML stripped, markers removed), patch the frontend
+            if final_message != accumulated_text:
+                yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
+        except Exception:
+            logger.exception("[chat] post-processing failed; serving the raw streamed answer")
 
         # ── Observability: dual-write to Langfuse + PostgreSQL ───────
-        latency_ms = int((time.time() - start_time) * 1000)
-
-        # Langfuse: finalise trace with output
-        tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
+        # Langfuse: finalise trace with output (best-effort — never break the response)
+        try:
+            tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
+        except Exception:
+            logger.exception("[chat] tracing.finalize failed")
 
         # PostgreSQL: insert request log + LLM call logs
         if not request.is_private:
@@ -1659,8 +1732,28 @@ def _is_people_search(message: str) -> bool:
     )
 
 
+# Markers of a "nothing to follow up on" response — no results, an error, or the
+# assistant abstaining. Following these up produces troubleshooting/app-meta chips
+# ("reset my search", "how do I add an employee") that don't belong in a user-facing
+# assistant, so we surface no chips at all instead.
+_NO_FOLLOWUP_RESPONSE_MARKERS = (
+    "no employees found", "no results", "no matching", "no records", "none found",
+    "couldn't find", "could not find", "didn't find", "did not find", "not found",
+    "i don't have", "i do not have", "don't have that", "isn't available",
+    "is not available", "unable to", "something went wrong", "an error occurred",
+)
+
+
+def _has_no_followup(response: str) -> bool:
+    low = (response or "").lower()
+    return any(marker in low for marker in _NO_FOLLOWUP_RESPONSE_MARKERS)
+
+
 @app.post("/api/suggestions")
 async def get_suggestions(request: SuggestionsRequest):
+    # No-result / error / abstention responses → no chips (nothing useful to ask next).
+    if _has_no_followup(request.response):
+        return {"suggestions": []}
     # People/skill search → curated chips (skip the LLM entirely).
     if _is_people_search(request.message):
         return {"suggestions": list(_PEOPLE_SEARCH_CHIPS)}
@@ -1675,8 +1768,12 @@ async def get_suggestions(request: SuggestionsRequest):
             "generate exactly 3 short follow-up questions the user might ask next. "
             "Each question must be under 10 words. "
             "Never suggest questions about salary, compensation, pay, CTC, or whether the "
-            "user can contact, hire, or recruit someone. Keep suggestions task-relevant and "
-            "professional. "
+            "user can contact, hire, or recruit someone. "
+            "Never suggest meta questions about how to use this app, the search, or the "
+            "assistant itself (e.g. 'how do I reset my search', 'what is the correct search "
+            "criteria', 'how do I add an employee', 'how does this work'). "
+            "Suggest only natural next questions about the subject matter. "
+            "Keep suggestions task-relevant and professional. "
             "Return ONLY a valid JSON array of 3 strings, no explanation, no markdown."
         )
         user_content = f"User question: {request.message}\n\nAI response: {request.response[:800]}"
@@ -1709,6 +1806,51 @@ async def get_suggestions(request: SuggestionsRequest):
         return {"suggestions": suggestions}
     except Exception as e:
         return {"suggestions": []}
+
+@app.get("/api/capabilities")
+async def get_capabilities(user: CurrentUser = Depends(get_current_user)):
+    """Role-aware capability discovery — the answer to "what can you do?".
+
+    Returns the capabilities visible to the caller's role, grouped by category,
+    plus any live signals (e.g. pending approvals) worth surfacing up front.
+    Powers the assistant empty-state and onboarding of every user on day one.
+    """
+    from app.services import capability_registry as caps
+    visible = caps.capabilities_for_role(user.role)
+
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for c in visible:
+        if c.category not in groups:
+            groups[c.category] = []
+            order.append(c.category)
+        groups[c.category].append(c.to_dict())
+
+    # Live signals — turn "what can you do" into "here's what needs you now".
+    live: list[dict] = []
+    try:
+        from app.services import nudge_service
+        for n in nudge_service.list_for_user(user.email)[:3]:
+            live.append({
+                "title": n.get("title") or n.get("message"),
+                "prompt": n.get("title") or "what needs my attention?",
+            })
+    except Exception:
+        pass
+
+    # A flat, role-ordered starter set for a compact empty-state (first 6).
+    starters = [
+        {"title": c["title"], "prompt": c["examples"][0]}
+        for c in (cap.to_dict() for cap in visible[:6])
+    ]
+
+    return {
+        "role": user.role,
+        "groups": [{"category": cat, "capabilities": groups[cat]} for cat in order],
+        "starters": starters,
+        "live": live,
+    }
+
 
 @app.get("/api/admin/stats")
 async def get_admin_stats(_: CurrentUser = Depends(require_admin)):
@@ -2070,6 +2212,94 @@ async def cancel_leave(leave_id: int, user: CurrentUser = Depends(get_current_us
         return {"message": f"Leave cancelled.{balance_note}", "was_approved": was_approved}
     finally:
         db.close()
+
+
+# ── Proactive nudges (system-initiated feed) ─────────────────────────────────
+
+class NudgeSeenRequest(BaseModel):
+    ids: Optional[List[int]] = None
+
+
+@app.get("/api/nudges")
+async def get_nudges(user: CurrentUser = Depends(get_current_user)):
+    """The current user's proactive-nudge feed + unread count."""
+    from app.services import nudge_service
+    nudges = await asyncio.to_thread(nudge_service.list_for_user, user.email)
+    unread = await asyncio.to_thread(nudge_service.count_unread, user.email)
+    return {"nudges": nudges, "unread": unread}
+
+
+@app.post("/api/nudges/seen")
+async def mark_nudges_seen(req: NudgeSeenRequest, user: CurrentUser = Depends(get_current_user)):
+    """Mark nudges as seen (all 'new' for the user, or just the given ids)."""
+    from app.services import nudge_service
+    n = await asyncio.to_thread(nudge_service.mark_seen, user.email, req.ids)
+    return {"marked": n}
+
+
+@app.post("/api/nudges/{nudge_id}/act")
+async def act_nudge(nudge_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Execute a nudge's one-click action (apply_leave → deeplink, nudge_manager → re-send approval)."""
+    from app.services import nudge_service
+    return await asyncio.to_thread(nudge_service.act, user.email, nudge_id)
+
+
+@app.post("/api/nudges/{nudge_id}/dismiss")
+async def dismiss_nudge(nudge_id: int, user: CurrentUser = Depends(get_current_user)):
+    from app.services import nudge_service
+    ok = await asyncio.to_thread(nudge_service.dismiss, user.email, nudge_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Nudge not found.")
+    return {"dismissed": True}
+
+
+# ── Action receipts + undo (trust / compliance ledger) ───────────────────────
+
+@app.get("/api/receipts")
+async def get_receipts(user: CurrentUser = Depends(get_current_user)):
+    """The current user's executed-action receipts (most recent first)."""
+    from app.services import receipt_service
+    receipts = await asyncio.to_thread(receipt_service.list_for_user, user.email)
+    return {"receipts": receipts}
+
+
+@app.get("/api/receipts/undo/{token}", response_class=HTMLResponse)
+async def undo_receipt_confirm(token: str):
+    """Show the undo CONFIRMATION page. A GET never mutates — so a link prefetcher
+    (Outlook SafeLinks, a Teams/Slack unfurler, antivirus) can't silently reverse the
+    action. The actual reversal happens on the POST the page submits. Mirrors the
+    approve/reject flow where reject likewise collects its confirmation before acting."""
+    from app.services import receipt_service
+    snap = await asyncio.to_thread(receipt_service.peek, token)
+    if not snap:
+        return HTMLResponse(_approval_html("Invalid Link", "This undo link is invalid or has already expired.", "#dc2626"), status_code=404)
+    if snap.get("status") == "undone":
+        return HTMLResponse(_approval_html("Already Undone", f"{snap.get('summary','This action')} was already reversed.", "#f59e0b"))
+    if snap.get("expired"):
+        return HTMLResponse(_approval_html("Link Expired", "The window to undo this action has passed.", "#f59e0b"))
+    if not snap.get("undoable"):
+        return HTMLResponse(_approval_html("Can't Undo", f"{snap.get('summary','This action')} can't be undone automatically.", "#f59e0b"))
+    return HTMLResponse(_undo_confirm_form(token, snap.get("summary", "this action"), snap.get("system") or ""))
+
+
+@app.post("/api/receipts/undo/{token}", response_class=HTMLResponse)
+async def undo_receipt(token: str):
+    """Perform the undo (POST only). The undo handler re-checks live downstream state, so a
+    stale confirmation safely refuses; a re-submit of an already-undone receipt is a friendly
+    success."""
+    from app.services import receipt_service
+    result = await asyncio.to_thread(receipt_service.undo, token)
+    if result.get("success"):
+        title = "Already Undone" if result.get("already") else "Action Undone"
+        return HTMLResponse(_approval_html(title, result.get("message", "Done."), "#16A34A"))
+    err = result.get("error")
+    # invalid/expired links read as a soft amber notice; a downstream refusal explains why.
+    color = "#dc2626" if err in ("error", "not_owner") else "#f59e0b"
+    status = 404 if err == "invalid" else 200
+    return HTMLResponse(
+        _approval_html("Couldn't Undo", result.get("message", "This action can't be undone."), color),
+        status_code=status,
+    )
 
 
 @app.post("/api/parking/submit")

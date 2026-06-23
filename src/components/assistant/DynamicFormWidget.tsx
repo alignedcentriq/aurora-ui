@@ -32,7 +32,7 @@ const FIELD_ICON: Record<DynamicFormField["type"], React.ElementType> = {
 };
 
 /** Unified field label: type icon + label + required/optional marker. */
-function FieldLabel({ field }: { field: DynamicFormField }) {
+function FieldLabel({ field, prefilled }: { field: DynamicFormField; prefilled?: boolean }) {
   const Icon = FIELD_ICON[field.type] ?? Type;
   return (
     <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
@@ -42,6 +42,11 @@ function FieldLabel({ field }: { field: DynamicFormField }) {
         <span className="text-destructive">*</span>
       ) : (
         <span className="font-normal text-muted-foreground/50">(optional)</span>
+      )}
+      {prefilled && (
+        <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold text-primary/80">
+          <CheckCircle2 className="h-2.5 w-2.5" /> from your profile
+        </span>
       )}
     </label>
   );
@@ -265,12 +270,21 @@ function ImageUploadField({
  * schema the backend sends.
  */
 export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Props) {
-  const [values, setValues] = useState<Record<string, string | boolean>>({});
+  // Seed identity-bound fields the backend resolved from the user's profile — they only confirm.
+  const [values, setValues] = useState<Record<string, string | boolean>>(() => ({
+    ...(data.prefill || {}),
+  }));
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   const setField = (name: string, val: string | boolean) =>
     setValues((prev) => ({ ...prev, [name]: val }));
+
+  const hasPrefill = Boolean(data.prefill && Object.keys(data.prefill).length > 0);
+  // A field shows its "from your profile" badge only while it still holds the seeded value;
+  // once the user edits it, the badge clears, signalling it's now their own input.
+  const isPrefilled = (f: DynamicFormField) =>
+    Boolean(data.prefill && f.name in data.prefill && values[f.name] === data.prefill[f.name]);
 
   const missingRequired = (data.fields || []).some((f) => {
     if (!f.required) return false;
@@ -350,7 +364,7 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
     if (f.type === "user") {
       return (
         <div>
-          <FieldLabel field={f} />
+          <FieldLabel field={f} prefilled={isPrefilled(f)} />
           <UserPickerField
             field={f}
             value={(v as string) || ""}
@@ -362,7 +376,7 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
       );
     }
 
-    const labelEl = <FieldLabel field={f} />;
+    const labelEl = <FieldLabel field={f} prefilled={isPrefilled(f)} />;
 
     if (f.type === "checkbox") {
       return (
@@ -487,6 +501,14 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
       </div>
 
       <div className="p-4">
+        {hasPrefill && (
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3.5 py-2.5 text-[11px] text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+            <span>
+              We pre-filled some fields from your profile — just confirm or edit them before submitting.
+            </span>
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           {fields.map((f) => (
             <div key={f.name} className={isWide(f) ? "sm:col-span-2" : ""}>

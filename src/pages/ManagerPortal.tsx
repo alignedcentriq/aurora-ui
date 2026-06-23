@@ -134,7 +134,7 @@ export function ManagerPortal() {
       </div>
 
       {/* Tab bar */}
-      <div className="mb-5 flex gap-1 overflow-x-auto rounded-2xl border border-border bg-muted/30 p-1">
+      <div className="mb-5 flex gap-1 overflow-x-auto no-scrollbar rounded-2xl border border-border bg-muted/30 p-1">
         {TABS.map(t => {
           const Icon = t.icon;
           return (

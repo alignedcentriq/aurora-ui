@@ -45,7 +45,9 @@ def create_it_ticket(
     Default priority to Medium unless user says urgent/critical/emergency.
     Use user's own words as subject and description. Never use placeholder text."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
-    return ITService.create_ticket(email, category, subject, description, priority)
+    from app.services import actions  # routed through the action registry spine
+    return actions.run("it_ticket", actor_email=email, category=category,
+                       subject=subject, description=description, priority=priority).human_message
 
 
 @tool

@@ -116,6 +116,22 @@ async def read_my_emails(
     return json.dumps(result)
 
 
+def _ms365_pending(action_type: str, preview: str, blast: str, **params) -> str:
+    """Return a pending-action signal to the sub-agent instead of executing a write API call.
+
+    The outer ms365_agent_node detects `__pending__: true` in ToolMessages, stages the
+    action in PendingActionService, and shows the user a confirmation card. Only after the
+    user confirms does the action execute via ms365_service.
+    """
+    return json.dumps({
+        "__pending__": True,
+        "action_type": action_type,
+        "params": params,
+        "preview": preview,
+        "blast_radius": blast,
+    })
+
+
 @tool
 async def send_email_graph(
     to: str,
@@ -124,16 +140,19 @@ async def send_email_graph(
     cc: str = "",
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Send an email via Microsoft Outlook. to and cc accept comma-separated email addresses.
-    IMPORTANT: Always confirm the recipient, subject, and body with the user BEFORE calling this tool.
-    Do not send without explicit user confirmation."""
+    """Stage an Outlook email for user confirmation. to and cc accept comma-separated addresses.
+    Call once you have the recipient, subject, and body — the user will review and confirm before
+    the email is sent. Never call without knowing who to send to and what to say."""
     token = (state or {}).get("graph_token")
     if not token:
         return _NOT_CONNECTED
-    to_list = [a.strip() for a in to.split(",") if a.strip()]
-    cc_list = [a.strip() for a in cc.split(",") if a.strip()] if cc else None
-    result = await ms365_service.send_email(token, to_list, subject, body, cc_list)
-    return json.dumps(result)
+    recip_count = len([a.strip() for a in to.split(",") if a.strip()])
+    return _ms365_pending(
+        "ms365_email",
+        f"Email to **{to}** | Subject: **{subject}**",
+        f"Will be sent to {recip_count} recipient(s)",
+        to=to, subject=subject, body=body, cc=cc,
+    )
 
 
 @tool
@@ -223,18 +242,24 @@ async def send_channel_message(
     message: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Post a message to a Microsoft Teams channel.
-    IMPORTANT: Always confirm the team name, channel name, and message with the user BEFORE calling this tool."""
+    """Stage a Teams channel post for user confirmation.
+    Call once you know the team, channel, and message — the user reviews and confirms before posting.
+    Use list_teams_channels first if you need to look up the exact names."""
     token = (state or {}).get("graph_token")
     if not token:
         return _NOT_CONNECTED
+    # Validate the channel exists before staging (avoids a bad-destination confirm card).
     info = await ms365_service.resolve_team_and_channel(token, team_name, channel_name)
     if not info or not info.get("channel_id"):
         return json.dumps({"success": False, "error": f"Channel '{channel_name}' in team '{team_name}' not found. Use list_teams_channels to see available channels."})
-    result = await ms365_service.send_channel_message(token, info["team_id"], info["channel_id"], message)
-    if result.get("success"):
-        result["posted_to"] = f"{info['team_name']} > {info['channel_name']}"
-    return json.dumps(result)
+    return _ms365_pending(
+        "ms365_channel_post",
+        f"Post to **{info['team_name']} > {info['channel_name']}**",
+        f"Visible to all members of {info['team_name']}",
+        team_name=info["team_name"], channel_name=info["channel_name"],
+        team_id=info["team_id"], channel_id=info["channel_id"],
+        message=message,
+    )
 
 
 @tool
@@ -419,19 +444,23 @@ async def send_teams_message(
     message: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Send a message to someone on Microsoft Teams. Provide the person's name or email.
-    The tool finds the correct chat and sends the message.
-    IMPORTANT: Always confirm the recipient and message with the user BEFORE calling this tool."""
+    """Stage a Teams DM for user confirmation. Provide the person's name or email.
+    Call once you know who to message and what to say — the user reviews before it is sent."""
     token = (state or {}).get("graph_token")
     if not token:
         return _NOT_CONNECTED
+    # Resolve the chat now so we can show a real name on the confirm card.
     chat = await ms365_service.find_chat_by_participant(token, person)
     if not chat:
         return json.dumps({"success": False, "error": f"No Teams chat found with '{person}'. Make sure you have an existing chat with them."})
-    result = await ms365_service.send_teams_message(token, chat["chat_id"], message)
-    if result.get("success"):
-        result["sent_to"] = chat.get("matched_name") or chat.get("matched_email") or person
-    return json.dumps(result)
+    display_name = chat.get("matched_name") or chat.get("matched_email") or person
+    return _ms365_pending(
+        "ms365_teams_message",
+        f"Teams message to **{display_name}**",
+        f"Visible to {display_name} only",
+        person=person, chat_id=chat["chat_id"],
+        display_name=display_name, message=message,
+    )
 
 
 # -- Yammer / Viva Engage Tools -----------------------------------------------
@@ -496,16 +525,20 @@ async def post_to_community(
     message: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Post a message to a Viva Engage community.
-    IMPORTANT: Always confirm the community name and message content with the user BEFORE calling this tool."""
+    """Stage a Viva Engage community post for user confirmation.
+    Call once you know the community and message — the user reviews before it is published."""
     token = (state or {}).get("yammer_token")
     if not token:
         return _YAMMER_NOT_CONNECTED
     group_id = await yammer_service.resolve_community_id(token, community_name)
     if not group_id:
         return json.dumps({"success": False, "error": f"Community '{community_name}' not found. Use list_my_communities to see available communities."})
-    result = await yammer_service.post_to_community(token, group_id, message)
-    return json.dumps(result)
+    return _ms365_pending(
+        "ms365_community_post",
+        f"Post to **{community_name}** community on Viva Engage",
+        f"Visible to all members of the {community_name} community",
+        community_name=community_name, group_id=group_id, message=message,
+    )
 
 
 @tool

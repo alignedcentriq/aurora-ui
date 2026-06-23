@@ -44,6 +44,21 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 const FIELD_TYPES = ["text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
+// Identity attributes a field can pre-fill from the logged-in user's profile, so chat opens the
+// form already populated and the user only confirms. "" = filled by hand (the default).
+// Must stay in sync with _AUTOFILL_SOURCES in backend/app/services/form_library_service.py.
+const AUTOFILL_SOURCES = [
+  { value: "", label: "No auto-fill (manual)" },
+  { value: "name", label: "Full name" },
+  { value: "email", label: "Work email" },
+  { value: "employee_id", label: "Employee ID" },
+  { value: "department", label: "Department" },
+  { value: "designation", label: "Designation" },
+  { value: "location", label: "Location" },
+  { value: "manager", label: "Manager" },
+] as const;
+type AutofillSource = (typeof AUTOFILL_SOURCES)[number]["value"];
+
 interface BuilderField {
   name: string;
   label: string;
@@ -51,6 +66,7 @@ interface BuilderField {
   required: boolean;
   options: string; // comma-separated in the editor
   placeholder: string;
+  autofill: AutofillSource;
 }
 
 interface FormField {
@@ -60,6 +76,7 @@ interface FormField {
   required?: boolean;
   options?: string[];
   placeholder?: string;
+  autofill?: AutofillSource;
 }
 
 interface FormTemplate {
@@ -100,6 +117,7 @@ const EMPTY_FIELD: BuilderField = {
   required: false,
   options: "",
   placeholder: "",
+  autofill: "",
 };
 
 type MetaState = {
@@ -237,6 +255,7 @@ export function FormLibrary() {
         required: Boolean(fld.required),
         options: (fld.options || []).join(", "),
         placeholder: fld.placeholder || "",
+        autofill: (fld.autofill as AutofillSource) || "",
       })),
     );
     setDialogOpen(true);
@@ -274,6 +293,7 @@ export function FormLibrary() {
           required: f.required,
         };
         if (f.placeholder.trim()) out.placeholder = f.placeholder.trim();
+        if (f.autofill) out.autofill = f.autofill;
         if (f.type === "select")
           out.options = f.options
             .split(",")
@@ -641,7 +661,7 @@ export function FormLibrary() {
                             <td colSpan={7} className="py-4 px-8 border-b border-[#f1f5f9] dark:border-white/[0.05]">
                               <div className="max-w-2xl bg-white dark:bg-background rounded-xl border border-[#e2e8f0] dark:border-white/[0.06] p-4 shadow-sm space-y-2.5">
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8] mb-1">Form Data Values</p>
-                                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[13px]">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-[13px]">
                                   {Object.entries(s.field_values || {}).map(([k, v]) => (
                                     <div key={k} className="flex flex-col gap-0.5 border-b border-dashed border-[#e2e8f0] dark:border-white/[0.05] pb-1.5 last:border-0 last:pb-0">
                                       <span className="text-[11px] text-[#94a3b8] dark:text-white/40 uppercase font-semibold tracking-wide">{k.replace(/_/g, " ")}</span>
@@ -682,7 +702,7 @@ export function FormLibrary() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-[12px] font-medium text-muted-foreground">Name</label>
                 <Input
@@ -727,7 +747,7 @@ export function FormLibrary() {
                 Comma-separated. When a user's message contains any of these words, this form opens inline in chat automatically. Use specific phrases (e.g. "visitor pass", "guest entry") — single generic words like "form", "requests", or "status" are not allowed and will be rejected.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-[12px] font-medium text-muted-foreground">
                   Notify email <span className="opacity-60">(optional)</span>
@@ -814,7 +834,7 @@ export function FormLibrary() {
                         </button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <input
                         value={f.name}
                         onChange={(e) => updateField(idx, { name: e.target.value })}
@@ -858,6 +878,28 @@ export function FormLibrary() {
                         className={`${inputClass} mt-2`}
                       />
                     )}
+                    <div className="mt-2">
+                      <label className="text-[11px] font-medium text-muted-foreground">
+                        Auto-fill from profile <span className="opacity-60">(optional)</span>
+                      </label>
+                      <select
+                        value={f.autofill}
+                        onChange={(e) =>
+                          updateField(idx, { autofill: e.target.value as AutofillSource })
+                        }
+                        className={`${inputClass} mt-1`}
+                      >
+                        {AUTOFILL_SOURCES.map((s) => (
+                          <option key={s.value} value={s.value}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-muted-foreground/70 mt-1">
+                        Pre-fills from the logged-in user's profile — they just confirm. Skipped on
+                        anonymous forms.
+                      </p>
+                    </div>
                   </div>
                 ))}
               </div>

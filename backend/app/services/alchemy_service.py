@@ -405,3 +405,57 @@ def get_skill_details(token: str, skill_id: int) -> dict:
     with httpx.Client(timeout=20, follow_redirects=True) as client:
         resp = client.get(f"{_BASE}/skills/{skill_id}/details", headers=_headers(token))
     return _check(resp, f"skills/{skill_id}/details")
+
+
+# ── Skill-Gap Analysis (the /alchemy/skill-gap dashboard) ─────────────────────
+# Alchemy benchmarks internal coverage against EXTERNAL job-market demand
+# (demand_jobs × demand_companies scraped from postings) → gap = demand − coverage.
+# Demand here is the hiring market, NOT our internal project pipeline; the hub adds
+# that second half by crossing these gaps with EmployeeAllocation (see
+# skill_gap_overlay_service).
+
+def get_skill_gap_stats(token: str) -> dict:
+    """GET /skills/skill-gap-analysis/stats — headline gap counts.
+
+    Returns {stats:{critical_gaps, moderate_gaps, adequate_coverage, exceeding_demand},
+    total_internal_skills, total_market_skills}.
+    """
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        resp = client.get(f"{_BASE}/skills/skill-gap-analysis/stats", headers=_headers(token))
+    return _check(resp, "skills/skill-gap-analysis/stats")
+
+
+def get_skill_gap_training_priorities(token: str) -> dict:
+    """GET /skills/skill-gap-analysis/training-priorities — Critical/Moderate/Growth
+    buckets with skill lists, headcount targets, and recommendation text."""
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        resp = client.get(f"{_BASE}/skills/skill-gap-analysis/training-priorities",
+                          headers=_headers(token))
+    return _check(resp, "skills/skill-gap-analysis/training-priorities")
+
+
+def get_skill_gap_table(
+    token: str,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "gap",
+    sort_order: str = "desc",
+    search: str = "",
+) -> dict:
+    """POST /skills/skill-gap-analysis/table — paginated, sortable gap rows.
+
+    Each row: {skill_id, skill_name, coverage (% of workforce), coverage_count,
+    demand (0-100 market score), demand_jobs, demand_companies, gap, status,
+    employee_names_preview:[{name, photo_url}], is_external}. The preview lists the
+    people who HAVE the skill (verified full-length at observed sizes, not truncated).
+    Returns {skill_gaps:[...], total_count, total_pages, page, page_size, ...}.
+    """
+    body = {
+        "page": page, "page_size": page_size,
+        "sort_by": sort_by, "sort_order": sort_order, "search": search or "",
+    }
+    with httpx.Client(timeout=25, follow_redirects=True) as client:
+        resp = client.post(f"{_BASE}/skills/skill-gap-analysis/table",
+                           headers=_headers(token), json=body)
+    return _check(resp, "skills/skill-gap-analysis/table")

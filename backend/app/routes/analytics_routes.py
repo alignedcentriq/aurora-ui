@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from app.auth import CurrentUser, require_non_employee, require_admin
+from app.auth import CurrentUser, require_non_employee, require_admin, get_current_user
 from app.database import get_db
 from app.models import SavedDashboard
 from app.services import analytics_service as svc
@@ -43,6 +43,43 @@ def run_query(body: QueryBody, user: CurrentUser = Depends(require_non_employee)
     try:
         return svc.run_query(db, body.metric, body.dimension, body.period,
                              role=user.role, filters=body.filters)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Personal + team analytics (item 9) ────────────────────────────────────────────
+# Available to EVERY authenticated user (employees included) but strictly self-scoped:
+# "me" resolves to the caller's own employee id, "my-team" to their direct reports — both
+# derived server-side from the caller, never from client input. Only personal-category
+# metrics (leaves, …) are queryable here; org AI-ops metrics stay on the gated routes above.
+
+@router.get("/me/catalog")
+def my_catalog(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Personal/team metric catalog + the scopes available to this caller."""
+    return svc.personal_catalog(db, user.email)
+
+
+class MyQueryBody(BaseModel):
+    metric: str
+    dimension: str
+    period: str = "30d"
+    scope: str = "me"                    # me | my-team
+    filters: Optional[dict] = None
+
+
+@router.post("/me/query")
+def my_query(body: MyQueryBody, user: CurrentUser = Depends(get_current_user),
+             db: Session = Depends(get_db)):
+    """Resolve one personal/team metric for the caller. Scope is clamped to me/my-team so
+    this endpoint can never expose org-wide data to an employee."""
+    if body.metric not in svc.METRIC_CATALOG or \
+            svc.METRIC_CATALOG[body.metric].get("category") != "personal":
+        raise HTTPException(status_code=400, detail="Not a personal metric.")
+    scope = body.scope if body.scope in ("me", "my-team") else "me"
+    try:
+        return svc.run_query(db, body.metric, body.dimension, body.period,
+                             role=user.role, filters=body.filters,
+                             person_scope=scope, user_email=user.email)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

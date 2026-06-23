@@ -762,6 +762,73 @@ def my_requests(
         db.close()
 
 
+@router.get("/directory")
+def employee_directory(user: CurrentUser = Depends(get_current_user)):
+    """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
+
+    Primary source is the synced MS365 / Azure AD directory (full ~600-person
+    roster + profile photos), enriched per-person by the Zoho HR profile
+    (designation, function, reporting/functional manager, work phone) and the
+    Employee row (AASPL employee code, office location) where those are present.
+    Open to every authenticated user; photos load via the public MS365 photo
+    proxy keyed by email.
+
+    NOTE: fields the portal shows but this app doesn't sync (employee code,
+    phone, location, functional manager, birthday) are blank for most people —
+    only the MS365-carried fields (designation, department, reporting manager)
+    have full coverage here. Populating the Zoho profile sync would fill them.
+    """
+    from app.models import MS365User
+    from app.services.ms365_service import _is_non_human
+
+    db = SessionLocal()
+    try:
+        # Zoho HR overlay keyed by email (rich fields; sparse in this DB).
+        zoho: dict[str, EmployeeZohoProfile] = {}
+        for p in db.query(EmployeeZohoProfile).all():
+            key = (p.official_email or "").lower().strip()
+            if key:
+                zoho[key] = p
+
+        # Employee table keyed by email (AASPL code + office location).
+        emp_by_email: dict[str, Employee] = {}
+        for e in db.query(Employee).all():
+            if e.email:
+                emp_by_email[e.email.lower().strip()] = e
+
+        rows = db.query(MS365User).order_by(MS365User.name).all()
+        out = []
+        for r in rows:
+            email = (r.email or "").lower().strip()
+            name = r.name or email
+            if not email or _is_non_human(name, email):
+                continue
+            if r.account_enabled is False:
+                continue
+            z = zoho.get(email)
+            emp = emp_by_email.get(email)
+            out.append({
+                "name": name,
+                "email": r.email,
+                "employee_code": (emp.employee_id if emp else "") or "",
+                "designation": r.job_title or (z.designation if z else "") or "",
+                "department": r.department or (z.function if z else "") or "",
+                "location": r.office_location or (emp.location if emp else "")
+                            or (z.sub_location if z else "") or "",
+                "city": r.city or "",
+                "reporting_manager": r.manager_name or (z.reporting_manager if z else "") or "",
+                "functional_manager": (z.functional_manager if z else "") or "",
+                "phone": r.mobile_phone or r.business_phone or (z.work_phone if z else "") or "",
+                "extension": (z.extension if z else "") or "",
+                "nick_name": "",   # not synced
+                "birthday": "",    # DOB not synced
+            })
+        out.sort(key=lambda x: x["name"].lower())
+        return {"count": len(out), "employees": out}
+    finally:
+        db.close()
+
+
 # NOTE: keep this LAST — a bare /{employee_id} path param would otherwise shadow
 # the static routes above (e.g. /autocomplete would be parsed as an id).
 @router.get("/{employee_id}")

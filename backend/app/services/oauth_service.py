@@ -470,6 +470,175 @@ async def get_alchemy_token(user_email: str) -> str | None:
         db.close()
 
 
+async def get_techelevate_token(user_email: str) -> str | None:
+    """Get a bearer token for the TechElevate API, fully server-side.
+
+    TechElevate is secured with the same Azure AD app as Alchemy
+    (App ID: 4a7dad8b-1372-499d-ade0-a91fe84ae4d6). We exchange the user's
+    stored Microsoft refresh token for an access_as_user token — NO browser
+    MSAL flow and NO redirect URI are involved.
+
+    Two acceptance models are possible; we support both:
+      A. TechElevate accepts the raw Azure access_token directly (Alchemy pattern).
+      B. TechElevate wants its own JWT via /api/auth/sso-login (id_token exchange).
+    We return the Azure access_token by default, and only swap to a TechElevate
+    JWT if sso-login is present and succeeds.
+    """
+    db = SessionLocal()
+    try:
+        acc = (
+            db.query(ConnectedAccount)
+            .filter(
+                ConnectedAccount.user_email == user_email,
+                ConnectedAccount.provider == "microsoft",
+                ConnectedAccount.status == "active",
+            )
+            .first()
+        )
+        if not acc or not acc.refresh_token_enc:
+            return None
+
+        tenant = settings.MICROSOFT_OAUTH_TENANT_ID or "common"
+        token_url = f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/token"
+
+        payload = {
+            "client_id": settings.MICROSOFT_OAUTH_CLIENT_ID,
+            "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET,
+            "refresh_token": decrypt_token(acc.refresh_token_enc),
+            "grant_type": "refresh_token",
+            # access_as_user → API bearer (model A); openid → id_token (model B)
+            "scope": "api://4a7dad8b-1372-499d-ade0-a91fe84ae4d6/access_as_user openid profile email",
+        }
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(token_url, data=payload)
+            if resp.status_code != 200:
+                log.warning("[oauth] TechElevate MS token exchange failed: %s", resp.text)
+                return None
+            ms_data = resp.json()
+
+        if "error" in ms_data:
+            log.warning("[oauth] TechElevate MS token error: %s", ms_data)
+            return None
+
+        access_token = ms_data.get("access_token")
+        id_token = ms_data.get("id_token")
+
+        # Model B: try to upgrade to a TechElevate-native JWT via sso-login.
+        # If the endpoint is absent/fails, fall back to the Azure access_token (model A).
+        if id_token:
+            te_base = settings.TECHELEVATE_BASE_URL.rstrip("/").removesuffix("/api")
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    sso_resp = await client.post(
+                        f"{te_base}/api/auth/sso-login",
+                        json={"id_token": id_token},
+                    )
+                if sso_resp.status_code == 200:
+                    te_data = sso_resp.json()
+                    te_token = te_data.get("access_token") or te_data.get("token")
+                    if te_token:
+                        return te_token
+                else:
+                    log.info("[oauth] TechElevate sso-login %s — using Azure access_token directly",
+                             sso_resp.status_code)
+            except Exception as e:  # noqa: BLE001 — network/JSON issues are non-fatal here
+                log.info("[oauth] TechElevate sso-login unavailable (%s) — using Azure access_token", e)
+
+        return access_token
+    finally:
+        db.close()
+
+
+_te_service_cache: tuple[str, float] | None = None  # (jwt, expires_at)
+
+
+async def get_techelevate_service_token() -> str | None:
+    """Mint a TechElevate JWT via a service account (ROPC flow) — no user interaction.
+
+    Requires TECHELEVATE_SA_EMAIL + TECHELEVATE_SA_PASSWORD in env.
+    Uses the same Azure app as the rest of the auth stack.
+    Caches the result for 55 min.
+    """
+    global _te_service_cache
+    if _te_service_cache and _te_service_cache[1] > time.time():
+        return _te_service_cache[0]
+
+    email = settings.TECHELEVATE_SA_EMAIL
+    password = settings.TECHELEVATE_SA_PASSWORD
+    tenant_id = settings.MICROSOFT_OAUTH_TENANT_ID or settings.GRAPH_TENANT_ID
+    client_id = settings.MICROSOFT_OAUTH_CLIENT_ID
+
+    if not (email and password and tenant_id and client_id):
+        return None
+
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(token_url, data={
+                "grant_type": "password",
+                "client_id": client_id,
+                "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET or "",
+                "username": email,
+                "password": password,
+                "scope": "openid profile email",
+            })
+        if resp.status_code != 200:
+            log.warning("[oauth] TechElevate SA ROPC failed: %s %s", resp.status_code, resp.text[:300])
+            return None
+        id_token = resp.json().get("id_token")
+        if not id_token:
+            log.warning("[oauth] TechElevate SA ROPC: no id_token in response")
+            return None
+    except Exception as e:
+        log.warning("[oauth] TechElevate SA ROPC request error: %s", e)
+        return None
+
+    te_jwt, detail = await exchange_techelevate_id_token(id_token)
+    if te_jwt:
+        _te_service_cache = (te_jwt, time.time() + 55 * 60)
+        log.info("[oauth] TechElevate service token refreshed")
+    else:
+        log.warning("[oauth] TechElevate SA sso-login failed: %s", detail)
+    return te_jwt
+
+
+async def exchange_techelevate_id_token(id_token: str) -> tuple[str | None, str | None]:
+    """Exchange a browser-minted Azure AD id_token for a TechElevate-native JWT.
+
+    This is the live auth path for this environment: the frontend acquires the
+    id_token via MSAL (acquireTokenSilent) and posts it here. We forward it to
+    TechElevate's /api/auth/sso-login, which validates the Azure token and
+    returns its own JWT. No stored Microsoft refresh token (and therefore no
+    connected_accounts row) is required.
+
+    Returns (jwt, None) on success or (None, detail) with the upstream reason.
+    """
+    if not id_token:
+        return None, "no id_token supplied"
+
+    te_base = settings.TECHELEVATE_BASE_URL.rstrip("/").removesuffix("/api")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{te_base}/api/auth/sso-login",
+                json={"id_token": id_token},
+            )
+    except Exception as e:  # noqa: BLE001 — network/JSON issues surface as "not connected"
+        log.warning("[oauth] TechElevate sso-login request failed: %s", e)
+        return None, f"request failed: {e}"
+
+    if resp.status_code != 200:
+        detail = resp.text[:300]
+        log.warning("[oauth] TechElevate sso-login rejected id_token: %s %s",
+                    resp.status_code, detail)
+        return None, f"sso-login {resp.status_code}: {detail}"
+
+    data = resp.json()
+    token = data.get("access_token") or data.get("token")
+    return (token, None) if token else (None, f"no token in sso-login response: {str(data)[:200]}")
+
+
 async def get_yammer_token(user_email: str) -> str | None:
     """Exchange stored Microsoft refresh token for a Yammer-scoped access token.
 

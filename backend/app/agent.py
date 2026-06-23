@@ -50,6 +50,9 @@ from app.services.announcement_service import AnnouncementService
 from app.services.people_service import PeopleService
 from app.services.prompt_service import PromptService
 from app.services.feedback_service import FeedbackService
+from app.services.pending_action_service import PendingActionService
+from app.services import helpdesk_mail
+from app.services.resolver import Resolver, Decision, RouteContext
 
 log = logging.getLogger("aurora-logger")
 
@@ -150,6 +153,18 @@ def _try_extract_leave_params(message: str) -> Optional[dict]:
 # 1. STATE DEFINITION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class Focus(TypedDict, total=False):
+    """What the conversation is currently *about* — the subject a follow-up's
+    pronouns ('their', 'those') resolve against. Populated by the state_tracker node
+    from each answer and persisted with the rest of AgentState in the checkpointer.
+    This is the first piece of the ConversationState abstraction (Phase 1 of the
+    routing/agent redesign — see docs/architecture-redesign.md)."""
+    kind: str              # "people" | "projects" | "generic"
+    entities: List[str]    # named items from the last answer (e.g. the people listed)
+    domain: str            # domain that produced the answer
+    turn: int              # human-message count at the time it was set (for recency)
+
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     domain: Optional[str]
@@ -161,12 +176,23 @@ class AgentState(TypedDict):
     user_email: Optional[str]          # logged-in user email
     session_id: Optional[str]          # chat thread id, used for pending confirmations
     conversation_summary: Optional[str]  # rolling summary of older turns (context manager)
+    resolved_query: Optional[str]      # follow-up rewritten to a standalone query (coref resolved)
+    focus: Optional[dict]              # ConversationState: subject of the last answer (see Focus)
     user_role: Optional[str]           # "employee" | "hr" | "admin" | "manager" | "it" | "pmo"
     graph_token: Optional[str]         # user's delegated Microsoft Graph token (from frontend)
     user_location: Optional[str]       # detected from M365 profile (officeLocation / city)
 
 
-PENDING_IT_EMAIL_DRAFTS: dict[str, dict] = {}
+# Pending IT email drafts are now persisted via PendingActionService (durable, survives
+# restart) under action_type "software_install" — see docs/action-safety-audit.md. The old
+# in-memory PENDING_IT_EMAIL_DRAFTS dict was removed (it lost confirmed drafts on restart).
+
+# How long an already-submitted software-install request is treated as "still in progress"
+# (email-only, no resolution callback) so we don't draft a duplicate in a new chat. 7 days.
+_SOFTWARE_INSTALL_DEDUPE_MINUTES = 7 * 24 * 60
+
+# User explicitly asking to send a previously-submitted request again — bypasses the dedupe.
+_RESEND_RE = re.compile(r'\b(re-?send|send\s+(it\s+)?again|send\s+(it\s+)?(once\s+)?more|resubmit)\b', re.I)
 
 
 def _draft_key(state: AgentState) -> str:
@@ -329,9 +355,20 @@ async def _summarize_conversation_async(thread_id: str, messages_to_summarize, d
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @tool
-def get_leave_balance(email: str):
-    """Get current leave balance. Call with the logged-in user's email. Never ask for email."""
-    return HRService.get_leave_balance(email)
+def get_leave_balance(email: str = "", state: Annotated[dict, InjectedState] = None):
+    """Get a leave balance. Defaults to the logged-in user. A manager may pass a
+    direct report's name or email to view theirs; HR/admin may view anyone's.
+    Access is enforced server-side — never ask the user for someone else's email."""
+    from app.services.access_control import check_personal_data_access
+    requester_email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    requester_role = (state or {}).get("user_role")
+    # If the model echoed the requester's own email, treat it as a self-lookup.
+    req_norm = (requester_email or "").strip().lower()
+    target_query = email if (email and email.strip().lower() != req_norm) else ""
+    decision = check_personal_data_access(requester_email, requester_role, target_query)
+    if not decision.allowed:
+        return decision.message
+    return HRService.get_leave_balance(decision.target_email or requester_email)
 
 @tool
 def apply_leave(
@@ -341,16 +378,28 @@ def apply_leave(
     leave_type: str = "Casual",
     reason: str = "Applied via AI Assistant",
 ):
-    """Submit a leave request. Infer leave_type from context (default Casual). Dates in YYYY-MM-DD.
-    Do NOT ask for reason — defaults to 'Applied via AI Assistant'. Manager gets email to approve/reject."""
-    return HRService.apply_leave(email, start_date, end_date, leave_type, reason)
+    """Hand the user the Zoho People apply-leave form (we never submit leave ourselves).
+    Leave application is owned by Zoho People. Infer leave_type/dates from context if given
+    (YYYY-MM-DD) so they can be echoed into the form; Zoho's form takes no prefill params."""
+    import datetime as _d
+    from app.agents.deeplink_agent import _apply_handoff_message
+
+    def _fmt(iso: str) -> str:
+        try:
+            return _d.datetime.strptime(iso, "%Y-%m-%d").strftime("%d %b %Y")
+        except Exception:
+            return iso or ""
+
+    return _apply_handoff_message(leave_type, _fmt(start_date), _fmt(end_date))
 
 @tool
-def get_my_leaves(email: str):
+def get_my_leaves(email: str = "", state: Annotated[dict, InjectedState] = None):
     """List the logged-in user's leave requests (id, type, dates, status, days).
     Call before cancel_leave so the user can pick which leave to cancel."""
     from app.database import SessionLocal
     from app.models import Leave, Employee
+    # Always the requester's own leaves — ignore any email the model supplies.
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
     db = SessionLocal()
     try:
         emp = HRService.get_employee_by_email(db, email)
@@ -374,11 +423,14 @@ def get_my_leaves(email: str):
         db.close()
 
 @tool
-def cancel_leave(email: str, leave_id: int):
+def cancel_leave(leave_id: int, email: str = "", state: Annotated[dict, InjectedState] = None):
     """Cancel a leave by ID. If the leave was Approved, the balance is automatically restored.
-    Call get_my_leaves first if you don't know the leave_id."""
+    Call get_my_leaves first if you don't know the leave_id. A user can only cancel
+    their own leave."""
     import httpx
     from app.config import settings
+    # Cancellation is self-only — bind to the requester, ignore any supplied email.
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
     try:
         base = getattr(settings, "APP_BASE_URL", "http://localhost:8000")
         resp = httpx.post(
@@ -531,17 +583,28 @@ def get_team_absence_for(manager_email: str, from_date: str = "", to_date: str =
 
 
 @tool
-def generate_hr_document(doc_type: str, target_email: str = ""):
+def generate_hr_document(doc_type: str, target_email: str = "",
+                         state: Annotated[dict, InjectedState] = None):
     """Generate a downloadable HR document PDF.
     doc_type: 'experience_certificate' or 'expense_summary'.
-    target_email: employee email (defaults to current user if blank)."""
+    target_email: employee email (defaults to current user if blank). A user can
+    only generate their own documents; managers (for direct reports) and HR/admin
+    may generate others'. Access is enforced server-side."""
     import uuid
     from app.database import SessionLocal
     from app.models import Employee, Leave, Reimbursement
     from app.document_generation.generator import generate_pdf
     from app.document_store import store_pdf
+    from app.services.access_control import check_personal_data_access
 
-    email = target_email or settings.DEFAULT_USER_EMAIL
+    requester_email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    requester_role = (state or {}).get("user_role")
+    req_norm = (requester_email or "").strip().lower()
+    target_query = target_email if (target_email and target_email.strip().lower() != req_norm) else ""
+    decision = check_personal_data_access(requester_email, requester_role, target_query)
+    if not decision.allowed:
+        return decision.message
+    email = decision.target_email or requester_email
     db = SessionLocal()
     try:
         emp = db.query(Employee).filter(Employee.email == email).first()
@@ -639,8 +702,9 @@ def submit_hr_query(
     Categories: Attendance Query, General Query, Insurance Query, Leave Query,
     Notice Period Query, PF Query, Proof Letter Query, Compensation & Tax Query,
     Resignation Query."""
-    from app.hr_service import HRService
-    return HRService.submit_hr_query(email, category, subject, description)
+    from app.services import actions  # routed through the action registry spine
+    return actions.run("hr_query", actor_email=email, category=category,
+                       subject=subject, description=description).human_message
 
 
 # ── Zoho People — per-user delegated tools ────────────────────────────────────
@@ -1375,6 +1439,12 @@ _KW_HR_AVAILABILITY = re.compile(
     r'currently\s+(allocated|available|free)|bench\s+(strength|status))\b', re.I
 )
 
+# Knowledge-miss action handoff (item 3). Match ONLY the synthetic phrases the abstention
+# card emits ("<action> about this — <topic>"); the captured group is the original question,
+# reused as the ticket/query body. re.S so a multi-line topic is captured whole.
+_KW_HANDOFF_IT = re.compile(r'^\s*raise an it ticket about this\s*[—:\-]\s*(.+)$', re.I | re.S)
+_KW_HANDOFF_HR = re.compile(r'^\s*raise an hr query about this\s*[—:\-]\s*(.+)$', re.I | re.S)
+
 # Words to strip when extracting the SKILL term from a people-search query. Whatever
 # remains after removing verbs, role nouns, and filler is treated as the skill to look
 # up in Alchemy (e.g. "find senior python developers" -> "python"). Role-only queries
@@ -1599,6 +1669,12 @@ _KW_FORM_BUILDER = re.compile(
 )
 _KW_FORM_FILL = re.compile(r'\b(fill|submit|open|complete)\b', re.I)
 
+# A form match phrased as an intent to FILL/COMPLETE/SUBMIT enters the conversational fill flow
+# (gather field-by-field in chat); anything else ("show/open the X form") renders the widget.
+_CONV_FILL_RE = re.compile(r'\b(fill|complete|submit)\b', re.I)
+# A fresh "fill … form" request mid-fill should start the new form, not be swallowed as an answer.
+_NEW_FILL_REQUEST_RE = re.compile(r'\b(fill|complete|submit)\b[\s\S]{0,40}\bform\b', re.I)
+
 _KW_BOOKSHELF_RETURN = re.compile(
     r'\b(return\s+(my\s+|the\s+|a\s+)?book|'
     r'i\s+(have\s+)?finished\s+(reading|the\s+book)|'
@@ -1664,6 +1740,15 @@ _KW_IT_INSTALL = re.compile(
     r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
     r'([A-Za-z0-9][A-Za-z0-9.+# ]{1,30}?)'
     r'(?:\s+(?:on|for|please|pls|in|app|software)\b|[.!?]?\s*$)', re.I
+)
+
+# Re-send an already-submitted install request (escape hatch from cross-chat dedupe).
+# Captures the product named before "request"/"install" so the idempotency key matches
+# the original — e.g. "resend the Slack request", "resubmit slack install".
+_KW_IT_RESEND = re.compile(
+    r'\b(?:re-?send|resubmit)\b.*?\b'
+    r'(?!(?:a|an|the|to|some|my|our|your|another)\b)'
+    r'([A-Za-z0-9][A-Za-z0-9.+#]{1,29})\s+(?:request|install(?:ation)?)\b', re.I
 )
 
 # Generic desire verbs (need/want/get me) are install requests ONLY when an
@@ -1889,6 +1974,24 @@ def _try_keyword_route(message: str) -> dict | None:
     through to the LLM router for ambiguous queries.
     """
     text = message.strip()
+
+    # Knowledge-miss → action handoff (see _abstention_handoff_card). These match ONLY the
+    # synthetic phrases emitted by the abstention card's quick-choice options, so the user's
+    # click routes STRAIGHT to a ticket-creating action — never back into the search that
+    # just abstained (which would loop). Matched first so the embedded topic (which may
+    # itself contain "vpn"/"leave"/etc.) can't be stolen by a downstream keyword route.
+    _m = _KW_HANDOFF_IT.search(text)
+    if _m:
+        return {"domain": "it_support", "confidence": 1.0,
+                "reasoning": "Knowledge-miss handoff → IT ticket",
+                "sub_intent": "it_ticket_handoff",
+                "entities": {"handoff_topic": _m.group(1).strip()}}
+    _m = _KW_HANDOFF_HR.search(text)
+    if _m:
+        return {"domain": "hr", "confidence": 1.0,
+                "reasoning": "Knowledge-miss handoff → HR query",
+                "sub_intent": "hr_query_handoff",
+                "entities": {"handoff_topic": _m.group(1).strip()}}
 
     # Off-topic personal wishes — not actionable company processes
     if _KW_OFF_TOPIC.search(text):
@@ -2209,6 +2312,17 @@ def _try_keyword_route(message: str) -> dict | None:
                 "reasoning": "Keyword: meeting room / conference room query",
                 "sub_intent": "room_availability", "entities": {}}
 
+    # IT — resend an already-submitted install request (must precede the install branch so
+    # "resend the slack request" routes by the named product, bypassing dedupe downstream).
+    mr = _KW_IT_RESEND.search(text)
+    if mr and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs|room|meeting|book|visitor|guest|pass)\b', text, re.I):
+        sw = mr.group(1).strip()
+        if sw and 1 < len(sw) < 35:
+            return {"domain": "it_support", "confidence": 0.9,
+                    "reasoning": "Keyword: resend software install request",
+                    "sub_intent": "software_install",
+                    "entities": {"software_name": sw}}
+
     # IT — software install (with entity extraction)
     m = _KW_IT_INSTALL.search(text) or _KW_IT_INSTALL_NEED.search(text)
     if m and not re.search(r'\b(leave|parking|zoho|complaint|policy|reimburs|room|meeting|book|visitor|guest|pass)\b', text, re.I):
@@ -2356,6 +2470,154 @@ def _last_ai_message(messages: list) -> str:
     return ""
 
 
+# ── ConversationState: focus tracking (Phase 1) ────────────────────────────────
+# A list item in an agent answer: "1. **Name**", "- Name — 3 yrs", "2. Project X".
+_FOCUS_LIST_RE = re.compile(
+    r'^\s*(?:\d+[.)]|[-*•])\s*(?:\*\*)?([A-Z][A-Za-z0-9.&/\' \-]{1,58}?)(?:\*\*)?'
+    r'(?:\s*[—:\-].*)?$'
+)
+_FOCUS_PEOPLE_HINTS = ("developer", "engineer", "employee", "people", "candidate",
+                       "skill", "staff", "resource", "expert", "analyst", "manager")
+
+
+def _extract_focus(last_ai: str, domain, turn: int) -> Optional[dict]:
+    """Derive the conversation subject from the last answer: the list of named items
+    plus a kind ('people' | 'projects' | 'generic'). Returns None when there's nothing
+    worth tracking, so a previous focus is left in place rather than wiped."""
+    if not last_ai:
+        return None
+    names: list[str] = []
+    seen = set()
+    for line in last_ai.splitlines():
+        m = _FOCUS_LIST_RE.match(line)
+        if m:
+            n = m.group(1).strip().strip('*').strip()
+            if n and n.lower() not in seen:
+                seen.add(n.lower())
+                names.append(n)
+    low = last_ai.lower()
+    if any(w in low for w in _FOCUS_PEOPLE_HINTS):
+        kind = "people"
+    elif "project" in low:
+        kind = "projects"
+    else:
+        kind = "generic"
+    if not names and kind == "generic":
+        return None
+    return {"kind": kind, "entities": names[:25], "domain": domain or "", "turn": turn}
+
+
+def _resolve_anaphora_locally(message: str, focus: Optional[dict], current_turn: int) -> Optional[str]:
+    """Resolve a group/possessive follow-up against the tracked focus — NO LLM.
+
+    Returns a standalone query (the original message plus an unambiguous reference to
+    the focused entities) or None when local resolution isn't safe (no focus, focus
+    has no entities, or the focus is stale — more than one turn old)."""
+    if not focus or not focus.get("entities"):
+        return None
+    f_turn = focus.get("turn")
+    if f_turn is not None and current_turn - int(f_turn) > 1:
+        return None  # stale — the subject is from an older part of the conversation
+    if not _FOLLOWUP_REF_RE.search(message or ""):
+        return None
+    ents = focus["entities"]
+    shown = ", ".join(ents[:8]) + (f" and {len(ents) - 8} more" if len(ents) > 8 else "")
+    kind_word = {"people": "people", "projects": "projects"}.get(focus.get("kind"), "items")
+    return f"{message.rstrip(' .?!')} — referring to these {kind_word}: {shown}."
+
+
+def state_tracker(state: AgentState) -> dict:
+    """Post-answer node: record what this turn was about into `focus` so the next
+    turn's follow-up can resolve its pronouns without an LLM. Runs after the
+    answer-producing agents; the first concrete piece of the shared post-hook pipeline
+    (Abstraction C). Returns {} when nothing is extractable, leaving any prior focus
+    intact."""
+    msgs = state.get("messages", [])
+    turn = sum(1 for m in msgs if isinstance(m, HumanMessage))
+    focus = _extract_focus(_last_ai_message(msgs), state.get("domain"), turn)
+    return {"focus": focus} if focus else {}
+
+
+# ── History-aware follow-up resolution (coreference / query rewriting) ─────────
+# A referential follow-up ("show their allocation", "what about those people")
+# depends on the previous turn's subject. Routing each message in isolation loses
+# that subject and mis-routes the turn. The resolver below rewrites such a message
+# into a standalone query BEFORE the router sees it, so both routing and the agent
+# act on the resolved intent. Triggers only on group/possessive anaphora that
+# clearly point back at a prior answer — terse acks and self-standing questions are
+# left untouched (the rewrite LLM is also told to pass through anything already
+# self-contained, so false positives are cheap).
+_FOLLOWUP_REF_RE = re.compile(
+    r"\b(their|theirs|them|they|those|these|his|her|hers|its|that one|the same|the above)\b",
+    re.I,
+)
+
+
+def _needs_followup_resolution(last_human: str, last_ai: str) -> bool:
+    if not last_human or not last_ai or len(last_ai.strip()) < 40:
+        return False
+    # Terse acks and domain-clarify replies carry no resolvable subject — skip.
+    if _is_confirmation(last_human) or _is_cancellation(last_human):
+        return False
+    if _CLARIFY_REPLY_RE.match(last_human):
+        return False
+    return bool(_FOLLOWUP_REF_RE.search(last_human))
+
+
+async def followup_resolver(state: AgentState) -> dict:
+    """Rewrite a referential follow-up into a self-contained query using the prior turn.
+
+    Runs as the graph entry node, before intent_router. Sets `resolved_query` when (and
+    only when) the latest message is an anaphoric follow-up; the router and feedback_lookup
+    then prefer the resolved text. Fail-soft: any error or implausible rewrite returns {}
+    so the raw message is used unchanged."""
+    msgs = state.get("messages", [])
+    last_human = next((m.content for m in reversed(msgs) if isinstance(m, HumanMessage)), "")
+    last_ai = _last_ai_message(msgs)
+    if not isinstance(last_human, str) or not _needs_followup_resolution(last_human, last_ai):
+        return {}
+    # Fast path (Phase 1): resolve the pronoun against the tracked focus with zero LLM.
+    # Only falls through to the LLM rewrite when there's no usable/recent focus.
+    current_turn = sum(1 for m in msgs if isinstance(m, HumanMessage))
+    local = _resolve_anaphora_locally(last_human, state.get("focus"), current_turn)
+    if local:
+        log.info("[followup_resolver] resolved locally (no LLM) %r -> %r", last_human, local)
+        return {"resolved_query": local}
+    prev_human = next(
+        (m.content for m in reversed(msgs)
+         if isinstance(m, HumanMessage) and m.content != last_human),
+        "",
+    )
+    try:
+        resp = await resilient_ainvoke(
+            "router",
+            [
+                SystemMessage(content=(
+                    "You rewrite a user's latest message into ONE self-contained question by "
+                    "resolving pronouns and references (their, them, those, that one) using the "
+                    "conversation. Carry forward the specific names / items the previous "
+                    "assistant message referred to. Output ONLY the rewritten question — no "
+                    "preamble, no quotes. If it is already self-contained, output it unchanged. "
+                    "Never add facts not implied by the conversation."
+                )),
+                HumanMessage(content=(
+                    f"Previous user message:\n{prev_human}\n\n"
+                    f"Previous assistant answer:\n{last_ai[:1800]}\n\n"
+                    f"Latest user message:\n{last_human}\n\n"
+                    "Rewrite the latest message as a standalone question."
+                )),
+            ],
+            default_timeout=20,
+        )
+        rewritten = (resp.content or "").strip().strip('"').strip()
+    except Exception:
+        return {}
+    if rewritten and rewritten.lower() != last_human.strip().lower() and len(rewritten) <= 400:
+        log.info("[followup_resolver] resolved %r -> %r", last_human, rewritten)
+        return {"resolved_query": rewritten}
+    return {}
+
+
 # ── Routing clarification gate (wrong-answer prevention) ──────────────────────
 # When the router can't pick a domain confidently, the clarify node shows a quick-choice
 # card. Clicking an option sends "<Label>: <original question>" back as the next message,
@@ -2375,6 +2637,266 @@ _CLARIFY_REPLY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Leave-balance fast-path (must beat sticky domain so short queries aren't swallowed).
+_LEAVE_BALANCE_RE = re.compile(
+    r'\b(leave\s+balance|how\s+many\s+leave|remaining\s+leave|leave\s+status'
+    r'|my\s+leave|check\s+.*leave|leaves?\s+(left|remaining|available))\b',
+    re.IGNORECASE,
+)
+
+
+# ── Routing Resolver (Phase 3, strangler migration) ─────────────────────────────────────────
+# The deterministic fast-paths that historically opened intent_router are now registered
+# strategies on ROUTER_RESOLVER. They run on the RAW message (before any resolved_query rewrite),
+# in this precedence order. The keyword/sticky/semantic/LLM layers below remain inline for now and
+# will migrate into strategies in later slices. See app/services/resolver.py.
+
+def _clarify_reply_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """The user picked a domain from the clarify card — an explicit choice outranks all heuristics."""
+    m = _CLARIFY_REPLY_RE.match(ctx.message)
+    if not m:
+        return None
+    chosen = _CLARIFY_LABEL_TO_DOMAIN.get(m.group(1).lower())
+    if not chosen:
+        return None
+    return Decision(domain=chosen, reasoning="User selected this domain on the clarification card.")
+
+
+def _pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """A yes/no while an IT email draft is pending → confirm or cancel it. Only touches the
+    durable store on a yes/no message, so there's no DB read on ordinary turns."""
+    is_yes, is_no = _is_confirmation(ctx.message), _is_cancellation(ctx.message)
+    if not (is_yes or is_no):
+        return None
+    if not PendingActionService.has_pending(_draft_key(ctx.state), "software_install"):
+        return None
+    if is_yes:
+        return Decision(domain="it_support", sub_intent="software_install_confirm",
+                        reasoning="User confirmed a pending IT email draft.")
+    return Decision(domain="it_support", sub_intent="software_install_cancel",
+                    reasoning="User cancelled a pending IT email draft.")
+
+
+def _form_fill_confirm_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """A yes/no while a conversational form fill is STAGED (summary shown, awaiting submit) →
+    submit or discard. High-precision, like the other draft-confirmation strategies: only touches
+    the store on a yes/no message, and only claims the turn when the fill is in the 'ready' phase
+    (so a yes/no during gathering stays a field answer, handled later by the continue strategy)."""
+    if not (_is_confirmation(ctx.message) or _is_cancellation(ctx.message)):
+        return None
+    p = PendingActionService.get_pending(_draft_key(ctx.state), "form_fill")
+    if not p or (p.get("payload") or {}).get("phase") != "ready":
+        return None
+    return Decision(domain="form_fill", sub_intent="continue",
+                    reasoning="Confirm/cancel a staged conversational form fill.")
+
+
+def _form_fill_continue_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Low-priority continuation: a reply during an in-progress fill that no confident intent
+    claimed is treated as the answer to the pending field question. Registered LATE in
+    MAIN_RESOLVER (after the exact/keyword-high/semantic-high/form-library classifiers, before the
+    fuzzy fallbacks), so a clear new intent — 'what's my leave balance?' — escapes the fill while a
+    bare field answer — 'Pune' — stays in it. A fresh 'fill … form' is left to the form matcher so
+    the user can switch forms (the new fill supersedes the old pending)."""
+    if _NEW_FILL_REQUEST_RE.search(ctx.message):
+        return None
+    if not PendingActionService.has_pending(_draft_key(ctx.state), "form_fill"):
+        return None
+    return Decision(domain="form_fill", sub_intent="continue",
+                    reasoning="Continuing an in-progress conversational form fill (no stronger intent).")
+
+
+def _leave_balance_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Leave-balance query → Zoho deeplink. Runs before sticky so short queries aren't swallowed."""
+    if not _LEAVE_BALANCE_RE.search(ctx.message):
+        return None
+    return Decision(domain="deeplink", sub_intent="leave_balance",
+                    reasoning="Fast-path: leave balance query -> deeplink/Zoho.")
+
+
+_MS365_ACTION_TYPES = frozenset({
+    "ms365_email", "ms365_channel_post", "ms365_teams_message", "ms365_community_post"
+})
+
+
+def _ms365_pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """A yes/no while an MS365 write action is staged → confirm or cancel it."""
+    is_yes, is_no = _is_confirmation(ctx.message), _is_cancellation(ctx.message)
+    if not (is_yes or is_no):
+        return None
+    dk = _draft_key(ctx.state)
+    hit_type = next((at for at in _MS365_ACTION_TYPES if PendingActionService.has_pending(dk, at)), None)
+    if not hit_type:
+        return None
+    if is_yes:
+        return Decision(domain="ms365", sub_intent="ms365_send_confirm",
+                        entities={"pending_action_type": hit_type},
+                        reasoning=f"User confirmed a pending {hit_type} action.")
+    return Decision(domain="ms365", sub_intent="ms365_send_cancel",
+                    entities={"pending_action_type": hit_type},
+                    reasoning=f"User cancelled a pending {hit_type} action.")
+
+
+def _announcement_pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """A yes/no while an announcement draft is staged → confirm or cancel it."""
+    is_yes, is_no = _is_confirmation(ctx.message), _is_cancellation(ctx.message)
+    if not (is_yes or is_no):
+        return None
+    if not PendingActionService.has_pending(_draft_key(ctx.state), "announcement"):
+        return None
+    if is_yes:
+        return Decision(domain="hr", sub_intent="announcement_confirm",
+                        reasoning="User confirmed a pending announcement draft.")
+    return Decision(domain="hr", sub_intent="announcement_cancel",
+                    reasoning="User cancelled a pending announcement draft.")
+
+
+# Strategies on the RAW message, before any resolved_query rewrite, in precedence order.
+ROUTER_RESOLVER = Resolver()
+ROUTER_RESOLVER.register("clarify_reply", _clarify_reply_strategy)
+ROUTER_RESOLVER.register("pending_action", _pending_action_strategy)
+ROUTER_RESOLVER.register("ms365_pending_action", _ms365_pending_action_strategy)
+ROUTER_RESOLVER.register("announcement_pending_action", _announcement_pending_action_strategy)
+# Only the STAGED-fill yes/no is high-precision enough to short-circuit here; the gathering-phase
+# continuation runs late in MAIN_RESOLVER so confident new intents can escape an in-progress fill.
+ROUTER_RESOLVER.register("form_fill_confirm", _form_fill_confirm_strategy)
+ROUTER_RESOLVER.register("leave_balance", _leave_balance_strategy)
+
+
+def _leave_params_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Unambiguous leave application (dates + type extracted) → Zoho fast-path, no LLM."""
+    params = _try_extract_leave_params(ctx.message)
+    if not params:
+        return None
+    return Decision(domain="deeplink", sub_intent="zoho_leave_fastpath", entities=params,
+                    reasoning="Zoho leave params extracted without LLM.")
+
+
+def _exact_dict_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Fast Intent Dictionary: O(1) exact normalised match against the curated/learned phrasing
+    map (precomputed into ctx.exact). Microseconds, zero LLM load, 100% precise."""
+    if ctx.exact is None:
+        return None
+    entities = _extract_entities(ctx.message, ctx.exact.domain, ctx.exact.sub_intent)
+    return Decision(domain=ctx.exact.domain, sub_intent=ctx.exact.sub_intent,
+                    entities=entities, confidence=1.0, reasoning=ctx.exact.reasoning)
+
+
+def _keyword_high_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Zero-LLM keyword fast-exit: a confidence==1.0 keyword route is deterministic and must NOT
+    be overridden by the semantic router (which could re-route it to an LLM agent and time out).
+    Fires before the semantic high-tier strategy."""
+    kr = ctx.keyword_result
+    if not (kr and kr.get("confidence", 0) >= 1.0):
+        return None
+    return Decision(domain=kr["domain"], sub_intent=kr["sub_intent"],
+                    entities=kr.get("entities", {}), confidence=1.0, reasoning=kr["reasoning"])
+
+
+def _semantic_high_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Semantic intent router (high tier): a strong, top-k-agreeing pgvector k-NN match routes
+    directly with 0 LLM calls and cannot hallucinate a domain (output space = stored labels).
+    ctx.decision is always populated here (exact misses reach this point), so no recompute."""
+    d = ctx.decision
+    if d is None or d.tier != "high":
+        return None
+    entities = _extract_entities(ctx.message, d.domain, d.sub_intent)
+    return Decision(domain=d.domain, sub_intent=d.sub_intent, entities=entities,
+                    confidence=d.similarity, reasoning=d.reasoning)
+
+
+async def _form_library_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Form Library (layer 5.5): match the message against admin-defined fillable forms (pgvector
+    k-NN over enabled FormTemplate embeddings). A confident match short-circuits to render the form
+    inline — fully data-driven, so a new admin form is chat-triggerable with no code change. Runs
+    AFTER exact/semantic-high (a precise domain intent always wins). Info-style questions with no
+    action verb need a stronger match (so "what is the process for X?" gets a real answer, not a
+    widget). Fail-soft: returns None if the embed model is down."""
+    try:
+        from app.services.form_library_service import FormLibraryService
+        _is_info_no_action = _INFO_QUERY_RE.search(ctx.message) and not _ACTION_VERB_RE.search(ctx.message)
+        _threshold = settings.FORM_MATCH_INFO_SIM_THRESHOLD if _is_info_no_action else None
+        form_match = await asyncio.to_thread(FormLibraryService.match, ctx.message, _threshold)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[intent_router] FormLibraryService.match raised unexpectedly: %s", e)
+        form_match = None
+    if not form_match:
+        return None
+    # Intent to FILL/COMPLETE/SUBMIT → conversational gather flow; otherwise render the widget.
+    if _CONV_FILL_RE.search(ctx.message):
+        return Decision(domain="form_fill", sub_intent="start",
+                        entities={"form_template_id": form_match["id"], "form_name": form_match["name"]},
+                        confidence=form_match["similarity"],
+                        reasoning=f"User wants to fill the '{form_match['name']}' form conversationally.")
+    return Decision(domain="dynamic_form", sub_intent=f"form:{form_match['id']}",
+                    entities={"form_template_id": form_match["id"]},
+                    confidence=form_match["similarity"],
+                    reasoning=f"Message matched the '{form_match['name']}' form.")
+
+
+def _keyword_fallback_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Keyword regex safety net beneath the semantic high tier (any confidence). 0 LLM calls.
+    Phased out once the semantic router's accuracy is confirmed against live traffic."""
+    kr = ctx.keyword_result
+    if not kr:
+        return None
+    return Decision(domain=kr["domain"], sub_intent=kr["sub_intent"],
+                    entities=kr.get("entities", {}), confidence=kr["confidence"],
+                    reasoning=kr["reasoning"])
+
+
+async def _llm_fallback_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """Terminal strategy: the generative LLM router, the last resort when no deterministic /
+    semantic layer was confident. An ambiguous semantic tier hands its top-k shortlist as a soft
+    hint (constrains the 8-way choice to 2-3, cutting hallucination); low/unavailable → plain
+    router. Below CLARIFY_CONF_THRESHOLD a confident-but-wrong domain is the worst failure, so it
+    offers a domain_clarify card (LLM pick + shortlist, enabled domains only, general escape hatch)
+    instead of guessing. Always returns a Decision."""
+    d = ctx.decision
+    candidate_domains = d.candidate_domains if (d is not None and d.tier == "ambiguous") else None
+    try:
+        result = await classify_intent_async(ctx.message, candidate_domains=candidate_domains)
+    except APIConnectionError:
+        return Decision(domain="general", confidence=0.5, reasoning="LLM connection failed.")
+
+    if result["confidence"] < settings.CLARIFY_CONF_THRESHOLD and result["domain"] != "general":
+        clarify_domains: list[str] = []
+        for dom in [result["domain"]] + (candidate_domains or []):
+            if (dom in _CLARIFY_DOMAIN_LABELS and dom not in clarify_domains
+                    and llm_controls.is_domain_enabled(dom)):
+                clarify_domains.append(dom)
+        if "general" not in clarify_domains:
+            clarify_domains.append("general")
+        if len(clarify_domains) >= 2:
+            return Decision(
+                domain="domain_clarify", sub_intent="domain_clarify",
+                confidence=result["confidence"],
+                reasoning=(f"Routing confidence {result['confidence']:.2f} is below "
+                           f"{settings.CLARIFY_CONF_THRESHOLD} — asking the user to pick the domain."),
+                entities={"clarify_domains": clarify_domains[:4], "clarify_question": ctx.message},
+            )
+
+    return Decision(domain=result["domain"], sub_intent=result.get("sub_intent", "unknown"),
+                    entities=result.get("entities", {}), confidence=result["confidence"],
+                    reasoning=result["reasoning"])
+
+
+# Strategies on the RESOLVED message, after the resolved_query rewrite and the sticky-domain
+# decision, sharing a RouteContext (keyword_result/exact/decision computed once). This list is now
+# the COMPLETE post-rewrite routing pipeline — _llm_fallback is the terminal catch-all (always
+# returns). See docs/architecture-redesign.md §4.2.
+MAIN_RESOLVER = Resolver()
+MAIN_RESOLVER.register("leave_params", _leave_params_strategy)
+MAIN_RESOLVER.register("exact_dict", _exact_dict_strategy)
+MAIN_RESOLVER.register("keyword_high", _keyword_high_strategy)
+MAIN_RESOLVER.register("semantic_high", _semantic_high_strategy)
+MAIN_RESOLVER.register("form_library", _form_library_strategy)
+# Runs after the high-precision classifiers but before the fuzzy fallbacks: an in-progress fill
+# only claims a reply that no confident intent wanted (see _form_fill_continue_strategy).
+MAIN_RESOLVER.register("form_fill_continue", _form_fill_continue_strategy)
+MAIN_RESOLVER.register("keyword_fallback", _keyword_fallback_strategy)
+MAIN_RESOLVER.register("llm_fallback", _llm_fallback_strategy)
+
 
 async def intent_router(state: AgentState):
     """Entry node — classifies intent, extracts sub-intent + entities, routes to domain."""
@@ -2388,53 +2910,19 @@ async def intent_router(state: AgentState):
         return {"domain": "general", "route_confidence": 0.0, "route_reasoning": "No user message found",
                 "sub_intent": "unknown", "entities": {}}
 
-    # Clarification reply — the user picked a domain from the clarify card. Deterministic,
-    # runs before every other layer: an explicit user choice outranks all heuristics.
-    _clarify_m = _CLARIFY_REPLY_RE.match(last_human)
-    if _clarify_m:
-        _chosen = _CLARIFY_LABEL_TO_DOMAIN.get(_clarify_m.group(1).lower())
-        if _chosen:
-            return {
-                "domain": _chosen,
-                "route_confidence": 1.0,
-                "route_reasoning": "User selected this domain on the clarification card.",
-                "sub_intent": "unknown",
-                "entities": {},
-            }
+    # Deterministic fast-paths (clarify reply -> pending-action confirm/cancel -> leave balance),
+    # in precedence order, on the RAW message. Migrated to named, individually-tested strategies
+    # (Phase 3 strangler step 1). The keyword/sticky/semantic/LLM layers below are still inline.
+    _early = await ROUTER_RESOLVER.resolve(RouteContext(message=last_human, state=state))
+    if _early is not None:
+        return _early.as_route()
 
-    draft_key = _draft_key(state)
-    if draft_key in PENDING_IT_EMAIL_DRAFTS:
-        if _is_confirmation(last_human):
-            return {
-                "domain": "it_support",
-                "route_confidence": 1.0,
-                "route_reasoning": "User confirmed a pending IT email draft.",
-                "sub_intent": "software_install_confirm",
-                "entities": {},
-            }
-        if _is_cancellation(last_human):
-            return {
-                "domain": "it_support",
-                "route_confidence": 1.0,
-                "route_reasoning": "User cancelled a pending IT email draft.",
-                "sub_intent": "software_install_cancel",
-                "entities": {},
-            }
-
-    # Fast-path: leave balance — must run BEFORE sticky domain so short queries aren't swallowed
-    _LB_RE = re.compile(
-        r'\b(leave\s+balance|how\s+many\s+leave|remaining\s+leave|leave\s+status'
-        r'|my\s+leave|check\s+.*leave|leaves?\s+(left|remaining|available))\b',
-        re.IGNORECASE,
-    )
-    if _LB_RE.search(last_human):
-        return {
-            "domain": "deeplink",
-            "route_confidence": 1.0,
-            "route_reasoning": "Fast-path: leave balance query -> deeplink/Zoho.",
-            "sub_intent": "leave_balance",
-            "entities": {},
-        }
+    # History-aware follow-up: if followup_resolver rewrote this referential message into a
+    # standalone query, classify on THAT (so "show their allocation" routes by its real
+    # subject, not as a fresh project query). Deterministic fast-paths above (clarify reply,
+    # pending-draft confirm, leave-balance) intentionally use the raw text; everything from
+    # here on — keyword, semantic, sticky, sub-intent + entity extraction — uses the resolved.
+    last_human = state.get("resolved_query") or last_human
 
     # Keyword fast-path is computed up-front so a clear, complete new intent can
     # override stickiness. Terse follow-up answers ("B-07", "tomorrow 3pm") don't
@@ -2503,142 +2991,22 @@ async def intent_router(state: AgentState):
         if topic_switch:
             pass
 
-    # Fast-path: bypass LLM entirely for unambiguous leave requests
-    leave_params = _try_extract_leave_params(last_human)
-    if leave_params:
-        return {
-            "domain": "deeplink",
-            "route_confidence": 1.0,
-            "route_reasoning": "Zoho leave params extracted without LLM.",
-            "sub_intent": "zoho_leave_fastpath",
-            "entities": leave_params,
-        }
+    # Post-rewrite layers, in precedence order, sharing one RouteContext (keyword_result/exact/
+    # decision precomputed above for the sticky override, reused here — no recompute). Migrated to
+    # named strategies (Phase 3): leave-params → exact dictionary → keyword(conf==1.0) →
+    # semantic-high → form-library → keyword(any fallback). Only the LLM-router fallback (+ clarify
+    # gate) below remains inline (it owns the decision-based candidate shortlist).
+    _ctx = RouteContext(message=last_human, state=state,
+                        keyword_result=keyword_result, exact=exact, decision=decision)
+    _decision = await MAIN_RESOLVER.resolve(_ctx)
+    if _decision is not None:
+        return _decision.as_route()
 
-    # Fast Intent Dictionary (layer 4.5): O(1) exact normalised match against the curated/learned
-    # phrasing map (computed above for the stickiness override; reused here). Microseconds, zero
-    # ml01 load, 100% precise — handles the high-frequency head and every seeded exact phrasing.
-    if exact is not None:
-        entities = _extract_entities(last_human, exact.domain, exact.sub_intent)
-        return {
-            "domain": exact.domain,
-            "route_confidence": 1.0,
-            "route_reasoning": exact.reasoning,
-            "sub_intent": exact.sub_intent,
-            "entities": entities,
-        }
-
-    # Zero-LLM keyword fast-exit (layer 4.5): keyword routes with confidence=1.0 are deterministic
-    # and must NOT be overridden by the semantic router (which can re-route them to an LLM agent
-    # and cause timeouts). Fire before the semantic high-tier check below.
-    if keyword_result and keyword_result.get("confidence", 0) >= 1.0:
-        return {
-            "domain": keyword_result["domain"],
-            "route_confidence": 1.0,
-            "route_reasoning": keyword_result["reasoning"],
-            "sub_intent": keyword_result["sub_intent"],
-            "entities": keyword_result.get("entities", {}),
-        }
-
-    # Semantic intent router (layer 5): embed the message and match it against the closed set of
-    # labeled seed utterances (pgvector cosine k-NN). A strong, top-k-agreeing match routes
-    # directly with 0 LLM calls and — because the output space is the stored labels — cannot
-    # hallucinate a domain the way the generative LLM router can. Generalises to novel paraphrases
-    # the exact dictionary misses. Permanent replacement for the brittle keyword-regex bulk.
-    # (Computed above when exact missed, for the stickiness override; reused here, never twice.)
-    if decision is None:
-        decision = await asyncio.to_thread(SemanticRouterService.classify, last_human)
-    if decision.tier == "high":
-        entities = _extract_entities(last_human, decision.domain, decision.sub_intent)
-        return {
-            "domain": decision.domain,
-            "route_confidence": decision.similarity,
-            "route_reasoning": decision.reasoning,
-            "sub_intent": decision.sub_intent,
-            "entities": entities,
-        }
-
-    # Form Library (layer 5.5): match the message against admin-defined fillable forms
-    # (pgvector cosine k-NN over enabled FormTemplate embeddings). A confident match short-
-    # circuits to render the form inline — fully data-driven, so a brand-new form created by an
-    # admin becomes chat-triggerable with no code change. Runs AFTER the curated exact/semantic-
-    # high tiers (so a precise domain intent always wins) and reuses the LRU-cached embedding of
-    # this same message (no extra ml01 call). Fail-soft: returns None if the embed model is down.
-    # Stickiness is already handled by the early-return above, so a follow-up never lands here.
-    try:
-        from app.services.form_library_service import FormLibraryService
-        # Info-style questions without action verbs deserve a real agent answer, not just a form
-        # widget — use a higher similarity gate so "how do I submit a parking request?" (which HAS
-        # an action verb) still routes to the form, but "what is the process for reporting
-        # incidents?" (no action verb) requires a much stronger match before short-circuiting.
-        _is_info_no_action = _INFO_QUERY_RE.search(last_human) and not _ACTION_VERB_RE.search(last_human)
-        _form_threshold = settings.FORM_MATCH_INFO_SIM_THRESHOLD if _is_info_no_action else None
-        # match() calls the embedding model — run in thread to avoid blocking the event loop.
-        form_match = await asyncio.to_thread(FormLibraryService.match, last_human, _form_threshold)
-    except Exception as e:  # noqa: BLE001
-        log.warning("[intent_router] FormLibraryService.match raised unexpectedly: %s", e)
-        form_match = None
-    if form_match:
-        return {
-            "domain": "dynamic_form",
-            "route_confidence": form_match["similarity"],
-            "route_reasoning": f"Message matched the '{form_match['name']}' form.",
-            "sub_intent": f"form:{form_match['id']}",
-            "entities": {"form_template_id": form_match["id"]},
-        }
-
-    # Keyword fast-path: regex safety net beneath the semantic high tier. 0 LLM calls.
-    # (Computed up-front so it could override stickiness; reused here. Phased out once the
-    # semantic router's accuracy is confirmed against the eval set on live traffic.)
-    if keyword_result:
-        return {
-            "domain": keyword_result["domain"],
-            "route_confidence": keyword_result["confidence"],
-            "route_reasoning": keyword_result["reasoning"],
-            "sub_intent": keyword_result["sub_intent"],
-            "entities": keyword_result.get("entities", {}),
-        }
-
-    # Ambiguous semantic match → hand the LLM router the semantic shortlist as a soft hint,
-    # constraining the 8-way choice to 2-3 and sharply cutting hallucination. Low/unavailable
-    # → plain LLM router (the original behaviour).
-    candidate_domains = decision.candidate_domains if decision.tier == "ambiguous" else None
-    try:
-        result = await classify_intent_async(last_human, candidate_domains=candidate_domains)
-    except APIConnectionError:
-        return {"domain": "general", "route_confidence": 0.5, "route_reasoning": "LLM connection failed.",
-                "sub_intent": "unknown", "entities": {}}
-
-    # Clarification gate: below the confidence threshold a route is a guess, and a confident
-    # wrong-domain answer is the worst failure mode. Offer the LLM's pick plus the semantic
-    # shortlist as a quick-choice card instead. "general" is always the escape hatch. Only
-    # fires with >=2 real alternatives — a one-option card would be noise.
-    if result["confidence"] < settings.CLARIFY_CONF_THRESHOLD and result["domain"] != "general":
-        clarify_domains: list[str] = []
-        for d in [result["domain"]] + (candidate_domains or []):
-            if (d in _CLARIFY_DOMAIN_LABELS and d not in clarify_domains
-                    and llm_controls.is_domain_enabled(d)):
-                clarify_domains.append(d)
-        if "general" not in clarify_domains:
-            clarify_domains.append("general")
-        if len(clarify_domains) >= 2:
-            return {
-                "domain": "domain_clarify",
-                "route_confidence": result["confidence"],
-                "route_reasoning": (
-                    f"Routing confidence {result['confidence']:.2f} is below "
-                    f"{settings.CLARIFY_CONF_THRESHOLD} — asking the user to pick the domain."
-                ),
-                "sub_intent": "domain_clarify",
-                "entities": {"clarify_domains": clarify_domains[:4], "clarify_question": last_human},
-            }
-
-    return {
-        "domain": result["domain"],
-        "route_confidence": result["confidence"],
-        "route_reasoning": result["reasoning"],
-        "sub_intent": result.get("sub_intent", "unknown"),
-        "entities": result.get("entities", {}),
-    }
+    # Safety net: the llm_fallback strategy is terminal and always returns, so this is reachable
+    # only if a strategy raised and was skipped. Never leave the router without a route.
+    return {"domain": "general", "route_confidence": 0.5,
+            "route_reasoning": "Resolver produced no decision (all strategies deferred/skipped).",
+            "sub_intent": "unknown", "entities": {}}
 
 
 _feedback_count_cache: dict = {"count": 0, "ts": 0.0}
@@ -2750,7 +3118,7 @@ async def feedback_lookup(state: AgentState) -> dict:
     # read by those nodes, and the 0.62 cosine threshold often injects misleading app suggestions
     # (e.g. ManageEngine "All Requests" being suggested for "create a form…"). Also saves one
     # embedding call per request on these fast-path routes.
-    _NUDGE_SKIP_DOMAINS = {"dynamic_form", "form_builder", "referral_choice", "domain_clarify", "deeplink"}
+    _NUDGE_SKIP_DOMAINS = {"dynamic_form", "form_fill", "form_builder", "referral_choice", "domain_clarify", "deeplink"}
     _skip_nudge = state.get("domain") in _NUDGE_SKIP_DOMAINS
 
     async def _noop():
@@ -2761,7 +3129,18 @@ async def feedback_lookup(state: AgentState) -> dict:
         _get_feedback(),
     )
 
-    combined = (fb_ctx or "") + (app_nudge or "")
+    # Surface a resolved follow-up to the agent's LLM so it answers the standalone intent
+    # (with the prior turn's people/items) rather than the bare pronoun message.
+    resolved_q = state.get("resolved_query")
+    resolved_note = ""
+    if resolved_q and resolved_q.strip().lower() != last_human.strip().lower():
+        resolved_note = (
+            f"\n\n[FOLLOW-UP CONTEXT] The user's latest message is a follow-up referring to the "
+            f"previous turn. It resolves to this standalone request: \"{resolved_q}\". "
+            f"Answer that request, using the people/items from the previous answer.\n"
+        )
+
+    combined = resolved_note + (fb_ctx or "") + (app_nudge or "")
     return {"feedback_context": combined} if combined else {}
 
 
@@ -2770,6 +3149,59 @@ def hr_agent(state: AgentState):
     user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
     sub_intent = state.get("sub_intent") or ""
     messages = state["messages"]
+    draft_key = _draft_key(state)
+
+    # ── Announcement: confirm the pending draft ─────────────────────────────
+    if sub_intent == "announcement_confirm":
+        claimed = PendingActionService.confirm(draft_key, "announcement")
+        if not claimed:
+            return {"messages": [AIMessage(content=(
+                "I don't have a pending announcement draft to publish. "
+                "Please describe the announcement again and I'll prepare a new draft."
+            ))]}
+        ann_params = (claimed.get("payload") or {}).get("params") or {}
+        try:
+            result = AnnouncementService.create(
+                title=ann_params.get("title", ""),
+                body=ann_params.get("body", ""),
+                category=ann_params.get("category", "General"),
+                created_by=user_email,
+                created_by_domain="hr",
+                target_audience=ann_params.get("target_audience", "all"),
+                expires_days=int(ann_params.get("expires_days") or 0) or None,
+            )
+            return {"messages": [AIMessage(content=(
+                f"Done — your announcement **\"{ann_params.get('title', '')}\"** has been published. {result}"
+                if isinstance(result, str) else
+                f"Done — your announcement **\"{ann_params.get('title', '')}\"** has been published."
+            ))]}
+        except Exception as exc:
+            log.warning("[hr_agent] announcement publish failed: %s", exc)
+            return {"messages": [AIMessage(content="I couldn't publish the announcement. Please try again.")]}
+
+    # ── Announcement: cancel the pending draft ──────────────────────────────
+    if sub_intent == "announcement_cancel":
+        PendingActionService.cancel(draft_key, "announcement")
+        return {"messages": [AIMessage(content="No problem — the announcement draft was discarded and nothing was published.")]}
+
+    # Knowledge-miss handoff (item 3): the user accepted "raise it with HR" from an
+    # abstention card. Create the HR query DIRECTLY — do NOT search policy first (the
+    # search is exactly what abstained, so re-running it would dead-end or loop) — and
+    # return the receipt verbatim.
+    if sub_intent == "hr_query_handoff":
+        _topic = str((state.get("entities") or {}).get("handoff_topic")
+                     or next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")).strip()
+        _subj = (_topic[:77] + "…") if len(_topic) > 78 else (_topic or "HR assistance request")
+        try:
+            from app.services import actions  # routed through the action registry spine
+            _receipt = actions.run(
+                "hr_query", actor_email=user_email, category="General",
+                subject=_subj, description=_topic or _subj,
+            ).human_message
+        except Exception:
+            _receipt = ("I couldn't log the HR query automatically — please reach out to HR "
+                        "directly and they'll help you with this.")
+        return {"messages": [AIMessage(content=_receipt)]}
 
     # Pre-fetch policy for policy_query sub_intent — avoids a slow LLM tool-calling
     # round-trip (saves one full inference pass on ml01 and eliminates timeout risk).
@@ -2794,7 +3226,10 @@ def hr_agent(state: AgentState):
             f"Employee email: {user_email}.{_loc_line} Never ask who the user is.\n"
             f"ROLE: {role_instruction}\n\n"
             f"Tool routing — act immediately:\n"
-            f"- Leave balance → get_leave_balance(email='{user_email}')\n"
+            f"- Leave balance → get_leave_balance() for the user's own; if they ask about a "
+            f"specific OTHER person (e.g. 'Priya's leave balance'), pass that person's name/email "
+            f"as get_leave_balance(email='<that person>'). Access is enforced server-side — "
+            f"do not pre-judge whether they're allowed; just pass the name and relay the result.\n"
             f"- Apply leave → apply_leave with inferred leave_type (default Casual)\n"
             f"- Cancel/withdraw leave → call get_my_leaves(email='{user_email}') to list leaves, "
             f"then call cancel_leave(email='{user_email}', leave_id=<id>)\n"
@@ -2896,6 +3331,32 @@ def hr_agent(state: AgentState):
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now — please try again in a moment.")]}
 
+    # ── Intercept create_announcement before it fires (Phase 2 action safety) ──
+    # If the LLM called create_announcement we stage it instead of letting the
+    # hr_tools ToolNode execute it. The summarizer never sees this path so the
+    # confirmation card isn't swallowed by the policy-framed summarizer.
+    for tc in getattr(response, "tool_calls", None) or []:
+        if tc.get("name") != "create_announcement":
+            continue
+        ann_args = tc.get("args") or {}
+        idem = f"announcement:{user_email}:{ann_args.get('title', '')}"
+        PendingActionService.create(
+            session_key=draft_key,
+            action_type="announcement",
+            payload={"params": ann_args},
+            user_email=user_email,
+            idempotency_key=idem,
+        )
+        card_payload = json.dumps({
+            "question": f"Publish the announcement **\"{ann_args.get('title', 'Untitled')}\"** now?",
+            "preview": (ann_args.get("body") or "")[:300],
+            "choices": [{"label": "Publish", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+        })
+        return {"messages": [AIMessage(content=(
+            f"Here's the announcement I've prepared. Confirm to publish it company-wide.\n\n"
+            f"{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+        ))]}
+
     # Guard: weak models sometimes return empty content with no tool calls.
     # Surface the last ToolMessage (second-pass scenario) or return an explicit fallback.
     if not (response.content or "").strip() and not getattr(response, "tool_calls", None):
@@ -2941,7 +3402,8 @@ async def deeplink_agent_node(state: AgentState):
         except Exception as _lb_err:
             pass
 
-    # Fast-path: leave application params already extracted by regex — call tool directly, 0 LLM calls
+    # Fast-path: leave params extracted by regex — hand back the Zoho apply-leave form
+    # deep-link (0 LLM, no internal record; Zoho owns leave application).
     if state.get("sub_intent") == "zoho_leave_fastpath":
         entities = state.get("entities") or {}
         if entities.get("start_date") and entities.get("end_date"):
@@ -2952,7 +3414,6 @@ async def deeplink_agent_node(state: AgentState):
                 result_data = json.loads(result_json)
                 if result_data.get("success"):
                     return {"messages": [AIMessage(content=result_data["message"])]}
-                # Session not set up or not configured — fall through to LLM agent
             except Exception as _fp_err:
                 pass
 
@@ -2978,6 +3439,98 @@ QUICK_CHOICE_START = "[QUICK_CHOICE_START]"
 QUICK_CHOICE_END = "[QUICK_CHOICE_END]"
 
 
+def _ms365_confirmation_card(action_type: str, params: dict) -> str:
+    """Build the user-facing confirmation card for a staged MS365 write action.
+
+    Email → EMAIL_DRAFT widget (editable before send).
+    Teams DM / channel / community → QUICK_CHOICE "Send / Cancel" card.
+    """
+    if action_type == "ms365_email":
+        draft_json = json.dumps({
+            "to": params.get("to", ""),
+            "subject": params.get("subject", ""),
+            "body": params.get("body", ""),
+            "cc": params.get("cc", ""),
+        })
+        return (
+            "I've prepared this email for you. Review it below and click Send when you're ready.\n\n"
+            f"[EMAIL_DRAFT_START]{draft_json}[EMAIL_DRAFT_END]"
+        )
+    if action_type == "ms365_teams_message":
+        card_payload = json.dumps({
+            "question": f"Send this Teams message to **{params.get('display_name', 'them')}**?",
+            "preview": params.get("message", "")[:200],
+            "choices": [{"label": "Send", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+        })
+        return (
+            f"Ready to send a Teams message to **{params.get('display_name', 'them')}**. "
+            f"Confirm below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+        )
+    if action_type == "ms365_channel_post":
+        card_payload = json.dumps({
+            "question": (
+                f"Post to **{params.get('team_name', 'the team')} › "
+                f"{params.get('channel_name', 'channel')}**?"
+            ),
+            "preview": params.get("message", "")[:200],
+            "choices": [{"label": "Post", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+        })
+        return (
+            f"Ready to post to **{params.get('team_name')} › {params.get('channel_name')}**. "
+            f"Confirm below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+        )
+    if action_type == "ms365_community_post":
+        card_payload = json.dumps({
+            "question": f"Post to the **{params.get('community_name', 'community')}** Viva Engage community?",
+            "preview": params.get("message", "")[:200],
+            "choices": [{"label": "Post", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+        })
+        return (
+            f"Ready to post to the **{params.get('community_name')}** community on Viva Engage. "
+            f"Confirm below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+        )
+    # Fallback
+    card_payload = json.dumps({
+        "question": "Send this message?",
+        "choices": [{"label": "Send", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+    })
+    return f"Confirm the action below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+
+
+async def _execute_ms365_action(claimed: dict, graph_token: str, yammer_token: str) -> dict:
+    """Dispatch a confirmed MS365 write action to the actual API.
+
+    `claimed` is the PendingAction payload from PendingActionService.confirm().
+    Returns the service result dict {"success": bool, ...}.
+    """
+    payload = claimed.get("payload") or {}
+    action_type = payload.get("action_type") or ""
+    params = payload.get("params") or {}
+
+    if action_type == "ms365_email":
+        from app.services import ms365_service as _ms
+        to_list = [a.strip() for a in params.get("to", "").split(",") if a.strip()]
+        cc_raw = params.get("cc", "")
+        cc_list = [a.strip() for a in cc_raw.split(",") if a.strip()] if cc_raw else None
+        return await _ms.send_email(graph_token, to_list, params.get("subject", ""), params.get("body", ""), cc_list)
+
+    if action_type == "ms365_channel_post":
+        from app.services import ms365_service as _ms
+        return await _ms.send_channel_message(
+            graph_token, params["team_id"], params["channel_id"], params.get("message", "")
+        )
+
+    if action_type == "ms365_teams_message":
+        from app.services import ms365_service as _ms
+        return await _ms.send_teams_message(graph_token, params["chat_id"], params.get("message", ""))
+
+    if action_type == "ms365_community_post":
+        from app.services import yammer_service as _ys
+        return await _ys.post_to_community(yammer_token, int(params["group_id"]), params.get("message", ""))
+
+    return {"success": False, "error": "unknown_action_type", "message": f"Unknown MS365 action type: {action_type}"}
+
+
 async def dynamic_form_agent_node(state: AgentState):
     """Form Library node — terminal, 0 LLM. Loads the matched FormTemplate and emits its schema
     inside [DYNAMIC_FORM_START]…[DYNAMIC_FORM_END] markers so _postprocess can turn it into the
@@ -2993,15 +3546,145 @@ async def dynamic_form_agent_node(state: AgentState):
     if not tpl or not tpl.get("enabled"):
         return {"messages": [AIMessage(content="That form isn't available right now. Please try again later.")]}
 
+    # Pre-fill identity-bound fields from the logged-in user's profile so they only confirm.
+    # Skipped for anonymous forms — pre-filling identity there would defeat the anonymity promise.
+    prefill: dict = {}
+    if not tpl.get("is_anonymous"):
+        try:
+            from app.services.form_library_service import FormLibraryService as _FLS
+            user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+            prefill = _FLS.build_prefill(tpl["fields"], user_email)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[dynamic_form] prefill failed (rendering empty): %s", e)
+            prefill = {}
+
     payload = {
         "template_id": tpl["id"],
         "name": tpl["name"],
         "description": tpl["description"],
         "fields": tpl["fields"],
         "submit_endpoint": "/api/forms/submit",
+        "prefill": prefill,
     }
     intro = f"Sure — please fill in the **{tpl['name']}** form below and submit."
     content = f"{intro}\n{DYNAMIC_FORM_START}{json.dumps(payload)}{DYNAMIC_FORM_END}"
+    return {"messages": [AIMessage(content=content)]}
+
+
+# ── Conversational form fill (item #2) ──────────────────────────────────────────
+_FORM_FILL_ACTION = "form_fill"
+
+
+def _form_field_question(missing: list, intro: str = "") -> str:
+    """Build a concise question for the next missing field(s). Asks up to two at a time so the
+    conversation stays light, and lists the choices for select fields."""
+    asks = []
+    for f in missing[:2]:
+        label = f.get("label") or f.get("name")
+        if f.get("type") == "select" and f.get("options"):
+            asks.append(f"**{label}** ({' / '.join(f['options'])})")
+        else:
+            asks.append(f"**{label}**")
+    if len(asks) == 1:
+        body = f"What's the {asks[0]}?"
+    else:
+        body = "Could you give me the " + ", ".join(asks[:-1]) + f" and {asks[-1]}?"
+    return (intro + body + "\n\n_(Answer in one message, or say **cancel** to stop.)_").strip()
+
+
+async def form_fill_agent_node(state: AgentState):
+    """Conversational Form Library fill — gathers an admin-defined form's fields turn-by-turn,
+    pre-filling identity, extracting whatever the user states in natural language, and asking only
+    for what's still missing. When every required field is in hand it shows a summary and asks for
+    an explicit yes (the write-confirmation gate the rest of the action layer uses), then submits
+    via the same path the inline widget does (FormLibraryService.submit → FormSubmission + notify)."""
+    from app.services.form_library_service import FormLibraryService
+
+    dk = _draft_key(state)
+    user_email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    msg = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "").strip()
+    entities = state.get("entities") or {}
+
+    pending = PendingActionService.get_pending(dk, _FORM_FILL_ACTION)
+    # A fresh "start" (user named a form) supersedes any in-progress fill, so switching forms
+    # mid-conversation uses the newly matched form rather than continuing the old one.
+    if state.get("sub_intent") == "start":
+        pending = None
+    starting = pending is None
+    payload = (pending or {}).get("payload", {})
+    form_id = (payload.get("form_template_id") if pending else None) or entities.get("form_template_id")
+
+    try:
+        tpl = FormLibraryService.get(form_id) if form_id is not None else None
+    except Exception:
+        tpl = None
+    if not tpl or not tpl.get("enabled"):
+        PendingActionService.cancel(dk, _FORM_FILL_ACTION)
+        return {"messages": [AIMessage(content="That form isn't available right now. Please try again later.")]}
+    fields = tpl.get("fields") or []
+
+    # User backs out at any point.
+    if _is_cancellation(msg):
+        PendingActionService.cancel(dk, _FORM_FILL_ACTION)
+        return {"messages": [AIMessage(content=f"No problem — I've cancelled the **{tpl['name']}**. Just ask when you'd like to start again.")]}
+
+    phase = payload.get("phase", "gathering")
+    collected = dict(payload.get("collected") or {})
+
+    # ── Final confirmation gate: explicit yes while everything is staged → submit. ──
+    if phase == "ready" and _is_confirmation(msg):
+        snap = PendingActionService.confirm(dk, _FORM_FILL_ACTION)   # atomic — guards double-submit
+        if not snap:
+            return {"messages": [AIMessage(content="Looks like that was already submitted.")]}
+        final_values = dict(snap.get("payload", {}).get("collected") or {})
+        res = await asyncio.to_thread(FormLibraryService.submit, tpl["id"], user_email, final_values)
+        if res.get("status") != "ok":
+            # Validation failed at submit — re-open for correction so the turn isn't a dead end.
+            PendingActionService.create(dk, _FORM_FILL_ACTION, {
+                "form_template_id": tpl["id"], "form_name": tpl["name"],
+                "collected": final_values, "phase": "gathering"}, user_email)
+            return {"messages": [AIMessage(content=f"I couldn't submit it: {res.get('message', 'please check the details.')} What should I fix?")]}
+        return {"messages": [AIMessage(content=res.get("message") or f"Your **{tpl['name']}** has been submitted.")]}
+
+    # ── Seed identity pre-fill on the first turn (never for anonymous forms). ──
+    if starting and not tpl.get("is_anonymous"):
+        try:
+            collected.update(FormLibraryService.build_prefill(fields, user_email))
+        except Exception:
+            pass
+
+    # ── Extract whatever the user just provided. In the ready phase a non-yes reply is an
+    #    edit, so allow it to overwrite; while gathering, only fill gaps. ──
+    skip = set() if phase == "ready" else set(collected.keys())
+    try:
+        collected.update(await asyncio.to_thread(FormLibraryService.extract_values, msg, fields, skip))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[form_fill] extraction failed: %s", e)
+
+    missing_required = [f for f in fields if f.get("required") and not collected.get(f.get("name"))]
+
+    if missing_required:
+        PendingActionService.create(dk, _FORM_FILL_ACTION, {
+            "form_template_id": tpl["id"], "form_name": tpl["name"],
+            "collected": collected, "phase": "gathering"}, user_email)
+        intro = ""
+        if starting:
+            seeded = [f.get("label") or f.get("name") for f in fields if collected.get(f.get("name"))]
+            note = f" I've filled in {', '.join(seeded)} from your profile." if seeded else ""
+            intro = f"Sure — let's complete your **{tpl['name']}**.{note}\n\n"
+        return {"messages": [AIMessage(content=_form_field_question(missing_required, intro))]}
+
+    # ── All required gathered → summary + explicit confirmation. ──
+    PendingActionService.create(dk, _FORM_FILL_ACTION, {
+        "form_template_id": tpl["id"], "form_name": tpl["name"],
+        "collected": collected, "phase": "ready"}, user_email)
+    lines = [
+        f"- **{f.get('label') or f.get('name')}:** {collected.get(f.get('name'))}"
+        for f in fields if collected.get(f.get("name")) not in (None, "", False)
+    ]
+    summary = "\n".join(lines)
+    content = (f"Here's your **{tpl['name']}** ready to go:\n\n{summary}\n\n"
+               "Reply **yes** to submit, or tell me what to change.")
     return {"messages": [AIMessage(content=content)]}
 
 
@@ -3210,6 +3893,75 @@ def _reroute_card_on_empty_retrieval(state: AgentState, result_messages: list, c
         return None  # never let the reroute check break a working answer
 
 
+# Domains whose knowledge-miss can be converted into a concrete action handoff.
+# spec = (team_shown_to_user, action_phrase). The action_phrase is what the quick-choice
+# button sends back; _KW_HANDOFF_IT / _KW_HANDOFF_HR route it deterministically to a
+# ticket-creating action. Admin policy misses (reimbursement, certification, relocation…)
+# are HR-adjacent, so they hand off to the general HR query queue.
+_ABSTENTION_HANDOFF = {
+    "it_support": ("the IT team", "Raise an IT ticket about this"),
+    "hr":         ("HR",          "Raise an HR query about this"),
+    "admin":      ("HR",          "Raise an HR query about this"),
+}
+
+
+def _abstention_handoff_card(state: AgentState, result_messages: list, current_domain: str):
+    """Genuine knowledge miss → offer to convert the abstain into an action (raise a ticket /
+    route to the team) instead of a dead-end "not found". Returns a quick-choice AIMessage, or
+    None to keep the honest not-found answer.
+
+    Fires only when the scoped corpus truly had nothing (semantic veto) AND the domain has an
+    action target. This COMPLEMENTS _reroute_card_on_empty_retrieval, which offers other
+    *knowledge* areas when the domain pick itself is suspect (low route confidence): callers
+    try the reroute first, then fall back to this handoff — so a confident-but-empty answer
+    (the real knowledge miss) becomes a resolved action rather than a dead end."""
+    from app.services.policy_service import RETRIEVAL_VETO_SENTINEL
+    try:
+        spec = _ABSTENTION_HANDOFF.get(current_domain)
+        if not spec:
+            return None
+        veto_hit = any(
+            isinstance(m, ToolMessage) and RETRIEVAL_VETO_SENTINEL in (m.content or "")
+            for m in result_messages
+        )
+        if not veto_hit:
+            return None
+        question = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        ).strip()
+        if not question:
+            return None
+        team, action_phrase = spec
+        current_label = _CLARIFY_DOMAIN_LABELS.get(current_domain, current_domain)
+        options = [
+            {"label": f"Yes, raise it with {team}", "action": "message",
+             "value": f"{action_phrase} — {question}"},
+        ]
+        # Failed-query rescue: turn a dead end into discovery by offering the
+        # nearest things the assistant CAN do (role-aware), as tap-to-run chips.
+        try:
+            from app.services import capability_registry as _caps
+            for cap in _caps.nearest_capabilities(
+                question, role=state.get("user_role"), domain=current_domain, limit=3
+            ):
+                ex = cap.examples[0]
+                options.append({"label": cap.title, "action": "message", "value": ex})
+        except Exception:
+            pass
+        options.append({"label": "No, thanks", "action": "message", "value": "No thanks"})
+        payload = {
+            "question": f"Want me to raise it with {team} so someone can follow up — or try one of these?",
+            "options": options,
+        }
+        return AIMessage(content=(
+            f"I couldn't find anything about this in the {current_label} resources — "
+            f"it may not be documented yet.\n"
+            f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+        ))
+    except Exception:
+        return None  # never let the handoff check break a working answer
+
+
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
     result = await pmo_agent.ainvoke({
@@ -3224,7 +3976,11 @@ async def pmo_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process PMO request.")
-    return {"messages": [last_ai]}
+    reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "pmo")
+    if reroute:
+        return {"messages": [reroute]}
+    handoff = _abstention_handoff_card(state, result["messages"], "pmo")
+    return {"messages": [handoff or last_ai]}
 
 
 _ADMIN_POLICY_KEYWORDS = {"policy", "reimbursement", "reimburse", "claim", "expense", "certification", "travel", "medical"}
@@ -3296,7 +4052,10 @@ async def admin_agent_node(state: AgentState):
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Admin request.")
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "admin")
-    return {"messages": [reroute or last_ai]}
+    if reroute:
+        return {"messages": [reroute]}
+    handoff = _abstention_handoff_card(state, result["messages"], "admin")
+    return {"messages": [handoff or last_ai]}
 
 
 async def it_agent_node(state: AgentState):
@@ -3307,25 +4066,45 @@ async def it_agent_node(state: AgentState):
     draft_key = _draft_key(state)
 
     if sub_intent == "software_install_confirm":
-        draft = PENDING_IT_EMAIL_DRAFTS.get(draft_key)
-        if not draft:
+        # confirm() atomically claims the pending action (pending->executed). A duplicate
+        # confirm finds nothing and returns None, so the email is never sent twice.
+        claimed = PendingActionService.confirm(draft_key, "software_install")
+        if not claimed:
             return {"messages": [AIMessage(content="I do not have a pending IT email draft to send. Please start the software install request again.")]}
-        response = ITService.send_software_install_request(user_email, draft["software_name"])
-        PENDING_IT_EMAIL_DRAFTS.pop(draft_key, None)
+        software_name = (claimed.get("payload") or {}).get("software_name", "")
+        response = ITService.send_software_install_request(user_email, software_name)
         return {"messages": [AIMessage(content=response)]}
 
     if sub_intent == "software_install_cancel":
-        PENDING_IT_EMAIL_DRAFTS.pop(draft_key, None)
+        PendingActionService.cancel(draft_key, "software_install")
         return {"messages": [AIMessage(content="No problem. I discarded the pending IT email draft and did not send anything.")]}
 
     if sub_intent == "hardware_issue":
         # Deterministic path — create a hardware ticket directly without LLM to avoid
         # the model hallucinating wrong content (e.g. VPN steps for overheating).
         _hw_msg = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
-        _hw_result = ITService.create_ticket(
-            user_email, "Hardware", _hw_msg[:120], _hw_msg, "Medium"
-        )
+        from app.services import actions  # routed through the action registry spine
+        _hw_result = actions.run(
+            "it_ticket", actor_email=user_email, category="Hardware",
+            subject=(_hw_msg[:120] or "Hardware issue"),
+            description=(_hw_msg or "Hardware issue"), priority="Medium",
+        ).human_message
         return {"messages": [AIMessage(content=_hw_result)]}
+
+    if sub_intent == "it_ticket_handoff":
+        # Knowledge-miss handoff (item 3): user accepted "raise an IT ticket" from an
+        # abstention card. Create the ticket directly — no search_it_docs first (it just
+        # abstained, so re-running it would loop). create_ticket is idempotent on
+        # double-clicks. Returns the receipt verbatim.
+        _topic = str(entities.get("handoff_topic")
+                     or next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")).strip()
+        from app.services import actions  # routed through the action registry spine
+        _result = actions.run(
+            "it_ticket", actor_email=user_email, category="General",
+            subject=(_topic[:120] or "IT assistance request"),
+            description=(_topic or "IT assistance request"), priority="Medium",
+        ).human_message
+        return {"messages": [AIMessage(content=_result)]}
 
     if sub_intent == "software_install":
         software_name = (
@@ -3339,8 +4118,61 @@ async def it_agent_node(state: AgentState):
         # hasn't told us *what* to install — fall through to the LLM agent, which
         # asks "which software?" instead of drafting an email for "software".
         if software_name and ITService._looks_like_software_name(str(software_name)):
-            PENDING_IT_EMAIL_DRAFTS[draft_key] = {"software_name": str(software_name)}
-            return {"messages": [AIMessage(content=ITService.request_software_install(user_email, str(software_name)))]}
+            sw = str(software_name)
+            idem = f"software_install:{user_email}:{sw.lower()}"
+
+            _last_human = next(
+                (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+            )
+            _wants_resend = bool(_RESEND_RE.search(str(_last_human)))
+
+            if not _wants_resend:
+                # Authoritative dedupe: the IT helpdesk emails the user at each lifecycle step
+                # (logged -> assigned -> approved -> resolved) carrying the real RE-#### id. We
+                # read those to learn the live status. An OPEN request -> don't draft a
+                # duplicate; show its id/status/technician. A RESOLVED one -> a new request is
+                # legitimate, fall through and draft. (Needs connected MS365; fails soft.)
+                status = await helpdesk_mail.find_request_status(state.get("graph_token") or "", sw)
+                if status and status.get("is_open"):
+                    PendingActionService.attach_external_ref(idem, status["request_id"])
+                    _label = {
+                        "logged": "logged and awaiting pickup",
+                        "assigned": "assigned to an IT technician",
+                        "approved": "approved and being actioned",
+                    }.get(status["status"], "in progress")
+                    _who = f" ({status['technician']})" if status.get("technician") else ""
+                    return {"messages": [AIMessage(content=(
+                        f"You've already raised this with IT — request **{status['request_id']}** "
+                        f"for **{sw}** is **{_label}**{_who}. I didn't send a duplicate.\n\n"
+                        f"If you think it was missed, reply *\"resend the {sw} request\"* and I'll send it again."
+                    ))]}
+                # status present but resolved/closed -> treat as no open request; fall through.
+
+                # Fallback (MS365 not connected, or no lifecycle mail yet): treat a request we
+                # recorded in the last week as still in progress.
+                prior = None if status else PendingActionService.find_executed_by_key(
+                    idem, within_minutes=_SOFTWARE_INSTALL_DEDUPE_MINUTES
+                )
+                if prior:
+                    when = prior.get("created_at")
+                    when_txt = f" on {when:%b %d}" if when else ""
+                    ref = (prior.get("payload") or {}).get("helpdesk_request_id")
+                    ref_txt = f" (request **{ref}**)" if ref else ""
+                    return {"messages": [AIMessage(content=(
+                        f"You've already submitted a request to install **{sw}**{when_txt}{ref_txt}, "
+                        f"and it's still being processed by IT — I haven't sent a duplicate. "
+                        f"If it's urgent or you think it was missed, reply *\"resend the {sw} request\"* "
+                        f"and I'll send it again."
+                    ))]}
+
+            PendingActionService.create(
+                session_key=draft_key,
+                action_type="software_install",
+                payload={"software_name": sw},
+                user_email=user_email,
+                idempotency_key=idem,
+            )
+            return {"messages": [AIMessage(content=ITService.request_software_install(user_email, sw))]}
 
     entity_hint = ""
     if entities:
@@ -3356,7 +4188,10 @@ async def it_agent_node(state: AgentState):
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process IT request.")
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "it_support")
-    return {"messages": [reroute or last_ai]}
+    if reroute:
+        return {"messages": [reroute]}
+    handoff = _abstention_handoff_card(state, result["messages"], "it_support")
+    return {"messages": [handoff or last_ai]}
 
 
 async def manager_agent_node(state: AgentState):
@@ -3371,7 +4206,11 @@ async def manager_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Manager request.")
-    return {"messages": [last_ai]}
+    reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "functional_manager")
+    if reroute:
+        return {"messages": [reroute]}
+    handoff = _abstention_handoff_card(state, result["messages"], "functional_manager")
+    return {"messages": [handoff or last_ai]}
 
 
 async def doc_agent_node(state: AgentState):
@@ -3393,10 +4232,16 @@ async def ms365_agent_node(state: AgentState):
 
     Execute-first: for unambiguous read intents, pre-fetch data at the Python
     level and inject it into feedback_context so the LLM only formats (1 call).
+
+    Write safety (Phase 2): all T3 write tools return a __pending__ signal which
+    this node intercepts, stages via PendingActionService, and surfaces as a
+    confirmation card. On yes/no the ROUTER_RESOLVER fires ms365_send_confirm or
+    ms365_send_cancel before the sub-agent is even invoked.
     """
     sub_intent = state.get("sub_intent") or ""
     graph_token = state.get("graph_token") or ""
     user_email = (state.get("user_email") or settings.DEFAULT_USER_EMAIL).lower().strip()
+    draft_key = _draft_key(state)
 
     # Fetch Yammer token on-demand (separate audience from Graph)
     yammer_token = ""
@@ -3405,6 +4250,41 @@ async def ms365_agent_node(state: AgentState):
         yammer_token = await get_yammer_token(user_email) or ""
     except Exception:
         pass
+
+    # ── Confirm a staged MS365 write action ────────────────────────────────
+    if sub_intent == "ms365_send_confirm":
+        at = (state.get("entities") or {}).get("pending_action_type") or ""
+        claimed = PendingActionService.confirm(draft_key, at) if at else None
+        if not claimed:
+            return {"messages": [AIMessage(content=(
+                "I don't have a pending message to send. "
+                "Please start the request again and I'll prepare a fresh draft."
+            ))]}
+        result = await _execute_ms365_action(claimed, graph_token, yammer_token)
+        if result.get("success"):
+            payload = claimed.get("payload") or {}
+            pparams = payload.get("params") or {}
+            at_label = {
+                "ms365_email": f"email to **{pparams.get('to', 'the recipient')}**",
+                "ms365_teams_message": f"Teams message to **{pparams.get('display_name', 'them')}**",
+                "ms365_channel_post": (
+                    f"post to **{pparams.get('team_name', 'the team')} › "
+                    f"{pparams.get('channel_name', 'channel')}**"
+                ),
+                "ms365_community_post": f"post to the **{pparams.get('community_name', 'community')}** community",
+            }.get(at, "message")
+            return {"messages": [AIMessage(content=f"Done — your {at_label} has been sent.")]}
+        return {"messages": [AIMessage(content=(
+            f"I couldn't send it: {result.get('message') or result.get('error') or 'unknown error'}. "
+            f"Please try again."
+        ))]}
+
+    # ── Cancel a staged MS365 write action ─────────────────────────────────
+    if sub_intent == "ms365_send_cancel":
+        at = (state.get("entities") or {}).get("pending_action_type") or ""
+        if at:
+            PendingActionService.cancel(draft_key, at)
+        return {"messages": [AIMessage(content="No problem — I discarded the draft and nothing was sent.")]}
 
     # Execute-first for unambiguous read-only intents (skip 1 LLM call)
     pre_fetched = ""
@@ -3476,6 +4356,31 @@ async def ms365_agent_node(state: AgentState):
         "graph_token": graph_token,
         "yammer_token": yammer_token,
     })
+
+    # ── Intercept __pending__ signals from write tools ──────────────────────
+    # Write tools return {"__pending__": true, "action_type": ..., "params": {...}, ...}
+    # instead of calling the API. We stage the action and return a confirmation card.
+    for msg in reversed(result["messages"]):
+        if not isinstance(msg, ToolMessage):
+            continue
+        try:
+            sig = json.loads(msg.content or "")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(sig, dict) or not sig.get("__pending__"):
+            continue
+        at = sig.get("action_type", "")
+        params = sig.get("params") or {}
+        idem = f"{at}:{user_email}:{json.dumps(params, sort_keys=True)}"
+        PendingActionService.create(
+            session_key=draft_key,
+            action_type=at,
+            payload={"action_type": at, "params": params},
+            user_email=user_email,
+            idempotency_key=idem,
+        )
+        return {"messages": [AIMessage(content=_ms365_confirmation_card(at, params))]}
+
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
@@ -3488,10 +4393,16 @@ general_tool_node = ToolNode(general_tools)
 
 
 def _greeting_response(state: AgentState) -> str:
-    """Build a time-aware greeting — 0 LLM calls, <1ms."""
+    """Build a role-aware, time-aware greeting — 0 LLM calls, <1ms.
+
+    Onboards the user on their first message: instead of a static menu, it leads
+    with a few capabilities their role actually has, plus any live signal (e.g.
+    pending approvals) worth nudging them toward."""
     import datetime as _dt
+    from app.services import capability_registry as _caps
     hour = _dt.datetime.now().hour
     email = state.get("user_email") or ""
+    role = state.get("user_role") or "employee"
     name = email.split("@")[0].replace(".", " ").title() if email and "@" in email else ""
     if hour < 12:
         period = "Good morning"
@@ -3500,7 +4411,29 @@ def _greeting_response(state: AgentState) -> str:
     else:
         period = "Good evening"
     greeting = f"{period}{', ' + name if name else ''}!"
-    return f"{greeting} I'm Centriq, your workplace assistant. I can help you with HR policies, leave management, reimbursements, IT tickets, parking, and more. What do you need help with?"
+
+    # Live signal — surface a pending count if there's something waiting on them.
+    live_line = ""
+    if email:
+        try:
+            from app.services import nudge_service
+            n = nudge_service.count_unread(email)
+            if n:
+                live_line = f" You have **{n}** thing{'s' if n != 1 else ''} that may need your attention — just ask \"what needs my attention?\""
+        except Exception:
+            pass
+
+    # Lead with a few role-appropriate capabilities rather than a fixed menu.
+    visible = _caps.capabilities_for_role(role)[:4]
+    if visible:
+        bullets = "\n".join(f"- {c.title} — _e.g. \"{c.examples[0]}\"_" for c in visible)
+        body = (
+            f" I'm Centriq, your workplace assistant. Here are a few things I can help you with:\n\n"
+            f"{bullets}\n\nWhat would you like to do?"
+        )
+    else:
+        body = " I'm Centriq, your workplace assistant. What do you need help with?"
+    return f"{greeting}{live_line}{body}"
 
 
 _OFF_TOPIC_RESPONSES = [
@@ -3567,7 +4500,7 @@ def should_continue_general(state: AgentState):
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "general_tools"
-    return END
+    return "state_tracker"
 
 
 def dummy_test_agent(state: AgentState):
@@ -3622,6 +4555,9 @@ async def summarizer(state: AgentState):
     reroute = _reroute_card_on_empty_retrieval(state, [tool_message], "hr")
     if reroute:
         return {"messages": [reroute]}
+    handoff = _abstention_handoff_card(state, [tool_message], "hr")
+    if handoff:
+        return {"messages": [handoff]}
 
     # The summarizer must ANSWER THE QUESTION, not blindly paraphrase the tool output.
     # Without the question, a weak model paraphrases whatever text it's handed — e.g. turning
@@ -3842,6 +4778,7 @@ def route_to_agent(state: AgentState):
     if domain in llm_controls.disabled_domains():
         return "disabled_agent"
     if domain == "dynamic_form": return "dynamic_form_agent"
+    if domain == "form_fill": return "form_fill_agent"
     if domain == "form_builder": return "form_builder_agent"
     if domain == "referral_choice": return "referral_choice_agent"
     if domain == "domain_clarify": return "domain_clarify_agent"
@@ -3864,7 +4801,7 @@ def should_continue_hr(state: AgentState):
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "hr_tools"
-    return END
+    return "state_tracker"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3893,6 +4830,7 @@ except Exception as e:
 
 workflow = StateGraph(AgentState)
 
+workflow.add_node("followup_resolver", followup_resolver)
 workflow.add_node("intent_router", intent_router)
 workflow.add_node("context_manager", context_manager_node)
 workflow.add_node("feedback_lookup", feedback_lookup)
@@ -3904,6 +4842,7 @@ workflow.add_node("it_agent", it_agent_node)
 workflow.add_node("manager_agent", manager_agent_node)
 workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
+workflow.add_node("form_fill_agent", form_fill_agent_node)
 workflow.add_node("form_builder_agent", form_builder_agent_node)
 workflow.add_node("referral_choice_agent", referral_choice_agent_node)
 workflow.add_node("domain_clarify_agent", domain_clarify_agent_node)
@@ -3917,10 +4856,13 @@ workflow.add_node("disabled_agent", disabled_agent)
 workflow.add_node("hr_tools", hr_tool_node)
 workflow.add_node("summarizer", summarizer)
 workflow.add_node("connector_agent", connector_agent)
+workflow.add_node("state_tracker", state_tracker)
 
-workflow.set_entry_point("intent_router")
-# context_manager sits between router and feedback_lookup:
-# intent_router -> context_manager (compress if >6000 tokens) -> feedback_lookup -> domain agent
+workflow.set_entry_point("followup_resolver")
+# followup_resolver rewrites referential follow-ups into standalone queries BEFORE routing.
+# followup_resolver -> intent_router -> context_manager (compress if >6000 tokens)
+#   -> feedback_lookup -> context_gate -> domain agent
+workflow.add_edge("followup_resolver", "intent_router")
 workflow.add_edge("intent_router", "context_manager")
 workflow.add_edge("context_manager", "feedback_lookup")
 # Shared custom-context gate runs once for the routed domain; either answers and ends
@@ -3931,21 +4873,26 @@ workflow.add_conditional_edges("hr_agent", should_continue_hr)
 workflow.add_conditional_edges("general_agent", should_continue_general)
 workflow.add_edge("hr_tools", "summarizer")
 workflow.add_edge("general_tools", "general_agent")
-workflow.add_edge("summarizer", END)
-workflow.add_edge("pmo_agent", END)
-workflow.add_edge("admin_agent", END)
-workflow.add_edge("it_agent", END)
-workflow.add_edge("manager_agent", END)
-workflow.add_edge("deeplink_agent", END)
+# Substantive answer-producing paths flow through state_tracker (records `focus` for
+# the next turn's coref) before ending. UI-flow / placeholder / disabled paths don't
+# produce a subject, so they end directly.
+workflow.add_edge("summarizer", "state_tracker")
+workflow.add_edge("pmo_agent", "state_tracker")
+workflow.add_edge("admin_agent", "state_tracker")
+workflow.add_edge("it_agent", "state_tracker")
+workflow.add_edge("manager_agent", "state_tracker")
+workflow.add_edge("deeplink_agent", "state_tracker")
+workflow.add_edge("ms365_agent", "state_tracker")
+workflow.add_edge("doc_agent", "state_tracker")
+workflow.add_edge("connector_agent", "state_tracker")
+workflow.add_edge("state_tracker", END)
 workflow.add_edge("dynamic_form_agent", END)
+workflow.add_edge("form_fill_agent", END)
 workflow.add_edge("form_builder_agent", END)
 workflow.add_edge("referral_choice_agent", END)
 workflow.add_edge("domain_clarify_agent", END)
-workflow.add_edge("ms365_agent", END)
-workflow.add_edge("doc_agent", END)
 workflow.add_edge("dummy_test_agent", END)
 workflow.add_edge("placeholder_agent", END)
 workflow.add_edge("disabled_agent", END)
-workflow.add_edge("connector_agent", END)
 
 app_agent = workflow.compile(checkpointer=checkpointer)

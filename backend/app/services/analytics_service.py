@@ -19,7 +19,10 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import AiRequestLog, ChatFeedback, ConnectorCallLog, ConnectorOperation, CompanySettings
+from app.models import (
+    AiRequestLog, ChatFeedback, ConnectorCallLog, ConnectorOperation, CompanySettings,
+    Leave, Employee,
+)
 
 log = logging.getLogger(__name__)
 
@@ -111,12 +114,50 @@ def _domain_scope(role: str) -> Optional[list[str]]:
     return _ROLE_DOMAINS.get((role or "").lower())
 
 
+# ── Person scoping (personal + team analytics) ──────────────────────────────────
+# Personal-category metrics (leaves, …) are filtered to a set of employee ids derived from
+# the CALLER, never from a client-supplied id — so "me" can only ever see the caller's own
+# rows and "my-team" only the caller's direct reports.
+
+def _resolve_employee_id(db: Session, email: str) -> Optional[int]:
+    if not email:
+        return None
+    row = db.query(Employee.id).filter(func.lower(Employee.email) == email.strip().lower()).first()
+    return row[0] if row else None
+
+
+def _team_member_ids(db: Session, manager_email: str) -> list[int]:
+    """Direct reports of the caller (by Employee.manager_id). Empty if they manage no one."""
+    mid = _resolve_employee_id(db, manager_email)
+    if not mid:
+        return []
+    return [r[0] for r in db.query(Employee.id).filter(Employee.manager_id == mid).all()]
+
+
+def _person_ids_for_scope(db: Session, person_scope: str, user_email: str) -> Optional[list[int]]:
+    """Resolve a person_scope to the employee-id allow-list (or None for org-wide).
+
+    Returns [] (which the caller treats as "no data") when the scope yields nobody — e.g.
+    'me' for an unknown user, or 'my-team' for someone with no reports. That empties the
+    series rather than silently widening to everyone."""
+    ps = (person_scope or "org").lower()
+    if ps == "org":
+        return None
+    if ps == "me":
+        eid = _resolve_employee_id(db, user_email)
+        return [eid] if eid else []
+    if ps in ("my-team", "team"):
+        return _team_member_ids(db, user_email)
+    return []
+
+
 # ── Metric + dimension catalog ──────────────────────────────────────────────────
 # Each metric: {label, table, agg (callable -> SQLAlchemy expr), time_col, dims (allowed),
 #               domain_col (for role scoping, optional), chart_hint, unit}
 _AIRL_DIMS = ["domain", "sub_intent", "served_from", "model_name", "day", "week", "month"]
 _FB_DIMS = ["domain", "day", "week", "month"]
 _CONN_DIMS = ["status", "day", "week", "month"]
+_LEAVE_DIMS = ["leave_type", "status", "day", "week", "month"]
 
 METRIC_CATALOG: dict[str, dict] = {
     "requests": {
@@ -172,6 +213,24 @@ METRIC_CATALOG: dict[str, dict] = {
         "agg": lambda M: func.count(M.id), "time_col": "created_at",
         "dims": _CONN_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "count",
     },
+    # ── Personal / team (HR) metrics — local Leave data, person-scoped (item 9) ──
+    # category "personal" + person_col gates these to the caller (me) or their reports
+    # (my-team); org scope is HR/admin-only and enforced at the route layer.
+    "leaves_taken": {
+        "label": "Leave Requests", "table": Leave,
+        "agg": lambda M: func.count(M.id), "time_col": "created_at",
+        "dims": _LEAVE_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "count",
+        "category": "personal", "person_col": "employee_id",
+        "scopes": ["me", "my-team", "org"],
+    },
+    "leave_days": {
+        "label": "Leave Days", "table": Leave,
+        # Postgres date subtraction yields an integer day count; +1 makes it inclusive.
+        "agg": lambda M: func.sum((M.end_date - M.start_date) + 1), "time_col": "created_at",
+        "dims": _LEAVE_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "count",
+        "category": "personal", "person_col": "employee_id",
+        "scopes": ["me", "my-team", "org"],
+    },
 }
 
 # Dimension → (column-name on the metric's table) OR a date_trunc bucket key.
@@ -182,6 +241,7 @@ DIMENSION_CATALOG: dict[str, dict] = {
     "served_from": {"label": "Served from"},
     "model_name": {"label": "Model"},
     "status": {"label": "Status"},
+    "leave_type": {"label": "Leave type"},
     "day": {"label": "Day"},
     "week": {"label": "Week"},
     "month": {"label": "Month"},
@@ -190,18 +250,38 @@ DIMENSION_CATALOG: dict[str, dict] = {
 CHART_TYPES = ["bar", "line", "area", "pie"]
 
 
-def catalog() -> dict:
-    """Public catalog for the Studio dropdowns and the NL prompt."""
+def _metric_entry(mid: str, m: dict) -> dict:
     return {
-        "metrics": [
-            {"id": mid, "label": m["label"], "dims": m["dims"],
-             "chart_hint": m["chart_hint"], "unit": m["unit"]}
-            for mid, m in METRIC_CATALOG.items()
-        ],
+        "id": mid, "label": m["label"], "dims": m["dims"],
+        "chart_hint": m["chart_hint"], "unit": m["unit"],
+        "category": m.get("category", "ops"),
+        "scopes": m.get("scopes", ["org"]),
+    }
+
+
+def catalog(category: Optional[str] = None) -> dict:
+    """Public catalog for the Studio dropdowns and the NL prompt. `category` filters the
+    metric list ("ops" for the org AI/ROI studio, "personal" for the my/team view)."""
+    metrics = [_metric_entry(mid, m) for mid, m in METRIC_CATALOG.items()
+               if category is None or m.get("category", "ops") == category]
+    return {
+        "metrics": metrics,
         "dimensions": [{"id": did, "label": d["label"]} for did, d in DIMENSION_CATALOG.items()],
         "chart_types": CHART_TYPES,
         "periods": list(_PERIODS.keys()),
     }
+
+
+def personal_catalog(db: Session, user_email: str) -> dict:
+    """The personal/team metric catalog plus the scopes actually available to this caller —
+    'my-team' is only offered when they have direct reports."""
+    cat = catalog(category="personal")
+    has_team = bool(_team_member_ids(db, user_email))
+    allowed = {"me", "my-team"} if has_team else {"me"}
+    for mt in cat["metrics"]:
+        mt["scopes"] = [s for s in mt["scopes"] if s in allowed]
+    cat["has_team"] = has_team
+    return cat
 
 
 def _bucket_expr(model, bucket: str):
@@ -212,8 +292,12 @@ def _bucket_expr(model, bucket: str):
 def run_query(
     db: Session, metric: str, dimension: str, period: str = "30d",
     role: str = "super admin", filters: Optional[dict] = None,
+    person_scope: str = "org", user_email: str = "",
 ) -> dict:
     """Resolve a single (metric, dimension, period) against the catalog → series.
+
+    person_scope ∈ {org, me, my-team}. For a personal-category metric, "me"/"my-team" filter
+    by the CALLER's own employee id / direct reports (never a client-supplied id).
 
     Returns {series: [{label, value}], metric, dimension, period, chart_hint, unit}.
     Raises ValueError on any unknown metric/dimension (the NL layer relies on this)."""
@@ -222,6 +306,8 @@ def run_query(
     spec = METRIC_CATALOG[metric]
     if dimension not in spec["dims"]:
         raise ValueError(f"Dimension '{dimension}' not available for metric '{metric}'")
+    if person_scope and person_scope not in spec.get("scopes", ["org"]):
+        raise ValueError(f"Scope '{person_scope}' not available for metric '{metric}'")
 
     M = spec["table"]
     agg = spec["agg"](M).label("value")
@@ -234,10 +320,17 @@ def run_query(
     q = db.query(group_expr, agg).filter(getattr(M, spec["time_col"]) >= _period_cutoff(period))
 
     # Role-based domain scoping (only where the table carries a domain column).
-    scope = _domain_scope(role)
-    if scope and spec.get("domain_col"):
+    dom_scope = _domain_scope(role)
+    if dom_scope and spec.get("domain_col"):
         domain_col = getattr(M, spec["domain_col"])
-        q = q.filter(func.lower(domain_col).in_(scope))
+        q = q.filter(func.lower(domain_col).in_(dom_scope))
+
+    # Person scoping for personal-category metrics (me / my-team). An empty allow-list
+    # (unknown user, or no reports) returns no rows rather than widening to everyone.
+    if spec.get("person_col") and (person_scope or "org").lower() != "org":
+        ids = _person_ids_for_scope(db, person_scope, user_email)
+        person_col = getattr(M, spec["person_col"])
+        q = q.filter(person_col.in_(ids if ids else [-1]))
 
     # Optional caller filters, restricted to columns on the metric's table.
     for fk, fv in (filters or {}).items():
@@ -266,7 +359,7 @@ def run_query(
     return {
         "series": series, "metric": metric, "dimension": dimension,
         "period": period, "chart_hint": spec["chart_hint"], "unit": spec["unit"],
-        "metric_label": spec["label"],
+        "metric_label": spec["label"], "scope": (person_scope or "org"),
     }
 
 

@@ -296,6 +296,25 @@ class BookshelfService:
             return {"ok": False, "message": f"No borrow with ticket {ticket_id} found on your account."}
         if req.get("status") != "Approved":
             return {"ok": False, "message": f"Borrow {ticket_id} is {req.get('status')} — only active borrows can be extended."}
+
+        # Idempotency: don't stack a second pending extension on the same borrow. The library
+        # API is HTTP-only (no shared DB), so dedupe against the user's existing extensions.
+        try:
+            _tkt = (req.get("ticket_id") or "").upper()
+            for _x in (BookshelfService.list_my_extensions(employee_email) or []):
+                if (_x.get("ticket_id") or "").upper() == _tkt and (_x.get("status") or "") == "Pending":
+                    return {
+                        "ok": True, "duplicate": True,
+                        "message": (
+                            f"You already have a pending extension request for "
+                            f"**{req.get('book_title') or 'this book'}** (ticket {req['ticket_id']}). "
+                            f"I didn't submit another — please wait for admin approval."
+                        ),
+                        "extension_id": _x.get("id"),
+                    }
+        except Exception as e:
+            logger.warning("[bookshelf] extension dedupe check failed for %s: %s", ticket_id, e)
+
         try:
             ext = _post(f"/api/library/requests/{req['id']}/extension", {
                 "employee_email": employee_email,

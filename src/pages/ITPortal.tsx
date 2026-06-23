@@ -149,7 +149,8 @@ function TicketsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         variant="tabs"
       />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="tickets" /> : (
-        <table className="w-full text-[13px]">
+        <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
+        <table className="w-full min-w-[900px] text-[13px]">
           <thead>
             <tr className="border-b border-[var(--border)]">
               {["Ticket ID", "Employee", "Category", "Subject", "Priority", "Status", "Raised On", "Update Status"].map((h) => (
@@ -204,6 +205,7 @@ function TicketsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -257,7 +259,8 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     <div>
       <FilterBar filter={filter} setFilter={setFilter} options={["Pending", "Approved", "Rejected", "All"]} onRefresh={fetch_} variant="tabs" />
       {loading ? <TableLoader /> : items.length === 0 ? <TableEmpty label="software requests" /> : (
-        <table className="w-full text-[13px]">
+        <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
+        <table className="w-full min-w-[820px] text-[13px]">
           <thead>
             <tr className="border-b border-[var(--border)]">
               {["Employee", "Software", "Version", "Justification", "Admin Req.", "Status", "Actions"].map((h) => (
@@ -307,6 +310,7 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

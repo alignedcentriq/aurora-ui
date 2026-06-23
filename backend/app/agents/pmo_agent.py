@@ -29,6 +29,7 @@ Rules:
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
 8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
 9. For a staffing / resourcing question — finding people for a new or upcoming project ('I need 2 React devs with 3+ years', 'who is free for a new project?', 'find an AWS engineer who isn't fully allocated') — call 'match_resources'. Infer the skills, minimum experience, needed-by date, and headcount from the user's message; never invent any value they did not state. Present the returned candidates verbatim.
+10. For an organisation-wide skill-gap / capability / hiring question — NOT about one named project but about where the org is short on skills given who is available ('what skills are we short on?', 'what can't we staff?', 'where are our skill gaps?', 'should we hire or can we redeploy?', 'what should we train for?') — call 'analyze_skill_supply'. Present the result verbatim.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -208,6 +209,22 @@ def match_resources(
 
 
 @tool
+def analyze_skill_supply(
+    top_n: int = 8,
+    state: Annotated[dict, InjectedState] = None,
+):
+    """Analyze which in-demand skills the org CANNOT currently staff — Alchemy's
+    market skill-gap data crossed with live project allocation availability. Each
+    skill is tagged BUY / TRAIN / REDEPLOY / STAFFABLE. Use for questions like
+    'what skills are we short on?', 'what can't we staff?', 'where are our skill
+    gaps given who's available?', 'do we need to hire or can we redeploy?'.
+    top_n: how many top gaps to return (default 8)."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    from app.services.skill_gap_overlay_service import SkillSupplyService
+    return SkillSupplyService.render(user_email=email, top_n=top_n)
+
+
+@tool
 def search_pmo_docs(query: str):
     """Search PMO process / governance documents for how-to / process / policy questions
     (project onboarding, governance, change-request process, PMO templates). Call for any
@@ -243,6 +260,7 @@ pmo_tools = [
     generate_multi_project_report,
     search_people_directory,
     match_resources,
+    analyze_skill_supply,
     search_pmo_docs,
     request_training_license,
 ]
@@ -445,7 +463,7 @@ def pmo_assistant(state: PMOState):
 _PASSTHROUGH_TOOLS = {
     "generate_project_report", "generate_multi_project_report",
     "get_project_status", "get_project_achievements", "search_people_directory",
-    "match_resources",
+    "match_resources", "analyze_skill_supply",
     # Training-license confirmation is display-ready; passing it through avoids the
     # LLM reflexively refusing ("can't help get a discounted Udemy/Coursera license").
     "request_training_license",

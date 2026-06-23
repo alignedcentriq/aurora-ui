@@ -1,4 +1,4 @@
-import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink, LayoutGrid } from "lucide-react";
+import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink, LayoutGrid, BookOpen } from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -22,6 +22,8 @@ type Props = {
   onStop?: () => void;
   suggestions?: string[];
   onSuggestionSelect?: (text: string) => void;
+  /** Navigate to an in-app route (used by /slash route shortcuts like /library). */
+  onNavigate?: (path: string) => void;
 };
 
 interface AttachedFile {
@@ -39,7 +41,15 @@ interface MentionUser {
 
 type SlashItem =
   | { kind: "form"; id: number; name: string; description: string; category: string }
-  | { kind: "url";  id: number; name: string; url: string; purpose: string };
+  | { kind: "url";  id: number; name: string; url: string; purpose: string }
+  | { kind: "route"; id: string; name: string; path: string; description: string };
+
+// Static in-app destinations exposed through the /slash picker so users can jump
+// to a page without it living in the top nav. Always shown above forms & URLs.
+const NAV_SLASH_ITEMS: SlashItem[] = [
+  { kind: "route", id: "library", name: "Library", path: "/books", description: "Browse and request company books" },
+  { kind: "route", id: "my-library", name: "My Library", path: "/my-library", description: "Track your borrows, requests, and extensions" },
+];
 
 export function Composer({
   value,
@@ -53,6 +63,7 @@ export function Composer({
   onStop,
   suggestions,
   onSuggestionSelect,
+  onNavigate,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -74,7 +85,7 @@ export function Composer({
   // /slash-picker state (forms + URLs)
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashStart, setSlashStart] = useState(-1);
-  const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  const [slashItems, setSlashItems] = useState<SlashItem[]>(NAV_SLASH_ITEMS);
   const [slashIndex, setSlashIndex] = useState(0);
   const slashFetchedRef = useRef(false);
 
@@ -122,7 +133,7 @@ export function Composer({
       const urls: SlashItem[] = urlsRes.ok
         ? (await urlsRes.json()).map((u: { id: number; name: string; url: string; purpose: string }) => ({ kind: "url" as const, ...u }))
         : [];
-      setSlashItems([...forms, ...urls]);
+      setSlashItems([...NAV_SLASH_ITEMS, ...forms, ...urls]);
     } catch { /* silent fail */ }
   }, []);
 
@@ -149,10 +160,12 @@ export function Composer({
     setSlashQuery(null);
     if (item.kind === "url") {
       window.open(item.url, "_blank", "noreferrer");
+    } else if (item.kind === "route") {
+      onNavigate?.(item.path);
     } else {
       onQuickAction?.(item.name);
     }
-  }, [value, slashStart, onChange, onQuickAction]);
+  }, [value, slashStart, onChange, onQuickAction, onNavigate]);
 
   const fetchMentions = useCallback(async (q: string) => {
     if (q === "") {
@@ -344,10 +357,14 @@ export function Composer({
                     >
                       <div className={cn(
                         "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                        item.kind === "form" ? "bg-primary/10 text-primary" : "bg-blue-500/10 text-blue-500"
+                        item.kind === "form" ? "bg-primary/10 text-primary"
+                          : item.kind === "route" ? "bg-emerald-500/10 text-emerald-500"
+                          : "bg-blue-500/10 text-blue-500"
                       )}>
                         {item.kind === "form"
                           ? <FileText className="h-3.5 w-3.5" />
+                          : item.kind === "route"
+                          ? <BookOpen className="h-3.5 w-3.5" />
                           : <ExternalLink className="h-3.5 w-3.5" />
                         }
                       </div>
@@ -358,15 +375,19 @@ export function Composer({
                             "shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border",
                             item.kind === "form"
                               ? "text-primary border-primary/20 bg-primary/5"
+                              : item.kind === "route"
+                              ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
                               : "text-blue-500 border-blue-500/20 bg-blue-500/5"
                           )}>
-                            {item.kind === "form" ? "Form" : "App"}
+                            {item.kind === "form" ? "Form" : item.kind === "route" ? "Page" : "App"}
                           </span>
                         </div>
-                        {(item.kind === "form" ? (item.description || item.category) : item.purpose) && (
+                        {(item.kind === "form" ? (item.description || item.category) : item.kind === "route" ? item.description : item.purpose) && (
                           <p className="text-[11px] text-muted-foreground truncate">
                             {item.kind === "form"
                               ? `${item.category ? item.category + " · " : ""}${item.description}`
+                              : item.kind === "route"
+                              ? item.description
                               : item.purpose}
                           </p>
                         )}

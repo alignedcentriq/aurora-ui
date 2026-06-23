@@ -698,6 +698,11 @@ class ChatFeedback(Base):
     feedback_text = Column(String, nullable=True)   # optional free-text comment
     user_message_embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Feedback-triage flywheel: set when an admin promotes/dismisses this failure so it
+    # drops out of the triage queue. triaged_action ∈ curated_answer | routing_fix | dismissed.
+    triaged_at = Column(DateTime, nullable=True, index=True)
+    triaged_action = Column(String, nullable=True)
+    triaged_by = Column(String, nullable=True)
 
 
 class CachedAnswer(Base):
@@ -1706,3 +1711,166 @@ class DashboardConfig(Base):
     widgets = Column(JSON, nullable=True)       # ordered list of {widget_type, config}
     updated_by = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class PendingAction(Base):
+    """Durable store for a state-changing action awaiting user confirmation.
+
+    Replaces the in-memory PENDING_IT_EMAIL_DRAFTS dict so a confirmed/awaiting action
+    survives a process restart. One row per pending write, keyed by session + idempotency
+    key; the action layer creates it on intent, then executes ONLY on explicit confirm.
+    See docs/action-safety-audit.md (Phase 2 of the routing/agent redesign).
+    """
+    __tablename__ = "pending_actions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_key = Column(String, index=True)        # _draft_key: session_id or user_email
+    user_email = Column(String, index=True)
+    action_type = Column(String, index=True)        # e.g. "software_install"
+    payload = Column(JSON, nullable=True)           # action args, e.g. {"software_name": "..."}
+    idempotency_key = Column(String, index=True, nullable=True)  # dedupe a single logical action
+    status = Column(String, default="pending", index=True)       # pending|executed|cancelled|expired
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+
+
+class ActionReceipt(Base):
+    """Durable receipt for every executed write action — the trust / compliance ledger.
+
+    One row per executed action recording WHAT was done, in WHICH system, WHEN, the
+    downstream CONFIRMATION id, and — where the downstream allows it — a one-click UNDO.
+    Emitted by receipt_service.emit() immediately after an action's side effect succeeds,
+    then surfaced both as an undo link in the assistant's confirmation and in the in-app
+    receipts feed. Idempotency_key dedupes re-emits of one logical action (retries / the
+    'you already have a ticket' path) so an action never yields two receipts.
+    """
+    __tablename__ = "action_receipts"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True)
+    action_type = Column(String, index=True)        # it_ticket | hr_query | grievance | software_install | ...
+    system = Column(String)                          # human label of the downstream system
+    summary = Column(String)                         # the "what", human-readable
+    confirmation_id = Column(String, index=True, nullable=True)   # IT-001 / HRQ-001 / RE-7964
+    entity_type = Column(String, nullable=True)      # for the undo handler to locate the row
+    entity_id = Column(String, nullable=True)
+    idempotency_key = Column(String, index=True, nullable=True)   # dedupe re-emits of one logical action
+    status = Column(String, default="executed", index=True)       # executed | undone
+    undoable = Column(Boolean, default=False)
+    undo_token = Column(String, unique=True, index=True, nullable=True)
+    undo_deadline = Column(DateTime, nullable=True)  # undo allowed only before this instant
+    undone_at = Column(DateTime, nullable=True)
+    receipt_metadata = Column("metadata", JSON, nullable=True)    # extra context for the feed / audit
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class ProactiveNudge(Base):
+    """A system-initiated, deterministic nudge surfaced in the in-app feed.
+
+    A background scan (nudge_service.run_due, fired by the startup scheduler)
+    detects actionable situations with pure DB look-ups — no LLM — and upserts one
+    row per (recipient, situation), keyed by ``dedup_key`` so re-scanning never
+    creates duplicates and a dismissed nudge stays dismissed for its period.
+
+    The in-app feed (GET /api/nudges) is the source of truth; an optional
+    best-effort Teams/email push is gated by settings.NUDGE_PUSH_ENABLED.
+    """
+    __tablename__ = "proactive_nudges"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=False)   # recipient (who to nudge)
+    nudge_type = Column(String, index=True, nullable=False)   # leave_expiring | approval_stale
+    # Stable identity of the situation; unique so the detector can upsert idempotently.
+    # Encodes the period so dismissals persist, e.g. "leave_expiring:u@x:2026:CL".
+    dedup_key = Column(String, unique=True, index=True, nullable=False)
+
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    severity = Column(String, default="action")              # info | action
+
+    # One-click action: apply_leave (returns a deeplink) | nudge_manager (re-sends approval).
+    action_type = Column(String, nullable=True)
+    action_payload = Column(JSON, nullable=True)             # prefilled args for the action
+
+    # What the nudge is about, for deep-linking from the UI.
+    entity_type = Column(String, nullable=True)             # leave | leave_type
+    entity_id = Column(String, nullable=True)
+
+    status = Column(String, default="new", index=True)      # new|seen|actioned|dismissed|expired
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    # Last time the action was fired / pushed — drives the manager-nudge cooldown.
+    last_actioned_at = Column(DateTime, nullable=True)
+    last_delivered_at = Column(DateTime, nullable=True)     # best-effort Teams/email push
+
+
+class OnboardingJourney(Base):
+    """One new hire's onboarding journey — the parent record tracking overall progress.
+
+    Created lazily (onboarding_service.ensure_journey) the first time a new hire opens
+    the onboarding page or the assistant asks about it. The ordered steps themselves live
+    in OnboardingStepProgress; the canonical step *definitions* are in
+    services/onboarding_template.py (code, not DB), so the sequence is versioned with the app.
+    """
+    __tablename__ = "onboarding_journeys"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), unique=True, index=True, nullable=False)
+    status = Column(String, default="active", index=True)    # active | completed
+    started_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    employee = relationship("Employee")
+    steps = relationship("OnboardingStepProgress", back_populates="journey",
+                         cascade="all, delete-orphan")
+    documents = relationship("OnboardingDocSubmission", back_populates="journey",
+                            cascade="all, delete-orphan")
+
+
+class OnboardingStepProgress(Base):
+    """Per-step status for one journey. One row per template step, seeded on journey creation."""
+    __tablename__ = "onboarding_step_progress"
+    __table_args__ = (
+        UniqueConstraint("journey_id", "step_key", name="uq_onboarding_step"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    journey_id = Column(Integer, ForeignKey(f"{SCHEMA}.onboarding_journeys.id"), index=True, nullable=False)
+    step_key = Column(String, nullable=False)                # matches onboarding_template.STEPS[].key
+    status = Column(String, default="pending")               # pending | in_progress | done | skipped
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(String, nullable=True)             # email of who marked it (self / HR)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    journey = relationship("OnboardingJourney", back_populates="steps")
+
+
+class OnboardingDocSubmission(Base):
+    """A joining document the hire uploaded — saved to disk and emailed to HR.
+
+    `doc_key` matches onboarding_template.ONBOARDING_DOCS[].doc_key. The
+    `onboarding_documents` step auto-completes once every required doc has a row here.
+    """
+    __tablename__ = "onboarding_doc_submissions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    journey_id = Column(Integer, ForeignKey(f"{SCHEMA}.onboarding_journeys.id"), index=True, nullable=False)
+    doc_key = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)               # path under uploads/onboarding_docs/<email>/
+    original_name = Column(String, nullable=True)
+    status = Column(String, default="submitted")             # submitted | emailed
+    emailed_to = Column(String, nullable=True)               # HR address the file was sent to
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    journey = relationship("OnboardingJourney", back_populates="documents")

@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
+import { useAuth } from "@/lib/auth-store";
 type Thread = { id: string; title: string; domain: string; time: string };
 
 const initialThreads: Thread[] = [];
@@ -40,6 +41,9 @@ export function AssistantSidebar({
   onHelp,
   className,
 }: SidebarProps) {
+  const { user } = useAuth();
+  const initials = user?.name?.split(" ").map(n => n[0]).join("") || "U";
+
   return (
     <aside
       className={cn(
@@ -132,16 +136,16 @@ export function AssistantSidebar({
         <div className="flex items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-[var(--sidebar-accent)] cursor-pointer">
           <div className="relative">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500/20 text-violet-400 font-bold text-xs border border-violet-500/30">
-              SS
+              {initials}
             </div>
             <div className="absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-[var(--sidebar-bg)] bg-emerald-500" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-[var(--sidebar-foreground)]">
-              Shivam Sharma
+              {user?.name || "User"}
             </div>
             <div className="truncate text-[10px] text-[var(--sidebar-foreground)]/40 font-medium">
-              Product · Bengaluru
+              {user?.email || ""}
             </div>
           </div>
           <LogOut className="h-4 w-4 text-[var(--sidebar-foreground)]/30 hover:text-red-400 transition-colors" />

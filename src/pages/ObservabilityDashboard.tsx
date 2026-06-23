@@ -39,6 +39,8 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FeedbackTriageTab } from "./FeedbackTriageTab";
+import { AdoptionTab } from "./AdoptionTab";
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {
@@ -196,7 +198,7 @@ function DomainBadge({ domain }: { domain: string }) {
 
 export function ObservabilityDashboard() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"logs" | "charts">("logs");
+  const [activeTab, setActiveTab] = useState<"logs" | "charts" | "triage" | "adoption">("logs");
 
   if (user?.role !== "Super Admin") {
     return (
@@ -222,7 +224,7 @@ export function ObservabilityDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
-              {(["logs", "charts"] as const).map((tab) => (
+              {(["logs", "charts", "triage", "adoption"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -233,7 +235,7 @@ export function ObservabilityDashboard() {
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  {tab === "logs" ? "Activity Logs" : "Charts & Analytics"}
+                  {tab === "logs" ? "Activity Logs" : tab === "charts" ? "Charts & Analytics" : tab === "triage" ? "Feedback Triage" : "Feature Adoption"}
                 </button>
               ))}
             </div>
@@ -242,7 +244,7 @@ export function ObservabilityDashboard() {
       </div>
 
       <div className="p-6">
-        {activeTab === "logs" ? <LogsTab /> : <ChartsTab />}
+        {activeTab === "logs" ? <LogsTab /> : activeTab === "charts" ? <ChartsTab /> : activeTab === "triage" ? <FeedbackTriageTab /> : <AdoptionTab />}
       </div>
     </div>
   );

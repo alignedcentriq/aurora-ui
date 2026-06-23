@@ -54,6 +54,18 @@ class AdminService:
         try:
             emp = AdminService._get_or_create_employee(db, email)
 
+            # Idempotency: same type+amount submitted moments ago is a double-submit.
+            from app.services.idempotency import find_recent_duplicate
+            dup = find_recent_duplicate(
+                db, Reimbursement, window_seconds=120,
+                employee_id=emp.id, type=type, amount=amount, status="Pending",
+            )
+            if dup:
+                return (
+                    f"You already submitted a {type} reimbursement of INR {amount:,.0f} moments ago "
+                    f"(ref #{dup.id}). I didn't create a duplicate."
+                )
+
             new_r = Reimbursement(
                 employee_id=emp.id,
                 type=type,
@@ -276,6 +288,18 @@ class AdminService:
         try:
             emp = AdminService._get_or_create_employee(db, email)
 
+            # Idempotency: same type+location requested moments ago is a double-submit.
+            from app.services.idempotency import find_recent_duplicate
+            dup = find_recent_duplicate(
+                db, Accommodation, window_seconds=120,
+                employee_id=emp.id, type=type, location=location, status="Pending",
+            )
+            if dup:
+                return (
+                    f"You already have a pending {type} accommodation request for {location} "
+                    f"(ref #{dup.id}). I didn't create a duplicate."
+                )
+
             new_a = Accommodation(
                 employee_id=emp.id,
                 type=type,
@@ -378,6 +402,18 @@ class AdminService:
         db = SessionLocal()
         try:
             emp = AdminService._get_or_create_employee(db, email)
+
+            # Idempotency: identical open complaint moments ago is a double-submit.
+            from app.services.idempotency import find_recent_duplicate
+            dup = find_recent_duplicate(
+                db, FacilityComplaint, window_seconds=120,
+                employee_id=emp.id, description=description, location=location, status="Open",
+            )
+            if dup:
+                return (
+                    f"You already logged this facility complaint — **Ticket ID: {dup.ticket_id}**. "
+                    f"I didn't create a duplicate."
+                )
 
             ticket_id = f"FC-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_c = FacilityComplaint(
@@ -490,6 +526,19 @@ class AdminService:
         db = SessionLocal()
         try:
             emp = AdminService._get_or_create_employee(db, email)
+
+            # Idempotency: identical food complaint moments ago is a double-submit.
+            from app.services.idempotency import find_recent_duplicate
+            dup = find_recent_duplicate(
+                db, FoodComplaint, window_seconds=120,
+                employee_id=emp.id, vendor_name=vendor_name,
+                complaint_type=complaint_type, description=description,
+            )
+            if dup:
+                return (
+                    f"You already logged this food complaint about {vendor_name} — "
+                    f"**Ticket ID: {dup.ticket_id}**. I didn't create a duplicate."
+                )
 
             ticket_id = f"FD-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
             new_c = FoodComplaint(

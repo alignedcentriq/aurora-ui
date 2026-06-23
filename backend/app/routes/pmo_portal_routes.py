@@ -4,12 +4,25 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_pmo
 from app.services.udemy_service import UdemyService
+from app.services.skill_gap_overlay_service import SkillSupplyService
 
 router = APIRouter(prefix="/api/portal/pmo", tags=["PMO Portal"])
 
 
 class RejectBody(BaseModel):
     reason: str = ""
+
+
+# ── Skill Supply (Alchemy gap × allocation overlay) ───────────────────────────
+
+@router.get("/skill-supply")
+def skill_supply(
+    top_n: int = 10,
+    user: CurrentUser = Depends(require_pmo),
+):
+    """Top hardest-to-staff skills: Alchemy market demand crossed with live
+    allocation availability, tagged BUY / TRAIN / REDEPLOY / STAFFABLE."""
+    return SkillSupplyService.analyze(user_email=user.email, top_n=max(1, min(top_n, 25)))
 
 
 # ── Udemy Licenses ────────────────────────────────────────────────────────────

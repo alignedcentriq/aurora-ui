@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { cleanUrlParams } from "./utils";
+import { getIdToken } from "./api-token";
 
 // Fast wrapper for fetch timeout
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 2000) => {
@@ -99,6 +100,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const checkAccount = async () => {
+      // 1. Dev Bypass / Mock Mode
+      const isDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      const params = new URLSearchParams(window.location.search);
+      const mockEmail = params.get("mock-email") || localStorage.getItem("mock-email") || (isDev ? "shivam.sharma@alignedautomation.com" : null);
+      const mockRole = params.get("mock-role") || localStorage.getItem("mock-role") || (isDev ? "Employee" : null);
+
+      if (mockEmail) {
+        if (params.get("mock-email")) localStorage.setItem("mock-email", mockEmail);
+        if (params.get("mock-role")) localStorage.setItem("mock-role", mockRole);
+        
+        let effectiveRole: Role = ROLE_MAP[mockRole.toLowerCase()] ?? (mockRole as Role);
+        let scopes: string[] = [];
+        try {
+          const accessRes = await fetchWithTimeout("/api/access/me", {
+            headers: { "x-user-email": mockEmail, "x-user-role": mockRole.toLowerCase() },
+          }, 2000);
+          if (accessRes.ok) {
+            const accessData = await accessRes.json();
+            if (accessData.has_override && accessData.role) {
+              effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
+              scopes = accessData.scopes || [];
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        setUser((prev) => ({
+          id: "mock-id",
+          name: mockEmail.split("@")[0].replace(/[._]/g, " "),
+          email: mockEmail,
+          role: effectiveRole,
+          scopes,
+          avatarUrl: prev?.avatarUrl || undefined,
+          team: [
+            { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
+            { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
+          ],
+        }));
+        setIsLoading(false);
+        return;
+      }
+
       // Only update user state when not in the middle of an interaction
       if (inProgress === InteractionStatus.None) {
         if (accounts.length > 0) {
@@ -215,6 +259,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchGraphPhoto();
   }, [accounts, instance, inProgress]);
 
+  // Pre-warm the TechElevate session at login: mint an Azure id_token silently
+  // and exchange it for a TechElevate JWT cached server-side, so the portal
+  // opens without a connect round-trip. Fire-and-forget — if it fails, the
+  // portal still establishes the session lazily on first use.
+  const teWarmedFor = React.useRef<string | null>(null);
+  useEffect(() => {
+    const warmTechElevate = async () => {
+      if (!user?.email || teWarmedFor.current === user.email) return;
+      teWarmedFor.current = user.email;
+      try {
+        const idToken = await getIdToken();
+        if (!idToken) return;
+        await fetch("/api/portal/techelevate/connect", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-user-email": user.email,
+            "x-user-role": user.role.toLowerCase(),
+          },
+          body: JSON.stringify({ id_token: idToken }),
+        });
+      } catch {
+        // non-fatal — portal connects lazily on first use
+      }
+    };
+    warmTechElevate();
+  }, [user?.email, user?.role]);
+
   const login = async () => {
     if (isInteracting) return;
     try {
@@ -227,6 +299,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    localStorage.removeItem("mock-email");
+    localStorage.removeItem("mock-role");
     if (isInteracting) return;
     try {
       if (user?.email) {

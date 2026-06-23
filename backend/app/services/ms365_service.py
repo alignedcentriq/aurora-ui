@@ -84,6 +84,26 @@ async def fetch_user_by_email(email: str) -> dict:
         return _error(f"Failed to look up user: {e}")
 
 
+async def fetch_user_photo(user: str) -> tuple[bytes, str] | None:
+    """Fetch a user's profile photo bytes from Graph (app-only User.Read.All).
+
+    `user` is an email/UPN or id. Returns (bytes, content_type) or None when the
+    user has no photo (404) or the call fails — the frontend then shows initials.
+    """
+    from urllib.parse import quote
+    url = f"{GRAPH_BASE}/users/{quote(user.strip())}/photo/$value"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                url, headers={"Authorization": f"Bearer {_app_token()}"}
+            )
+        if resp.status_code == 200 and resp.content:
+            return resp.content, resp.headers.get("content-type", "image/jpeg")
+        return None
+    except Exception:
+        return None
+
+
 async def fetch_user_manager(user: str) -> dict:
     """Fetch a user's manager (app-only User.Read.All). `user` is an email/UPN or id."""
     from urllib.parse import quote
@@ -779,6 +799,12 @@ USER_SELECT = (
     "city,state,country,accountEnabled,employeeHireDate"
 )
 USER_EXPAND = "manager($select=displayName,mail)"
+# For the org-user LIST query, the manager must be expanded with `$levels` — Graph
+# requires it when $expand=manager is combined with the advanced query ($count +
+# endsWith) that filters the directory to the company domain. $levels=1 keeps it to
+# the direct manager (no transitive chain). This pulls managers inline, avoiding the
+# per-user /manager lookups that Graph throttles hard at org scale.
+USER_LIST_EXPAND = "manager($levels=1;$select=id,displayName,mail)"
 
 
 def _parse_graph_dt(value: str | None):
@@ -843,18 +869,21 @@ async def fetch_org_users(top: int = 100) -> dict:
     directory's tens of thousands of guest/resource objects are never paginated
     client-side.
     """
+    token = _app_token()
     url = f"{GRAPH_BASE}/users"
+    # Advanced domain filter with the manager expanded inline via $levels (see
+    # sync_users_to_db) — managers come back with each user, no per-user lookups.
     params = {
         "$select": USER_SELECT,
-        "$expand": USER_EXPAND,
+        "$expand": USER_LIST_EXPAND,
         "$filter": f"accountEnabled eq true and endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
         "$count": "true",
         "$top": str(min(top, 999)),
     }
-    headers = _headers(_app_token(), {"ConsistencyLevel": "eventual"})
+    headers = _headers(token, {"ConsistencyLevel": "eventual"})
     try:
         users = []
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             while url:
                 resp = await client.get(url, headers=headers, params=params)
                 resp.raise_for_status()
@@ -881,74 +910,248 @@ async def fetch_org_users(top: int = 100) -> dict:
         return _error(f"Failed to fetch org users: {e}")
 
 
-async def sync_users_to_db(limit: int = 100) -> dict:
-    """Fetch company-domain users from Azure AD and bulk-upsert into ms365_users.
+async def sync_users_to_db(limit: int = 0) -> dict:
+    """Fetch company-domain users from Azure AD and upsert into ms365_users per page.
 
-    App-only (application User.Read.All). Filters server-side (see fetch_org_users)
-    and caps at `limit` users (default 100) so a single Graph page is fetched — no
-    full-directory pagination. Upserts in one statement keyed on azure_id.
+    Commits each page immediately so progress is never lost if Graph throttles or
+    the process dies mid-way. Under heavy throttling a page retries up to 8 times
+    then gives up and commits what it has (partial=True in the result).
     """
     import httpx as _httpx
     from app.database import SessionLocal
     from app.models import MS365User
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     import datetime as _dt
+    import asyncio
 
+    cap = limit if (limit and limit > 0) else 100_000
+    token = _app_token()
     url = f"{GRAPH_BASE}/users"
     params = {
         "$select": USER_SELECT,
-        "$expand": USER_EXPAND,
+        "$expand": USER_LIST_EXPAND,
         "$filter": f"accountEnabled eq true and endsWith(mail,'{_ORG_MAIL_DOMAIN}')",
         "$count": "true",
-        "$top": str(min(limit, 999)),
+        "$top": str(min(cap, 999)),
     }
-    headers = _headers(_app_token(), {"ConsistencyLevel": "eventual"})
+    headers = _headers(token, {"ConsistencyLevel": "eventual"})
 
-    seen: dict[str, dict] = {}
+    total_synced = 0
+    pages = 0
+    throttled_out = False
+    _MAX_429_PER_PAGE = 8
+
+    db = SessionLocal()
     try:
-        async with _httpx.AsyncClient(timeout=30.0) as client:
-            while url and len(seen) < limit:
+        async with _httpx.AsyncClient(timeout=90.0) as client:
+            while url and total_synced < cap:
+                retries = 0
                 resp = await client.get(url, headers=headers, params=params)
+                while resp.status_code == 429:
+                    retries += 1
+                    if retries > _MAX_429_PER_PAGE:
+                        throttled_out = True
+                        break
+                    await asyncio.sleep(min(int(resp.headers.get("Retry-After", 5)), 20))
+                    resp = await client.get(url, headers=headers, params=params)
+                if throttled_out:
+                    break
                 resp.raise_for_status()
                 data = resp.json()
+                pages += 1
+
+                now = _dt.datetime.utcnow()
+                batch: list[dict] = []
                 for u in data.get("value", []):
                     row = _normalize_user_row(u)
                     if row is None:
                         continue
-                    seen[row["azure_id"]] = row  # dedupe by azure_id to satisfy ON CONFLICT
-                    if len(seen) >= limit:
-                        break
+                    row["synced_at"] = now
+                    batch.append(row)
+
+                if batch:
+                    stmt = pg_insert(MS365User).values(batch)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["azure_id"],
+                        set_={col: getattr(stmt.excluded, col) for col in _MS365_UPSERT_COLS},
+                    )
+                    db.execute(stmt)
+                    db.commit()
+                    total_synced += len(batch)
+
                 url = data.get("@odata.nextLink")
                 params = {}
     except _httpx.HTTPStatusError as e:
+        db.rollback()
         return _error(f"Sync error fetching users: {e.response.text[:300]}", e.response.status_code)
     except Exception as e:
-        return _error(f"Sync error: {e}")
-
-    rows = list(seen.values())
-    if not rows:
-        return {"success": True, "synced": 0, "total_fetched": 0}
-
-    now = _dt.datetime.utcnow()
-    for r in rows:
-        r["synced_at"] = now
-
-    db = SessionLocal()
-    try:
-        stmt = pg_insert(MS365User).values(rows)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["azure_id"],
-            set_={col: getattr(stmt.excluded, col) for col in _MS365_UPSERT_COLS},
-        )
-        db.execute(stmt)
-        db.commit()
-    except Exception as e:
         db.rollback()
-        return _error(f"DB upsert error: {e}")
+        return _error(f"Sync error: {e}")
     finally:
         db.close()
 
-    return {"success": True, "synced": len(rows), "total_fetched": len(rows)}
+    return {
+        "success": True,
+        "synced": total_synced,
+        "total_fetched": total_synced,
+        "pages": pages,
+        "partial": throttled_out,
+    }
+
+
+async def resolve_missing_managers() -> int:
+    """Fetch manager rows referenced in ms365_users but not yet stored there.
+
+    After a (possibly partial) sync, users have manager_email pointing to people
+    not yet in the DB, breaking the tree into many false roots. This resolves each
+    missing manager with a single lightweight /users/{email} Graph call (no
+    pagination, no advanced query) so the org tree has no broken links.
+    """
+    from app.database import SessionLocal
+    from app.models import MS365User
+    from sqlalchemy import text
+    import datetime as _dt
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    import asyncio
+
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT DISTINCT manager_email
+            FROM ms365_users
+            WHERE manager_email != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM ms365_users u WHERE u.email = manager_email
+              )
+        """))
+        missing = [row[0] for row in result if row[0]]
+    except Exception:
+        missing = []
+    finally:
+        db.close()
+
+    if not missing:
+        return 0
+
+    fetched = 0
+    for email in missing:
+        res = await fetch_user_by_email(email)
+        if not res.get("success"):
+            continue
+        user_row = res.get("user")
+        if not user_row:
+            continue
+        user_row["synced_at"] = _dt.datetime.utcnow()
+        db = SessionLocal()
+        try:
+            stmt = pg_insert(MS365User).values([user_row])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["azure_id"],
+                set_={col: getattr(stmt.excluded, col) for col in _MS365_UPSERT_COLS},
+            )
+            db.execute(stmt)
+            db.commit()
+            fetched += 1
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+        await asyncio.sleep(0.15)  # gentle pacing — single-user calls, but still app token
+
+    return fetched
+
+
+async def _cleanup_non_human_rows() -> int:
+    """Delete ms365_users rows that the non-human heuristic flags.
+
+    Old syncs ran before _is_non_human was wired into _normalize_user_row; this
+    purge evicts conference rooms, shared mailboxes, and service accounts that
+    snuck in.
+    """
+    from app.database import SessionLocal
+    from app.models import MS365User
+
+    db = SessionLocal()
+    try:
+        rows = db.query(MS365User.azure_id, MS365User.name, MS365User.email).all()
+        to_delete = [r.azure_id for r in rows if _is_non_human(r.name or "", r.email or "")]
+        if to_delete:
+            db.query(MS365User).filter(
+                MS365User.azure_id.in_(to_delete)
+            ).delete(synchronize_session=False)
+            db.commit()
+        return len(to_delete)
+    except Exception:
+        db.rollback()
+        return 0
+    finally:
+        db.close()
+
+
+# ── Background sync orchestration ────────────────────────────────────────────
+# A full org sync (~1.1k users) spends 1-2 min resolving managers because Graph
+# throttles per-user /manager lookups; running it inline would time out the HTTP
+# client. So the route launches run_sync_background() and the UI polls status.
+_sync_status: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "synced": 0,
+    "error": None,
+}
+
+
+def get_sync_status() -> dict:
+    """Current background-sync state plus live directory totals from the DB."""
+    from app.database import SessionLocal
+    from app.models import MS365User
+    from sqlalchemy import func
+
+    db = SessionLocal()
+    try:
+        total = db.query(MS365User).count()
+        with_mgr = db.query(MS365User).filter(MS365User.manager_email != "").count()
+        latest = db.query(func.max(MS365User.synced_at)).scalar()
+    finally:
+        db.close()
+    return {
+        **_sync_status,
+        "started_at": _sync_status["started_at"].isoformat() if _sync_status["started_at"] else None,
+        "finished_at": _sync_status["finished_at"].isoformat() if _sync_status["finished_at"] else None,
+        "db_count": total,
+        "db_with_manager": with_mgr,
+        "last_synced_at": latest.isoformat() if latest else None,
+    }
+
+
+async def run_sync_background(limit: int = 0) -> None:
+    """Run the full sync pipeline: paginated user fetch → non-human cleanup → missing-manager resolution.
+    Idempotent: a second call while one is running is a no-op."""
+    import datetime as _dt
+
+    if _sync_status["running"]:
+        return
+    _sync_status.update(
+        running=True, error=None, synced=0,
+        started_at=_dt.datetime.utcnow(), finished_at=None,
+    )
+    try:
+        result = await sync_users_to_db(limit=limit)
+        if result.get("success"):
+            _sync_status["synced"] = result.get("synced", 0)
+            # Remove conference rooms / service accounts that slipped in from old syncs.
+            await _cleanup_non_human_rows()
+            # Fetch referenced managers not yet in the DB so the tree has no broken links.
+            extra = await resolve_missing_managers()
+            if extra:
+                _sync_status["synced"] += extra
+        else:
+            _sync_status["error"] = result.get("error", "sync failed")
+    except Exception as e:
+        _sync_status["error"] = str(e)
+    finally:
+        _sync_status["running"] = False
+        _sync_status["finished_at"] = _dt.datetime.utcnow()
 
 
 async def fetch_team_members(token: str, team_id: str) -> dict:

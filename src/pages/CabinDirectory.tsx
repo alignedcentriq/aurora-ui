@@ -169,7 +169,8 @@ export function CabinDirectory() {
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="overflow-x-auto no-scrollbar -mx-1 px-1">
+        <div className="space-y-3 min-w-[820px]">
           {/* Column headers */}
           <div className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_32px] gap-3 px-4 items-center">
             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
@@ -231,6 +232,7 @@ export function CabinDirectory() {
               </button>
             </div>
           ))}
+        </div>
         </div>
       )}
 

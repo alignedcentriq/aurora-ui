@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, useNavigate, Link, useLocation } from "@tanstack/react-router";
 import { Logo } from "@/components/Logo";
+import { CopilotSidebar } from "@/components/assistant/CopilotSidebar";
 import { BrandName } from "@/components/BrandName";
 import {
   MessageSquare,
@@ -17,7 +18,6 @@ import {
   Trash2,
   X,
   Sparkles,
-  BookOpen,
   FileText,
   Crown,
   Globe,
@@ -26,11 +26,13 @@ import {
   Sun,
   Moon,
   PlayCircle,
+  Rocket,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
 import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
+import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
@@ -66,8 +68,10 @@ const ROLE_META: Record<Role, { icon: any; color: string; label: string; cKey: s
 
 const NAV_COLORS: Record<string, string> = {
   "/": "var(--clarity)",
+  "/onboarding": "var(--collaboration)",
   "/books": "var(--connectivity)",
   "/documents": "var(--connectivity)",
+  "/directory": "var(--connectivity)",
   "/my-requests": "var(--collaboration)",
   "/control-hub": "var(--clarity)",
   "/settings": "var(--capacity)",
@@ -199,8 +203,8 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
         </div>
       </div>
 
-      {/* Sweeping Analog Clock Face */}
-      <div className="relative w-24 h-24 rounded-full border border-foreground/10 bg-background/40 flex items-center justify-center shadow-inner">
+      {/* Sweeping Analog Clock Face — hidden on mobile, digital time below is shown instead */}
+      <div className="relative w-24 h-24 rounded-full border border-foreground/10 bg-background/40 hidden sm:flex items-center justify-center shadow-inner">
         <div className="absolute w-2 h-2 rounded-full bg-foreground z-20" />
         
         {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((tick) => (
@@ -359,8 +363,9 @@ function LayoutComponent() {
 
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
-    { to: "/books", icon: BookOpen, label: "Library", show: true },
+    { to: "/onboarding", icon: Rocket, label: "Onboarding", show: true },
     { to: "/documents", icon: FileText, label: "Documents", show: true },
+    { to: "/directory", icon: Users, label: "Directory", show: true },
     { to: "/my-requests", icon: ClipboardCheck, label: "My Requests", show: true },
     {
       to: "/control-hub",
@@ -389,6 +394,8 @@ function LayoutComponent() {
     </div>
   );
 
+  const showCopilot = location.pathname !== "/" && location.pathname !== "/settings";
+
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
       
@@ -413,7 +420,7 @@ function LayoutComponent() {
 
         {/* Center: always-visible nav */}
         <div className="flex min-w-0 items-center justify-center">
-          <nav className="hidden md:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1">
+          <nav className="hidden lg:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1">
             {navItems.filter((n) => n.show).map((item) => {
               const Icon = item.icon;
               const active = isActive(item.to);
@@ -440,7 +447,7 @@ function LayoutComponent() {
                     />
                   )}
                   <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: active ? accentColor : "inherit" }} />
-                  <span>{item.label}</span>
+                  <span className="hidden xl:inline">{item.label}</span>
                 </Link>
               );
             })}
@@ -450,7 +457,7 @@ function LayoutComponent() {
         {/* Right Side: Theme, Announcement, History drawer toggle, User profile role switcher */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Notifications / Announcements banner inside Header */}
-          <div className="hidden md:block">
+          <div className="hidden xl:block">
             <AnnouncementBanner variant="topbar" />
           </div>
 
@@ -471,6 +478,9 @@ function LayoutComponent() {
           >
             <Globe className="h-4 w-4 text-primary" />
           </button>
+
+          {/* Proactive nudges (system-initiated feed) */}
+          <ProactiveNudgeFeed />
 
           {/* Theme Toggle */}
           <button
@@ -518,6 +528,48 @@ function LayoutComponent() {
                   <div className="px-3 py-1.5 border-b border-border/40 mb-1.5 flex flex-col">
                     <span className="text-xs font-bold text-foreground truncate">{user.name}</span>
                     <span className="text-[10px] text-muted-foreground truncate font-medium">{user.role}</span>
+                  </div>
+
+                  {/* Mobile-only quick actions — these live as top-bar buttons on ≥sm screens */}
+                  <div className="sm:hidden border-b border-border/40 mb-1.5 pb-1.5">
+                    <div className="px-3 py-1 flex items-center gap-1.5 mb-1">
+                      <Sparkles className="h-3 w-3 text-primary" />
+                      <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
+                        Quick Actions
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <button
+                        onClick={() => {
+                          handleThemeToggle();
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
+                      >
+                        {activeTheme === "dark" ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-indigo-400" />}
+                        <span className="flex-1 truncate">{activeTheme === "dark" ? "Light mode" : "Dark mode"}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setClocksOverlayOpen(true);
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
+                      >
+                        <Globe className="h-3.5 w-3.5 text-primary" />
+                        <span className="flex-1 truncate">Office Clocks</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          openIntro();
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
+                      >
+                        <PlayCircle className="h-3.5 w-3.5 text-primary" />
+                        <span className="flex-1 truncate">Watch intro tour</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="px-3 py-1 flex items-center gap-1.5 mb-1">
@@ -574,7 +626,7 @@ function LayoutComponent() {
       </header>
 
       {/* --- MAIN WORKSPACE --- */}
-      <main className="flex-1 w-full min-h-0 relative z-0 pb-20 md:pb-0 overflow-hidden">
+      <main className="flex-1 w-full min-h-0 relative z-0 pb-20 lg:pb-0 overflow-hidden">
         <Outlet />
       </main>
 
@@ -700,7 +752,7 @@ function LayoutComponent() {
       </AnimatePresence>
 
       {/* --- BOTTOM FLOATING NAVIGATION DOCK (MOBILE) --- */}
-      <div className="flex md:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)' }}>
+      <div className="flex lg:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)' }}>
         {navItems
           .filter((n) => n.show)
           .map((item) => {
@@ -714,7 +766,7 @@ function LayoutComponent() {
                 to={item.to}
                 title={item.label}
                 className={cn(
-                  "group relative flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px]",
+                  "group relative flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px]",
                   active ? "text-foreground font-bold" : "text-muted-foreground hover:text-foreground"
                 )}
                 style={active ? {
@@ -808,7 +860,7 @@ function LayoutComponent() {
 
       {/* --- FLOATING OFFICE RUNNER MASCOT --- */}
       {theme && location.pathname === "/" && (
-        <div className="fixed bottom-20 md:bottom-28 right-4 md:right-8 z-40">
+        <div className="fixed bottom-20 lg:bottom-28 right-4 md:right-8 z-40">
           <SittingBuddy />
         </div>
       )}
@@ -837,6 +889,9 @@ function LayoutComponent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* --- COPILOT SIDEBAR DRAWER --- */}
+      {showCopilot && <CopilotSidebar />}
 
     </div>
   );

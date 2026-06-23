@@ -169,7 +169,7 @@ const DOC_GEN_RE = /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:
 // ── My-requests navigation ────────────────────────────────────────────────────
 const MY_REQUESTS_VIEW_RE = /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
 
-export function AssistantView() {
+export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
     useChatStore();
   // The active chat is "thinking" only if it is the thread currently generating a response
@@ -238,7 +238,16 @@ export function AssistantView() {
       .then((r) => r.ok ? r.json() : [])
       .then((data) => { if (Array.isArray(data)) formsRef.current = data; })
       .catch(() => {});
-  }, [user?.email]);
+    // Role-aware "what can you do" starters + live signals for the empty state.
+    fetch("/api/capabilities", { headers })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data && Array.isArray(data.starters)) {
+          setCaps({ starters: data.starters, live: Array.isArray(data.live) ? data.live : [] });
+        }
+      })
+      .catch(() => {});
+  }, [user?.email, user?.role]);
 
   // Open a form from the announcement banner image click.
   useEffect(() => {
@@ -259,6 +268,12 @@ export function AssistantView() {
   }, [activeId, addTurn]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [starterPage, setStarterPage] = useState(0);
+  // Role-aware capability discovery for the empty state (fail-soft; falls back
+  // to local quick-queries if unavailable). `live` carries pending signals.
+  const [caps, setCaps] = useState<{
+    starters: { title: string; prompt: string }[];
+    live: { title: string; prompt: string }[];
+  } | null>(null);
 
   // Hands-free voice mode ("Jarvis")
   const { voiceMode, voiceState, setVoiceState, setLiveTranscript } = useVoiceStore();
@@ -281,6 +296,17 @@ export function AssistantView() {
       createThread();
     }
   }, [activeId, createThread]);
+
+  // Start a fresh thread whenever the user's role changes (prevents previous-role
+  // AI responses — which may reference other users' names from seeded data — from
+  // persisting visibly across role switches).
+  const prevRoleRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevRoleRef.current !== undefined && prevRoleRef.current !== user?.role) {
+      createThread();
+    }
+    prevRoleRef.current = user?.role;
+  }, [user?.role, createThread]);
 
   // Clear suggestion chips whenever the active thread changes
   useEffect(() => {
@@ -569,8 +595,9 @@ export function AssistantView() {
       // Matches: "book/reserve a room", "book [named room] for/on/at [time or date]"
       // Does NOT rely on hardcoded room names — uses structure instead.
       const isRoomBooking =
-        /\b(book|reserve)\b.{0,40}\b(room|conference|meeting room|conf room)\b/i.test(text) ||
-        /\b(room|conference room|meeting room)\b.{0,40}\b(book|reserve|available|free)\b/i.test(text) ||
+        /\b(book|reserve)\b.{0,40}\b(rooms?|conference|meeting rooms?|conf rooms?)\b/i.test(text) ||
+        /\b(rooms?|conference rooms?|meeting rooms?)\b.{0,40}\b(book|reserve|available|availability|free)\b/i.test(text) ||
+        /\b(available|free|availability)\b.{0,25}\b(rooms?|meeting rooms?|conference rooms?)\b/i.test(text) ||
         /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(text);
       if (isRoomBooking) {
         const prefill = parseRoomBooking(text);
@@ -1509,12 +1536,41 @@ export function AssistantView() {
           className="relative flex-1 overflow-y-auto scroll-smooth"
         >
           <div className={cn(
-            "mx-auto w-full max-w-5xl px-4 sm:px-8 flex flex-col",
+            "mx-auto w-full flex flex-col",
+            isCopilot ? "max-w-xl px-4" : "max-w-5xl px-4 sm:px-8",
             activeThread.turns.length === 0 ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12" : "pt-4 md:pt-8 pb-6 md:pb-12",
           )}>
             {activeThread.turns.length === 0 ? (
-              /* ──── Empty State ──── */
-              <motion.section
+              isCopilot ? (
+                /* ──── Simplified Copilot Empty State ──── */
+                <motion.section
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5 }}
+                  className="flex w-full flex-col items-center justify-center text-center max-w-md mx-auto relative py-12 px-4 select-none"
+                >
+                  <motion.div
+                    className="relative shrink-0 flex items-center justify-center mb-6"
+                    animate={{ y: [0, -6, 0] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  >
+                    <Logo size="lg" />
+                    <motion.div
+                      className="absolute -inset-2 rounded-2xl opacity-40 blur-md pointer-events-none bg-gradient-to-r from-primary to-[#00c4bb]"
+                      animate={{ opacity: [0.3, 0.6, 0.3] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    />
+                  </motion.div>
+                  <h2 className="text-base font-bold tracking-tight mb-2 text-foreground">
+                    How can I help you today?
+                  </h2>
+                  <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
+                    Ask me questions about this page, operational data, or request workspace actions.
+                  </p>
+                </motion.section>
+              ) : (
+                /* ──── Empty State ──── */
+                <motion.section
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.6 }}
@@ -1565,39 +1621,74 @@ export function AssistantView() {
                   className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
                 >
                   <div className="try-asking-container">
+                    {/* Live signals — surface anything waiting on the user up front. */}
+                    {caps?.live && caps.live.length > 0 && (
+                      <div className="flex flex-wrap justify-center gap-2 mb-3">
+                        {caps.live.map((l) => (
+                          <button
+                            key={l.title}
+                            onClick={() => !busy && send(l.prompt)}
+                            className="group flex items-center gap-2 rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] sm:text-[12px] font-semibold text-amber-700 dark:text-amber-300 shadow-sm transition-all hover:bg-amber-400/20 hover:scale-[1.02]"
+                          >
+                            <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            {l.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">Try asking…</p>
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={starterPage}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -6 }}
-                        transition={{ duration: 0.3 }}
-                        className="flex flex-wrap justify-center gap-2"
-                      >
-                        {queries.slice(
-                          starterPage * STARTER_PAGE_SIZE,
-                          starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
-                        ).map((q) => {
-                          const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
-                          return (
-                            <button
-                              key={q.prompt}
-                              onClick={() => !busy && send(q.prompt)}
-                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
-                            >
-                              <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                                <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
-                              </span>
-                              {q.label}
-                            </button>
-                          );
-                        })}
-                      </motion.div>
-                    </AnimatePresence>
+                    {caps?.starters && caps.starters.length > 0 ? (
+                      /* Role-aware capability starters (static, from /api/capabilities). */
+                      <div className="flex flex-wrap justify-center gap-2">
+                        {caps.starters.map((s) => (
+                          <button
+                            key={s.prompt}
+                            title={s.title}
+                            onClick={() => !busy && send(s.prompt)}
+                            className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                          >
+                            <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                              <Sparkles className="h-2.5 w-2.5 text-primary" />
+                            </span>
+                            {s.prompt}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <AnimatePresence mode="wait">
+                        <motion.div
+                          key={starterPage}
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.3 }}
+                          className="flex flex-wrap justify-center gap-2"
+                        >
+                          {queries.slice(
+                            starterPage * STARTER_PAGE_SIZE,
+                            starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
+                          ).map((q) => {
+                            const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
+                            return (
+                              <button
+                                key={q.prompt}
+                                onClick={() => !busy && send(q.prompt)}
+                                className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              >
+                                <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                  <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
+                                </span>
+                                {q.label}
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      </AnimatePresence>
+                    )}
                   </div>
                 </motion.div>
               </motion.section>
+              )
             ) : (
               /* ──── Chat Messages ──── */
               <section className="space-y-6 pb-6">
@@ -1657,7 +1748,7 @@ export function AssistantView() {
                               return (
                                 <>
                                   {cleaned && (
-                                    <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm">
+                                    <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
                                       <ReactMarkdown
                                         remarkPlugins={[remarkGfm]}
                                         components={{
@@ -1983,6 +2074,7 @@ export function AssistantView() {
                 toast("Attachments", { description: "This feature is currently in preview." })
               }
               onQuickAction={(p) => !busy && send(p)}
+              onNavigate={(path) => navigate({ to: path })}
               onGenerateDoc={activeThread.turns.length > 0 ? openDocModal : undefined}
               suggestions={suggestions}
               onSuggestionSelect={(t) => !busy && send(t)}

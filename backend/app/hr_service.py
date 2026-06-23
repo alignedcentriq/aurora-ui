@@ -251,39 +251,84 @@ class HRService:
 
     @staticmethod
     def submit_hr_query(email: str, category: str, subject: str, description: str) -> str:
-        """Create an HR query and notify HR team."""
-        from app.config import settings
-        from app.services.email_service import send_hr_query_notification
+        """Public entry point (unchanged behaviour): create the HR query, emit a receipt, and
+        return the human string with the inline receipt+undo line appended. The side effect is
+        factored into _submit_hr_query_core so the action registry can reuse it and own receipt
+        emission itself — see docs/action-registry-design.md."""
         db = SessionLocal()
         try:
-            emp = HRService.get_employee_by_email(db, email)
-            count = db.query(HRQuery).count()
-            reference_id = f"HRQ-{count + 1:03}"
-            query = HRQuery(
+            core = HRService._submit_hr_query_core(db, email, category, subject, description)
+            try:
+                from app.services import receipt_service as _receipt
+                _line = _receipt.format_receipt_line(_receipt.emit(
+                    core["user_email"], "hr_query", "HR", f"HR query: {subject}",
+                    confirmation_id=core["confirmation_id"], idempotency_key=core["confirmation_id"],
+                ))
+            except Exception:
+                _line = ""  # receipt bookkeeping must never break the action
+            return core["message"] + (f"\n\n{_line}" if _line else "")
+        finally:
+            db.close()
+
+    @staticmethod
+    def _submit_hr_query_core(db, email: str, category: str, subject: str, description: str) -> dict:
+        """Side effect only — create an HR query and notify HR. Returns
+        {"confirmation_id", "user_email", "already", "message"} WITHOUT emitting a receipt, so
+        each caller (the submit_hr_query shim and the action registry) owns receipt emission."""
+        from app.services.email_service import send_hr_query_notification
+        emp = HRService.get_employee_by_email(db, email)
+        count = db.query(HRQuery).count()
+        reference_id = f"HRQ-{count + 1:03}"
+        query = HRQuery(
+            reference_id=reference_id,
+            employee_id=emp.id,
+            category=category,
+            subject=subject,
+            description=description,
+        )
+        db.add(query)
+        db.commit()
+        try:
+            send_hr_query_notification(
+                user_email=emp.email,
                 reference_id=reference_id,
-                employee_id=emp.id,
+                employee_name=emp.name,
+                employee_email=emp.email,
                 category=category,
                 subject=subject,
                 description=description,
             )
-            db.add(query)
+        except Exception:
+            pass
+        return {
+            "confirmation_id": reference_id,
+            "user_email": emp.email,
+            "already": False,
+            "message": (f"Your HR query has been submitted (Ref: **{reference_id}**). "
+                        f"Category: {category}. HR will respond within 2 working days."),
+        }
+
+    @staticmethod
+    def withdraw_hr_query(reference_id: str, email: str) -> dict:
+        """Undo handler for a just-raised HR query. Withdraws it ONLY while still 'Open'
+        (HR hasn't started responding). Verifies ownership by employee email."""
+        db = SessionLocal()
+        try:
+            q = db.query(HRQuery).filter(HRQuery.reference_id == reference_id).first()
+            if not q:
+                return {"success": False, "error": "not_found"}
+            emp = HRService.get_employee_by_email(db, email)
+            if not emp or q.employee_id != emp.id:
+                return {"success": False, "error": "not_owner"}
+            if q.status == "Cancelled":
+                return {"success": True, "already": True}
+            if q.status != "Open":
+                return {"success": False, "error": "in_progress",
+                        "message": f"HR has already moved this query to '{q.status}', "
+                                   f"so it can't be withdrawn automatically."}
+            q.status = "Cancelled"
             db.commit()
-            try:
-                send_hr_query_notification(
-                    user_email=emp.email,
-                    reference_id=reference_id,
-                    employee_name=emp.name,
-                    employee_email=emp.email,
-                    category=category,
-                    subject=subject,
-                    description=description,
-                )
-            except Exception as e:
-                pass
-            return (
-                f"Your HR query has been submitted (Ref: **{reference_id}**). "
-                f"Category: {category}. HR will respond within 2 working days."
-            )
+            return {"success": True}
         finally:
             db.close()
 

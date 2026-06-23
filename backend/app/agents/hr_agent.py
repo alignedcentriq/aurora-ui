@@ -81,12 +81,9 @@ def submit_hr_query(
     category examples: Payroll, Attendance, Tax, Benefits, General.
     Use the user's own words for subject and description."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
-    return HRService.submit_hr_query(
-        email=email,
-        category=category,
-        subject=subject,
-        description=description,
-    )
+    from app.services import actions  # routed through the action registry spine
+    return actions.run("hr_query", actor_email=email, category=category,
+                       subject=subject, description=description).human_message
 
 
 @tool
@@ -123,6 +120,38 @@ def get_team_absence(
     )
 
 
+@tool
+def onboarding_status(state: Annotated[dict, InjectedState]):
+    """Show the user's onboarding progress and what to do next.
+    Call when a new joiner asks 'what's next in my onboarding', 'how do I get set up',
+    'what do I still need to do', or about their onboarding checklist/steps."""
+    email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
+    from app.services import onboarding_service as ob
+    view = ob.get_for_employee(email)
+    if not view:
+        return "I couldn't find an employee record for your account, so there's no onboarding journey yet."
+
+    pct = view.get("progress_pct", 0)
+    steps = view.get("steps", [])
+    done = [s for s in steps if s["status"] in ("done", "skipped")]
+    pending = [s for s in steps if s["status"] not in ("done", "skipped")]
+
+    if view.get("status") == "completed":
+        return f"🎉 You're all set — your onboarding is **100% complete**. Nice work!"
+
+    lines = [f"**Your onboarding — {pct}% complete** ({len(done)}/{len(steps)} steps done)\n"]
+    nxt_key = view.get("next_step")
+    nxt = next((s for s in steps if s["key"] == nxt_key), None)
+    if nxt:
+        lines.append(f"👉 **Next up: {nxt['title']}** — {nxt['description']}")
+    if len(pending) > 1:
+        rest = [s["title"] for s in pending if s["key"] != nxt_key]
+        if rest:
+            lines.append("\nStill to do: " + ", ".join(rest) + ".")
+    lines.append("\nOpen the **Onboarding** page to work through each step.")
+    return "\n".join(lines)
+
+
 _tools = [
     search_policy,
     get_leave_balance,
@@ -130,11 +159,12 @@ _tools = [
     submit_hr_query,
     submit_grievance,
     get_team_absence,
+    onboarding_status,
 ]
 _tool_node = ToolNode(_tools)
 
 # Read-only tools whose output is display-ready — skip the LLM re-read
-_PASSTHROUGH_TOOLS = {"get_leave_balance", "get_team_absence"}
+_PASSTHROUGH_TOOLS = {"get_leave_balance", "get_team_absence", "onboarding_status"}
 
 
 # ── Agent Node ─────────────────────────────────────────────────────────────────

@@ -280,9 +280,11 @@ export function RoomBookingWidget({ userEmail, userRole, prefill, onBooked }: Pr
     finally { setLoadingRooms(false); }
   }, [allRooms, auth, date, startTime, endISO]);
 
-  // Auto-check when rooms load from prefill hint (partial info path)
+  // Auto-check when rooms load from prefill — either a room hint or just a
+  // requested time ("which rooms are free tomorrow 10–2"). Shows the list
+  // immediately instead of leaving the user on a form with a button.
   useEffect(() => {
-    if (!prefill?.roomHint || !allRooms.length || autoChecked.current) return;
+    if ((!prefill?.roomHint && !prefill?.startTime) || !allRooms.length || autoChecked.current) return;
     autoChecked.current = true;
     checkAvailability();
   }, [allRooms, checkAvailability, prefill]);

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricChart, type ChartType } from "@/components/analytics/MetricChart";
+import { MyAnalytics } from "@/components/analytics/MyAnalytics";
 
 interface CatalogMetric {
   id: string;
@@ -255,6 +256,9 @@ export function AnalyticsStudio() {
       </div>
 
       <div className="p-6 space-y-6">
+        {/* Personal + team analytics (item 9) — self-scoped to the caller / their reports */}
+        <MyAnalytics />
+
         {/* NL bar */}
         <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-4">
           <div className="flex items-center gap-2">
