@@ -27,6 +27,6 @@ export const useIntroStore = create<IntroState>()(
         return true;
       },
     }),
-    { name: "centriq-intro-tour" }
-  )
+    { name: "centriq-intro-tour" },
+  ),
 );

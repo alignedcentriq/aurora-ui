@@ -192,66 +192,6 @@ async def list_users(
         db.close()
 
 
-# ── Org hierarchy graph (built from the synced ms365_users directory) ────────────
-
-@router.get("/org-hierarchy")
-async def org_hierarchy(
-    department: str = "",
-    user: CurrentUser = Depends(get_current_user),
-):
-    """Return the org reporting graph built from the synced Azure AD directory.
-
-    Each ms365_users row carries a `manager_email` (populated by the Graph sync
-    via $expand=manager), so the table is already a manager→report edge list.
-    We return a flat node list plus the computed root emails (people whose
-    manager is unknown or outside the result set); the frontend assembles the
-    tree. Run POST /api/ms365/users/sync first to (re)populate the directory.
-    """
-    from app.database import SessionLocal
-    from app.models import MS365User
-
-    from app.services.ms365_service import _is_non_human
-
-    db = SessionLocal()
-    try:
-        q = db.query(MS365User)
-        if department:
-            q = q.filter(MS365User.department.ilike(f"%{department}%"))
-        rows = q.order_by(MS365User.name).all()
-
-        nodes = [
-            {
-                "email": (r.email or "").lower(),
-                "name": r.name or r.email or "(unknown)",
-                "job_title": r.job_title or "",
-                "department": r.department or "",
-                "office_location": r.office_location or "",
-                "manager_email": (r.manager_email or "").lower(),
-                "manager_name": r.manager_name or "",
-            }
-            for r in rows
-            if r.email and not _is_non_human(r.name or "", r.email)
-        ]
-
-        emails = {n["email"] for n in nodes}
-        # A node is a root when it has no manager, or its manager isn't in this
-        # result set (e.g. filtered out by department, or the top of the chain).
-        root_emails = [
-            n["email"] for n in nodes
-            if not n["manager_email"] or n["manager_email"] not in emails
-        ]
-
-        latest = max((r.synced_at for r in rows if r.synced_at), default=None)
-        return {
-            "count": len(nodes),
-            "root_emails": root_emails,
-            "nodes": nodes,
-            "synced_at": latest.isoformat() if latest else None,
-        }
-    finally:
-        db.close()
-
-
 # ── User profile / hierarchy (on-demand Graph lookup, requires User.Read.All) ────
 
 @router.get("/users/{email}/photo")
@@ -262,7 +202,13 @@ async def get_user_photo(email: str):
     from app.services.ms365_service import fetch_user_photo
     res = await fetch_user_photo(email)
     if not res:
-        raise HTTPException(status_code=404, detail="No photo")
+        # Cache the "no photo" outcome briefly so the browser doesn't re-request a
+        # photoless face on every render/scroll; short TTL so a newly-added photo
+        # still appears within the hour.
+        return Response(
+            status_code=404,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
     content, content_type = res
     return Response(
         content=content,

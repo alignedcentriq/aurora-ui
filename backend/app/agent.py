@@ -1187,6 +1187,7 @@ def get_employee_availability(name_or_email: str) -> str:
     """
     from app.database import SessionLocal
     from app.models import EmployeeAllocation
+    from app.services import allocation_snapshot_service as snap
     from sqlalchemy import or_, func
 
     term = (name_or_email or "").strip()
@@ -1194,31 +1195,35 @@ def get_employee_availability(name_or_email: str) -> str:
         return "Please specify an employee name to check availability."
     db = SessionLocal()
     try:
-        allocs = db.query(EmployeeAllocation).filter(
+        # Resolve the canonical name from any allocation row (name or employee_id code),
+        # then compute capacity from the LATEST snapshot only (not summed across months).
+        any_row = db.query(EmployeeAllocation).filter(
             or_(
                 EmployeeAllocation.employee_name.ilike(f"%{term}%"),
                 func.lower(EmployeeAllocation.employee_id) == term.lower(),
             )
-        ).order_by(EmployeeAllocation.allocation_date.desc()).all()
+        ).order_by(EmployeeAllocation.allocation_date.desc()).first()
 
-        if not allocs:
+        if not any_row:
             return (f"**{term}** — ✅ Available for work (no project allocation on record).")
 
-        def _is_active(a) -> bool:
-            return (a.status or "").strip().lower() == "active" or \
-                   (a.completion_status or "").strip().lower() == "active"
+        display_name = any_row.employee_name or term
+        a = snap.availability_for(db, name=any_row.employee_name,
+                                  employee_id=any_row.employee_id)
+        current = a["rows"]
+        if not current or a["load"] <= 0:
+            return f"**{display_name}** — ✅ Available for work (no active allocation; {a['free']:g}% free)."
 
-        active = [a for a in allocs if _is_active(a)]
-        display_name = allocs[0].employee_name or term
-        if not active:
-            return f"**{display_name}** — ✅ Available for work (no active allocation)."
-
-        lines = [f"**{display_name}** — ❌ Not available (currently allocated):"]
-        for a in active[:5]:
-            end = a.expected_end_date.isoformat() if a.expected_end_date else "no end date"
-            eff = f"{a.efforts_percent}% efforts" if a.efforts_percent is not None else ""
-            detail = " | ".join(x for x in [a.project_name or "Project", eff, f"ends {end}"] if x)
+        head = (f"**{display_name}** — ❌ Not available "
+                f"({a['load']:g}% allocated, {a['free']:g}% free):")
+        lines = [head]
+        for al in current[:5]:
+            eff = f"{al.efforts_percent}% efforts" if al.efforts_percent is not None else ""
+            detail = " | ".join(x for x in [al.project_name or "Project", eff,
+                                            al.billing or ""] if x)
             lines.append(f"- {detail}")
+        if a["earliest_free"]:
+            lines.append(f"_Soonest project rolloff: {a['earliest_free'].isoformat()}._")
         return "\n".join(lines)
     finally:
         db.close()

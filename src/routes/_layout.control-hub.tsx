@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { HoverEffect } from "@/components/ui/card-hover-effect";
 import {
   Megaphone,
+  BookOpen,
   Car,
   CalendarDays,
   Ticket,
@@ -27,8 +28,8 @@ import {
   ShieldCheck,
   TrendingUp,
   Globe,
-  Network,
   Rocket,
+  Brain,
 } from "lucide-react";
 
 // Page components live outside the routes folder so they are code-split
@@ -37,6 +38,7 @@ import { AdminPortal } from "@/pages/AdminPortal";
 import { HRPortal } from "@/pages/HRPortal";
 import { ITPortal } from "@/pages/ITPortal";
 import { PMOPortal } from "@/pages/PMOPortal";
+import { LeadershipPortal } from "@/pages/LeadershipPortal";
 import { AutomationHub } from "@/pages/AutomationHub";
 import { ManagerPortal } from "@/pages/ManagerPortal";
 import { PeoplePage } from "@/pages/PeoplePage";
@@ -50,8 +52,10 @@ import { AnalyticsStudio } from "@/pages/AnalyticsStudio";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
 import { CabinDirectory } from "@/pages/CabinDirectory";
-import { OrgHierarchy } from "@/pages/OrgHierarchy";
 import { TechElevatePortal } from "@/pages/TechElevatePortal";
+import { TechElevateLocalPortal } from "@/pages/TechElevateLocalPortal";
+import { UdemyBusinessPortal } from "@/pages/UdemyBusinessPortal";
+import { ProjectIQPortal } from "@/pages/ProjectIQPortal";
 import { OnboardingTracker } from "@/pages/OnboardingTracker";
 
 const controlHubSearchSchema = z.object({
@@ -75,10 +79,13 @@ type TabId =
   | "onboarding-tracker"
   | "it-portal"
   | "pmo-portal"
+  | "leadership-command"
+  | "project-iq"
   | "techelevate"
+  | "te-lms"
+  | "udemy-business"
   | "manager-portal"
   | "people"
-  | "org-hierarchy"
   | "config"
   | "url-library"
   | "form-library"
@@ -93,8 +100,8 @@ interface TabItem {
   icon: typeof Megaphone;
   color: string;
   show: (role: string) => boolean;
-  requireScope?: string;       // Admin must have this specific scope (or full access)
-  requireAnyScope?: string[];  // Admin must have at least one of these scopes (or full access)
+  requireScope?: string; // Admin must have this specific scope (or full access)
+  requireAnyScope?: string[]; // Admin must have at least one of these scopes (or full access)
   component: React.ComponentType<any>;
 }
 
@@ -195,7 +202,7 @@ const TABS: TabItem[] = [
     category: "Management Portals",
     icon: Rocket,
     color: "#7C3AED",
-    show: (role) => ["HR", "Admin", "Super Admin"].includes(role),
+    show: (role) => role === "HR",
     component: OnboardingTracker,
   },
   {
@@ -219,6 +226,24 @@ const TABS: TabItem[] = [
     component: PMOPortal,
   },
   {
+    id: "leadership-command",
+    label: "Capability Command",
+    category: "Management Portals",
+    icon: TrendingUp,
+    color: "#06B6D4",
+    show: (role) => role === "PMO" || role === "Admin",
+    component: LeadershipPortal,
+  },
+  {
+    id: "project-iq",
+    label: "Project IQ",
+    category: "Management Portals",
+    icon: Brain,
+    color: "#0EA5E9",
+    show: (role) => role !== "Employee",
+    component: ProjectIQPortal,
+  },
+  {
     id: "techelevate",
     label: "TechElevate",
     category: "Management Portals",
@@ -226,6 +251,24 @@ const TABS: TabItem[] = [
     color: "#7C3AED",
     show: () => true,
     component: TechElevatePortal,
+  },
+  {
+    id: "te-lms",
+    label: "TechElevate LMS",
+    category: "Management Portals",
+    icon: GraduationCap,
+    color: "#7C3AED",
+    show: () => true,
+    component: TechElevateLocalPortal,
+  },
+  {
+    id: "udemy-business",
+    label: "Udemy Business",
+    category: "Management Portals",
+    icon: BookOpen,
+    color: "#A435F0",
+    show: () => true,
+    component: UdemyBusinessPortal,
   },
   {
     id: "manager-portal",
@@ -247,16 +290,6 @@ const TABS: TabItem[] = [
     show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
     requireScope: "people_directory",
     component: PeoplePage,
-  },
-  {
-    id: "org-hierarchy",
-    label: "Org Hierarchy",
-    category: "Assets & Config",
-    icon: Network,
-    color: "#6366F1",
-    show: (role) =>
-      ["HR", "PMO", "Admin", "Functional Manager", "Super Admin"].includes(role),
-    component: OrgHierarchy,
   },
   {
     id: "config",
@@ -317,19 +350,27 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "automation-hub": "Automate email sequences, rule actions, and triggers.",
   "admin-portal": "Submit transport claims, desk keys, parking stickers, and library books.",
   "hr-portal": "Request leave, review pending approvals, and download payroll reports.",
-  "onboarding-tracker": "Track every new joiner's onboarding progress, steps, and joining documents.",
+  "onboarding-tracker":
+    "Track every new joiner's onboarding progress, steps, and joining documents.",
   "it-portal": "Open IT tickets, view device status, and check active support incidents.",
   "pmo-portal": "Monitor project delivery status, milestones, and training compliance.",
+  "leadership-command":
+    "Org-wide workforce intelligence: capability heat map, pipeline readiness, SPOF risk, and bench cost.",
+  "project-iq":
+    "Reuse delivery knowledge: find similar past projects, lessons, experts, and reusable assets.",
   "manager-portal": "Review attendance check-ins, hierarchy status, and shift reports.",
   people: "Browse team directories, organization hierarchy, and contact cards.",
-  "org-hierarchy":
-    "Visualize the live Microsoft 365 reporting graph — managers, reports, and teams.",
   config: "Customize base templates, instructions, and system guardrails.",
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
   "form-library": "Submit custom forms, view request archives, and check statuses.",
-  "connector-studio": "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
+  "connector-studio":
+    "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
   techelevate: "View training assignments, level progress, study materials, and exam results.",
+  "te-lms":
+    "In-house LMS: browse trainings, assign them, and take assessments that earn verified skills.",
+  "udemy-business":
+    "Browse the company's Udemy Business course catalog and track learner activity.",
 };
 
 interface ControlHubOverviewProps {
@@ -406,7 +447,7 @@ function ControlHubPage() {
       }
       return true;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, fullAccess, scopes.join(",")]);
 
   const activeTabId = useMemo<TabId | "overview">(() => {
@@ -428,7 +469,7 @@ function ControlHubPage() {
     if (activeTabId !== "overview" && !allowedTabs.some((t) => t.id === activeTabId)) {
       handleTabChange("overview");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedTabs, activeTabId]);
 
   if (!user) {

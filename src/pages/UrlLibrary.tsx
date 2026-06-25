@@ -1,6 +1,19 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, Loader2, RefreshCw, ExternalLink, Link2, Sparkles, ToggleLeft, ToggleRight } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  RefreshCw,
+  ExternalLink,
+  Link2,
+  Sparkles,
+  ToggleLeft,
+  ToggleRight,
+  Lightbulb,
+  Check,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -43,13 +56,15 @@ const SUGGESTIONS = [
   {
     name: "Paymo Reimbursements",
     url: "https://paymo.centriq.corp/reimbursements",
-    purpose: "Submit expense claims, track reimbursement approvals, and manage corporate card expenses.",
+    purpose:
+      "Submit expense claims, track reimbursement approvals, and manage corporate card expenses.",
     capabilities: "create expense reports, upload receipts, track approval status, view history",
   },
   {
     name: "IT Service Desk",
     url: "https://helpdesk.centriq.corp",
-    purpose: "Raise tickets for hardware issues, software licenses, network access, or account lockouts.",
+    purpose:
+      "Raise tickets for hardware issues, software licenses, network access, or account lockouts.",
     capabilities: "create support tickets, track ticket status, chat with IT agent, request access",
   },
   {
@@ -60,8 +75,32 @@ const SUGGESTIONS = [
   },
 ];
 
-type FormState = { name: string; url: string; purpose: string; capabilities: string; trigger_keywords: string };
-const EMPTY_FORM: FormState = { name: "", url: "", purpose: "", capabilities: "", trigger_keywords: "" };
+type FormState = {
+  name: string;
+  url: string;
+  purpose: string;
+  capabilities: string;
+  trigger_keywords: string;
+};
+const EMPTY_FORM: FormState = {
+  name: "",
+  url: "",
+  purpose: "",
+  capabilities: "",
+  trigger_keywords: "",
+};
+
+interface KeywordSuggestion {
+  keyword: string;
+  count: number;
+  samples: string[];
+}
+interface AppSuggestions {
+  app_id: number;
+  app_name: string;
+  near_miss_count: number;
+  suggestions: KeywordSuggestion[];
+}
 
 export function UrlLibrary() {
   const { user } = useAuth();
@@ -73,6 +112,17 @@ export function UrlLibrary() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [toggling, setToggling] = useState<Set<number>>(new Set());
+  const [genDesc, setGenDesc] = useState("");
+  const [genUrl, setGenUrl] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestData, setSuggestData] = useState<{
+    apps: AppSuggestions[];
+    scanned: number;
+    window_days: number;
+  } | null>(null);
+  const [addingKw, setAddingKw] = useState<Set<string>>(new Set());
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -115,18 +165,26 @@ export function UrlLibrary() {
         body: JSON.stringify({ is_active: !app.is_active }),
       });
       if (!res.ok) throw new Error("Failed to update");
-      setApps((prev) => prev.map((a) => (a.id === app.id ? { ...a, is_active: !app.is_active } : a)));
+      setApps((prev) =>
+        prev.map((a) => (a.id === app.id ? { ...a, is_active: !app.is_active } : a)),
+      );
       toast.success(app.is_active ? "App deactivated" : "App activated");
     } catch {
       toast.error("Failed to update status");
     } finally {
-      setToggling((prev) => { const s = new Set(prev); s.delete(app.id); return s; });
+      setToggling((prev) => {
+        const s = new Set(prev);
+        s.delete(app.id);
+        return s;
+      });
     }
   };
 
   const openAdd = () => {
     setEditId(null);
     setForm(EMPTY_FORM);
+    setGenDesc("");
+    setGenUrl("");
     setDialogOpen(true);
   };
 
@@ -139,19 +197,116 @@ export function UrlLibrary() {
       capabilities: app.capabilities || "",
       trigger_keywords: app.trigger_keywords || "",
     });
+    setGenDesc("");
+    setGenUrl("");
     setDialogOpen(true);
   };
 
-  const handleAddSuggestion = (sug: typeof SUGGESTIONS[0]) => {
+  const describeAndDraft = async () => {
+    const description = genDesc.trim();
+    if (!description) return;
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/admin/url-library/generate", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ description, url: genUrl.trim(), name: form.name.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Couldn't draft the entry");
+      setForm((prev) => ({
+        name: data.name || prev.name,
+        url: data.url || genUrl.trim() || prev.url,
+        purpose: data.purpose || "",
+        capabilities: data.capabilities || "",
+        trigger_keywords: data.trigger_keywords || "",
+      }));
+      toast.success("Drafted — review and save.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Couldn't draft the entry");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const openSuggest = async () => {
+    setSuggestOpen(true);
+    setSuggesting(true);
+    setSuggestData(null);
+    try {
+      const res = await fetch("/api/admin/url-library/keyword-suggestions?window_days=30", {
+        headers: authHeaders,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Couldn't load suggestions");
+      setSuggestData(data);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Couldn't load suggestions");
+      setSuggestOpen(false);
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const addSuggestedKeyword = async (appId: number, keyword: string) => {
+    const app = apps.find((a) => a.id === appId);
+    if (!app) return;
+    const key = `${appId}:${keyword}`;
+    setAddingKw((prev) => new Set(prev).add(key));
+    try {
+      const existing = app.trigger_keywords
+        ? app.trigger_keywords
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean)
+        : [];
+      // De-dupe case-insensitively; keep first-seen casing.
+      const seen = new Set(existing.map((k) => k.toLowerCase()));
+      if (!seen.has(keyword.toLowerCase())) existing.push(keyword);
+      const merged = existing.join(", ");
+      const res = await fetch(`/api/admin/url-library/${appId}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ trigger_keywords: merged }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Couldn't add keyword");
+      setApps((prev) => prev.map((a) => (a.id === appId ? { ...a, trigger_keywords: merged } : a)));
+      // Drop the accepted chip from the suggestion list.
+      setSuggestData((prev) =>
+        prev
+          ? {
+              ...prev,
+              apps: prev.apps
+                .map((s) =>
+                  s.app_id === appId
+                    ? { ...s, suggestions: s.suggestions.filter((x) => x.keyword !== keyword) }
+                    : s,
+                )
+                .filter((s) => s.suggestions.length > 0),
+            }
+          : prev,
+      );
+      toast.success(`Added "${keyword}" to ${app.name}`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Couldn't add keyword");
+    } finally {
+      setAddingKw((prev) => {
+        const s = new Set(prev);
+        s.delete(key);
+        return s;
+      });
+    }
+  };
+
+  const handleAddSuggestion = (sug: (typeof SUGGESTIONS)[0]) => {
     setForm({ ...sug, trigger_keywords: "" });
     setEditId(null);
     setDialogOpen(true);
   };
 
   const valid =
-    form.name.trim().length > 0 &&
-    form.url.trim().length > 0 &&
-    form.purpose.trim().length > 0;
+    form.name.trim().length > 0 && form.url.trim().length > 0 && form.purpose.trim().length > 0;
 
   const save = async () => {
     if (!valid) return;
@@ -229,6 +384,15 @@ export function UrlLibrary() {
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
           </button>
           <button
+            onClick={openSuggest}
+            disabled={apps.length === 0}
+            className="flex items-center gap-1.5 rounded-xl border border-[#8B5CF6]/30 bg-[#8B5CF6]/[0.06] px-3.5 py-2 text-[13px] font-semibold text-[#7c3aed] dark:text-violet-300 hover:bg-[#8B5CF6]/[0.12] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Mine recent chat questions for trigger keywords your apps are missing"
+          >
+            <Lightbulb className="h-4 w-4" />
+            Suggest keywords
+          </button>
+          <button
             onClick={openAdd}
             className="flex items-center gap-1.5 rounded-xl bg-[#00a29a] dark:bg-[#00c4bb] px-4 py-2 text-[13px] font-semibold text-white hover:opacity-90 transition-opacity"
           >
@@ -251,9 +415,12 @@ export function UrlLibrary() {
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#0d9488]/10 text-[#0d9488] border border-[#0d9488]/20 mb-4">
                 <Link2 className="h-6 w-6" />
               </div>
-              <h3 className="text-[15px] font-bold text-[#0f172a] dark:text-white">No apps registered yet.</h3>
+              <h3 className="text-[15px] font-bold text-[#0f172a] dark:text-white">
+                No apps registered yet.
+              </h3>
               <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-1 max-w-md">
-                Register company apps, portals, and websites so they can be surfaced in assistant conversations when users ask.
+                Register company apps, portals, and websites so they can be surfaced in assistant
+                conversations when users ask.
               </p>
               <button
                 onClick={openAdd}
@@ -280,7 +447,9 @@ export function UrlLibrary() {
                       SUGGESTION
                     </div>
                     <div>
-                      <h4 className="font-bold text-[#0f172a] dark:text-white text-[14px] pr-20">{sug.name}</h4>
+                      <h4 className="font-bold text-[#0f172a] dark:text-white text-[14px] pr-20">
+                        {sug.name}
+                      </h4>
                       <p className="text-[12px] text-[#64748b] dark:text-white/50 mt-2 leading-relaxed">
                         {sug.purpose}
                       </p>
@@ -338,11 +507,18 @@ export function UrlLibrary() {
                     <td className="py-3.5 px-4 align-top max-w-[220px]">
                       {app.trigger_keywords ? (
                         <div className="flex flex-wrap gap-1">
-                          {app.trigger_keywords.split(",").map((kw) => kw.trim()).filter(Boolean).map((kw) => (
-                            <span key={kw} className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                              {kw}
-                            </span>
-                          ))}
+                          {app.trigger_keywords
+                            .split(",")
+                            .map((kw) => kw.trim())
+                            .filter(Boolean)
+                            .map((kw) => (
+                              <span
+                                key={kw}
+                                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20"
+                              >
+                                {kw}
+                              </span>
+                            ))}
                         </div>
                       ) : (
                         <span className="text-[#94a3b8] dark:text-white/30 text-[12px]">—</span>
@@ -354,7 +530,7 @@ export function UrlLibrary() {
                           "inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold border",
                           app.is_active
                             ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                            : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-500/20"
+                            : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 border-zinc-500/20",
                         )}
                       >
                         {app.is_active ? "Active" : "Inactive"}
@@ -377,7 +553,7 @@ export function UrlLibrary() {
                             "rounded-lg p-1.5 transition-colors",
                             app.is_active
                               ? "text-emerald-500 hover:bg-rose-500/10 hover:text-rose-500"
-                              : "text-zinc-400 dark:text-zinc-600 hover:bg-emerald-500/10 hover:text-emerald-600"
+                              : "text-zinc-400 dark:text-zinc-600 hover:bg-emerald-500/10 hover:text-emerald-600",
                           )}
                           title={app.is_active ? "Deactivate" : "Activate"}
                         >
@@ -430,6 +606,58 @@ export function UrlLibrary() {
               descriptive so the right people find it.
             </DialogDescription>
           </DialogHeader>
+          {editId === null && (
+            <div className="rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/[0.04] p-3 mb-1">
+              <label className="flex items-center gap-1.5 text-[12px] font-semibold text-[#7c3aed] dark:text-violet-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                Describe it, let AI draft it
+              </label>
+              <p className="text-[11px] text-muted-foreground/80 mt-0.5">
+                Describe the app in a sentence — AI drafts the fields below for you to review. Works
+                for internal/SSO apps too (nothing is fetched).
+              </p>
+              <Textarea
+                value={genDesc}
+                onChange={(e) => setGenDesc(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    (e.metaKey || e.ctrlKey) &&
+                    !generating &&
+                    genDesc.trim()
+                  ) {
+                    e.preventDefault();
+                    describeAndDraft();
+                  }
+                }}
+                placeholder="e.g. Internal travel booking portal (SSO login) — book flights and hotels, view itineraries, submit travel claims"
+                disabled={generating}
+                className="mt-2 min-h-[56px]"
+              />
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  value={genUrl}
+                  onChange={(e) => setGenUrl(e.target.value)}
+                  placeholder="App URL (optional) — https://travel.corp.local"
+                  disabled={generating}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  onClick={describeAndDraft}
+                  disabled={generating || !genDesc.trim()}
+                  className="bg-[#8B5CF6] hover:bg-[#7c3aed] text-white shrink-0"
+                >
+                  {generating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {generating ? "Drafting…" : "Draft with AI"}
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             <div>
               <label className="text-[12px] font-medium text-muted-foreground">Name</label>
@@ -480,7 +708,10 @@ export function UrlLibrary() {
                 className="mt-1"
               />
               <p className="text-[11px] text-muted-foreground/70 mt-1">
-                Comma-separated. When a user's message contains any of these words, the assistant will offer to open this portal directly. Use specific phrases (e.g. "payslip", "salary slip") — single generic words like "requests", "form", or "status" are not allowed and will be rejected.
+                Comma-separated. When a user's message contains any of these words, the assistant
+                will offer to open this portal directly. Use specific phrases (e.g. "payslip",
+                "salary slip") — single generic words like "requests", "form", or "status" are not
+                allowed and will be rejected.
               </p>
             </div>
           </div>
@@ -491,6 +722,93 @@ export function UrlLibrary() {
             <Button onClick={save} disabled={!valid || saving}>
               {saving && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
               {editId !== null ? "Save changes" : "Add app"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Keyword suggestions dialog */}
+      <Dialog open={suggestOpen} onOpenChange={setSuggestOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lightbulb className="h-4 w-4 text-[#8B5CF6]" />
+              Learn keywords from chat
+            </DialogTitle>
+            <DialogDescription>
+              These are real questions from the last 30 days that{" "}
+              <span className="font-medium">matched an app</span> but didn't contain any of its
+              trigger keywords — so the direct-link offer never fired. Add the ones that fit.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto -mx-1 px-1">
+            {suggesting ? (
+              <div className="flex items-center justify-center py-16 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Scanning recent questions…
+              </div>
+            ) : !suggestData || suggestData.apps.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-14 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 mb-3">
+                  <Check className="h-6 w-6" />
+                </div>
+                <p className="text-[14px] font-semibold text-foreground">
+                  No new keyword suggestions.
+                </p>
+                <p className="text-[12px] text-muted-foreground mt-1 max-w-sm">
+                  {suggestData
+                    ? `Scanned ${suggestData.scanned} recent questions — the assistant is already matching them to your apps, or there's nothing distinctive to add.`
+                    : "Nothing to suggest right now."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-5 py-1">
+                {suggestData.apps.map((app) => (
+                  <div
+                    key={app.app_id}
+                    className="rounded-xl border border-[#e2e8f0] dark:border-white/[0.08] p-4"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <h4 className="font-bold text-[14px] text-foreground">{app.app_name}</h4>
+                      <span className="text-[11px] text-muted-foreground shrink-0">
+                        {app.near_miss_count} question{app.near_miss_count === 1 ? "" : "s"} matched
+                        without a keyword
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {app.suggestions.map((s) => {
+                        const key = `${app.app_id}:${s.keyword}`;
+                        const busy = addingKw.has(key);
+                        return (
+                          <button
+                            key={s.keyword}
+                            onClick={() => addSuggestedKeyword(app.app_id, s.keyword)}
+                            disabled={busy}
+                            title={
+                              s.samples.length ? `e.g. "${s.samples.join('"  •  "')}"` : undefined
+                            }
+                            className="group inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/[0.06] pl-3 pr-2 py-1 text-[12px] font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-500/[0.14] transition-colors disabled:opacity-50"
+                          >
+                            {s.keyword}
+                            <span className="text-[10px] text-violet-500/70">×{s.count}</span>
+                            {busy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Plus className="h-3.5 w-3.5 opacity-60 group-hover:opacity-100" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuggestOpen(false)}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

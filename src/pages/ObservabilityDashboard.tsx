@@ -186,7 +186,7 @@ function DomainBadge({ domain }: { domain: string }) {
     <span
       className={cn(
         "rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-        DOMAIN_BADGE[key] || "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20"
+        DOMAIN_BADGE[key] || "bg-zinc-500/15 text-zinc-400 border border-zinc-500/20",
       )}
     >
       {domain || "unknown"}
@@ -219,7 +219,9 @@ export function ObservabilityDashboard() {
             </div>
             <div>
               <h1 className="text-[20px] font-bold text-foreground">AI Observability</h1>
-              <p className="text-[12px] text-muted-foreground">Activity logs, performance metrics & analytics</p>
+              <p className="text-[12px] text-muted-foreground">
+                Activity logs, performance metrics & analytics
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -232,10 +234,16 @@ export function ObservabilityDashboard() {
                     "px-4 py-2 text-[13px] font-medium transition-colors",
                     activeTab === tab
                       ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {tab === "logs" ? "Activity Logs" : tab === "charts" ? "Charts & Analytics" : tab === "triage" ? "Feedback Triage" : "Feature Adoption"}
+                  {tab === "logs"
+                    ? "Activity Logs"
+                    : tab === "charts"
+                      ? "Charts & Analytics"
+                      : tab === "triage"
+                        ? "Feedback Triage"
+                        : "Feature Adoption"}
                 </button>
               ))}
             </div>
@@ -244,7 +252,15 @@ export function ObservabilityDashboard() {
       </div>
 
       <div className="p-6">
-        {activeTab === "logs" ? <LogsTab /> : activeTab === "charts" ? <ChartsTab /> : activeTab === "triage" ? <FeedbackTriageTab /> : <AdoptionTab />}
+        {activeTab === "logs" ? (
+          <LogsTab />
+        ) : activeTab === "charts" ? (
+          <ChartsTab />
+        ) : activeTab === "triage" ? (
+          <FeedbackTriageTab />
+        ) : (
+          <AdoptionTab />
+        )}
       </div>
     </div>
   );
@@ -262,7 +278,7 @@ function LogsTab() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -349,7 +365,8 @@ function LogsTab() {
         try {
           const err = await res.json();
           if (typeof err?.detail === "string") detail = err.detail;
-          else if (Array.isArray(err?.detail)) detail = err.detail.map((d: any) => d?.msg || String(d)).join("; ");
+          else if (Array.isArray(err?.detail))
+            detail = err.detail.map((d: any) => d?.msg || String(d)).join("; ");
         } catch {
           // non-JSON error body — keep the HTTP status as the message
         }
@@ -372,7 +389,10 @@ function LogsTab() {
 
         <select
           value={domain}
-          onChange={(e) => { setDomain(e.target.value); setPage(1); }}
+          onChange={(e) => {
+            setDomain(e.target.value);
+            setPage(1);
+          }}
           className="rounded-xl border border-[var(--border)] bg-card px-3 py-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
         >
           <option value="All">All Domains</option>
@@ -388,10 +408,15 @@ function LogsTab() {
           {["All", "Success", "Error"].map((s) => (
             <button
               key={s}
-              onClick={() => { setStatus(s); setPage(1); }}
+              onClick={() => {
+                setStatus(s);
+                setPage(1);
+              }}
               className={cn(
                 "px-3.5 py-2 text-[12px] font-medium transition-colors",
-                status === s ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                status === s
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {s}
@@ -407,9 +432,7 @@ function LogsTab() {
           Refresh
         </button>
 
-        <span className="text-[11px] text-muted-foreground ml-auto">
-          {total} total entries
-        </span>
+        <span className="text-[11px] text-muted-foreground ml-auto">{total} total entries</span>
       </div>
 
       {/* Log table */}
@@ -426,7 +449,10 @@ function LogsTab() {
           {logs.map((log) => {
             const isExpanded = expandedId === log.id;
             return (
-              <div key={log.id} className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+              <div
+                key={log.id}
+                className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden"
+              >
                 {/* Row header */}
                 <div
                   className="flex items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-[var(--muted)]/30 transition-colors"
@@ -487,7 +513,7 @@ function LogsTab() {
                   <ChevronDown
                     className={cn(
                       "h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0",
-                      isExpanded && "rotate-180"
+                      isExpanded && "rotate-180",
                     )}
                   />
                 </div>
@@ -506,7 +532,10 @@ function LogsTab() {
                           <InfoItem label="Session" value={detail.session_id} />
                           <InfoItem label="Route Method" value={detail.route_method || "—"} />
                           <InfoItem label="Total Latency" value={`${detail.total_latency_ms}ms`} />
-                          <InfoItem label="Response Length" value={`${detail.response_length} chars`} />
+                          <InfoItem
+                            label="Response Length"
+                            value={`${detail.response_length} chars`}
+                          />
                         </div>
 
                         {/* Conversation content — hidden until revealed (audited, domain-scoped) */}
@@ -514,17 +543,24 @@ function LogsTab() {
                           <div className="space-y-3">
                             <div className="flex items-center gap-2 text-[11px] text-amber-400">
                               <Eye className="h-3.5 w-3.5" />
-                              <span>Content revealed for {revealed.user_email} — this access has been logged. IDs, contact details, and money amounts are masked.</span>
+                              <span>
+                                Content revealed for {revealed.user_email} — this access has been
+                                logged. IDs, contact details, and money amounts are masked.
+                              </span>
                             </div>
                             <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">User Message</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                User Message
+                              </p>
                               <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 whitespace-pre-wrap">
                                 {revealed.user_message}
                               </p>
                             </div>
                             {revealed.response_text && (
                               <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">AI Response</p>
+                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                  AI Response
+                                </p>
                                 <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
                                   {revealed.response_text}
                                 </p>
@@ -534,7 +570,8 @@ function LogsTab() {
                         ) : (
                           <div className="rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 space-y-2">
                             <p className="text-[12px] text-muted-foreground">
-                              Conversation content is hidden to protect employee privacy. Revealing it is logged against your name (IDs and money amounts are masked).
+                              Conversation content is hidden to protect employee privacy. Revealing
+                              it is logged against your name (IDs and money amounts are masked).
                             </p>
                             <div className="flex items-center gap-2">
                               <button
@@ -542,11 +579,17 @@ function LogsTab() {
                                 disabled={revealLoading}
                                 className="flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-3.5 py-2 text-[12px] font-medium hover:bg-primary/20 disabled:opacity-40 transition-colors"
                               >
-                                {revealLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                                {revealLoading ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Eye className="h-3.5 w-3.5" />
+                                )}
                                 Reveal content
                               </button>
                             </div>
-                            {revealError && <p className="text-[11px] text-rose-400">{revealError}</p>}
+                            {revealError && (
+                              <p className="text-[11px] text-rose-400">{revealError}</p>
+                            )}
                           </div>
                         )}
 
@@ -594,7 +637,9 @@ function LogsTab() {
                         {/* Error */}
                         {detail.error && (
                           <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-400 mb-1">Error</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-400 mb-1">
+                              Error
+                            </p>
                             <p className="text-[13px] text-rose-300">{detail.error}</p>
                           </div>
                         )}
@@ -655,7 +700,9 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60">{label}</p>
-      <p className="text-[13px] text-foreground font-mono truncate" title={value}>{value}</p>
+      <p className="text-[13px] text-foreground font-mono truncate" title={value}>
+        {value}
+      </p>
     </div>
   );
 }
@@ -672,7 +719,7 @@ function ChartsTab() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const [period, setPeriod] = useState("24h");
@@ -722,7 +769,9 @@ function ChartsTab() {
               onClick={() => setPeriod(p)}
               className={cn(
                 "px-4 py-2 text-[13px] font-medium transition-colors",
-                period === p ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                period === p
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {p === "24h" ? "Last 24h" : p === "7d" ? "Last 7 days" : "Last 30 days"}
@@ -820,14 +869,24 @@ function ChartsTab() {
                   tickFormatter={(v) => {
                     const d = new Date(v);
                     return period === "24h"
-                      ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+                      ? d.toLocaleTimeString("en-IN", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        })
                       : d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
                   }}
                   tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 />
                 <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
                 <RechartsTooltip contentStyle={tooltipStyle} />
-                <Area type="monotone" dataKey="requests" stroke="#6366f1" fill="url(#volGrad)" strokeWidth={2} />
+                <Area
+                  type="monotone"
+                  dataKey="requests"
+                  stroke="#6366f1"
+                  fill="url(#volGrad)"
+                  strokeWidth={2}
+                />
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -849,7 +908,11 @@ function ChartsTab() {
                   tickFormatter={(v) => {
                     const d = new Date(v);
                     return period === "24h"
-                      ? d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+                      ? d.toLocaleTimeString("en-IN", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        })
                       : d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
                   }}
                   tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
@@ -862,7 +925,13 @@ function ChartsTab() {
                   contentStyle={tooltipStyle}
                   formatter={(value) => [`${(Number(value) / 1000).toFixed(2)}s`, "Avg Latency"]}
                 />
-                <Line type="monotone" dataKey="avg_latency" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                <Line
+                  type="monotone"
+                  dataKey="avg_latency"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -879,7 +948,9 @@ function ChartsTab() {
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : domainData.length === 0 ? (
-            <div className="flex items-center justify-center h-[280px] text-muted-foreground text-[13px]">No data</div>
+            <div className="flex items-center justify-center h-[280px] text-muted-foreground text-[13px]">
+              No data
+            </div>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
@@ -913,7 +984,9 @@ function ChartsTab() {
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : modelData.length === 0 ? (
-            <div className="flex items-center justify-center h-[280px] text-muted-foreground text-[13px]">No data</div>
+            <div className="flex items-center justify-center h-[280px] text-muted-foreground text-[13px]">
+              No data
+            </div>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={modelData} layout="vertical">
@@ -926,8 +999,20 @@ function ChartsTab() {
                   tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 />
                 <RechartsTooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="prompt_tokens" name="Prompt" stackId="tok" fill="#6366f1" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="completion_tokens" name="Completion" stackId="tok" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar
+                  dataKey="prompt_tokens"
+                  name="Prompt"
+                  stackId="tok"
+                  fill="#6366f1"
+                  radius={[0, 0, 0, 0]}
+                />
+                <Bar
+                  dataKey="completion_tokens"
+                  name="Completion"
+                  stackId="tok"
+                  fill="#10b981"
+                  radius={[0, 4, 4, 0]}
+                />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
               </BarChart>
             </ResponsiveContainer>
@@ -949,21 +1034,35 @@ function ChartsTab() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-[var(--border)]">
-                  {["Node", "Calls", "Avg Latency", "P95 Latency", "Avg Tokens", "Errors"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {h}
-                    </th>
-                  ))}
+                  {["Node", "Calls", "Avg Latency", "P95 Latency", "Avg Tokens", "Errors"].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                      >
+                        {h}
+                      </th>
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {nodeData.map((n: any) => (
-                  <tr key={n.node} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/30 transition-colors">
+                  <tr
+                    key={n.node}
+                    className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/30 transition-colors"
+                  >
                     <td className="px-4 py-3 text-[13px] font-medium text-foreground">{n.node}</td>
                     <td className="px-4 py-3 text-[13px] text-muted-foreground">{n.calls}</td>
-                    <td className="px-4 py-3"><LatencyBadge ms={n.avg_ms} /></td>
-                    <td className="px-4 py-3"><LatencyBadge ms={n.p95_ms} /></td>
-                    <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">{n.avg_tokens}</td>
+                    <td className="px-4 py-3">
+                      <LatencyBadge ms={n.avg_ms} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <LatencyBadge ms={n.p95_ms} />
+                    </td>
+                    <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
+                      {n.avg_tokens}
+                    </td>
                     <td className="px-4 py-3">
                       {n.errors > 0 ? (
                         <span className="rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/20 px-2 py-0.5 text-[10px] font-medium">

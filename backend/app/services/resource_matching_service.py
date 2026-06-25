@@ -38,12 +38,15 @@ _COMPETENCY_WEIGHT = {
 
 
 def _is_current(alloc: EmployeeAllocation) -> bool:
-    """An allocation counts toward current load unless it's finished/inactive."""
-    if (alloc.completion_status or "").strip().lower() == "completed":
-        return False
-    if (alloc.status or "").strip().lower() == "inactive":
-        return False
-    return True
+    """An allocation counts toward current load unless the project is completed or the
+    employee is inactive in that snapshot.
+
+    NOTE: completion is read from `project_status` ("Ongoing"/"Completed"), NOT
+    `completion_status` (a "Done"/"Not Done" record flag). Kept for backward imports;
+    capacity math now lives in allocation_snapshot_service.
+    """
+    from app.services.allocation_snapshot_service import _counts_as_load
+    return _counts_as_load(alloc)
 
 
 def _parse_skills(skills: str) -> list[str]:
@@ -282,23 +285,18 @@ class ResourceMatchingService:
     @classmethod
     def _availability(cls, db, name: str, email: Optional[str]):
         """Return (load%, free%, earliest_free_date, current_allocations) for a person,
-        matched against the EmployeeAllocation feed by name (the shared identifier)."""
-        allocs = []
-        if name:
-            allocs = (db.query(EmployeeAllocation)
-                      .filter(EmployeeAllocation.employee_name.ilike(name)).all())
-        if not allocs and email:
-            # last resort: name → Employee → employee_id code → allocations
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            if emp and emp.employee_id:
-                allocs = (db.query(EmployeeAllocation)
-                          .filter(EmployeeAllocation.employee_id == emp.employee_id).all())
+        computed from their LATEST allocation snapshot (not summed across months).
 
-        current = [a for a in allocs if _is_current(a)]
-        load = sum(float(a.efforts_percent or 0) for a in current)
-        free = max(0.0, 100.0 - load)
-        end_dates = [a.expected_end_date for a in current if a.expected_end_date]
-        return load, free, (min(end_dates) if end_dates else None), current
+        Delegates to allocation_snapshot_service so capacity math has one definition.
+        Matched by name (the shared identifier), falling back to employee_id code.
+        """
+        from app.services import allocation_snapshot_service as snap
+        emp_code = None
+        if email:
+            emp = db.query(Employee).filter(Employee.email == email).first()
+            emp_code = emp.employee_id if emp else None
+        a = snap.availability_for(db, name=name, employee_id=emp_code)
+        return a["load"], a["free"], a["earliest_free"], a["rows"]
 
     # ── rendering ───────────────────────────────────────────────────────────
 

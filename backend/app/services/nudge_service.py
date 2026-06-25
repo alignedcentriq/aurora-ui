@@ -232,6 +232,65 @@ def detect_onboarding_next_step(db, emp: Employee) -> list[NudgeSpec]:
     )]
 
 
+def detect_bench_reports(db, today: Optional[datetime.date] = None) -> list[NudgeSpec]:
+    """For each manager, fire ONE nudge when ≥2 of their direct reports are on the
+    bench or rolling off within the rolloff horizon — capacity they should act on.
+
+    Pure DB look-up: capacity comes from allocation_snapshot_service (latest snapshot
+    per person). One bulk load_map for everyone, then grouped per manager.
+    """
+    today = today or _now().date()
+    from app.services import allocation_snapshot_service as snap
+
+    employees = db.query(Employee).all()
+    by_id = {e.id: e for e in employees}
+    reports: dict[int, list[Employee]] = {}
+    for e in employees:
+        if e.manager_id:
+            reports.setdefault(e.manager_id, []).append(e)
+    if not reports:
+        return []
+
+    load_map = snap.current_load_map(db, as_of=today)
+    horizon = today + datetime.timedelta(days=snap.ROLLOFF_HORIZON_DAYS)
+
+    specs: list[NudgeSpec] = []
+    for mgr_id, team in reports.items():
+        mgr = by_id.get(mgr_id)
+        if not mgr or not mgr.email:
+            continue
+        free_people = []
+        for e in team:
+            v = load_map.get((e.name or "").strip().lower())
+            if not v:
+                continue
+            on_bench = v["is_bench"] and v.get("active")
+            rolling = v["earliest_free"] and v["earliest_free"] <= horizon
+            if on_bench or rolling:
+                free_people.append(e.name)
+        if len(free_people) < 2:
+            continue
+        names = ", ".join(free_people[:4]) + ("…" if len(free_people) > 4 else "")
+        # Month-bucketed dedup so it can re-fire next month but not spam within one.
+        specs.append(NudgeSpec(
+            user_email=mgr.email,
+            nudge_type="bench_capacity",
+            dedup_key=f"bench_capacity:{mgr.email}:{today.strftime('%Y-%m')}",
+            title=f"{len(free_people)} of your reports have capacity soon",
+            body=(
+                f"{names} are on the bench or rolling off within "
+                f"{snap.ROLLOFF_HORIZON_DAYS} days. Review the team digest to plan "
+                f"redeployment or upskilling before the capacity sits idle."
+            ),
+            severity="action",
+            action_type="open_team_digest",
+            action_payload={"route": "/control-hub?tab=manager-portal"},
+            entity_type="manager",
+            entity_id=str(mgr_id),
+        ))
+    return specs
+
+
 def _resolve_manager_email(db, emp: Employee) -> Optional[str]:
     """Best-effort manager lookup. Returns None instead of raising (HRService's
     fallback touches settings.HR_EMAIL which may be unset)."""
@@ -319,6 +378,14 @@ def run_due() -> int:
                     created += 1
         except Exception as exc:
             log.warning("[nudge] stale-approval detector failed: %s", exc)
+
+        # Bench/rolloff capacity alerts for managers: one bulk pass over allocations.
+        try:
+            for spec in detect_bench_reports(db):
+                if upsert(db, spec) == "created":
+                    created += 1
+        except Exception as exc:
+            log.warning("[nudge] bench-reports detector failed: %s", exc)
 
         # Expiring leaves: per active employee.
         employees = db.query(Employee).filter(Employee.email.isnot(None)).all()
@@ -473,6 +540,8 @@ def act(email: str, nudge_id: int) -> dict:
             result = _act_nudge_manager(db, row)
         elif row.action_type == "open_onboarding":
             result = _act_open_onboarding(row)
+        elif row.action_type == "open_team_digest":
+            result = _act_navigate(row)
         else:
             return {"success": False, "error": "no_action"}
 
@@ -509,6 +578,13 @@ def _act_open_onboarding(row: ProactiveNudge) -> dict:
         "route": route,
         "message": f"Opening your onboarding — [continue here]({route}).",
     }
+
+
+def _act_navigate(row: ProactiveNudge) -> dict:
+    """Generic deep-link action — hand the client a route to open."""
+    route = (row.action_payload or {}).get("route", "/control-hub")
+    return {"success": True, "action": "navigate", "route": route,
+            "message": f"Opening [the team digest]({route})."}
 
 
 def _act_nudge_manager(db, row: ProactiveNudge) -> dict:

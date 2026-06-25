@@ -11,18 +11,18 @@ it does an idempotency check, performs the side effect, emits a receipt
 (`receipt_service.emit` + `format_receipt_line`), wraps everything in `try/except` so
 receipt bookkeeping can't break the action, and returns a human string with the receipt
 line appended. `HRService.raise_hr_query` repeats the same shape. The automation hub has a
-*third* copy of "send + record". Every new write re-implements the safety choreography, and
+_third_ copy of "send + record". Every new write re-implements the safety choreography, and
 each copy is a place to get it subtly wrong.
 
 This is the same disease the routing Resolver cured for reads: ~14 inline branches, implicit
 precedence, untestable. The cure is the same — make each action a **registered, named unit
-with its own test**, and make the safety choreography happen *once*, in the dispatcher.
+with its own test**, and make the safety choreography happen _once_, in the dispatcher.
 
 Two features need this and neither should build its own action layer:
 
 - **Cross-domain bundles** compose N typed actions in one interactive turn, one confirm,
   child receipts under a parent.
-- **The no-code Automation Hub** composes the *same* typed actions on a trigger, unattended,
+- **The no-code Automation Hub** composes the _same_ typed actions on a trigger, unattended,
   with a dry-run at authoring time.
 
 The registry is the hinge under both. Build it once.
@@ -150,7 +150,7 @@ is just: validate-free side effect → `ActionResult(True, confirmation_id, mess
 
 The PendingAction gate
 ([pending_action_service.py](../backend/app/services/pending_action_service.py)) does NOT
-move — it stays the durable confirm machine. What changes is *who drives it*. The confirmation
+move — it stays the durable confirm machine. What changes is _who drives it_. The confirmation
 step is conditional on `source`; **authorize + idempotency + receipt are unconditional.**
 
 ### Interactive (chat / bundle) — propose, then confirm
@@ -198,7 +198,7 @@ dispatch(spec, ctx)
 
 ## Authorization is per-action — this is non-negotiable
 
-A bundle may contain an action the actor *cannot* run (the travel macro's access-request leg
+A bundle may contain an action the actor _cannot_ run (the travel macro's access-request leg
 needs manager approval; OOO is self-service). A rule's creator may not be allowed every action
 they can drag onto a canvas (an HR author shouldn't auto-create IT tickets unless granted).
 So `authorize` lives on the **ActionSpec**, is evaluated **at dispatch**, against the
@@ -215,32 +215,33 @@ def _post_teams_channel_authorize(ctx) -> bool:
 ## How the two crown jewels consume it
 
 **Bundles.** A `BundlePlan` is an ordered `[(spec_key, params)]`. For each leg: `authorize`
-+ `preview`. Render one checklist with per-leg opt-out, one confirm. On confirm: create N
-PendingActions sharing a `bundle_id`, `dispatch` each best-effort, collect child receipts,
-emit a parent bundle receipt linking them. Partial failure is *honest* — cabin booked, OOO
-failed — because each leg owns its own receipt + undo. No cross-system transaction is needed
-or attempted.
+
+- `preview`. Render one checklist with per-leg opt-out, one confirm. On confirm: create N
+  PendingActions sharing a `bundle_id`, `dispatch` each best-effort, collect child receipts,
+  emit a parent bundle receipt linking them. Partial failure is _honest_ — cabin booked, OOO
+  failed — because each leg owns its own receipt + undo. No cross-system transaction is needed
+  or attempted.
 
 **Automation Hub.** `AutomationRule` grows a `trigger` (whitelisted condition catalog —
 entity + field + operator + threshold, the same discipline as the analytics metric whitelist)
 and an `action` (`spec_key` + a params template). The trigger evaluator runs on the existing
 nudge scan loop (`run_due`), reusing `dedup_key` + cooldown so a rule can't re-fire or spam
 ([nudge_service.py](../backend/app/services/nudge_service.py)). Dry-run = evaluate the
-condition + call `preview()` for each match, *without* `execute` — "this rule would fire for
+condition + call `preview()` for each match, _without_ `execute` — "this rule would fire for
 47 tickets right now."
 
 ## Catalog v1 (map to what already exists)
 
-| key | execute wraps | undo | authorize | status |
-|---|---|---|---|---|
-| `it_ticket` | `ITService.create_ticket` | `cancel_ticket` (Open only) | self | exists, wrap it |
-| `hr_query` | `HRService.raise_hr_query` | `withdraw_hr_query` | self | exists, wrap it |
-| `software_install` | existing pending email-draft path | — | self | exists, wrap it |
-| `nudge_manager` | resend approval (has cooldown) | — | self | exists, wrap it |
-| `apply_leave` | Zoho deep-link (informational, `is_write=False`) | — | self | exists, wrap it |
-| `send_email` | `automation_service` email send | — | author role | exists, wrap it |
-| `post_teams` | `notify_teams` (gated OFF) | — | admin/hr/it/manager | exists, gated |
-| `set_ooo` / `book_cabin` / `access_request` | — | per-system | varies | new (travel bundle) |
+| key                                         | execute wraps                                    | undo                        | authorize           | status              |
+| ------------------------------------------- | ------------------------------------------------ | --------------------------- | ------------------- | ------------------- |
+| `it_ticket`                                 | `ITService.create_ticket`                        | `cancel_ticket` (Open only) | self                | exists, wrap it     |
+| `hr_query`                                  | `HRService.raise_hr_query`                       | `withdraw_hr_query`         | self                | exists, wrap it     |
+| `software_install`                          | existing pending email-draft path                | —                           | self                | exists, wrap it     |
+| `nudge_manager`                             | resend approval (has cooldown)                   | —                           | self                | exists, wrap it     |
+| `apply_leave`                               | Zoho deep-link (informational, `is_write=False`) | —                           | self                | exists, wrap it     |
+| `send_email`                                | `automation_service` email send                  | —                           | author role         | exists, wrap it     |
+| `post_teams`                                | `notify_teams` (gated OFF)                       | —                           | admin/hr/it/manager | exists, gated       |
+| `set_ooo` / `book_cabin` / `access_request` | —                                                | per-system                  | varies              | new (travel bundle) |
 
 ## File layout (mirrors `resolver.py`)
 
@@ -273,5 +274,5 @@ choreography. Each migrated action gets a test, exactly as each routing strategy
   `receipt_service._UNDO_HANDLERS` — we do not grow a second undo path.
 - **No event bus in v1.** Triggers poll on the nudge scan loop. Event-driven ("the instant
   leave is approved") is a v2 refinement, not a prerequisite.
-- **The registry does not decide *whether* to act** — that's the Resolver (chat), the bundle
+- **The registry does not decide _whether_ to act** — that's the Resolver (chat), the bundle
   planner, or the trigger evaluator. The registry only executes safely once asked.

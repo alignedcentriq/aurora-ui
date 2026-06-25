@@ -1,4 +1,13 @@
-import { CheckCircle2, ArrowRight, ThumbsUp, ThumbsDown, Send, Copy, Check, Bookmark } from "lucide-react";
+import {
+  CheckCircle2,
+  ArrowRight,
+  ThumbsUp,
+  ThumbsDown,
+  Send,
+  Copy,
+  Check,
+  Bookmark,
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -111,11 +120,23 @@ const REFUSAL_PHRASES = [
 ];
 
 const REFERRAL_PHRASES = [
-  "please contact", "please reach out", "reach out to hr", "reach out to the it",
-  "reach out to admin", "contact hr directly", "contact the hr", "contact your hr",
-  "contact the it", "contact the admin", "contact your manager", "i recommend contacting",
-  "i suggest contacting", "i recommend reaching out", "you may want to contact",
-  "you should contact", "you can contact",
+  "please contact",
+  "please reach out",
+  "reach out to hr",
+  "reach out to the it",
+  "reach out to admin",
+  "contact hr directly",
+  "contact the hr",
+  "contact your hr",
+  "contact the it",
+  "contact the admin",
+  "contact your manager",
+  "i recommend contacting",
+  "i suggest contacting",
+  "i recommend reaching out",
+  "you may want to contact",
+  "you should contact",
+  "you can contact",
 ];
 
 function detectsRefusal(text?: string): boolean {
@@ -131,12 +152,36 @@ function detectsReferral(text?: string): boolean {
 }
 
 const DOMAIN_BADGE: Record<string, { label: string; classes: string; borderColor: string }> = {
-  hr: { label: "HR", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", borderColor: "border-l-emerald-500" },
-  admin: { label: "Admin", classes: "bg-amber-500/10 text-amber-600 dark:text-amber-400", borderColor: "border-l-amber-500" },
-  it_support: { label: "IT Support", classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400", borderColor: "border-l-blue-500" },
-  pmo: { label: "PMO", classes: "bg-violet-500/10 text-violet-600 dark:text-violet-400", borderColor: "border-l-violet-500" },
-  functional_manager: { label: "Manager", classes: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400", borderColor: "border-l-indigo-500" },
-  general: { label: "General", classes: "bg-muted text-muted-foreground", borderColor: "border-l-muted-foreground" },
+  hr: {
+    label: "HR",
+    classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    borderColor: "border-l-emerald-500",
+  },
+  admin: {
+    label: "Admin",
+    classes: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    borderColor: "border-l-amber-500",
+  },
+  it_support: {
+    label: "IT Support",
+    classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    borderColor: "border-l-blue-500",
+  },
+  pmo: {
+    label: "PMO",
+    classes: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    borderColor: "border-l-violet-500",
+  },
+  functional_manager: {
+    label: "Manager",
+    classes: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+    borderColor: "border-l-indigo-500",
+  },
+  general: {
+    label: "General",
+    classes: "bg-muted text-muted-foreground",
+    borderColor: "border-l-muted-foreground",
+  },
 };
 
 type FeedbackState = "idle" | "up" | "down_pending" | "submitted";
@@ -215,10 +260,7 @@ export function AIMessage({
 
         <div className="flex-1 min-w-0 space-y-1.5">
           {/* Message bubble with domain border accent */}
-          <div className={cn(
-            "chat-bubble-assistant",
-            badge && `border-l-2 ${badge.borderColor}`,
-          )}>
+          <div className={cn("chat-bubble-assistant", badge && `border-l-2 ${badge.borderColor}`)}>
             <div className="relative">{children}</div>
           </div>
 
@@ -301,7 +343,8 @@ export function AIMessage({
               className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 space-y-2 mx-1 overflow-hidden"
             >
               <p className="text-[11px] font-medium text-foreground/70">
-                What was wrong with this answer? <span className="text-muted-foreground">(optional)</span>
+                What was wrong with this answer?{" "}
+                <span className="text-muted-foreground">(optional)</span>
               </p>
               <textarea
                 autoFocus

@@ -77,8 +77,8 @@ export function LeaveApplicationWidget({ userEmail, userRole }: Props) {
         {url && !error && (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-muted-foreground">
-              Leave is applied directly in Zoho People. Open the form below, then enter your
-              leave type, dates, and reason and submit it there.
+              Leave is applied directly in Zoho People. Open the form below, then enter your leave
+              type, dates, and reason and submit it there.
             </p>
             <a
               href={url}

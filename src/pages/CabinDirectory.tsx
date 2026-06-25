@@ -7,9 +7,9 @@ import { cn } from "@/lib/utils";
 // Dept columns: key matches what the backend / CompanySettingsService reads
 const DEPTS = [
   { key: "admin", label: "Admin", color: "text-blue-400" },
-  { key: "hr",    label: "HR",    color: "text-emerald-400" },
-  { key: "it",    label: "IT Support", color: "text-teal-400" },
-  { key: "pmo",   label: "PMO",   color: "text-violet-400" },
+  { key: "hr", label: "HR", color: "text-emerald-400" },
+  { key: "it", label: "IT Support", color: "text-teal-400" },
+  { key: "pmo", label: "PMO", color: "text-violet-400" },
 ] as const;
 
 type DeptKey = (typeof DEPTS)[number]["key"];
@@ -59,18 +59,17 @@ export function CabinDirectory() {
     }
   }, [user?.email]);
 
-  useEffect(() => { fetchCabins(); }, [fetchCabins]);
+  useEffect(() => {
+    fetchCabins();
+  }, [fetchCabins]);
 
   const handleChange = (idx: number, field: keyof OfficeEntry, value: string) => {
-    setOffices((prev) =>
-      prev.map((o, i) => (i === idx ? { ...o, [field]: value } : o))
-    );
+    setOffices((prev) => prev.map((o, i) => (i === idx ? { ...o, [field]: value } : o)));
   };
 
   const addOffice = () => setOffices((prev) => [...prev, emptyOffice()]);
 
-  const removeOffice = (idx: number) =>
-    setOffices((prev) => prev.filter((_, i) => i !== idx));
+  const removeOffice = (idx: number) => setOffices((prev) => prev.filter((_, i) => i !== idx));
 
   const handleSave = async () => {
     // Validate: each office must have a name
@@ -124,9 +123,10 @@ export function CabinDirectory() {
           <div>
             <h2 className="text-base font-semibold text-foreground">Cabin Directory</h2>
             <p className="text-[11px] text-muted-foreground leading-relaxed max-w-lg">
-              Set cabin/room locations per office. The <strong>Location Name</strong> must exactly match
-              the employee's office location in M365 (e.g. <em>Pune</em>, <em>Indore</em>, <em>Dubai</em>).
-              The assistant auto-picks the right row based on where the user is based.
+              Set cabin/room locations per office. The <strong>Location Name</strong> must exactly
+              match the employee's office location in M365 (e.g. <em>Pune</em>, <em>Indore</em>,{" "}
+              <em>Dubai</em>). The assistant auto-picks the right row based on where the user is
+              based.
             </p>
           </div>
         </div>
@@ -150,7 +150,11 @@ export function CabinDirectory() {
             disabled={saving}
             className="flex items-center gap-2 rounded-xl bg-primary px-4 h-8 text-[12px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
           >
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
             Save All
           </button>
         </div>
@@ -170,76 +174,79 @@ export function CabinDirectory() {
         </div>
       ) : (
         <div className="overflow-x-auto no-scrollbar -mx-1 px-1">
-        <div className="space-y-3 min-w-[820px]">
-          {/* Column headers */}
-          <div className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_32px] gap-3 px-4 items-center">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-              <MapPin className="h-3 w-3" /> Location Name
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              Country / Region
-            </span>
-            {DEPTS.map((d) => (
-              <span key={d.key} className={cn("text-[10px] font-bold uppercase tracking-wider", d.color)}>
-                {d.label}
+          <div className="space-y-3 min-w-[820px]">
+            {/* Column headers */}
+            <div className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_32px] gap-3 px-4 items-center">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                <MapPin className="h-3 w-3" /> Location Name
               </span>
-            ))}
-            <span />
-          </div>
-
-          {offices.map((office, idx) => (
-            <div
-              key={idx}
-              className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_32px] gap-3 items-center rounded-xl border border-border bg-muted/20 px-4 py-3 hover:bg-muted/30 transition-colors"
-            >
-              {/* Location name — must match employee.location */}
-              <input
-                type="text"
-                value={office.name}
-                onChange={(e) => handleChange(idx, "name", e.target.value)}
-                placeholder="e.g. Pune"
-                className="h-8 w-full rounded-lg border border-border bg-background px-3 text-[12px] font-medium text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 transition-colors"
-              />
-
-              {/* Country label (display only, not used for matching) */}
-              <input
-                type="text"
-                value={office.country}
-                onChange={(e) => handleChange(idx, "country", e.target.value)}
-                placeholder="e.g. India"
-                className="h-8 w-full rounded-lg border border-border bg-background px-3 text-[12px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 transition-colors"
-              />
-
-              {/* Cabin fields per dept */}
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Country / Region
+              </span>
               {DEPTS.map((d) => (
-                <input
+                <span
                   key={d.key}
+                  className={cn("text-[10px] font-bold uppercase tracking-wider", d.color)}
+                >
+                  {d.label}
+                </span>
+              ))}
+              <span />
+            </div>
+
+            {offices.map((office, idx) => (
+              <div
+                key={idx}
+                className="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_32px] gap-3 items-center rounded-xl border border-border bg-muted/20 px-4 py-3 hover:bg-muted/30 transition-colors"
+              >
+                {/* Location name — must match employee.location */}
+                <input
                   type="text"
-                  value={office[d.key as DeptKey]}
-                  onChange={(e) => handleChange(idx, d.key as DeptKey, e.target.value)}
-                  placeholder="e.g. Room 201"
+                  value={office.name}
+                  onChange={(e) => handleChange(idx, "name", e.target.value)}
+                  placeholder="e.g. Pune"
+                  className="h-8 w-full rounded-lg border border-border bg-background px-3 text-[12px] font-medium text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 transition-colors"
+                />
+
+                {/* Country label (display only, not used for matching) */}
+                <input
+                  type="text"
+                  value={office.country}
+                  onChange={(e) => handleChange(idx, "country", e.target.value)}
+                  placeholder="e.g. India"
                   className="h-8 w-full rounded-lg border border-border bg-background px-3 text-[12px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 transition-colors"
                 />
-              ))}
 
-              {/* Remove */}
-              <button
-                onClick={() => removeOffice(idx)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400 transition-colors shrink-0"
-                title="Remove this office"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
+                {/* Cabin fields per dept */}
+                {DEPTS.map((d) => (
+                  <input
+                    key={d.key}
+                    type="text"
+                    value={office[d.key as DeptKey]}
+                    onChange={(e) => handleChange(idx, d.key as DeptKey, e.target.value)}
+                    placeholder="e.g. Room 201"
+                    className="h-8 w-full rounded-lg border border-border bg-background px-3 text-[12px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/50 transition-colors"
+                  />
+                ))}
+
+                {/* Remove */}
+                <button
+                  onClick={() => removeOffice(idx)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400 transition-colors shrink-0"
+                  title="Remove this office"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       <p className="text-[11px] text-muted-foreground/55">
-        The <strong>Location Name</strong> field is used for matching — it must match the office location
-        value in employee profiles (MS365 officeLocation field). Multiple offices per country are supported.
-        Leave cabin fields blank for departments not present at a location.
+        The <strong>Location Name</strong> field is used for matching — it must match the office
+        location value in employee profiles (MS365 officeLocation field). Multiple offices per
+        country are supported. Leave cabin fields blank for departments not present at a location.
       </p>
     </div>
   );

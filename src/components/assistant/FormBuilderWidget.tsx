@@ -28,7 +28,11 @@ const inputClass =
   "w-full rounded-lg border border-border/70 bg-background px-2.5 py-1.5 text-[13px] text-foreground outline-none transition-shadow focus:border-primary/40 focus:ring-2 focus:ring-primary/15";
 
 function slugify(label: string, used: Set<string>): string {
-  const base = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "field";
+  const base =
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_|_$/g, "") || "field";
   let name = base;
   let n = 2;
   while (used.has(name)) name = `${base}_${n++}`;
@@ -129,7 +133,9 @@ export function FormBuilderWidget({ draft, userEmail, userRole, onCreated }: Pro
         className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-400"
       >
         <CheckCircle2 className="h-4 w-4 shrink-0" />
-        {isEdit ? "Form updated and live in the Form Library." : "Form created and live in the Form Library."}
+        {isEdit
+          ? "Form updated and live in the Form Library."
+          : "Form created and live in the Form Library."}
       </motion.div>
     );
   }
@@ -245,7 +251,10 @@ export function FormBuilderWidget({ draft, userEmail, userRole, onCreated }: Pro
                     value={(f.options || []).join(", ")}
                     onChange={(e) =>
                       updateField(idx, {
-                        options: e.target.value.split(",").map((o) => o.trim()).filter(Boolean),
+                        options: e.target.value
+                          .split(",")
+                          .map((o) => o.trim())
+                          .filter(Boolean),
                       })
                     }
                     className={`${inputClass} w-full`}

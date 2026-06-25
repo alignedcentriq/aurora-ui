@@ -1,9 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(npx tsc *)",
-      "Bash(git stash *)"
-    ],
-     "deny": ["Read(.env)"]
+    "allow": ["Bash(npx tsc *)", "Bash(git stash *)"],
+    "deny": ["Read(.env)"]
   }
 }

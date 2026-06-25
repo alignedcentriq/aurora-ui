@@ -12,9 +12,7 @@ export function openFormById(detail: FormTriggerDetail) {
   window.dispatchEvent(new CustomEvent<FormTriggerDetail>("centriq:open-form", { detail }));
 }
 
-export function subscribeFormTrigger(
-  handler: (detail: FormTriggerDetail) => void,
-): () => void {
+export function subscribeFormTrigger(handler: (detail: FormTriggerDetail) => void): () => void {
   const listener = (e: Event) => handler((e as CustomEvent<FormTriggerDetail>).detail);
   window.addEventListener("centriq:open-form", listener);
   return () => window.removeEventListener("centriq:open-form", listener);

@@ -257,11 +257,12 @@ export const useSettings = create<SettingsState>()(
       setCountry: (country) => set({ country }),
 
       clocks: ["US", "IN", "AE", "IE"],
-      toggleClock: (code) => set((state) => ({
-        clocks: state.clocks.includes(code)
-          ? state.clocks.filter((c) => c !== code)
-          : [...state.clocks, code]
-      })),
+      toggleClock: (code) =>
+        set((state) => ({
+          clocks: state.clocks.includes(code)
+            ? state.clocks.filter((c) => c !== code)
+            : [...state.clocks, code],
+        })),
     }),
     {
       name: "aurora-settings",
@@ -289,4 +290,3 @@ export function detectCountryFromTimezone(): CountryCode {
   if (tz.startsWith("America/")) return "US";
   return "US";
 }
-

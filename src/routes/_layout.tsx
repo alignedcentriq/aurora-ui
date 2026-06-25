@@ -60,9 +60,19 @@ const ROLE_META: Record<Role, { icon: any; color: string; label: string; cKey: s
   Employee: { icon: Briefcase, color: "text-[#3B8FE8]", label: "Employee", cKey: "Clarity" },
   HR: { icon: Users, color: "text-[#22C55E]", label: "Human Resources", cKey: "Collaboration" },
   IT: { icon: Wrench, color: "text-[#14B8A6]", label: "IT Support", cKey: "Connectivity" },
-  PMO: { icon: ClipboardList, color: "text-[#4F6FEF]", label: "Project Management", cKey: "Capacity" },
+  PMO: {
+    icon: ClipboardList,
+    color: "text-[#4F6FEF]",
+    label: "Project Management",
+    cKey: "Capacity",
+  },
   Admin: { icon: Shield, color: "text-[#3B8FE8]", label: "Administrator", cKey: "Clarity" },
-  "Functional Manager": { icon: UserCog, color: "text-[#22C55E]", label: "Functional Manager", cKey: "Collaboration" },
+  "Functional Manager": {
+    icon: UserCog,
+    color: "text-[#22C55E]",
+    label: "Functional Manager",
+    cKey: "Collaboration",
+  },
   "Super Admin": { icon: Crown, color: "text-[#F59E0B]", label: "Super Admin", cKey: "Capacity" },
 };
 
@@ -80,12 +90,20 @@ const NAV_COLORS: Record<string, string> = {
 // --- Timezone Clock Card Component with Parallax Hover ---
 function TimezoneOrbitClockCard({ country }: { country: any }) {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0, scale: 1 });
-  const [timeData, setTimeData] = useState({ timeStr: "", isOpen: false, hrDeg: 0, minDeg: 0, secDeg: 0, h: 12, m: 0 });
+  const [timeData, setTimeData] = useState({
+    timeStr: "",
+    isOpen: false,
+    hrDeg: 0,
+    minDeg: 0,
+    secDeg: 0,
+    h: 12,
+    m: 0,
+  });
 
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      
+
       let localTimeStr = "";
       let isOpen = false;
       let hrDeg = 0;
@@ -112,10 +130,10 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
         });
 
         const parts = formatter.formatToParts(now);
-        h = parseInt(parts.find(p => p.type === "hour")?.value || "0", 10);
-        m = parseInt(parts.find(p => p.type === "minute")?.value || "0", 10);
-        const s = parseInt(parts.find(p => p.type === "second")?.value || "0", 10);
-        const weekday = parts.find(p => p.type === "weekday")?.value || "Mon";
+        h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+        m = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+        const s = parseInt(parts.find((p) => p.type === "second")?.value || "0", 10);
+        const weekday = parts.find((p) => p.type === "weekday")?.value || "Mon";
 
         secDeg = s * 6;
         minDeg = m * 6 + s * 0.1;
@@ -182,14 +200,16 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
         "relative rounded-3xl border border-border/50 p-5 flex flex-col items-center gap-4 text-center backdrop-blur-md transition-shadow",
         "bg-gradient-to-br",
         bgGradient,
-        borderGlow
+        borderGlow,
       )}
     >
       <div className="absolute top-4 right-4 flex items-center gap-1.5">
-        <span className={cn(
-          "h-2 w-2 rounded-full",
-          isOpen ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-zinc-600"
-        )} />
+        <span
+          className={cn(
+            "h-2 w-2 rounded-full",
+            isOpen ? "bg-emerald-500 shadow-[0_0_8px_#10b981]" : "bg-zinc-600",
+          )}
+        />
         <span className="text-[9px] font-bold text-foreground/50 uppercase tracking-wider">
           {isOpen ? "Open" : "Closed"}
         </span>
@@ -198,22 +218,31 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
       <div className="flex items-center gap-2 mt-2">
         <span className="text-2xl">{country.flag}</span>
         <div className="text-left">
-          <h4 className="text-xs font-bold text-foreground truncate max-w-[120px]">{country.name}</h4>
-          <p className="text-[10px] text-muted-foreground font-medium truncate max-w-[120px]">{country.office}</p>
+          <h4 className="text-xs font-bold text-foreground truncate max-w-[120px]">
+            {country.name}
+          </h4>
+          <p className="text-[10px] text-muted-foreground font-medium truncate max-w-[120px]">
+            {country.office}
+          </p>
         </div>
       </div>
 
       {/* Sweeping Analog Clock Face — hidden on mobile, digital time below is shown instead */}
       <div className="relative w-24 h-24 rounded-full border border-foreground/10 bg-background/40 hidden sm:flex items-center justify-center shadow-inner">
         <div className="absolute w-2 h-2 rounded-full bg-foreground z-20" />
-        
+
         {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((tick) => (
           <div
             key={tick}
             className="absolute inset-1 flex flex-col items-center pointer-events-none"
             style={{ transform: `rotate(${tick * 30}deg)` }}
           >
-            <div className={cn("w-0.5 rounded-full bg-foreground/20", tick % 3 === 0 ? "h-1.5 bg-foreground/35" : "h-0.75")} />
+            <div
+              className={cn(
+                "w-0.5 rounded-full bg-foreground/20",
+                tick % 3 === 0 ? "h-1.5 bg-foreground/35" : "h-0.75",
+              )}
+            />
           </div>
         ))}
 
@@ -250,7 +279,9 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
         <div className="flex items-center justify-center gap-1.5 text-[9px] text-muted-foreground font-bold uppercase tracking-wider">
           <span>{timeLabel}</span>
           <span>•</span>
-          <span className="truncate max-w-[80px]">{country.timezone.split("/")[1].replace("_", " ")}</span>
+          <span className="truncate max-w-[80px]">
+            {country.timezone.split("/")[1].replace("_", " ")}
+          </span>
         </div>
       </div>
     </motion.div>
@@ -271,6 +302,13 @@ function LayoutComponent() {
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [clocksOverlayOpen, setClocksOverlayOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+
+  useEffect(() => {
+    if (location.pathname === "/" || location.pathname === "/settings") {
+      setCopilotOpen(false);
+    }
+  }, [location.pathname]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -285,9 +323,12 @@ function LayoutComponent() {
     }
   }, [createThread]);
 
-  const activeTheme = theme === "system"
-    ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : theme;
+  const activeTheme =
+    theme === "system"
+      ? typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : theme;
 
   const handleThemeToggle = () => {
     const targetTheme = activeTheme === "dark" ? "light" : "dark";
@@ -297,7 +338,7 @@ function LayoutComponent() {
   useEffect(() => {
     const detected = detectCountryFromTimezone();
     if (detected !== country) setCountry(detected);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -356,10 +397,25 @@ function LayoutComponent() {
   };
 
   // Check roles demo switcher
-  const roles: Role[] = ["Employee", "HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"];
+  const roles: Role[] = [
+    "Employee",
+    "HR",
+    "IT",
+    "PMO",
+    "Admin",
+    "Functional Manager",
+    "Super Admin",
+  ];
 
   // Static checks for Hub items
-  const hasControlHubAccess = ["HR", "IT", "PMO", "Admin", "Functional Manager", "Super Admin"].includes(user.role);
+  const hasControlHubAccess = [
+    "HR",
+    "IT",
+    "PMO",
+    "Admin",
+    "Functional Manager",
+    "Super Admin",
+  ].includes(user.role);
 
   const navItems = [
     { to: "/", icon: MessageSquare, label: "Chat", show: true },
@@ -376,32 +432,34 @@ function LayoutComponent() {
     { to: "/settings", icon: Settings, label: "Settings", show: true },
   ];
 
-  const avatarEl = user.avatarUrl && !avatarError ? (
-    <img
-      src={user.avatarUrl}
-      alt={user.name}
-      onError={() => setAvatarError(true)}
-      className="h-7 w-7 rounded-full object-cover shrink-0 ring-2 ring-primary/20"
-    />
-  ) : (
-    <div
-      className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-black text-white shrink-0"
-      style={{
-        background: "var(--gradient-primary)",
-      }}
-    >
-      {user.name.split(" ").map((n) => n[0]).join("")}
-    </div>
-  );
+  const avatarEl =
+    user.avatarUrl && !avatarError ? (
+      <img
+        src={user.avatarUrl}
+        alt={user.name}
+        onError={() => setAvatarError(true)}
+        className="h-7 w-7 rounded-full object-cover shrink-0 ring-2 ring-primary/20"
+      />
+    ) : (
+      <div
+        className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-black text-white shrink-0"
+        style={{
+          background: "var(--gradient-primary)",
+        }}
+      >
+        {user.name
+          .split(" ")
+          .map((n) => n[0])
+          .join("")}
+      </div>
+    );
 
   const showCopilot = location.pathname !== "/" && location.pathname !== "/settings";
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
-      
       {/* --- PREMIUM TOP HEADER --- */}
       <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-30 shrink-0 select-none">
-        
         {/* Left Side: Brand Logo + Brand Name */}
         <div className="flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity">
@@ -421,36 +479,47 @@ function LayoutComponent() {
         {/* Center: always-visible nav */}
         <div className="flex min-w-0 items-center justify-center">
           <nav className="hidden lg:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1">
-            {navItems.filter((n) => n.show).map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.to);
-              const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={cn(
-                    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
-                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                  )}
-                  style={active ? {
-                    background: `color-mix(in oklab, ${accentColor} 14%, var(--background))`,
-                    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
-                  } : undefined}
-                >
-                  {active && (
-                    <motion.div
-                      layoutId="header-nav-active-dot"
-                      className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded-full"
-                      style={{ background: accentColor }}
-                      transition={{ type: "spring", stiffness: 400, damping: 28 }}
+            {navItems
+              .filter((n) => n.show)
+              .map((item) => {
+                const Icon = item.icon;
+                const active = isActive(item.to);
+                const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={cn(
+                      "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
+                      active
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                    )}
+                    style={
+                      active
+                        ? {
+                          background: `color-mix(in oklab, ${accentColor} 14%, var(--background))`,
+                          boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
+                        }
+                        : undefined
+                    }
+                  >
+                    {active && (
+                      <motion.div
+                        layoutId="header-nav-active-dot"
+                        className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded-full"
+                        style={{ background: accentColor }}
+                        transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                      />
+                    )}
+                    <Icon
+                      className="h-3.5 w-3.5 shrink-0"
+                      style={{ color: active ? accentColor : "inherit" }}
                     />
-                  )}
-                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: active ? accentColor : "inherit" }} />
-                  <span className="hidden xl:inline">{item.label}</span>
-                </Link>
-              );
-            })}
+                    <span className="hidden xl:inline">{item.label}</span>
+                  </Link>
+                );
+              })}
           </nav>
         </div>
 
@@ -488,7 +557,11 @@ function LayoutComponent() {
             className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
             title="Toggle Theme"
           >
-            {activeTheme === "dark" ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-indigo-400" />}
+            {activeTheme === "dark" ? (
+              <Sun className="h-4 w-4 text-amber-400" />
+            ) : (
+              <Moon className="h-4 w-4 text-indigo-400" />
+            )}
           </button>
 
           {/* History Toggle */}
@@ -498,7 +571,7 @@ function LayoutComponent() {
               "flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer shadow-sm",
               historyDrawerOpen
                 ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground"
+                : "border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground",
             )}
             title="Recent Chats"
           >
@@ -512,7 +585,12 @@ function LayoutComponent() {
               className="flex items-center gap-2 rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 p-1 pr-2 text-xs font-medium text-foreground transition-all shrink-0 cursor-pointer shadow-sm"
             >
               {avatarEl}
-              <ChevronDown className={cn("h-3 w-3 opacity-55 transition-transform duration-200", profileDropdownOpen && "rotate-180")} />
+              <ChevronDown
+                className={cn(
+                  "h-3 w-3 opacity-55 transition-transform duration-200",
+                  profileDropdownOpen && "rotate-180",
+                )}
+              />
             </button>
 
             <AnimatePresence>
@@ -527,7 +605,9 @@ function LayoutComponent() {
                 >
                   <div className="px-3 py-1.5 border-b border-border/40 mb-1.5 flex flex-col">
                     <span className="text-xs font-bold text-foreground truncate">{user.name}</span>
-                    <span className="text-[10px] text-muted-foreground truncate font-medium">{user.role}</span>
+                    <span className="text-[10px] text-muted-foreground truncate font-medium">
+                      {user.role}
+                    </span>
                   </div>
 
                   {/* Mobile-only quick actions — these live as top-bar buttons on ≥sm screens */}
@@ -546,8 +626,14 @@ function LayoutComponent() {
                         }}
                         className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
                       >
-                        {activeTheme === "dark" ? <Sun className="h-3.5 w-3.5 text-amber-400" /> : <Moon className="h-3.5 w-3.5 text-indigo-400" />}
-                        <span className="flex-1 truncate">{activeTheme === "dark" ? "Light mode" : "Dark mode"}</span>
+                        {activeTheme === "dark" ? (
+                          <Sun className="h-3.5 w-3.5 text-amber-400" />
+                        ) : (
+                          <Moon className="h-3.5 w-3.5 text-indigo-400" />
+                        )}
+                        <span className="flex-1 truncate">
+                          {activeTheme === "dark" ? "Light mode" : "Dark mode"}
+                        </span>
                       </button>
                       <button
                         onClick={() => {
@@ -595,7 +681,7 @@ function LayoutComponent() {
                             "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs transition-all text-left",
                             isSelected
                               ? "bg-primary/10 text-primary font-semibold"
-                              : "text-foreground/75 hover:bg-muted/65 hover:text-foreground"
+                              : "text-foreground/75 hover:bg-muted/65 hover:text-foreground",
                           )}
                         >
                           <RIcon className={cn("h-3.5 w-3.5", meta.color)} />
@@ -626,7 +712,12 @@ function LayoutComponent() {
       </header>
 
       {/* --- MAIN WORKSPACE --- */}
-      <main className="flex-1 w-full min-h-0 relative z-0 pb-20 lg:pb-0 overflow-hidden">
+      <main
+        className={cn(
+          "flex-1 w-full min-h-0 relative z-0 pb-20 lg:pb-0 overflow-hidden transition-all duration-300",
+          showCopilot && copilotOpen && "lg:pr-[480px]",
+        )}
+      >
         <Outlet />
       </main>
 
@@ -698,9 +789,7 @@ function LayoutComponent() {
                       if (t.turns.length === 0) return false;
                       if (!searchQuery) return true;
                       const query = searchQuery.toLowerCase();
-                      return t.turns.some((turn) =>
-                        turn.text.toLowerCase().includes(query)
-                      );
+                      return t.turns.some((turn) => turn.text.toLowerCase().includes(query));
                     })
                     .sort((a, b) => b.updatedAt - a.updatedAt);
 
@@ -726,10 +815,15 @@ function LayoutComponent() {
                           "group flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium cursor-pointer transition-all border border-transparent",
                           active
                             ? "bg-primary/10 text-primary font-semibold border-primary/20"
-                            : "text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+                            : "text-foreground/75 hover:bg-muted/40 hover:text-foreground",
                         )}
                       >
-                        <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground/70")} />
+                        <MessageSquare
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            active ? "text-primary" : "text-muted-foreground/70",
+                          )}
+                        />
                         <span className="truncate flex-1 text-left">{title}</span>
                         <button
                           onClick={(e) => {
@@ -752,7 +846,10 @@ function LayoutComponent() {
       </AnimatePresence>
 
       {/* --- BOTTOM FLOATING NAVIGATION DOCK (MOBILE) --- */}
-      <div className="flex lg:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)' }}>
+      <div
+        className="flex lg:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 6px)" }}
+      >
         {navItems
           .filter((n) => n.show)
           .map((item) => {
@@ -767,12 +864,18 @@ function LayoutComponent() {
                 title={item.label}
                 className={cn(
                   "group relative flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px]",
-                  active ? "text-foreground font-bold" : "text-muted-foreground hover:text-foreground"
+                  active
+                    ? "text-foreground font-bold"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
-                style={active ? {
-                  background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
-                  boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
-                } : undefined}
+                style={
+                  active
+                    ? {
+                      background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
+                      boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
+                    }
+                    : undefined
+                }
               >
                 {active && (
                   <motion.div
@@ -789,7 +892,9 @@ function LayoutComponent() {
                   className="h-[18px] w-[18px] shrink-0"
                   style={{ color: active ? accentColor : "inherit" }}
                 />
-                <span className="mt-0.5 text-[9px] truncate max-w-[60px] leading-tight text-center">{item.label}</span>
+                <span className="mt-0.5 text-[9px] truncate max-w-[60px] leading-tight text-center">
+                  {item.label}
+                </span>
               </Link>
             );
           })}
@@ -825,14 +930,18 @@ function LayoutComponent() {
 
               <div className="mb-6 text-center select-none">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold mb-2">
-                  <Globe className="h-3.5 w-3.5 animate-spin-slow" style={{ animationDuration: "10s" }} />
+                  <Globe
+                    className="h-3.5 w-3.5 animate-spin-slow"
+                    style={{ animationDuration: "10s" }}
+                  />
                   <span>Interactive Workspace Clocks</span>
                 </div>
                 <h2 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">
                   Global Office Time Orbit
                 </h2>
                 <p className="text-xs md:text-sm text-muted-foreground max-w-md mx-auto mt-1">
-                  Real-time dial sweeping and local timezone gradients across US, Ireland, Dubai, and India.
+                  Real-time dial sweeping and local timezone gradients across US, Ireland, Dubai,
+                  and India.
                 </p>
               </div>
 
@@ -865,12 +974,16 @@ function LayoutComponent() {
         </div>
       )}
 
-
       {/* --- COMMAND PALETTE --- */}
       <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
 
       {/* --- DELETE CONFIRMATION DIALOG --- */}
-      <AlertDialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+      <AlertDialog
+        open={!!deleteConfirmId}
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirmId(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation</AlertDialogTitle>
@@ -891,8 +1004,7 @@ function LayoutComponent() {
       </AlertDialog>
 
       {/* --- COPILOT SIDEBAR DRAWER --- */}
-      {showCopilot && <CopilotSidebar />}
-
+      {showCopilot && <CopilotSidebar isOpen={copilotOpen} setIsOpen={setCopilotOpen} />}
     </div>
   );
 }

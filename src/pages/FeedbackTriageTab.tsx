@@ -17,7 +17,15 @@ const DOMAIN_BADGE: Record<string, string> = {
   functional_manager: "bg-pink-500/15 text-pink-400 border border-pink-500/20",
   ms365: "bg-sky-500/15 text-sky-400 border border-sky-500/20",
 };
-const TRIAGE_DOMAINS = ["hr", "it_support", "admin", "pmo", "ms365", "functional_manager", "general"];
+const TRIAGE_DOMAINS = [
+  "hr",
+  "it_support",
+  "admin",
+  "pmo",
+  "ms365",
+  "functional_manager",
+  "general",
+];
 
 interface TriageSample {
   kind: "feedback" | "escalation";
@@ -44,22 +52,29 @@ export function FeedbackTriageTab() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const [clusters, setClusters] = useState<TriageCluster[]>([]);
-  const [stats, setStats] = useState<{ untriaged_feedback: number; open_escalations: number } | null>(null);
+  const [stats, setStats] = useState<{
+    untriaged_feedback: number;
+    open_escalations: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [openForm, setOpenForm] = useState<Record<string, "answer" | "routing">>({});
   const [answerText, setAnswerText] = useState<Record<string, string>>({});
-  const [routeTarget, setRouteTarget] = useState<Record<string, { domain: string; sub_intent: string }>>({});
+  const [routeTarget, setRouteTarget] = useState<
+    Record<string, { domain: string; sub_intent: string }>
+  >({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/observability/feedback-triage/clusters?days=60", { headers: authHeaders });
+      const res = await fetch("/api/observability/feedback-triage/clusters?days=60", {
+        headers: authHeaders,
+      });
       const data = await res.json();
       setClusters(data.clusters || []);
       setStats(data.stats || null);
@@ -121,9 +136,13 @@ export function FeedbackTriageTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[15px] font-semibold text-foreground">Failure clusters awaiting triage</h2>
+          <h2 className="text-[15px] font-semibold text-foreground">
+            Failure clusters awaiting triage
+          </h2>
           <p className="text-[12px] text-muted-foreground">
-            {stats ? `${stats.untriaged_feedback} untriaged 👎 · ${stats.open_escalations} open escalations · ` : ""}
+            {stats
+              ? `${stats.untriaged_feedback} untriaged 👎 · ${stats.open_escalations} open escalations · `
+              : ""}
             ranked by frequency. Promote a fix to compound your eval set.
           </p>
         </div>
@@ -152,26 +171,42 @@ export function FeedbackTriageTab() {
             const form = openForm[c.cluster_id];
             const busyKey = busy === c.cluster_id;
             return (
-              <div key={c.cluster_id} className="rounded-xl border border-[var(--border)] bg-card/50 p-4">
+              <div
+                key={c.cluster_id}
+                className="rounded-xl border border-[var(--border)] bg-card/50 p-4"
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="mb-1.5 flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-400">
-                        <AlertTriangle className="h-3 w-3" /> {c.count} failure{c.count > 1 ? "s" : ""}
+                        <AlertTriangle className="h-3 w-3" /> {c.count} failure
+                        {c.count > 1 ? "s" : ""}
                       </span>
-                      <span className={cn("rounded-full px-2 py-0.5 text-[11px]", DOMAIN_BADGE[c.domain] || DOMAIN_BADGE.general)}>
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[11px]",
+                          DOMAIN_BADGE[c.domain] || DOMAIN_BADGE.general,
+                        )}
+                      >
                         {c.domain}
                       </span>
                       {c.escalation_ids.length > 0 && (
                         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-400">
-                          {c.escalation_ids.length} escalation{c.escalation_ids.length > 1 ? "s" : ""}
+                          {c.escalation_ids.length} escalation
+                          {c.escalation_ids.length > 1 ? "s" : ""}
                         </span>
                       )}
                     </div>
-                    <p className="truncate text-[14px] font-medium text-foreground">{c.representative_question}</p>
+                    <p className="truncate text-[14px] font-medium text-foreground">
+                      {c.representative_question}
+                    </p>
                     {c.samples.length > 1 && (
                       <p className="mt-1 truncate text-[12px] text-muted-foreground">
-                        + variants: {c.samples.slice(1, 4).map((s) => `"${s.question}"`).join(", ")}
+                        + variants:{" "}
+                        {c.samples
+                          .slice(1, 4)
+                          .map((s) => `"${s.question}"`)
+                          .join(", ")}
                       </p>
                     )}
                   </div>
@@ -197,7 +232,11 @@ export function FeedbackTriageTab() {
                     <button
                       disabled={busyKey}
                       onClick={() =>
-                        act("dismiss", { feedback_ids: c.feedback_ids, escalation_ids: c.escalation_ids }, c.cluster_id)
+                        act(
+                          "dismiss",
+                          { feedback_ids: c.feedback_ids, escalation_ids: c.escalation_ids },
+                          c.cluster_id,
+                        )
                       }
                       className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] text-muted-foreground hover:text-rose-400"
                     >
@@ -213,13 +252,18 @@ export function FeedbackTriageTab() {
                     </label>
                     <textarea
                       value={answerText[c.cluster_id] || ""}
-                      onChange={(e) => setAnswerText((p) => ({ ...p, [c.cluster_id]: e.target.value }))}
+                      onChange={(e) =>
+                        setAnswerText((p) => ({ ...p, [c.cluster_id]: e.target.value }))
+                      }
                       rows={3}
                       placeholder="Write the correct, grounded answer…"
                       className="w-full rounded-lg border border-[var(--border)] bg-background p-2.5 text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                     />
                     <div className="mt-2 flex justify-end gap-2">
-                      <button onClick={() => closeForm(c.cluster_id)} className="px-3 py-1.5 text-[12px] text-muted-foreground">
+                      <button
+                        onClick={() => closeForm(c.cluster_id)}
+                        className="px-3 py-1.5 text-[12px] text-muted-foreground"
+                      >
                         Cancel
                       </button>
                       <button
@@ -234,7 +278,7 @@ export function FeedbackTriageTab() {
                               feedback_ids: c.feedback_ids,
                               escalation_ids: c.escalation_ids,
                             },
-                            c.cluster_id
+                            c.cluster_id,
                           )
                         }
                         className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
@@ -256,7 +300,10 @@ export function FeedbackTriageTab() {
                         onChange={(e) =>
                           setRouteTarget((p) => ({
                             ...p,
-                            [c.cluster_id]: { ...(p[c.cluster_id] || { sub_intent: "" }), domain: e.target.value },
+                            [c.cluster_id]: {
+                              ...(p[c.cluster_id] || { sub_intent: "" }),
+                              domain: e.target.value,
+                            },
                           }))
                         }
                         className="rounded-lg border border-[var(--border)] bg-background px-2.5 py-1.5 text-[13px] text-foreground"
@@ -272,7 +319,10 @@ export function FeedbackTriageTab() {
                         onChange={(e) =>
                           setRouteTarget((p) => ({
                             ...p,
-                            [c.cluster_id]: { ...(p[c.cluster_id] || { domain: c.domain }), sub_intent: e.target.value },
+                            [c.cluster_id]: {
+                              ...(p[c.cluster_id] || { domain: c.domain }),
+                              sub_intent: e.target.value,
+                            },
                           }))
                         }
                         placeholder="sub_intent (e.g. create_ticket)"
@@ -280,7 +330,10 @@ export function FeedbackTriageTab() {
                       />
                     </div>
                     <div className="mt-2 flex justify-end gap-2">
-                      <button onClick={() => closeForm(c.cluster_id)} className="px-3 py-1.5 text-[12px] text-muted-foreground">
+                      <button
+                        onClick={() => closeForm(c.cluster_id)}
+                        className="px-3 py-1.5 text-[12px] text-muted-foreground"
+                      >
                         Cancel
                       </button>
                       <button
@@ -295,12 +348,13 @@ export function FeedbackTriageTab() {
                               feedback_ids: c.feedback_ids,
                               escalation_ids: c.escalation_ids,
                             },
-                            c.cluster_id
+                            c.cluster_id,
                           )
                         }
                         className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
                       >
-                        {busyKey && <Loader2 className="h-3 w-3 animate-spin" />} Promote routing fix
+                        {busyKey && <Loader2 className="h-3 w-3 animate-spin" />} Promote routing
+                        fix
                       </button>
                     </div>
                   </div>

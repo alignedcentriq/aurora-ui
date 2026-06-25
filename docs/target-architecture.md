@@ -18,9 +18,9 @@ observable, with routing as a solved, tested sub-problem rather than the main ev
   calls, prefer deterministic paths, and degrade gracefully — not assume GPT-4-class reasoning.
 - **Enterprise, multi-domain**: HR, IT, Admin, PMO, MS365, Manager, General + connectors.
 - **Three capability classes**, in ascending order of blast radius:
-  1. *Inform* (policy/RAG Q&A) — wrong answer is recoverable.
-  2. *Look up* (my leaves, tickets, attendance) — read-only, per-user.
-  3. *Act* (apply leave, send email/Teams, raise ticket, cancel leave) — **irreversible**.
+  1. _Inform_ (policy/RAG Q&A) — wrong answer is recoverable.
+  2. _Look up_ (my leaves, tickets, attendance) — read-only, per-user.
+  3. _Act_ (apply leave, send email/Teams, raise ticket, cancel leave) — **irreversible**.
 - **Integrations** with independent auth/availability: Zoho, Alchemy, SharePoint, M365, marketplace.
 - **Stack to keep**: FastAPI, LangGraph, Redis checkpointer + Postgres, the resilience layer.
 
@@ -34,14 +34,14 @@ observable, with routing as a solved, tested sub-problem rather than the main ev
    structurally, not by prompt-wishing.
 3. **One brain, layered.** A single orchestration pipeline; cross-cutting concerns live
    once as hooks, never copy-pasted per agent.
-4. **Conversation has state.** What the conversation is *about* is a typed object, not
+4. **Conversation has state.** What the conversation is _about_ is a typed object, not
    re-derived per turn from heuristics.
 5. **Deterministic first, LLM last.** Exact/keyword/semantic resolve before any generative
    call; the small model is the fallback, not the front door.
 6. **Internal model calls are invisible.** Classifiers/resolvers/summarisers can never
    reach the user stream — enforced by the pipeline, not per-node skip-lists.
 7. **Logs ≠ eval.** Observability is operational telemetry. Correctness is human-labelled
-   curated cases. Logs feed *discovery*, never *truth*, and only via a human gate.
+   curated cases. Logs feed _discovery_, never _truth_, and only via a human gate.
 8. **Data-driven extensibility.** New domains/forms/connectors/skills are data + config,
    not new control-flow branches.
 
@@ -82,7 +82,7 @@ observable, with routing as a solved, tested sub-problem rather than the main ev
 
 - **`ConversationState`** — typed per-thread object: `active_domain`, `active_task`,
   `focus` (subject + entities for coref), `pending_action`. Replaces the 5 ad-hoc
-  carry-over mechanisms. *(Phase 1 landed: `focus` + `state_tracker`.)*
+  carry-over mechanisms. _(Phase 1 landed: `focus` + `state_tracker`.)_
 - **Resolver** — `(message, ConversationState) → RouteDecision`, implemented as an ordered
   list of **named, individually-tested strategies** (clarify-reply, pending-action,
   continuation/coref, exact, keyword, semantic, form-library, LLM-fallback). Replaces the
@@ -91,7 +91,7 @@ observable, with routing as a solved, tested sub-problem rather than the main ev
   guardrails, prefetch, tool-narrowing, empty-recovery, output-hygiene, focus-tracking
   exist **once**. Domain agents shrink to their unique logic.
 
-## 5. Action layer  ← the highest-value decision
+## 5. Action layer ← the highest-value decision
 
 Today: actions are scattered in agents; the IT email draft lives in an in-memory dict
 (`PENDING_IT_EMAIL_DRAFTS`) that dies on restart. That is the most dangerous part of the
@@ -104,7 +104,7 @@ system. Target:
   and executes only on an explicit confirm. Cancel/expiry are first-class.
 - **Idempotency.** Each execution carries a key so a retry/double-confirm can't double-book
   leave or send a message twice.
-- **Effect isolation.** The agent *decides*; the action layer *executes* and owns
+- **Effect isolation.** The agent _decides_; the action layer _executes_ and owns
   side-effect logging. One audit trail for every write.
 
 This is what turns "an assistant that sometimes does the wrong thing" into one safe to
@@ -163,16 +163,16 @@ This is a consolidation, not a teardown.
 
 Each step ships independently and is reversible; all gated by the eval harness.
 
-| # | Step | Why this order | Status |
-|---|------|----------------|--------|
-| 0 | Routing eval harness | safety net for all router work | **DONE** |
-| 1 | `ConversationState.focus` + tracker | kills the follow-up bug class | **DONE** |
-| 2 | **Action safety layer** | highest blast radius; do before more refactor | **NEXT** |
-| 3 | Resolver extraction (strategies) | de-accretes routing; harness-gated | planned |
-| 4 | Shared agent pipeline (pre/post hooks) | removes per-agent duplication | planned |
-| 5 | RAG uniform retriever + groundedness gate | correctness of inform answers | planned |
-| 6 | Online eval from feedback/escalations | continuous quality signal | planned |
-| 7 | Retire characterization snapshot | scaffold no longer needed | after 3 |
+| #   | Step                                      | Why this order                                | Status   |
+| --- | ----------------------------------------- | --------------------------------------------- | -------- |
+| 0   | Routing eval harness                      | safety net for all router work                | **DONE** |
+| 1   | `ConversationState.focus` + tracker       | kills the follow-up bug class                 | **DONE** |
+| 2   | **Action safety layer**                   | highest blast radius; do before more refactor | **NEXT** |
+| 3   | Resolver extraction (strategies)          | de-accretes routing; harness-gated            | planned  |
+| 4   | Shared agent pipeline (pre/post hooks)    | removes per-agent duplication                 | planned  |
+| 5   | RAG uniform retriever + groundedness gate | correctness of inform answers                 | planned  |
+| 6   | Online eval from feedback/escalations     | continuous quality signal                     | planned  |
+| 7   | Retire characterization snapshot          | scaffold no longer needed                     | after 3  |
 
 I deliberately put **Action safety (2) before the routing Resolver (3)**: a mis-route is
 recoverable, a mis-action is not, and the in-memory pending-draft is a live correctness/

@@ -70,6 +70,11 @@ from app.models import (
     SavedDashboard,
     AutomationRule,
     PendingAction,
+    TeTraining,
+    TeTrainingLevel,
+    TeMcqQuestion,
+    TeAssignment,
+    TeGroup,
     SCHEMA,
 )
 from app.config import settings
@@ -88,6 +93,14 @@ _base_engine = create_engine(
         "max_overflow": 10,
         "pool_pre_ping": True,
         "pool_recycle": 3600,
+        # Server-side safety net: if any connection is left idle INSIDE a transaction
+        # (e.g. a backend Ctrl-C'd mid-operation), Postgres aborts it after 5 min and
+        # releases its locks, so orphaned transactions can't pile up and block the next
+        # startup's migrations. Conservative (5 min) so it only catches true orphans,
+        # never a transaction merely idle across a slow LLM/network call; the migration
+        # lock_timeout (see _set_migration_timeouts) is what actually prevents the
+        # "stuck migrating database" hang.
+        "connect_args": {"options": "-c idle_in_transaction_session_timeout=300000"},
     }),
 )
 if _base_engine.dialect.name == "sqlite":
@@ -113,6 +126,24 @@ def _background_embed_policies():
 
 
 
+def _set_migration_timeouts(conn):
+    """Bound how long a migration statement will WAIT to acquire a lock before aborting.
+
+    On a shared database an idle-in-transaction session (or another running backend)
+    can hold a lock on a table these migrations touch — a blocked CREATE INDEX / ALTER
+    would otherwise hang the entire startup for the full 5-min launcher timeout. With a
+    short lock_timeout the blocked statement aborts fast and falls through to the
+    per-statement except handlers (skip-and-continue); the change applies on a later boot
+    once the lock is free. lock_timeout fires only while WAITING for a lock, so it never
+    aborts a legitimately long index build that has already started.
+    """
+    try:
+        conn.execute(text("SET lock_timeout = '5s'"))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+
 def init_db():
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
@@ -135,15 +166,17 @@ def init_db():
     # Drop removed tables
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
+            _set_migration_timeouts(conn)
             try:
                 conn.execute(text(f'DROP TABLE IF EXISTS "{SCHEMA}".payroll CASCADE'))
                 conn.commit()
             except Exception:
-                pass
+                conn.rollback()
 
     # Migrations: add columns that may not exist in older deployments
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
+            _set_migration_timeouts(conn)
             for stmt in [
                 f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS location VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".projects ADD COLUMN IF NOT EXISTS achievements TEXT',
@@ -359,6 +392,16 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_at TIMESTAMP',
                 f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_action VARCHAR',
                 f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS triaged_by VARCHAR',
+                # Alchemy directory enrichment: per-employee skills + projects, synced from
+                # the Alchemy API into our DB so the directory serves them inline (no per-open
+                # API call). Keyed by AASPL employee code.
+                f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".alchemy_profile_cache ('
+                f'  employee_code VARCHAR PRIMARY KEY,'
+                f'  skills JSONB DEFAULT \'[]\'::jsonb,'
+                f'  projects JSONB DEFAULT \'[]\'::jsonb,'
+                f'  available BOOLEAN DEFAULT TRUE,'
+                f'  fetched_at TIMESTAMP DEFAULT NOW()'
+                f')',
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -369,28 +412,36 @@ def init_db():
     # pgvector column migrations: convert TEXT embeddings to vector(768)
     if _base_engine.dialect.name != "sqlite":
         with engine.connect() as conn:
-            # policy_chunks.embedding: TEXT → vector(768)
-            row = conn.execute(text(
-                "SELECT data_type FROM information_schema.columns "
-                "WHERE table_schema = :s AND table_name = 'policy_chunks' AND column_name = 'embedding'"
-            ), {"s": SCHEMA}).fetchone()
-            if row and row[0] == "text":
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks DROP COLUMN embedding'))
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN embedding vector(768)'))
-                conn.commit()
+            _set_migration_timeouts(conn)
+            # policy_chunks.embedding: TEXT → vector(768). Wrapped so a lock_timeout
+            # (blocked by another session) skips-and-continues instead of crashing boot.
+            try:
+                row = conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema = :s AND table_name = 'policy_chunks' AND column_name = 'embedding'"
+                ), {"s": SCHEMA}).fetchone()
+                if row and row[0] == "text":
+                    conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks DROP COLUMN embedding'))
+                    conn.execute(text(f'ALTER TABLE "{SCHEMA}".policy_chunks ADD COLUMN embedding vector(768)'))
+                    conn.commit()
+            except Exception:
+                conn.rollback()
 
             # chat_feedback.user_message_embedding: add as vector(768) or convert from TEXT
-            row = conn.execute(text(
-                "SELECT data_type FROM information_schema.columns "
-                "WHERE table_schema = :s AND table_name = 'chat_feedback' AND column_name = 'user_message_embedding'"
-            ), {"s": SCHEMA}).fetchone()
-            if row is None:
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
-                conn.commit()
-            elif row[0] == "text":
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback DROP COLUMN user_message_embedding'))
-                conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
-                conn.commit()
+            try:
+                row = conn.execute(text(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_schema = :s AND table_name = 'chat_feedback' AND column_name = 'user_message_embedding'"
+                ), {"s": SCHEMA}).fetchone()
+                if row is None:
+                    conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                    conn.commit()
+                elif row[0] == "text":
+                    conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback DROP COLUMN user_message_embedding'))
+                    conn.execute(text(f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN user_message_embedding vector(768)'))
+                    conn.commit()
+            except Exception:
+                conn.rollback()
 
             # HNSW indexes for fast approximate nearest-neighbour search
             for idx_stmt in [
@@ -415,12 +466,15 @@ def init_db():
                 # HNSW index for the Form Library (nearest admin-defined form for a query)
                 f'CREATE INDEX IF NOT EXISTS idx_form_templates_embedding_hnsw ON "{SCHEMA}".form_templates '
                 f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+                # HNSW index for Project IQ (nearest past project to a "have we done this?" query)
+                f'CREATE INDEX IF NOT EXISTS idx_project_profiles_embedding_hnsw ON "{SCHEMA}".project_profiles '
+                f'USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
             ]:
                 try:
                     conn.execute(text(idx_stmt))
                     conn.commit()
                 except Exception as e:
-                    pass
+                    conn.rollback()  # clear aborted txn so the next index still runs
 
             # employees.role: added with the Role & Access Management feature. create_all()
             # never adds columns to an existing table, so back-fill it idempotently here.
@@ -430,7 +484,7 @@ def init_db():
                 ))
                 conn.commit()
             except Exception as e:
-                pass
+                conn.rollback()
 
             for _col_stmt in [
                 f'ALTER TABLE "{SCHEMA}".automation_rules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
@@ -443,7 +497,7 @@ def init_db():
                     conn.execute(text(_col_stmt))
                     conn.commit()
                 except Exception as e:
-                    pass
+                    conn.rollback()
 
     db = SessionLocal()
 
@@ -491,6 +545,23 @@ def init_db():
         except Exception as e:
             pass
 
+        # Background thread: seed the local TechElevate LMS (8 trainings + a spread of
+        # assignments/completions) so the learning flywheel + analytics show live data.
+        # Idempotent and self-contained; no-ops when TECHELEVATE_LOCAL is off.
+        try:
+            from app.config import settings as _s
+            if getattr(_s, "TECHELEVATE_LOCAL", False):
+                def _techelevate_local_boot():
+                    from app.services.techelevate_local_service import seed_local_data
+                    _db = SessionLocal()
+                    try:
+                        seed_local_data(_db)
+                    finally:
+                        _db.close()
+                threading.Thread(target=_techelevate_local_boot, daemon=True).start()
+        except Exception as e:
+            pass
+
         # Background thread: polls SharePoint for new/changed policy documents
         try:
             from app.config import settings as _s
@@ -524,6 +595,17 @@ def init_db():
                 threading.Thread(target=template_sync_loop, daemon=True).start()
             else:
                 pass
+        except Exception as e:
+            pass
+
+        # Background thread: keep the Alchemy directory-enrichment cache (skills +
+        # projects per employee) warm so the directory serves them inline, no per-open
+        # API call. No-ops when no service identity is connected.
+        try:
+            from app.config import settings as _s
+            if getattr(_s, "ALCHEMY_SKILL_SEARCH_ENABLED", False):
+                from app.services.alchemy_service import alchemy_enrichment_sync_loop
+                threading.Thread(target=alchemy_enrichment_sync_loop, daemon=True).start()
         except Exception as e:
             pass
 

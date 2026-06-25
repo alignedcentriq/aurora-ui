@@ -24,9 +24,7 @@ export function ThinkingBuddy({ activity }: { activity?: string }) {
   const character = getCharacter(charId);
   const ThinkingComponent = character.Thinking;
 
-  const [phraseIndex, setPhraseIndex] = useState(() =>
-    Math.floor(Math.random() * PHRASES.length),
-  );
+  const [phraseIndex, setPhraseIndex] = useState(() => Math.floor(Math.random() * PHRASES.length));
 
   // Phrase cycling
   useEffect(() => {

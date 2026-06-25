@@ -40,7 +40,7 @@ export function MyAnalytics() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const [catalog, setCatalog] = useState<PCatalog | null>(null);
@@ -107,7 +107,9 @@ export function MyAnalytics() {
               onClick={() => setScope(s as "me" | "my-team")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium transition-colors",
-                scope === s ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                scope === s
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {s === "me" ? <User className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5" />}
@@ -118,19 +120,35 @@ export function MyAnalytics() {
       </div>
 
       <div className="mb-4 flex flex-wrap gap-3">
-        <select value={metric} onChange={(e) => { setMetric(e.target.value); }} className={selectCls}>
+        <select
+          value={metric}
+          onChange={(e) => {
+            setMetric(e.target.value);
+          }}
+          className={selectCls}
+        >
           {catalog.metrics.map((m) => (
-            <option key={m.id} value={m.id}>{m.label}</option>
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
           ))}
         </select>
-        <select value={dimension} onChange={(e) => setDimension(e.target.value)} className={selectCls}>
+        <select
+          value={dimension}
+          onChange={(e) => setDimension(e.target.value)}
+          className={selectCls}
+        >
           {dims.map((d) => (
-            <option key={d} value={d}>{DIM_LABELS[d] || d}</option>
+            <option key={d} value={d}>
+              {DIM_LABELS[d] || d}
+            </option>
           ))}
         </select>
         <select value={period} onChange={(e) => setPeriod(e.target.value)} className={selectCls}>
           {catalog.periods.map((p) => (
-            <option key={p} value={p}>{p}</option>
+            <option key={p} value={p}>
+              {p}
+            </option>
           ))}
         </select>
       </div>
@@ -140,7 +158,11 @@ export function MyAnalytics() {
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : data && (data.series || []).length > 0 ? (
-        <MetricChart chartType={activeMetric?.chart_hint || "bar"} series={data.series} unit={data.unit} />
+        <MetricChart
+          chartType={activeMetric?.chart_hint || "bar"}
+          series={data.series}
+          unit={data.unit}
+        />
       ) : (
         <div className="flex h-[200px] items-center justify-center text-[13px] text-muted-foreground">
           No leave data for this {scope === "me" ? "view" : "team"} in the selected period.

@@ -42,7 +42,11 @@ export function AssistantSidebar({
   className,
 }: SidebarProps) {
   const { user } = useAuth();
-  const initials = user?.name?.split(" ").map(n => n[0]).join("") || "U";
+  const initials =
+    user?.name
+      ?.split(" ")
+      .map((n) => n[0])
+      .join("") || "U";
 
   return (
     <aside

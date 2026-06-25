@@ -38,6 +38,7 @@ from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
+from app.routes.capability_command_routes import router as capability_command_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
@@ -65,6 +66,9 @@ from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
 from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
 from app.routes.techelevate_routes import router as techelevate_router
+from app.routes.techelevate_local_routes import router as techelevate_local_router
+from app.routes.udemy_routes import router as udemy_router
+from app.routes.project_iq_routes import router as project_iq_router
 from app.routes.onboarding_routes import router as onboarding_router
 from app.services.feedback_service import FeedbackService
 
@@ -160,6 +164,7 @@ app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
+app.include_router(capability_command_router)
 app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
@@ -192,6 +197,9 @@ app.include_router(skill_doc_router)
 app.include_router(connector_admin_router)
 app.include_router(connector_invoke_router)
 app.include_router(techelevate_router)
+app.include_router(techelevate_local_router)
+app.include_router(udemy_router)
+app.include_router(project_iq_router)
 app.include_router(onboarding_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")

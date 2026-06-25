@@ -49,14 +49,14 @@ export function HoverBorderGradient({
       onMouseLeave={() => setHover(false)}
       className={cn(
         "relative flex h-min w-fit content-center items-center justify-center rounded-full border border-border bg-zinc-100 dark:bg-black/20 transition-all",
-        containerClassName
+        containerClassName,
       )}
       {...props}
     >
       <div
         className={cn(
           "w-auto text-foreground z-10 bg-background dark:bg-black px-4 py-2 rounded-[inherit]",
-          className
+          className,
         )}
       >
         {children}

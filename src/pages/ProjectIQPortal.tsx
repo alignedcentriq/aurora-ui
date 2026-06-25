@@ -1,0 +1,1074 @@
+import { useAuth } from "@/lib/auth-store";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  Brain,
+  Search,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Layers,
+  Link2,
+  Lightbulb,
+  Users,
+  Boxes,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  ShieldCheck,
+  FileText,
+  ArrowRight,
+  Calendar,
+  Shield,
+  ExternalLink,
+  Activity,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { motion } from "framer-motion";
+
+type Tab = "search" | "library";
+
+interface Capability {
+  capability_name: string;
+  category?: string | null;
+  maturity_level?: string | null;
+  confidence: string;
+  evidence?: string | null;
+}
+interface Integration {
+  system_name: string;
+  integration_type?: string | null;
+  complexity_level?: string | null;
+  lessons_learned?: string | null;
+  confidence: string;
+}
+interface Lesson {
+  category?: string | null;
+  lesson: string;
+  impact_level?: string | null;
+  recommendation?: string | null;
+  confidence: string;
+  evidence?: string | null;
+}
+interface Asset {
+  asset_name: string;
+  asset_type?: string | null;
+  repository_url?: string | null;
+  owner?: string | null;
+  reuse_readiness?: string | null;
+  documentation_url?: string | null;
+  confidence: string;
+}
+interface Expert {
+  person_name: string;
+  role_on_project?: string | null;
+  capability?: string | null;
+  evidence_level: string;
+  employee_id?: number | null;
+}
+
+interface Profile {
+  id: number;
+  slug: string;
+  name: string;
+  client_industry?: string | null;
+  status?: string | null;
+  business_problem?: string | null;
+  solution_summary?: string | null;
+  business_outcomes?: string | null;
+  technology_stack: string[];
+  architecture_summary?: string | null;
+  complexity_drivers: string[];
+  project_size?: string | null;
+  team_size?: string | null;
+  delivery_start_date?: string | null;
+  delivery_end_date?: string | null;
+  confidence: string;
+  review_status: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  source_doc_count: number;
+  similarity?: number;
+  capabilities?: Capability[];
+  integrations?: Integration[];
+  lessons?: Lesson[];
+  reusable_assets?: Asset[];
+  expertise?: Expert[];
+}
+
+function ConfBadge({ value }: { value?: string }) {
+  const verified = value === "verified";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm shrink-0",
+        verified
+          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+          : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+      )}
+      title={
+        verified
+          ? "Explicitly stated in source material"
+          : "Inferred — needs review before client-facing use"
+      }
+    >
+      {verified ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+      {verified ? "verified" : "inferred"}
+    </span>
+  );
+}
+
+function ReviewBadge({ status }: { status: string }) {
+  const reviewed = status === "reviewed";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm shrink-0",
+        reviewed
+          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+          : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border border-zinc-500/20",
+      )}
+    >
+      {reviewed ? (
+        <CheckCircle2 className="w-3 h-3" />
+      ) : (
+        <Loader2 className="w-3 h-3 animate-spin" />
+      )}
+      {reviewed ? "Reviewed" : "Draft"}
+    </span>
+  );
+}
+
+export function ProjectIQPortal() {
+  const { user } = useAuth();
+  const role = (user?.role || "").toLowerCase();
+  const canManage = ["pmo", "admin", "super admin"].includes(role);
+
+  const [tab, setTab] = useState<Tab>("search");
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [rebuilding, setRebuilding] = useState(false);
+
+  // search
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Profile[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  // detail drawer
+  const [selected, setSelected] = useState<Profile | null>(null);
+  const [drawerTab, setDrawerTab] = useState<"overview" | "tech" | "evidence">("overview");
+
+  const authHeaders = {
+    "Content-Type": "application/json",
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  const loadProfiles = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetch("/api/project-iq/profiles", { headers: authHeaders });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setProfiles(data.profiles || []);
+    } catch {
+      setError(
+        "Couldn't load Project DNA. Make sure the project corpus has been ingested and DNA built.",
+      );
+      setProfiles([]);
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email, user?.role]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadProfiles();
+  }, [loadProfiles]);
+
+  useEffect(() => {
+    if (selected) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDrawerTab("overview");
+    }
+  }, [selected]);
+
+  const onSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    setSearching(true);
+    setSearched(true);
+    try {
+      const resp = await fetch("/api/project-iq/search", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ description: query.trim(), limit: 5 }),
+      });
+      const data = await resp.json();
+      setResults(data.results || []);
+    } catch {
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const openProfile = async (slug: string) => {
+    try {
+      const resp = await fetch(`/api/project-iq/profiles/${encodeURIComponent(slug)}`, {
+        headers: authHeaders,
+      });
+      if (resp.ok) setSelected(await resp.json());
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const rebuildAll = async () => {
+    setRebuilding(true);
+    try {
+      await fetch("/api/project-iq/rebuild-all", { method: "POST", headers: authHeaders });
+    } finally {
+      // Extraction runs in the background; give it a beat, then refresh.
+      setTimeout(() => {
+        setRebuilding(false);
+        loadProfiles();
+      }, 1500);
+    }
+  };
+
+  const rebuildOne = async (slug: string) => {
+    await fetch(`/api/project-iq/profiles/${encodeURIComponent(slug)}/rebuild`, {
+      method: "POST",
+      headers: authHeaders,
+    });
+    setSelected(null);
+    setTimeout(loadProfiles, 1500);
+  };
+
+  const approve = async (slug: string) => {
+    const resp = await fetch(`/api/project-iq/profiles/${encodeURIComponent(slug)}/review`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ review_status: "reviewed" }),
+    });
+    if (resp.ok) {
+      const updated = await resp.json();
+      setSelected(updated);
+      loadProfiles();
+    }
+  };
+
+  // Compute metrics for high-level cards
+  const stats = useMemo(() => {
+    let reviewed = 0;
+    let assets = 0;
+    let experts = 0;
+    profiles.forEach((p) => {
+      if (p.review_status === "reviewed") reviewed++;
+      if (p.reusable_assets) assets += p.reusable_assets.length;
+      if (p.expertise) experts += p.expertise.length;
+    });
+    return {
+      total: profiles.length,
+      reviewed,
+      draft: profiles.length - reviewed,
+      assets,
+      experts,
+    };
+  }, [profiles]);
+
+  return (
+    <div className="flex-1 h-full overflow-y-auto bg-gradient-to-br from-slate-50/50 to-slate-100/50 dark:from-[#020d1a] dark:to-[#071428] px-4 sm:px-8 py-5 sm:py-6 select-none relative flex flex-col gap-5 sm:gap-6">
+      {/* Subtle background glow highlight */}
+      <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[300px] sm:w-[500px] h-[150px] bg-gradient-to-r from-sky-500/10 to-blue-500/10 rounded-full blur-[80px] pointer-events-none" />
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-5 shrink-0 z-10">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-sky-400 to-blue-600 text-white shadow-lg shadow-sky-500/10 animate-pulse">
+            <Brain className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-foreground">
+              Project IQ
+            </h2>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+              Reuse delivery knowledge from past projects — internal only.
+            </p>
+          </div>
+        </div>
+        {canManage && (
+          <button
+            onClick={rebuildAll}
+            disabled={rebuilding}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-sky-200 dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.03] backdrop-blur-md text-sm font-semibold hover:bg-sky-500/10 hover:border-sky-500/30 active:scale-95 transition-all disabled:opacity-60 cursor-pointer shadow-sm"
+          >
+            {rebuilding ? (
+              <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
+            ) : (
+              <RefreshCw className="w-4 h-4 text-sky-500" />
+            )}
+            Rebuild all DNA
+          </button>
+        )}
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 shrink-0 z-10">
+        {[
+          {
+            label: "Total Project DNA",
+            value: stats.total,
+            color: "from-blue-500/10 to-sky-500/10 border-blue-500/20 dark:border-blue-500/10",
+            icon: Layers,
+            iconColor: "text-blue-500 bg-blue-500/10",
+          },
+          {
+            label: "Reviewed DNA",
+            value: stats.reviewed,
+            color:
+              "from-emerald-500/10 to-teal-500/10 border-emerald-500/20 dark:border-emerald-500/10",
+            icon: CheckCircle2,
+            iconColor: "text-emerald-500 bg-emerald-500/10",
+          },
+          {
+            label: "Reusable Assets",
+            value: stats.assets,
+            color:
+              "from-purple-500/10 to-indigo-500/10 border-purple-500/20 dark:border-purple-500/10",
+            icon: Boxes,
+            iconColor: "text-purple-500 bg-purple-500/10",
+          },
+          {
+            label: "Expert Connections",
+            value: stats.experts,
+            color:
+              "from-amber-500/10 to-orange-500/10 border-amber-500/20 dark:border-amber-500/10",
+            icon: Users,
+            iconColor: "text-amber-500 bg-amber-500/10",
+          },
+        ].map((item, i) => (
+          <div
+            key={i}
+            className={cn(
+              "p-3.5 rounded-2xl border bg-gradient-to-br backdrop-blur-md flex items-center justify-between shadow-sm hover:scale-[1.01] transition-transform",
+              item.color,
+            )}
+          >
+            <div>
+              <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
+                {item.label}
+              </span>
+              <span className="text-xl sm:text-2xl font-black text-foreground mt-1 block tracking-tight">
+                {item.value}
+              </span>
+            </div>
+            <div
+              className={cn(
+                "p-2.5 rounded-xl border border-border/40 shadow-inner",
+                item.iconColor,
+              )}
+            >
+              <item.icon className="w-5 h-5" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs Switcher */}
+      <div className="flex gap-2 border-b border-border/60 pb-px shrink-0 z-10">
+        {(
+          [
+            ["search", "Find Similar", Sparkles],
+            ["library", "DNA Library", Layers],
+          ] as const
+        ).map(([id, label, Icon]) => {
+          const active = tab === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={cn(
+                "relative inline-flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold transition-all duration-300 rounded-t-xl cursor-pointer hover:bg-sky-500/5 hover:text-foreground",
+                active ? "text-sky-500 font-bold" : "text-muted-foreground",
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{label}</span>
+              {active && (
+                <motion.div
+                  layoutId="activeTabIndicator"
+                  className="absolute bottom-0 left-0 right-0 h-[2px] bg-sky-500"
+                  transition={{ type: "spring", stiffness: 350, damping: 30 }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* SEARCH TAB */}
+      {tab === "search" && (
+        <div className="flex flex-col gap-5 sm:gap-6 animate-in fade-in-50 duration-200">
+          <form
+            onSubmit={onSearch}
+            className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl border border-border/60 bg-white/50 dark:bg-card/20 backdrop-blur-md shadow-sm relative overflow-hidden group"
+          >
+            {/* Glow accent */}
+            <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-gradient-to-bl from-sky-500/5 to-transparent rounded-full pointer-events-none blur-3xl group-hover:from-sky-500/10 transition-all duration-500" />
+
+            <label className="text-xs sm:text-sm font-semibold text-foreground flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-sky-500" />
+              Have we built something similar before?
+            </label>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1 relative flex flex-col">
+                <textarea
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g. an e-commerce self-service portal with Next.js, Redis cart storage, Azure AD SSO and PayPal gateway integration..."
+                  rows={2}
+                  className="w-full resize-none rounded-xl border border-border bg-background/50 dark:bg-background/20 px-4 py-3 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all placeholder:text-muted-foreground/60 shadow-inner"
+                />
+                {query.trim().length > 0 && (
+                  <span className="absolute bottom-2 right-3 text-[10px] text-muted-foreground font-mono">
+                    {query.length} chars
+                  </span>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={searching || !query.trim()}
+                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 text-white text-xs sm:text-sm font-semibold hover:shadow-lg hover:shadow-sky-500/20 active:scale-95 transition-all disabled:opacity-60 disabled:pointer-events-none cursor-pointer shrink-0"
+              >
+                {searching ? (
+                  <Loader2 className="w-4.5 h-4.5 animate-spin" />
+                ) : (
+                  <Search className="w-4.5 h-4.5" />
+                )}
+                <span>Search DNA</span>
+              </button>
+            </div>
+
+            {/* Quick Prompts Helper */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">
+                Suggestions:
+              </span>
+              {[
+                "Next.js e-commerce portal with Redis",
+                "Azure cloud migration secure landing zone",
+                "Azure OpenAI patient note trial analyzer",
+              ].map((p, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setQuery(p)}
+                  className="text-[11px] px-2.5 py-1 rounded-lg border border-border hover:border-sky-500/30 hover:bg-sky-500/5 text-muted-foreground hover:text-foreground cursor-pointer transition-colors max-w-[250px] truncate"
+                  title={p}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </form>
+
+          {searched && !searching && results.length === 0 && (
+            <div className="text-center py-10 rounded-2xl border border-dashed border-border bg-background/20">
+              <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+              <h3 className="text-sm font-semibold text-foreground">
+                No matching DNA profiles found
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
+                Try refining your search terms or rebuild the project DNA from the Library
+                directory.
+              </p>
+            </div>
+          )}
+
+          {/* Search Results */}
+          <div className="flex flex-col gap-4">
+            {searching && (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-sky-500" />
+                <span className="text-xs text-muted-foreground font-semibold">
+                  Running semantic similarity scan...
+                </span>
+              </div>
+            )}
+
+            {!searching && results.length > 0 && (
+              <>
+                <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 px-1">
+                  Matched DNA Profiles ({results.length})
+                </h3>
+                <div className="flex flex-col gap-3">
+                  {results.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => openProfile(p.slug)}
+                      className="text-left rounded-2xl border border-border bg-gradient-to-br from-white to-slate-50/50 dark:from-card/40 dark:to-card/20 p-5 hover:border-sky-500/40 hover:shadow-lg hover:shadow-sky-500/5 active:scale-[0.99] transition-all cursor-pointer relative overflow-hidden group flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    >
+                      {/* Left glow line */}
+                      <div className="absolute top-0 bottom-0 left-0 w-1 bg-gradient-to-b from-sky-400 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center flex-wrap gap-2">
+                          <span className="font-bold text-sm sm:text-base text-foreground tracking-tight group-hover:text-sky-500 transition-colors leading-tight">
+                            {p.name}
+                          </span>
+                          <ReviewBadge status={p.review_status} />
+                          <ConfBadge value={p.confidence} />
+                        </div>
+                        {p.client_industry && (
+                          <span className="inline-block text-[10px] font-semibold text-sky-500 uppercase tracking-wider mt-1.5">
+                            {p.client_industry}
+                          </span>
+                        )}
+                        {p.solution_summary && (
+                          <p className="text-xs sm:text-sm mt-2 text-muted-foreground line-clamp-2 leading-relaxed">
+                            {p.solution_summary}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-1.5 mt-3">
+                          {(p.capabilities || []).slice(0, 4).map((c, i) => (
+                            <span
+                              key={i}
+                              className="px-2 py-0.5 rounded-lg bg-muted text-[10px] font-semibold border border-border/40 text-muted-foreground"
+                            >
+                              {c.capability_name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Match display */}
+                      {typeof p.similarity === "number" && (
+                        <div className="flex flex-row sm:flex-col items-center justify-between sm:justify-center border-t sm:border-t-0 sm:border-l border-border/60 pt-3 sm:pt-0 sm:pl-6 shrink-0 sm:text-center gap-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Match Match
+                          </span>
+                          <span className="text-lg sm:text-2xl font-black text-sky-500 tracking-tight">
+                            {Math.round(p.similarity * 100)}%
+                          </span>
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* LIBRARY TAB */}
+      {tab === "library" && (
+        <div className="animate-in fade-in-50 duration-200 flex flex-col gap-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-sky-500" />
+              <span className="text-xs text-muted-foreground font-semibold">
+                Loading Project DNA directory...
+              </span>
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2.5 text-amber-600 bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-sm font-semibold">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : profiles.length === 0 ? (
+            <div className="text-center py-16 rounded-2xl border border-dashed border-border bg-background/25">
+              <p className="text-sm text-muted-foreground">
+                No Project DNA profiles available.
+                {canManage
+                  ? " Click “Rebuild all DNA” in the header to extract from the project showcase corpus."
+                  : " Please contact PMO/admin to build profiles."}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {profiles.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => openProfile(p.slug)}
+                  className="text-left rounded-2xl border border-border/80 bg-white/70 dark:bg-card/20 backdrop-blur-sm p-5 hover:border-sky-500/40 hover:shadow-lg hover:shadow-sky-500/5 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] transition-all cursor-pointer flex flex-col gap-2.5 relative overflow-hidden group shadow-sm"
+                >
+                  {/* Card top border glow on hover */}
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-sky-400 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="font-bold text-sm sm:text-base text-foreground group-hover:text-sky-500 transition-colors leading-tight tracking-tight line-clamp-1">
+                      {p.name}
+                    </span>
+                    <ReviewBadge status={p.review_status} />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold text-muted-foreground/75 uppercase tracking-wider">
+                    {p.client_industry && <span className="text-sky-500">{p.client_industry}</span>}
+                    {p.status && (
+                      <>
+                        <span>·</span>
+                        <span
+                          className={cn(
+                            p.status.toLowerCase() === "completed"
+                              ? "text-emerald-500"
+                              : "text-amber-500",
+                          )}
+                        >
+                          {p.status}
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {p.solution_summary && (
+                    <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">
+                      {p.solution_summary}
+                    </p>
+                  )}
+
+                  {/* Tech stack pills */}
+                  {p.technology_stack && p.technology_stack.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {p.technology_stack.slice(0, 3).map((tech, i) => (
+                        <span
+                          key={i}
+                          className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-bold"
+                        >
+                          {tech}
+                        </span>
+                      ))}
+                      {p.technology_stack.length > 3 && (
+                        <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[9px] font-bold">
+                          +{p.technology_stack.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between border-t border-border/40 pt-2.5 mt-2.5 text-[10px] font-medium text-muted-foreground font-mono">
+                    <span className="flex items-center gap-1">
+                      <FileText className="w-3.5 h-3.5 text-sky-500" />
+                      {p.source_doc_count} source doc(s)
+                    </span>
+                    <span className="flex items-center gap-1 font-semibold text-sky-500 group-hover:translate-x-0.5 transition-transform">
+                      View details <ArrowRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* DETAIL DRAWER / SHEET */}
+      <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto flex flex-col gap-5 p-5 sm:p-6 h-full border-l border-border/60 bg-popover/95 backdrop-blur-xl">
+          {selected && (
+            <>
+              <SheetHeader className="text-left pb-4 border-b border-border/60 flex flex-col gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ReviewBadge status={selected.review_status} />
+                  <ConfBadge value={selected.confidence} />
+                </div>
+                <SheetTitle className="text-lg sm:text-xl font-black text-foreground tracking-tight leading-snug mt-1">
+                  {selected.name}
+                </SheetTitle>
+                <SheetDescription className="text-xs font-semibold text-sky-500 uppercase tracking-wider flex items-center gap-1">
+                  <Activity className="w-3.5 h-3.5 text-sky-500" />
+                  {selected.client_industry || "General Industry"}{" "}
+                  {selected.status ? `· ${selected.status}` : ""}
+                </SheetDescription>
+
+                {/* PMO / Admin Actions */}
+                {canManage && (
+                  <div className="flex flex-wrap gap-2 mt-3 pt-2">
+                    {selected.review_status !== "reviewed" && (
+                      <button
+                        onClick={() => approve(selected.slug)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold hover:shadow-lg active:scale-95 transition-all cursor-pointer shadow-sm"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Mark Reviewed</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => rebuildOne(selected.slug)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/80 bg-background/50 hover:bg-muted text-foreground text-xs font-semibold hover:border-sky-500/30 active:scale-95 transition-all cursor-pointer shadow-sm"
+                    >
+                      <RefreshCw className="w-4 h-4 text-sky-500" />
+                      <span>Rebuild DNA</span>
+                    </button>
+                  </div>
+                )}
+              </SheetHeader>
+
+              {/* Core Metrics Mini Panel */}
+              <div className="grid grid-cols-2 gap-3 bg-muted/30 dark:bg-white/[0.01] border border-border/40 p-4 rounded-2xl shrink-0">
+                {[
+                  { label: "Project Size", value: selected.project_size, icon: Layers },
+                  { label: "Team Size", value: selected.team_size, icon: Users },
+                  { label: "Start Date", value: selected.delivery_start_date, icon: Calendar },
+                  {
+                    label: "End Date",
+                    value: selected.delivery_end_date || "Present",
+                    icon: Calendar,
+                  },
+                ].map((m, idx) => (
+                  <div key={idx} className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-background/50 border border-border/40 text-muted-foreground/75">
+                      <m.icon className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                        {m.label}
+                      </span>
+                      <span className="text-xs font-bold text-foreground block mt-0.5">
+                        {m.value || "Unknown"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Custom Drawer Tabs Switcher */}
+              <div className="flex gap-1 border-b border-border/40 shrink-0">
+                {(
+                  [
+                    ["overview", "Overview Context", FileText],
+                    ["tech", "Architecture & Tech", Shield],
+                    ["evidence", "Assets & Experts", Boxes],
+                  ] as const
+                ).map(([id, label, Icon]) => (
+                  <button
+                    key={id}
+                    onClick={() => setDrawerTab(id)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors cursor-pointer",
+                      drawerTab === id
+                        ? "border-sky-500 text-sky-500 font-bold"
+                        : "border-transparent text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Drawer Content Views */}
+              <div className="flex-1 overflow-y-auto pr-1">
+                {drawerTab === "overview" && (
+                  <div className="flex flex-col gap-4 animate-in fade-in-30 duration-200">
+                    <Section title="Business Problem">
+                      <div className="text-xs sm:text-sm leading-relaxed text-foreground p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/15">
+                        {selected.business_problem ||
+                          "No documented business problem details available."}
+                      </div>
+                    </Section>
+                    <Section title="Solution Deliverables">
+                      <div className="text-xs sm:text-sm leading-relaxed text-foreground p-3.5 rounded-xl bg-sky-500/5 border border-sky-500/15">
+                        {selected.solution_summary ||
+                          "No documented solution summary details available."}
+                      </div>
+                    </Section>
+                    <Section title="Business Outcomes">
+                      <div className="text-xs sm:text-sm leading-relaxed text-foreground p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
+                        {selected.business_outcomes || "No documented outcomes details available."}
+                      </div>
+                    </Section>
+                  </div>
+                )}
+
+                {drawerTab === "tech" && (
+                  <div className="flex flex-col gap-4 animate-in fade-in-30 duration-200">
+                    <Section title="Architecture Summary">
+                      <p className="text-xs sm:text-sm leading-relaxed text-muted-foreground bg-muted/20 border border-border/40 p-3.5 rounded-xl">
+                        {selected.architecture_summary || "No architectural description captured."}
+                      </p>
+                    </Section>
+
+                    {selected.technology_stack?.length > 0 && (
+                      <Section title="Technology Stack">
+                        <div className="flex flex-wrap gap-1.5">
+                          {selected.technology_stack.map((tech, idx) => (
+                            <span
+                              key={idx}
+                              className="px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-400 text-xs font-semibold shadow-sm"
+                            >
+                              {tech}
+                            </span>
+                          ))}
+                        </div>
+                      </Section>
+                    )}
+
+                    {selected.complexity_drivers?.length > 0 && (
+                      <Section title="Complexity Drivers">
+                        <ul className="flex flex-col gap-2">
+                          {selected.complexity_drivers.map((driver, idx) => (
+                            <li
+                              key={idx}
+                              className="flex items-start gap-2.5 text-xs sm:text-sm text-foreground bg-muted/10 border border-border/30 p-2.5 rounded-xl"
+                            >
+                              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                              <span className="leading-relaxed">{driver}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </Section>
+                    )}
+                  </div>
+                )}
+
+                {drawerTab === "evidence" && (
+                  <div className="flex flex-col gap-5 animate-in fade-in-30 duration-200">
+                    <ChildSection
+                      icon={Layers}
+                      title="Capabilities Extracted"
+                      items={selected.capabilities}
+                      render={(c: Capability) => (
+                        <div className="flex flex-col gap-1 w-full">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-xs sm:text-sm text-foreground">
+                              {c.capability_name}
+                              {c.category ? ` — ${c.category}` : ""}
+                            </span>
+                            <ConfBadge value={c.confidence} />
+                          </div>
+                          {c.maturity_level && (
+                            <span className="text-[10px] font-semibold text-sky-500 uppercase tracking-wider">
+                              Maturity: {c.maturity_level}
+                            </span>
+                          )}
+                          {c.evidence && (
+                            <p className="text-xs text-muted-foreground mt-1 bg-muted/40 p-2 rounded-lg leading-relaxed">
+                              {c.evidence}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    />
+
+                    <ChildSection
+                      icon={Link2}
+                      title="Integrations Mapped"
+                      items={selected.integrations}
+                      render={(i: Integration) => (
+                        <div className="flex flex-col gap-1 w-full">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-xs sm:text-sm text-foreground">
+                              {i.system_name}
+                              {i.integration_type ? ` (${i.integration_type})` : ""}
+                            </span>
+                            <ConfBadge value={i.confidence} />
+                          </div>
+                          {i.complexity_level && (
+                            <span className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider">
+                              Complexity: {i.complexity_level}
+                            </span>
+                          )}
+                          {i.lessons_learned && (
+                            <div className="text-xs text-muted-foreground bg-amber-500/5 border-l-2 border-amber-500/40 p-2 rounded-r-lg mt-1.5 italic">
+                              &ldquo;{i.lessons_learned}&rdquo;
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    />
+
+                    <ChildSection
+                      icon={Lightbulb}
+                      title="Lessons Learned"
+                      items={selected.lessons}
+                      render={(l: Lesson) => (
+                        <div className="flex flex-col gap-1 w-full">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-xs sm:text-sm text-foreground">
+                              {l.lesson}
+                            </span>
+                            <ConfBadge value={l.confidence} />
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            {l.impact_level && (
+                              <span
+                                className={cn(
+                                  "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider",
+                                  l.impact_level.toLowerCase() === "high"
+                                    ? "bg-red-500/10 text-red-500"
+                                    : "bg-amber-500/10 text-amber-500",
+                                )}
+                              >
+                                {l.impact_level} Impact
+                              </span>
+                            )}
+                            {l.category && (
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase">
+                                {l.category}
+                              </span>
+                            )}
+                          </div>
+                          {l.recommendation && (
+                            <p className="text-xs text-foreground bg-emerald-500/5 border-l-2 border-emerald-500/40 p-2 rounded-r-lg mt-1.5 font-medium leading-relaxed">
+                              <span className="text-emerald-600 font-bold block text-[10px] uppercase tracking-wider mb-0.5">
+                                Recommendation:
+                              </span>
+                              {l.recommendation}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    />
+
+                    <ChildSection
+                      icon={Boxes}
+                      title="Reusable Assets Found"
+                      items={selected.reusable_assets}
+                      render={(a: Asset) => (
+                        <div className="flex flex-col gap-1.5 w-full">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <span className="font-bold text-xs sm:text-sm text-foreground block">
+                                {a.asset_name}
+                              </span>
+                              {a.asset_type && (
+                                <span className="text-[10px] font-semibold text-sky-500 uppercase tracking-wider">
+                                  {a.asset_type}
+                                </span>
+                              )}
+                            </div>
+                            <ConfBadge value={a.confidence} />
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground mt-0.5">
+                            {a.reuse_readiness && (
+                              <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 font-bold text-[9px] uppercase tracking-wider">
+                                {a.reuse_readiness}
+                              </span>
+                            )}
+                            {a.owner && <span>· Owner: {a.owner}</span>}
+                          </div>
+
+                          <div className="flex flex-col gap-1 mt-1">
+                            {a.repository_url && (
+                              <a
+                                href={a.repository_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-500 hover:underline"
+                              >
+                                <Link2 className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{a.repository_url}</span>
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                            {a.documentation_url && (
+                              <a
+                                href={a.documentation_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-sky-600 hover:text-sky-500 hover:underline"
+                              >
+                                <FileText className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{a.documentation_url}</span>
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    />
+
+                    <ChildSection
+                      icon={Users}
+                      title="Expertise Mapped"
+                      items={selected.expertise}
+                      render={(e: Expert) => (
+                        <div className="flex items-center justify-between gap-3 w-full">
+                          <div>
+                            <span className="font-bold text-xs sm:text-sm text-foreground block">
+                              {e.person_name}
+                            </span>
+                            <span className="text-xs text-muted-foreground mt-0.5 block">
+                              {e.role_on_project || "Team Member"}{" "}
+                              {e.capability ? `· ${e.capability}` : ""}
+                            </span>
+                          </div>
+                          <ConfBadge value={e.evidence_level} />
+                        </div>
+                      )}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {selected.reviewed_by && (
+                <div className="mt-auto pt-3.5 border-t border-border/40 text-[10px] text-muted-foreground/80 font-mono text-center shrink-0">
+                  Reviewed by {selected.reviewed_by}{" "}
+                  {selected.reviewed_at
+                    ? `on ${new Date(selected.reviewed_at).toLocaleDateString()}`
+                    : ""}
+                </div>
+              )}
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 mt-1">
+      <h4 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-muted-foreground/80">
+        {title}
+      </h4>
+      {children}
+    </div>
+  );
+}
+
+function ChildSection<T>({
+  icon: Icon,
+  title,
+  items,
+  render,
+}: {
+  icon: typeof Layers;
+  title: string;
+  items?: T[];
+  render: (item: T) => React.ReactNode;
+}) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2.5">
+      <h4 className="text-xs sm:text-sm font-bold text-foreground inline-flex items-center gap-1.5 border-b border-border/40 pb-1.5">
+        <Icon className="w-4 h-4 text-sky-500" /> {title}
+      </h4>
+      <ul className="flex flex-col gap-3">
+        {items.map((it, i) => (
+          <li
+            key={i}
+            className="text-sm rounded-2xl border border-border/60 bg-white/40 dark:bg-white/[0.01] p-3.5 flex shadow-sm relative overflow-hidden"
+          >
+            {render(it)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

@@ -267,9 +267,7 @@ function DocumentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docType, employee?.email]);
 
-  const missingRequired = userFields.some(
-    (f) => f.required && !(fieldValues[f.name]?.trim()),
-  );
+  const missingRequired = userFields.some((f) => f.required && !fieldValues[f.name]?.trim());
   const canGenerate = !!docType && !!employee && !missingRequired && !generating;
 
   const handleGenerate = useCallback(async () => {
@@ -316,7 +314,10 @@ function DocumentsPage() {
   const handleApprove = async (id: number) => {
     setApproving(true);
     try {
-      const res = await fetch(`/api/documents/${id}/approve`, { method: "POST", headers: authHeaders });
+      const res = await fetch(`/api/documents/${id}/approve`, {
+        method: "POST",
+        headers: authHeaders,
+      });
       if (!res.ok) throw new Error("Approve failed");
       const d = await res.json();
       if (id === documentId) {
@@ -459,7 +460,10 @@ function DocumentsPage() {
                         return (
                           <SelectItem key={d.doc_type} value={d.doc_type} className="rounded-lg">
                             <span className="flex items-center gap-2.5">
-                              <Icon className="h-4 w-4 shrink-0" style={{ color: "var(--connectivity)" }} />
+                              <Icon
+                                className="h-4 w-4 shrink-0"
+                                style={{ color: "var(--connectivity)" }}
+                              />
                               {d.label}
                             </span>
                           </SelectItem>
@@ -507,9 +511,13 @@ function DocumentsPage() {
                             >
                               <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
                               <div className="min-w-0">
-                                <div className="truncate text-[13px] font-medium text-foreground">{emp.name}</div>
+                                <div className="truncate text-[13px] font-medium text-foreground">
+                                  {emp.name}
+                                </div>
                                 <div className="truncate text-[11px] text-muted-foreground">
-                                  {[emp.designation, emp.department, emp.email].filter(Boolean).join(" · ")}
+                                  {[emp.designation, emp.department, emp.email]
+                                    .filter(Boolean)
+                                    .join(" · ")}
                                 </div>
                               </div>
                             </button>
@@ -527,14 +535,18 @@ function DocumentsPage() {
                       <Field label="Designation" value={employee.designation || "—"} />
                     </div>
                   )}
-                  {!employee && !isHr && <p className="text-[12px] text-muted-foreground">Loading your details…</p>}
+                  {!employee && !isHr && (
+                    <p className="text-[12px] text-muted-foreground">Loading your details…</p>
+                  )}
                 </section>
 
                 {/* Dynamic details */}
                 <section className="space-y-3">
                   <Step n={3} title="Details" />
                   {!docType ? (
-                    <p className="text-[12px] text-muted-foreground">Pick a document type to see its fields.</p>
+                    <p className="text-[12px] text-muted-foreground">
+                      Pick a document type to see its fields.
+                    </p>
                   ) : userFields.length === 0 ? (
                     <p className="text-[12px] text-muted-foreground">
                       No extra details needed — generate directly.
@@ -562,7 +574,11 @@ function DocumentsPage() {
                     )}
                     style={{ background: "var(--gradient-primary)" }}
                   >
-                    {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {generating ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
                     Generate
                   </button>
 
@@ -573,7 +589,11 @@ function DocumentsPage() {
                       disabled={approving}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-emerald-700 w-full sm:w-auto"
                     >
-                      {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      {approving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
                       Approve &amp; release
                     </button>
                   )}
@@ -585,7 +605,11 @@ function DocumentsPage() {
                       disabled={downloading}
                       className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--connectivity)] px-4 py-2.5 text-[13px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)] w-full sm:w-auto"
                     >
-                      {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      {downloading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
                       Download PDF
                     </button>
                   )}
@@ -593,7 +617,8 @@ function DocumentsPage() {
                   {/* Employee draft: awaiting approval note */}
                   {documentId != null && docStatus === "draft" && !canApprove && (
                     <span className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-600 dark:text-amber-400 w-full sm:w-auto text-center">
-                      <Clock className="h-3.5 w-3.5" /> Sent for approval — downloadable once released
+                      <Clock className="h-3.5 w-3.5" /> Sent for approval — downloadable once
+                      released
                     </span>
                   )}
                 </div>
@@ -632,7 +657,9 @@ function DocumentsPage() {
             {/* ── Preview ── */}
             <div className="lg:sticky lg:top-0">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">Preview</h2>
+                <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Preview
+                </h2>
                 {documentId != null &&
                   (isVerified ? (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -853,7 +880,10 @@ function ManageTemplates({
   const sync = async () => {
     setSyncing(true);
     try {
-      const res = await fetch("/api/documents/admin/templates/sync", { method: "POST", headers: authHeaders });
+      const res = await fetch("/api/documents/admin/templates/sync", {
+        method: "POST",
+        headers: authHeaders,
+      });
       if (!res.ok) throw new Error("Sync failed");
       toast.success("Sync started — new templates will appear shortly. Refreshing…");
       setTimeout(() => {
@@ -873,8 +903,8 @@ function ManageTemplates({
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">Document templates</h2>
           <p className="text-[12px] text-muted-foreground">
-            Synced from SharePoint. Enable a template to add it to the dropdown, set whether it needs
-            approval, and review the fields the app detected.
+            Synced from SharePoint. Enable a template to add it to the dropdown, set whether it
+            needs approval, and review the fields the app detected.
           </p>
         </div>
         <button
@@ -891,7 +921,9 @@ function ManageTemplates({
       <div className="mb-6 rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4" style={{ color: "var(--connectivity)" }} />
-          <h3 className="text-[14px] font-semibold text-foreground">Who can approve &amp; release</h3>
+          <h3 className="text-[14px] font-semibold text-foreground">
+            Who can approve &amp; release
+          </h3>
         </div>
         <p className="mt-1 text-[12px] text-muted-foreground">
           Select which roles may approve a draft and release the final document. HR is always an
@@ -915,7 +947,9 @@ function ManageTemplates({
                   onCheckedChange={() => toggleApprover(role)}
                 />
                 {role}
-                {role === "hr" && <span className="text-[10px] text-muted-foreground">(always)</span>}
+                {role === "hr" && (
+                  <span className="text-[10px] text-muted-foreground">(always)</span>
+                )}
               </label>
             );
           })}
@@ -928,7 +962,11 @@ function ManageTemplates({
               className="inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 w-full sm:w-auto"
               style={{ background: "var(--gradient-primary)" }}
             >
-              {savingApprovers ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {savingApprovers ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
               Save approval settings
             </button>
           </div>
@@ -941,15 +979,18 @@ function ManageTemplates({
         </div>
       ) : templates.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">
-          No templates yet. Drop PDF/DOCX files into the SharePoint templates folder and click “Sync from
-          SharePoint”.
+          No templates yet. Drop PDF/DOCX files into the SharePoint templates folder and click “Sync
+          from SharePoint”.
         </p>
       ) : (
         <div className="space-y-4">
           {templates.map((t0) => {
             const t = merged(t0);
             return (
-              <div key={t.id} className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm">
+              <div
+                key={t.id}
+                className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm"
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <input
@@ -971,7 +1012,10 @@ function ManageTemplates({
 
                 <div className="mt-3 flex flex-wrap gap-6">
                   <label className="flex items-center gap-2 text-[12px] text-foreground">
-                    <Switch checked={t.enabled} onCheckedChange={(v) => patch(t.id, { enabled: v })} />
+                    <Switch
+                      checked={t.enabled}
+                      onCheckedChange={(v) => patch(t.id, { enabled: v })}
+                    />
                     Enabled (show in dropdown)
                   </label>
                   <label className="flex items-center gap-2 text-[12px] text-foreground">
@@ -1006,7 +1050,9 @@ function ManageTemplates({
                             <div className="flex flex-col gap-2 w-full sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
                               <select
                                 value={f.type}
-                                onChange={(e) => patchField(t.id, f.name, { type: e.target.value as FieldType })}
+                                onChange={(e) =>
+                                  patchField(t.id, f.name, { type: e.target.value as FieldType })
+                                }
                                 className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[85px]"
                               >
                                 <option value="text">text</option>
@@ -1017,7 +1063,9 @@ function ManageTemplates({
                               <select
                                 value={f.source}
                                 onChange={(e) =>
-                                  patchField(t.id, f.name, { source: e.target.value as "auto" | "user" })
+                                  patchField(t.id, f.name, {
+                                    source: e.target.value as "auto" | "user",
+                                  })
                                 }
                                 className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[110px]"
                                 title="auto = filled from employee record; user = entered at generation"
@@ -1029,7 +1077,9 @@ function ManageTemplates({
                                 <input
                                   type="checkbox"
                                   checked={f.required}
-                                  onChange={(e) => patchField(t.id, f.name, { required: e.target.checked })}
+                                  onChange={(e) =>
+                                    patchField(t.id, f.name, { required: e.target.checked })
+                                  }
                                   className="rounded border-[var(--border)] text-primary focus:ring-primary h-3.5 w-3.5"
                                 />
                                 required
@@ -1052,7 +1102,11 @@ function ManageTemplates({
                     )}
                     style={{ background: "var(--gradient-primary)" }}
                   >
-                    {saving === t.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {saving === t.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
                     Save
                   </button>
                 </div>
@@ -1086,7 +1140,9 @@ function DocList({
 }) {
   return (
     <section className="pt-2">
-      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </h2>
       {docs.length === 0 ? (
         <p className="text-[12px] text-muted-foreground">{emptyHint}</p>
       ) : (
@@ -1094,7 +1150,10 @@ function DocList({
           {docs.map((d) => {
             const verified = d.status === "verified";
             return (
-              <div key={d.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3">
+              <div
+                key={d.id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3"
+              >
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] font-medium text-foreground">{d.label}</div>
                   <div className="truncate text-[11px] text-muted-foreground">
@@ -1111,7 +1170,11 @@ function DocList({
                         : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
                     )}
                   >
-                    {verified ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                    {verified ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <Clock className="h-3 w-3" />
+                    )}
                     {verified ? "Released" : "Draft"}
                   </span>
                   <button
@@ -1335,7 +1398,10 @@ function DocumentLibrary({
           />
         </div>
         {categories.length > 0 && (
-          <Select value={filterCat || "_all"} onValueChange={(v) => setFilterCat(v === "_all" ? "" : v)}>
+          <Select
+            value={filterCat || "_all"}
+            onValueChange={(v) => setFilterCat(v === "_all" ? "" : v)}
+          >
             <SelectTrigger className="h-9 text-[13px] w-full sm:w-44">
               <Tag className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <SelectValue placeholder="All categories" />
@@ -1343,7 +1409,9 @@ function DocumentLibrary({
             <SelectContent>
               <SelectItem value="_all">All categories</SelectItem>
               {categories.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
+                <SelectItem key={c} value={c}>
+                  {c}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -1366,7 +1434,9 @@ function DocumentLibrary({
           animate={{ opacity: 1, y: 0 }}
           className="mb-5 rounded-2xl border border-[var(--border)] bg-card p-5 shadow-sm"
         >
-          <h3 className="mb-4 text-[13px] font-semibold text-foreground">Add document to library</h3>
+          <h3 className="mb-4 text-[13px] font-semibold text-foreground">
+            Add document to library
+          </h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1426,7 +1496,11 @@ function DocumentLibrary({
               className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 w-full sm:w-auto"
               style={{ background: "var(--gradient-primary)" }}
             >
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
               {uploading ? "Uploading…" : "Upload"}
             </button>
             <button
@@ -1469,12 +1543,16 @@ function DocumentLibrary({
                 <div className="flex items-start gap-3">
                   <div
                     className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                    style={{ background: "color-mix(in oklab, var(--connectivity) 12%, transparent)" }}
+                    style={{
+                      background: "color-mix(in oklab, var(--connectivity) 12%, transparent)",
+                    }}
                   >
                     <Icon className="h-4.5 w-4.5" style={{ color: "var(--connectivity)" }} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-foreground">{doc.title}</p>
+                    <p className="truncate text-[13px] font-semibold text-foreground">
+                      {doc.title}
+                    </p>
                     {doc.category && (
                       <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                         {doc.category}
@@ -1483,7 +1561,9 @@ function DocumentLibrary({
                   </div>
                 </div>
                 {doc.description && (
-                  <p className="line-clamp-2 text-[12px] text-muted-foreground">{doc.description}</p>
+                  <p className="line-clamp-2 text-[12px] text-muted-foreground">
+                    {doc.description}
+                  </p>
                 )}
                 <div className="mt-auto flex items-center justify-between pt-1">
                   <span className="text-[11px] text-muted-foreground">
@@ -1566,7 +1646,9 @@ function Step({ n, title, hint }: { n: number; title: string; hint?: string }) {
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
       <div className="truncate text-[13px] text-foreground">{value}</div>
     </div>
   );

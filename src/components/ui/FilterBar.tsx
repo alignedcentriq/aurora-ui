@@ -21,12 +21,12 @@ export function FilterBar({
 }: FilterBarProps) {
   return (
     <div className={cn("flex items-center justify-between mb-5", className)}>
-      <div className={cn(
-        "flex p-0.5",
-        variant === "pills"
-          ? "gap-0.5 bg-[#f1f5f9] dark:bg-white/[0.06] rounded-lg"
-          : "gap-1"
-      )}>
+      <div
+        className={cn(
+          "flex p-0.5",
+          variant === "pills" ? "gap-0.5 bg-[#f1f5f9] dark:bg-white/[0.06] rounded-lg" : "gap-1",
+        )}
+      >
         {options.map((s) => (
           <button
             key={s}
@@ -39,14 +39,14 @@ export function FilterBar({
                     "rounded-md px-4 py-1.5",
                     filter === s
                       ? "bg-white dark:bg-white/[0.12] text-[#0f172a] dark:text-white shadow-sm"
-                      : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60"
+                      : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60",
                   )
                 : cn(
                     "rounded-lg px-3.5 py-1.5",
                     filter === s
                       ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  )
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  ),
             )}
           >
             {s}

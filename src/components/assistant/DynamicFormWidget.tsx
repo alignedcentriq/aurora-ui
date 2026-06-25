@@ -101,12 +101,15 @@ function UserPickerField({
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`/api/employees/autocomplete?q=${encodeURIComponent(query)}&limit=8`, {
-          headers: {
-            ...(userEmail ? { "x-user-email": userEmail } : {}),
-            ...(userRole ? { "x-user-role": userRole.toLowerCase() } : {}),
+        const res = await fetch(
+          `/api/employees/autocomplete?q=${encodeURIComponent(query)}&limit=8`,
+          {
+            headers: {
+              ...(userEmail ? { "x-user-email": userEmail } : {}),
+              ...(userRole ? { "x-user-role": userRole.toLowerCase() } : {}),
+            },
           },
-        });
+        );
         const data = await res.json();
         setResults(Array.isArray(data) ? data : []);
         setOpen(true);
@@ -158,7 +161,8 @@ function UserPickerField({
               <span className="text-sm font-medium text-foreground">{emp.name}</span>
               {(emp.designation || emp.email) && (
                 <span className="text-[11px] text-muted-foreground">
-                  {emp.designation ? `${emp.designation} · ` : ""}{emp.email}
+                  {emp.designation ? `${emp.designation} · ` : ""}
+                  {emp.email}
                 </span>
               )}
             </button>
@@ -248,7 +252,7 @@ function ImageUploadField({
           ) : (
             <ImagePlus className="h-4 w-4" />
           )}
-          {uploading ? "Uploading…" : (field.placeholder || "Choose image…")}
+          {uploading ? "Uploading…" : field.placeholder || "Choose image…"}
         </button>
       )}
       <input
@@ -505,7 +509,8 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
           <div className="mb-4 flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/[0.04] px-3.5 py-2.5 text-[11px] text-muted-foreground">
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary/70" />
             <span>
-              We pre-filled some fields from your profile — just confirm or edit them before submitting.
+              We pre-filled some fields from your profile — just confirm or edit them before
+              submitting.
             </span>
           </div>
         )}

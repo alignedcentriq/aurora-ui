@@ -22,21 +22,23 @@ interface Props {
 function fmtDate(iso: string) {
   const [y, mo, d] = iso.split("-").map(Number);
   return new Date(y, mo - 1, d).toLocaleDateString("en-IN", {
-    day: "numeric", month: "short", year: "numeric",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
   });
 }
 
 const STATUS_COLOR: Record<string, string> = {
   Approved: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
-  Pending:  "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  Pending: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
   Rejected: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  Cancelled:"bg-muted text-muted-foreground",
+  Cancelled: "bg-muted text-muted-foreground",
 };
 
 export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
   const auth = useMemo(
     () => ({ "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() }),
-    [userEmail, userRole]
+    [userEmail, userRole],
   );
 
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
@@ -55,7 +57,9 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
           return;
         }
         // Only show cancellable leaves (Pending or Approved)
-        setLeaves((data as LeaveRecord[]).filter(l => l.status === "Pending" || l.status === "Approved"));
+        setLeaves(
+          (data as LeaveRecord[]).filter((l) => l.status === "Pending" || l.status === "Approved"),
+        );
       } catch {
         setError("Could not reach the server. Please try again.");
       } finally {
@@ -75,12 +79,12 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail ?? "Cancellation failed.");
 
-      setCancelled(prev => new Set([...prev, leave.id]));
+      setCancelled((prev) => new Set([...prev, leave.id]));
       const balanceNote = data.was_approved ? " Balance restored." : "";
       flyBanner(`${leave.leave_type} leave cancelled${balanceNote}`);
       onCancelled(
         `✅ **${leave.leave_type}** leave (${fmtDate(leave.start_date)} – ${fmtDate(leave.end_date)}, ${leave.days} day${leave.days !== 1 ? "s" : ""}) has been cancelled.` +
-        (data.was_approved ? " Your leave balance has been restored." : "")
+          (data.was_approved ? " Your leave balance has been restored." : ""),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancellation failed.");
@@ -89,7 +93,7 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
     }
   };
 
-  const visible = leaves.filter(l => !cancelled.has(l.id));
+  const visible = leaves.filter((l) => !cancelled.has(l.id));
 
   return (
     <motion.div
@@ -132,7 +136,7 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
 
         {/* Leave list */}
         <AnimatePresence>
-          {visible.map(leave => (
+          {visible.map((leave) => (
             <motion.div
               key={leave.id}
               initial={{ opacity: 0, y: 4 }}
@@ -143,7 +147,9 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-semibold text-foreground">{leave.leave_type}</p>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLOR[leave.status] ?? "bg-muted text-muted-foreground"}`}>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLOR[leave.status] ?? "bg-muted text-muted-foreground"}`}
+                  >
                     {leave.status}
                   </span>
                   {leave.status === "Approved" && (
@@ -157,7 +163,9 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
                     <Calendar className="h-3 w-3 text-primary" />
                     {fmtDate(leave.start_date)} – {fmtDate(leave.end_date)}
                   </span>
-                  <span>{leave.days} day{leave.days !== 1 ? "s" : ""}</span>
+                  <span>
+                    {leave.days} day{leave.days !== 1 ? "s" : ""}
+                  </span>
                 </div>
                 {leave.reason && (
                   <p className="mt-1 text-[11px] text-muted-foreground truncate">{leave.reason}</p>
@@ -171,9 +179,11 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
                 disabled={cancelling === leave.id}
                 className="flex shrink-0 items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs font-semibold text-destructive transition-all hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {cancelling === leave.id
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : <XCircle className="h-3.5 w-3.5" />}
+                {cancelling === leave.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5" />
+                )}
                 {cancelling === leave.id ? "Cancelling…" : "Cancel"}
               </motion.button>
             </motion.div>
@@ -182,8 +192,11 @@ export function CancelLeaveWidget({ userEmail, userRole, onCancelled }: Props) {
 
         {/* All done */}
         {!loading && !error && leaves.length > 0 && visible.length === 0 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            className="flex items-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex items-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400"
+          >
             <CheckCircle2 className="h-4 w-4" />
             All selected leaves have been cancelled.
           </motion.div>

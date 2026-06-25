@@ -101,24 +101,99 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 
 // 4C Domains mapping for requests
-const COLOR_4C: Record<RequestType, { name: string; color: string; border: string; bg: string; text: string }> = {
-  leave: { name: "Collaboration", color: "text-emerald-500", border: "border-l-4 border-l-emerald-500", bg: "bg-emerald-500/10", text: "text-emerald-500" },
-  grievance: { name: "Collaboration", color: "text-emerald-500", border: "border-l-4 border-l-emerald-500", bg: "bg-emerald-500/10", text: "text-emerald-500" },
-  
-  travel_request: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
-  travel_expense: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
-  facility: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
-  parking: { name: "Connectivity", color: "text-cyan-500", border: "border-l-4 border-l-cyan-500", bg: "bg-cyan-500/10", text: "text-cyan-500" },
-  
-  expense: { name: "Capacity", color: "text-pink-500", border: "border-l-4 border-l-pink-500", bg: "bg-pink-500/10", text: "text-pink-500" },
-  udemy: { name: "Capacity", color: "text-pink-500", border: "border-l-4 border-l-pink-500", bg: "bg-pink-500/10", text: "text-pink-500" },
-  
-  escalation: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
-  document: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
-  query: { name: "Clarity", color: "text-indigo-500", border: "border-l-4 border-l-indigo-500", bg: "bg-indigo-500/10", text: "text-indigo-500" },
+const COLOR_4C: Record<
+  RequestType,
+  { name: string; color: string; border: string; bg: string; text: string }
+> = {
+  leave: {
+    name: "Collaboration",
+    color: "text-emerald-500",
+    border: "border-l-4 border-l-emerald-500",
+    bg: "bg-emerald-500/10",
+    text: "text-emerald-500",
+  },
+  grievance: {
+    name: "Collaboration",
+    color: "text-emerald-500",
+    border: "border-l-4 border-l-emerald-500",
+    bg: "bg-emerald-500/10",
+    text: "text-emerald-500",
+  },
+
+  travel_request: {
+    name: "Connectivity",
+    color: "text-cyan-500",
+    border: "border-l-4 border-l-cyan-500",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500",
+  },
+  travel_expense: {
+    name: "Connectivity",
+    color: "text-cyan-500",
+    border: "border-l-4 border-l-cyan-500",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500",
+  },
+  facility: {
+    name: "Connectivity",
+    color: "text-cyan-500",
+    border: "border-l-4 border-l-cyan-500",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500",
+  },
+  parking: {
+    name: "Connectivity",
+    color: "text-cyan-500",
+    border: "border-l-4 border-l-cyan-500",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500",
+  },
+
+  expense: {
+    name: "Capacity",
+    color: "text-pink-500",
+    border: "border-l-4 border-l-pink-500",
+    bg: "bg-pink-500/10",
+    text: "text-pink-500",
+  },
+  udemy: {
+    name: "Capacity",
+    color: "text-pink-500",
+    border: "border-l-4 border-l-pink-500",
+    bg: "bg-pink-500/10",
+    text: "text-pink-500",
+  },
+
+  escalation: {
+    name: "Clarity",
+    color: "text-indigo-500",
+    border: "border-l-4 border-l-indigo-500",
+    bg: "bg-indigo-500/10",
+    text: "text-indigo-500",
+  },
+  document: {
+    name: "Clarity",
+    color: "text-indigo-500",
+    border: "border-l-4 border-l-indigo-500",
+    bg: "bg-indigo-500/10",
+    text: "text-indigo-500",
+  },
+  query: {
+    name: "Clarity",
+    color: "text-indigo-500",
+    border: "border-l-4 border-l-indigo-500",
+    bg: "bg-indigo-500/10",
+    text: "text-indigo-500",
+  },
 
   // Admin-defined Form Library submissions — Capacity domain, distinct violet accent.
-  form: { name: "Capacity", color: "text-violet-500", border: "border-l-4 border-l-violet-500", bg: "bg-violet-500/10", text: "text-violet-500" },
+  form: {
+    name: "Capacity",
+    color: "text-violet-500",
+    border: "border-l-4 border-l-violet-500",
+    bg: "bg-violet-500/10",
+    text: "text-violet-500",
+  },
 };
 
 type StatusFilter = "all" | "open" | "closed" | "in-progress";
@@ -131,7 +206,16 @@ const STATUS_FILTERS: { key: StatusFilter; label: string; icon: React.ElementTyp
 ];
 
 const OPEN_STATUSES = ["open", "pending approval", "draft", "pending", "pending_rm", "pending_fm"];
-const CLOSED_STATUSES = ["resolved", "closed", "verified", "approved", "completed", "cancelled", "finance_processed", "rejected"];
+const CLOSED_STATUSES = [
+  "resolved",
+  "closed",
+  "verified",
+  "approved",
+  "completed",
+  "cancelled",
+  "finance_processed",
+  "rejected",
+];
 const IN_PROGRESS_STATUSES = [
   "acknowledged",
   "under review",
@@ -194,7 +278,7 @@ export function MyRequests() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const fetchAll = useCallback(async () => {
@@ -231,7 +315,7 @@ export function MyRequests() {
           .filter(
             (d: Record<string, unknown>) =>
               String(d.generated_by_email ?? "").toLowerCase() === userEmail ||
-              String(d.subject_email ?? "").toLowerCase() === userEmail
+              String(d.subject_email ?? "").toLowerCase() === userEmail,
           )
           .map((d: Record<string, unknown>) => ({
             key: `doc-${d.id}`,
@@ -368,7 +452,7 @@ export function MyRequests() {
       ];
 
       normalized.sort(
-        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
       );
       setItems(normalized);
     } catch {
@@ -430,7 +514,8 @@ export function MyRequests() {
       if (i.type === "form" && typeof i.formTemplateId === "number") {
         const g = m.get(i.formTemplateId);
         if (g) g.count += 1;
-        else m.set(i.formTemplateId, { id: i.formTemplateId, name: i.formName || "Form", count: 1 });
+        else
+          m.set(i.formTemplateId, { id: i.formTemplateId, name: i.formName || "Form", count: 1 });
       }
     }
     return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -471,7 +556,6 @@ export function MyRequests() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden relative select-none">
-      
       {/* Decorative corporate hex mesh overlay */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent pointer-events-none -z-10" />
       <div
@@ -485,9 +569,12 @@ export function MyRequests() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-8 py-4 sm:py-6 border-b border-border/40 shrink-0 gap-4">
         <div>
-          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-foreground">My Requests</h1>
+          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-foreground">
+            My Requests
+          </h1>
           <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground mt-0.5 font-medium">
-            Monitor and track your leaves, expenses, travel bookings, and support tickets in one place.
+            Monitor and track your leaves, expenses, travel bookings, and support tickets in one
+            place.
           </p>
         </div>
         <button
@@ -501,7 +588,6 @@ export function MyRequests() {
 
       {/* Redesigned Unified Control Row */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between px-4 sm:px-8 py-4 shrink-0 gap-4 border-b border-border/30 bg-muted/5">
-        
         {/* Left Side: Status Tabs (All, Open, In Progress, Closed) */}
         <div className="flex overflow-x-auto no-scrollbar flex-nowrap gap-1 bg-muted/40 p-1 rounded-2xl border border-border/40 w-full lg:w-auto relative select-none">
           {STATUS_FILTERS.map((f) => {
@@ -514,15 +600,25 @@ export function MyRequests() {
                   "relative flex-initial flex items-center justify-center gap-1 sm:gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer shrink-0 whitespace-nowrap",
                   active
                     ? "text-primary shadow-sm bg-background border border-border/60"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 <f.icon className="h-3.5 w-3.5 shrink-0 hidden sm:inline-block" />
-                <span>{f.key === "in-progress" ? <><span className="hidden sm:inline">In </span>Progress</> : f.label}</span>
-                <span className={cn(
-                  "text-[9px] font-black rounded-full px-1.5 py-0.5 shrink-0",
-                  active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                )}>
+                <span>
+                  {f.key === "in-progress" ? (
+                    <>
+                      <span className="hidden sm:inline">In </span>Progress
+                    </>
+                  ) : (
+                    f.label
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "text-[9px] font-black rounded-full px-1.5 py-0.5 shrink-0",
+                    active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+                  )}
+                >
                   {statusCounts[f.key]}
                 </span>
               </button>
@@ -562,7 +658,12 @@ export function MyRequests() {
                 <Filter className="h-3.5 w-3.5 text-primary shrink-0" />
                 <span className="truncate">{activeTypeLabel}</span>
               </div>
-              <ChevronDown className={cn("h-3.5 w-3.5 opacity-55 transition-transform duration-200", typeDropdownOpen && "rotate-180")} />
+              <ChevronDown
+                className={cn(
+                  "h-3.5 w-3.5 opacity-55 transition-transform duration-200",
+                  typeDropdownOpen && "rotate-180",
+                )}
+              />
             </button>
 
             <AnimatePresence>
@@ -600,17 +701,26 @@ export function MyRequests() {
                           "w-full flex items-center justify-between gap-2 px-3 py-2 text-xs rounded-xl transition-all text-left",
                           active
                             ? "bg-primary/10 text-primary font-bold"
-                            : "text-foreground/75 hover:bg-muted/65 hover:text-foreground"
+                            : "text-foreground/75 hover:bg-muted/65 hover:text-foreground",
                         )}
                       >
                         <div className="flex items-center gap-2 truncate">
-                          <TIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground/70")} />
+                          <TIcon
+                            className={cn(
+                              "h-3.5 w-3.5 shrink-0",
+                              active ? "text-primary" : "text-muted-foreground/70",
+                            )}
+                          />
                           <span className="truncate">{opt.label.split(" (")[0]}</span>
                         </div>
-                        <span className={cn(
-                          "text-[9px] font-black rounded-full px-1.5 py-0.5",
-                          active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                        )}>
+                        <span
+                          className={cn(
+                            "text-[9px] font-black rounded-full px-1.5 py-0.5",
+                            active
+                              ? "bg-primary/20 text-primary"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
                           {opt.label.includes("(") ? opt.label.match(/\((\d+)\)/)?.[1] : counts.all}
                         </span>
                       </button>
@@ -621,7 +731,6 @@ export function MyRequests() {
             </AnimatePresence>
           </div>
         </div>
-
       </div>
 
       {/* Redesigned Cards Grid List */}
@@ -653,7 +762,7 @@ export function MyRequests() {
                     "border border-border/40 bg-card/45 backdrop-blur-md rounded-2xl overflow-hidden transition-all duration-200",
                     isExpanded
                       ? "shadow-xl border-primary/20 ring-1 ring-primary/5 bg-card/85"
-                      : "hover:scale-[1.008] hover:bg-card/75 hover:shadow-md"
+                      : "hover:scale-[1.008] hover:bg-card/75 hover:shadow-md",
                   )}
                 >
                   {/* Card Main Summary Header */}
@@ -661,37 +770,61 @@ export function MyRequests() {
                     onClick={() => setExpanded(isExpanded ? null : item.key)}
                     className={cn(
                       "p-4 md:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer select-none",
-                      meta4C?.border
+                      meta4C?.border,
                     )}
                   >
                     {/* Left Details */}
                     <div className="flex items-center gap-4 min-w-0 flex-1">
-                      <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner", meta4C?.bg)}>
+                      <div
+                        className={cn(
+                          "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 shadow-inner",
+                          meta4C?.bg,
+                        )}
+                      >
                         <TIcon className={cn("h-5 w-5", meta4C?.color)} />
                       </div>
                       <div className="min-w-0 flex-1 space-y-0.5">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className={cn("text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full border", badgeClass(meta4C.name))}>
+                          <span
+                            className={cn(
+                              "text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full border",
+                              badgeClass(meta4C.name),
+                            )}
+                          >
                             {meta4C.name} • {TYPE_LABEL[item.type]}
                           </span>
                           <span className="text-[10px] font-bold text-muted-foreground font-mono">
                             {item.reference_id}
                           </span>
                           {item.priority && (
-                            <span className={cn("rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider md:hidden", PRIORITY_BADGE[item.priority])}>
+                            <span
+                              className={cn(
+                                "rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider md:hidden",
+                                PRIORITY_BADGE[item.priority],
+                              )}
+                            >
                               {item.priority}
                             </span>
                           )}
                         </div>
-                        <h3 className="text-[13px] md:text-sm font-bold text-foreground truncate">{item.subject}</h3>
-                        <p className="text-xs text-muted-foreground truncate font-medium">{item.description}</p>
+                        <h3 className="text-[13px] md:text-sm font-bold text-foreground truncate">
+                          {item.subject}
+                        </h3>
+                        <p className="text-xs text-muted-foreground truncate font-medium">
+                          {item.description}
+                        </p>
                       </div>
                     </div>
 
                     {/* Middle: Priority & Theme Info */}
                     <div className="hidden md:flex items-center gap-3 shrink-0">
                       {item.priority ? (
-                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", PRIORITY_BADGE[item.priority])}>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-bold",
+                            PRIORITY_BADGE[item.priority],
+                          )}
+                        >
                           {item.priority}
                         </span>
                       ) : (
@@ -702,7 +835,10 @@ export function MyRequests() {
                     {/* Right: Status, Date & Chevron */}
                     <div className="flex items-center justify-between md:justify-end gap-5 shrink-0 border-t md:border-t-0 border-border/30 pt-3.5 md:pt-0">
                       <div className="text-left md:text-right space-y-0.5">
-                        <StatusBadge status={item.status} className="px-2.5 py-0.5 text-[11px] font-bold shadow-xs" />
+                        <StatusBadge
+                          status={item.status}
+                          className="px-2.5 py-0.5 text-[11px] font-bold shadow-xs"
+                        />
                         <p className="text-[10px] text-muted-foreground/70 font-semibold">
                           {item.created_at ? item.created_at.slice(0, 10) : "—"}
                         </p>
@@ -710,11 +846,10 @@ export function MyRequests() {
                       <ChevronDown
                         className={cn(
                           "h-4 w-4 text-muted-foreground/50 transition-all duration-200 shrink-0",
-                          isExpanded && "rotate-180 text-primary"
+                          isExpanded && "rotate-180 text-primary",
                         )}
                       />
                     </div>
-
                   </div>
 
                   {/* Expanded Detail Panel */}
@@ -731,14 +866,12 @@ export function MyRequests() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-
                 </div>
               );
             })}
           </div>
         )}
       </div>
-
     </div>
   );
 }
@@ -754,7 +887,8 @@ function humanizeFieldName(name: string): string {
 
 // 4C pill color codes helpers
 function badgeClass(domainName: string) {
-  if (domainName === "Collaboration") return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
+  if (domainName === "Collaboration")
+    return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
   if (domainName === "Connectivity") return "bg-cyan-500/10 text-cyan-500 border-cyan-500/20";
   if (domainName === "Capacity") return "bg-pink-500/10 text-pink-500 border-pink-500/20";
   return "bg-indigo-500/10 text-indigo-500 border-indigo-500/20";
@@ -769,14 +903,15 @@ function DetailPanel({ item }: { item: RequestItem }) {
   const Detail = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value ? (
       <div className="space-y-0.5">
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">{label}</p>
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">
+          {label}
+        </p>
         <p className="text-xs font-semibold text-foreground leading-relaxed">{value}</p>
       </div>
     ) : null;
 
   return (
     <div className="flex flex-col md:flex-row gap-6 p-5 md:p-6 bg-muted/15 border-t border-border/20 select-none">
-      
       {/* Detailed Fields */}
       <div className="flex-1 min-w-0 space-y-4">
         {item.type === "escalation" && (
@@ -814,7 +949,7 @@ function DetailPanel({ item }: { item: RequestItem }) {
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
-                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400"
+                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400",
                   )}
                 >
                   {String(raw.priority)}
@@ -878,7 +1013,7 @@ function DetailPanel({ item }: { item: RequestItem }) {
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
-                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400"
+                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400",
                   )}
                 >
                   {String(raw.priority)} Priority
@@ -908,7 +1043,10 @@ function DetailPanel({ item }: { item: RequestItem }) {
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Detail label="Vehicle Details" value={`${raw.vehicle_make || ""} ${raw.vehicle_model || ""}`.trim() || "—"} />
+              <Detail
+                label="Vehicle Details"
+                value={`${raw.vehicle_make || ""} ${raw.vehicle_model || ""}`.trim() || "—"}
+              />
               <Detail label="Vehicle Number" value={String(raw.vehicle_number || "—")} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -934,8 +1072,14 @@ function DetailPanel({ item }: { item: RequestItem }) {
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Detail label="Start Date" value={raw.start_date ? String(raw.start_date).slice(0, 10) : "—"} />
-              <Detail label="End Date" value={raw.end_date ? String(raw.end_date).slice(0, 10) : "—"} />
+              <Detail
+                label="Start Date"
+                value={raw.start_date ? String(raw.start_date).slice(0, 10) : "—"}
+              />
+              <Detail
+                label="End Date"
+                value={raw.end_date ? String(raw.end_date).slice(0, 10) : "—"}
+              />
             </div>
             <Detail label="Reason for Leave" value={String(raw.reason || "—")} />
           </>
@@ -961,7 +1105,14 @@ function DetailPanel({ item }: { item: RequestItem }) {
         {item.type === "travel_request" && (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={cn("text-[11px] font-semibold rounded-full px-2.5 py-0.5 border", raw.is_international ? "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20" : "bg-blue-500/15 text-blue-400 border-blue-500/20")}>
+              <span
+                className={cn(
+                  "text-[11px] font-semibold rounded-full px-2.5 py-0.5 border",
+                  raw.is_international
+                    ? "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20"
+                    : "bg-blue-500/15 text-blue-400 border-blue-500/20",
+                )}
+              >
                 {raw.is_international ? "International Travel" : "Domestic Travel"}
               </span>
               <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5 border border-zinc-500/20">
@@ -978,17 +1129,35 @@ function DetailPanel({ item }: { item: RequestItem }) {
               <Detail label="Destination" value={String(raw.to_destination || "—")} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Detail label="Travel Date" value={raw.travel_date ? String(raw.travel_date).slice(0, 10) : "—"} />
-              <Detail label="Return Date" value={raw.return_date ? String(raw.return_date).slice(0, 10) : "—"} />
+              <Detail
+                label="Travel Date"
+                value={raw.travel_date ? String(raw.travel_date).slice(0, 10) : "—"}
+              />
+              <Detail
+                label="Return Date"
+                value={raw.return_date ? String(raw.return_date).slice(0, 10) : "—"}
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Detail label="Estimated Cost" value={raw.estimated_cost ? `$${raw.estimated_cost}` : "—"} />
-              <Detail label="Expense Limit Allocated" value={raw.expense_limit ? `${raw.expense_limit_currency || "INR"} ${raw.expense_limit.toLocaleString()}` : "—"} />
+              <Detail
+                label="Estimated Cost"
+                value={raw.estimated_cost ? `$${raw.estimated_cost}` : "—"}
+              />
+              <Detail
+                label="Expense Limit Allocated"
+                value={
+                  raw.expense_limit
+                    ? `${raw.expense_limit_currency || "INR"} ${raw.expense_limit.toLocaleString()}`
+                    : "—"
+                }
+              />
             </div>
             {raw.notes && <Detail label="Travel Justification/Notes" value={String(raw.notes)} />}
             {(raw.ticket_details || raw.hotel_details || raw.visa_status) && (
               <div className="border-t border-border/40 pt-3 mt-1.5 space-y-2">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">Booking Details</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold">
+                  Booking Details
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-muted/40 p-3 rounded-xl border border-border/40">
                   <Detail label="Ticket Details" value={String(raw.ticket_details || "—")} />
                   <Detail label="Hotel Details" value={String(raw.hotel_details || "—")} />
@@ -1023,7 +1192,9 @@ function DetailPanel({ item }: { item: RequestItem }) {
             )}
             {raw.rejection_reason && (
               <div className="rounded-xl bg-rose-500/5 border border-rose-500/15 p-3.5 text-xs text-rose-500 mt-2 font-semibold">
-                <p className="text-[10px] uppercase tracking-wide text-rose-500/60 mb-1 font-bold">Rejection Reason</p>
+                <p className="text-[10px] uppercase tracking-wide text-rose-500/60 mb-1 font-bold">
+                  Rejection Reason
+                </p>
                 {String(raw.rejection_reason)}
               </div>
             )}
@@ -1039,12 +1210,12 @@ function DetailPanel({ item }: { item: RequestItem }) {
             </div>
             <Detail label="Course Name" value={String(raw.course_name || "—")} />
             <Detail label="Justification" value={String(raw.justification || "—")} />
-            {raw.decided_by && (
-              <Detail label="Decided By" value={String(raw.decided_by)} />
-            )}
+            {raw.decided_by && <Detail label="Decided By" value={String(raw.decided_by)} />}
             {raw.decision_reason && (
               <div className="rounded-xl bg-card border border-border/50 p-3.5 text-xs text-foreground/80 leading-relaxed mt-2 font-semibold">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1 font-bold">Decision Details</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1 font-bold">
+                  Decision Details
+                </p>
                 {String(raw.decision_reason)}
               </div>
             )}
@@ -1064,15 +1235,13 @@ function DetailPanel({ item }: { item: RequestItem }) {
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {Object.entries((raw.field_values ?? {}) as Record<string, unknown>).map(
-                ([k, v]) => (
-                  <Detail
-                    key={k}
-                    label={humanizeFieldName(k)}
-                    value={Array.isArray(v) ? v.join(", ") : String(v ?? "—")}
-                  />
-                ),
-              )}
+              {Object.entries((raw.field_values ?? {}) as Record<string, unknown>).map(([k, v]) => (
+                <Detail
+                  key={k}
+                  label={humanizeFieldName(k)}
+                  value={Array.isArray(v) ? v.join(", ") : String(v ?? "—")}
+                />
+              ))}
             </div>
             {!!raw.admin_remarks && (
               <div className="space-y-1">
@@ -1096,7 +1265,9 @@ function DetailPanel({ item }: { item: RequestItem }) {
       {/* Right side: Status and Submission Time stamps */}
       <div className="w-full md:w-48 shrink-0 flex flex-col items-start gap-3 border-t md:border-t-0 md:border-l border-border/20 pt-4 md:pt-0 md:pl-6">
         <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-1">Current Status</p>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-1">
+            Current Status
+          </p>
           <StatusBadge status={item.status} className="px-3 py-1 text-xs font-bold shadow-xs" />
         </div>
         {isFinal && (
@@ -1107,12 +1278,15 @@ function DetailPanel({ item }: { item: RequestItem }) {
         )}
         {item.created_at && (
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-0.5">Submitted On</p>
-            <p className="text-xs text-foreground/75 font-semibold">{item.created_at.slice(0, 10)}</p>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-bold mb-0.5">
+              Submitted On
+            </p>
+            <p className="text-xs text-foreground/75 font-semibold">
+              {item.created_at.slice(0, 10)}
+            </p>
           </div>
         )}
       </div>
-
     </div>
   );
 }

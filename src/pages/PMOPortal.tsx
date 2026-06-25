@@ -98,6 +98,7 @@ interface UdemyRequest {
 
 const TABS = [
   { key: "skill-supply", label: "Skill Supply" },
+  { key: "bench-upskill", label: "Bench → Upskill" },
   { key: "udemy", label: "License Requests" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
@@ -105,7 +106,15 @@ type TabKey = (typeof TABS)[number]["key"];
 const TAB_SUBTITLE: Record<TabKey, string> = {
   "skill-supply":
     "In-demand skills we can't staff — market demand crossed with live capacity & availability.",
+  "bench-upskill":
+    "Turn idle bench time into capability — each person matched to a course teaching an in-demand skill they lack.",
   udemy: "Review, approve or decline training-program license requests (Udemy, Coursera).",
+};
+
+const TAB_ICON: Record<TabKey, typeof TrendingUp> = {
+  "skill-supply": TrendingUp,
+  "bench-upskill": GraduationCap,
+  udemy: BookOpen,
 };
 
 export function PMOPortal() {
@@ -190,11 +199,10 @@ export function PMOPortal() {
                   />
                 )}
                 <span className="relative z-20 flex items-center gap-1.5">
-                  {t.key === "skill-supply" ? (
-                    <TrendingUp className="h-3.5 w-3.5" />
-                  ) : (
-                    <BookOpen className="h-3.5 w-3.5" />
-                  )}
+                  {(() => {
+                    const Icon = TAB_ICON[t.key];
+                    return <Icon className="h-3.5 w-3.5" />;
+                  })()}
                   {t.label}
                 </span>
               </button>
@@ -216,6 +224,8 @@ export function PMOPortal() {
           >
             {tab === "skill-supply" ? (
               <SkillSupplyTab authHeaders={authHeaders} />
+            ) : tab === "bench-upskill" ? (
+              <BenchUpskillTab authHeaders={authHeaders} />
             ) : (
               <UdemyTab authHeaders={authHeaders} />
             )}
@@ -586,6 +596,304 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
         </span>
         {data.note ? ` • ${data.note}` : ""}
         {data.generated_on ? ` • Sync generated: ${data.generated_on}` : ""}
+      </div>
+    </div>
+  );
+}
+
+// ── Bench → Upskill Tab Component ────────────────────────────────────────────
+interface BenchSuggestion {
+  employee_id: number | null;
+  employee_name: string;
+  employee_email: string | null;
+  department: string | null;
+  free_pct: number;
+  reason: string;
+  rolloff_date: string | null;
+  current_projects: string[];
+  recommended_training_id: number;
+  recommended_training: string;
+  teaches_skills: string[];
+  demand_score: number;
+  suggested_due_date: string;
+}
+
+interface BenchResult {
+  ok: boolean;
+  generated_on?: string;
+  count?: number;
+  rows?: BenchSuggestion[];
+  summary?: { bench: number; rolling_off: number };
+}
+
+function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [data, setData] = useState<BenchResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<string | null>(null);
+  const [assigned, setAssigned] = useState<Set<string>>(new Set());
+
+  const rowKey = (r: BenchSuggestion) => r.employee_email || r.employee_name;
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/portal/pmo/bench-upskill?limit=50`, { headers: authHeaders });
+      setData(await res.json());
+    } catch {
+      toast.error("Failed to load bench-upskill suggestions");
+      setData({ ok: false });
+    } finally {
+      setLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    Promise.resolve().then(() => fetch_());
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const assign = async (r: BenchSuggestion) => {
+    const key = rowKey(r);
+    setActing(key);
+    try {
+      const res = await fetch(`/api/portal/pmo/bench-upskill/assign`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          employee_id: r.employee_id,
+          email: r.employee_email,
+          training_id: r.recommended_training_id,
+          due_date: r.suggested_due_date,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner(`Assigned ${r.recommended_training} to ${r.employee_name}`);
+      setAssigned((prev) => new Set(prev).add(key));
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to assign training");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col h-60 items-center justify-center gap-3">
+        <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
+        <span className="text-xs text-muted-foreground/80 font-medium">
+          Matching bench capacity to in-demand skills...
+        </span>
+      </div>
+    );
+  }
+
+  const rows = data?.rows ?? [];
+  const s = data?.summary ?? { bench: 0, rolling_off: 0 };
+
+  const cards = [
+    {
+      label: "On Bench",
+      n: s.bench ?? 0,
+      desc: "Free capacity now — ready to upskill",
+      icon: UserCheck,
+      iconCls: "bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/15",
+    },
+    {
+      label: "Rolling Off Soon",
+      n: s.rolling_off ?? 0,
+      desc: "Capacity arriving within 45 days",
+      icon: RefreshCw,
+      iconCls: "bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/15",
+    },
+    {
+      label: "Suggestions",
+      n: rows.length,
+      desc: "Manager-approved before any enrollment",
+      icon: GraduationCap,
+      iconCls: "bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/15",
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        {cards.map((c, idx) => {
+          const CardIcon = c.icon;
+          return (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.04, duration: 0.3 }}
+              key={c.label}
+              className="relative overflow-hidden rounded-2xl border p-5 bg-white/60 dark:bg-zinc-900/35 border-slate-200/60 dark:border-white/[0.04] shadow-sm"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                  {c.label}
+                </span>
+                <div className={cn("p-2 rounded-xl", c.iconCls)}>
+                  <CardIcon className="h-4 w-4" />
+                </div>
+              </div>
+              <div className="mt-4 flex items-baseline gap-1.5">
+                <span className="text-3xl font-black tracking-tight text-foreground">{c.n}</span>
+                <span className="text-[11px] font-medium text-muted-foreground">people</span>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground/80 leading-snug">{c.desc}</p>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+          Bench-to-Upskill Suggestions
+        </h2>
+        <button
+          onClick={fetch_}
+          className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+        >
+          <RefreshCw className="h-3 w-3" />
+          Refresh
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="flex flex-col h-56 items-center justify-center text-center p-8 rounded-2xl border border-dashed border-slate-200/80 dark:border-zinc-800/40 bg-white/20 dark:bg-zinc-950/10 backdrop-blur-sm select-none">
+          <div className="h-11 w-11 rounded-xl bg-slate-100 dark:bg-zinc-900 flex items-center justify-center mb-3">
+            <UserCheck className="h-5 w-5 text-muted-foreground/50" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">No bench suggestions right now</p>
+          <p className="text-xs text-muted-foreground/80 mt-1 max-w-sm">
+            Either no one is on the bench, or those who are already hold the in-demand skills.
+            Suggestions appear once a synced directory and skill profiles are present.
+          </p>
+        </div>
+      ) : (
+        <div className="bg-white/60 dark:bg-zinc-950/20 backdrop-blur-lg border border-slate-200/60 dark:border-white/[0.04] rounded-2xl overflow-hidden shadow-elevated">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                    Employee
+                  </th>
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                    Status
+                  </th>
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                    Recommended Course
+                  </th>
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                    Teaches
+                  </th>
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
+                    Due By
+                  </th>
+                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-right">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
+                {rows.map((r) => {
+                  const initials = r.employee_name
+                    .split(" ")
+                    .map((w) => w[0])
+                    .join("")
+                    .toUpperCase()
+                    .slice(0, 2);
+                  const key = rowKey(r);
+                  const isAssigned = assigned.has(key);
+                  return (
+                    <tr
+                      key={key}
+                      className="hover:bg-slate-500/[0.015] dark:hover:bg-white/[0.01] transition-colors duration-150 align-middle"
+                    >
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-3">
+                          <div className="inline-flex items-center justify-center h-7 w-7 rounded-full text-[10px] font-black text-white bg-gradient-to-br from-indigo-500 to-violet-600 shadow-inner">
+                            {initials}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-sm text-foreground truncate">
+                              {r.employee_name}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground truncate">
+                              {r.department || r.employee_email}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border",
+                            r.reason === "On bench"
+                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                              : "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
+                          )}
+                        >
+                          {r.reason === "On bench" ? `${r.free_pct}% free` : `Off ${r.rolloff_date}`}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span className="font-semibold text-foreground">
+                          {r.recommended_training}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {r.teaches_skills.slice(0, 3).map((sk) => (
+                            <span
+                              key={sk}
+                              className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/15"
+                            >
+                              {sk}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-center font-mono text-[11px] text-muted-foreground">
+                        {r.suggested_due_date}
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <button
+                          onClick={() => assign(r)}
+                          disabled={acting === key || isAssigned}
+                          className={cn(
+                            "inline-flex items-center justify-center gap-1.5 rounded-xl py-1.5 px-3.5 text-xs font-bold transition-all duration-200 disabled:opacity-60 active:scale-95 cursor-pointer shadow-sm border",
+                            isAssigned
+                              ? "bg-slate-100 dark:bg-zinc-800 text-muted-foreground border-slate-200/50 dark:border-zinc-700/50 cursor-default"
+                              : "bg-emerald-500/10 hover:bg-emerald-500/15 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+                          )}
+                        >
+                          {acting === key ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : isAssigned ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : (
+                            <GraduationCap className="h-3.5 w-3.5" />
+                          )}
+                          {isAssigned ? "Assigned" : "Approve & Assign"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground/60 select-none">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+        <span>
+          Demand computed in-house from skills held by people on billable work. Deadlines scale with
+          free capacity. Nothing is enrolled until a manager approves.
+        </span>
+        {data?.generated_on ? ` • Generated: ${data.generated_on}` : ""}
       </div>
     </div>
   );

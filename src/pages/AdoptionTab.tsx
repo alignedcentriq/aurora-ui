@@ -64,7 +64,7 @@ export function AdoptionTab() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 
   const [data, setData] = useState<AdoptionData | null>(null);
@@ -109,7 +109,8 @@ export function AdoptionTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Compass className="h-4 w-4 text-indigo-400" />
-          Capability reach across staff — trailing {data.window_days} days. Sorted most-undiscovered first.
+          Capability reach across staff — trailing {data.window_days} days. Sorted most-undiscovered
+          first.
         </div>
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
@@ -119,7 +120,9 @@ export function AdoptionTab() {
                 onClick={() => setWindowDays(w)}
                 className={cn(
                   "px-3 py-1.5 text-[12px] font-medium transition-colors",
-                  windowDays === w ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                  windowDays === w
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {w}d
@@ -139,7 +142,11 @@ export function AdoptionTab() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: "Total staff", value: data.total_staff, icon: null },
-          { label: "Active users", value: data.active_users, icon: <TrendingUp className="h-4 w-4 text-emerald-400" /> },
+          {
+            label: "Active users",
+            value: data.active_users,
+            icon: <TrendingUp className="h-4 w-4 text-emerald-400" />,
+          },
           { label: "Capabilities", value: data.feature_count, icon: null },
           {
             label: "Undiscovered",
@@ -152,11 +159,13 @@ export function AdoptionTab() {
             key={c.label}
             className={cn(
               "rounded-xl border border-[var(--border)] bg-card/50 p-4",
-              c.accent && "border-rose-500/30 bg-rose-500/5"
+              c.accent && "border-rose-500/30 bg-rose-500/5",
             )}
           >
             <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{c.label}</span>
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                {c.label}
+              </span>
               {c.icon}
             </div>
             <div className="mt-1 text-2xl font-bold text-foreground">{c.value}</div>
@@ -198,15 +207,21 @@ export function AdoptionTab() {
                         style={{ width: `${Math.max(f.adoption_pct_staff, f.users > 0 ? 2 : 0)}%` }}
                       />
                     </div>
-                    <span className="tabular-nums text-muted-foreground">{f.adoption_pct_staff}%</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {f.adoption_pct_staff}%
+                    </span>
                   </div>
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums">{f.users}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                   {denom ? f.never_used_staff : "—"}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{f.requests}</td>
-                <td className="px-4 py-2.5 text-right text-muted-foreground">{fmtDate(f.last_used)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                  {f.requests}
+                </td>
+                <td className="px-4 py-2.5 text-right text-muted-foreground">
+                  {fmtDate(f.last_used)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -235,12 +250,21 @@ export function AdoptionTab() {
               </thead>
               <tbody>
                 {data.unmapped.map((b) => (
-                  <tr key={`${b.domain}:${b.sub_intent}`} className="border-t border-[var(--border)] hover:bg-muted/20">
+                  <tr
+                    key={`${b.domain}:${b.sub_intent}`}
+                    className="border-t border-[var(--border)] hover:bg-muted/20"
+                  >
                     <td className="px-4 py-2.5 text-foreground">{b.domain || "—"}</td>
-                    <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">{b.sub_intent}</td>
+                    <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">
+                      {b.sub_intent}
+                    </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">{b.users}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{b.requests}</td>
-                    <td className="px-4 py-2.5 text-right text-muted-foreground">{fmtDate(b.last_used)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                      {b.requests}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-muted-foreground">
+                      {fmtDate(b.last_used)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

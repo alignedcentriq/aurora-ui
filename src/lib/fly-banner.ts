@@ -35,9 +35,7 @@ export function flyBanner(message: string, opts: FlyBannerOptions = {}): void {
 }
 
 /** Subscribe to launched banners. Returns an unsubscribe function. */
-export function subscribeFlyBanner(
-  listener: (item: FlyBannerItem) => void,
-): () => void {
+export function subscribeFlyBanner(listener: (item: FlyBannerItem) => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

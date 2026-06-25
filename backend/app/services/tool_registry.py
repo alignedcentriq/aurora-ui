@@ -50,8 +50,18 @@ _STATIC_REGISTRY: dict[str, ResponseMode] = {
     "get_alchemy_skills_overview":  "passthrough",
     "search_alchemy_skill_experts": "passthrough",
     "get_employee_availability":    "passthrough",
+    # Live Udemy Business catalog results — formatted with course links, no re-read
+    "search_udemy_courses":         "passthrough",
+    # Local TechElevate LMS — display-ready training recommendations + personal list
+    "recommend_training":           "passthrough",
+    "get_my_trainings":             "passthrough",
     # Document generation — already contains the download tag, don't re-process
     "generate_hr_document":         "passthrough",
+    # Project IQ — ranked similar projects / lessons / experts / reusable assets, pre-formatted
+    "find_similar_projects":        "passthrough",
+    "project_lessons":              "passthrough",
+    "find_project_experts":         "passthrough",
+    "find_reusable_assets":         "passthrough",
     # Policy / insurance Q&A — grounded strong-model answer
     "search_hr_policies":           "policy",
 }

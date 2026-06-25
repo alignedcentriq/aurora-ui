@@ -1,18 +1,26 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, ChevronDown, ChevronUp, Send, CheckCircle2, Loader2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Send,
+  CheckCircle2,
+  Loader2,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-store";
 
 // Escalation matrix — must mirror backend _DOMAIN_MATRIX
 const DOMAIN_DEPARTMENTS: Record<string, string> = {
-  hr:                 "HR Team",
-  admin:              "Admin & Facilities",
-  it_support:         "IT Helpdesk",
-  pmo:                "PMO Team",
+  hr: "HR Team",
+  admin: "Admin & Facilities",
+  it_support: "IT Helpdesk",
+  pmo: "PMO Team",
   functional_manager: "Your Manager",
-  ms365:              "IT Helpdesk",
-  general:            "Support Team",
+  ms365: "IT Helpdesk",
+  general: "Support Team",
 };
 
 const PRIORITY_OPTIONS = ["Low", "Medium", "High"] as const;
@@ -156,8 +164,8 @@ export function EscalationWidget({
             >
               <p className="text-[11px] text-muted-foreground leading-relaxed">
                 A ticket will be created and{" "}
-                <span className="font-medium text-foreground">{dept}</span>{" "}
-                will be notified to contact you directly.
+                <span className="font-medium text-foreground">{dept}</span> will be notified to
+                contact you directly.
               </p>
 
               {/* Priority */}
@@ -174,8 +182,8 @@ export function EscalationWidget({
                           ? p === "High"
                             ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400"
                             : p === "Medium"
-                            ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
-                            : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                              ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                              : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
                           : "border-border bg-background text-muted-foreground hover:border-muted-foreground",
                       )}
                     >
@@ -188,8 +196,7 @@ export function EscalationWidget({
               {/* Description */}
               <div>
                 <p className="text-[11px] font-medium text-foreground/70 mb-1.5">
-                  Additional context{" "}
-                  <span className="text-muted-foreground">(optional)</span>
+                  Additional context <span className="text-muted-foreground">(optional)</span>
                 </p>
                 <textarea
                   autoFocus
@@ -201,9 +208,7 @@ export function EscalationWidget({
                 />
               </div>
 
-              {error && (
-                <p className="text-[11px] text-red-500">{error}</p>
-              )}
+              {error && <p className="text-[11px] text-red-500">{error}</p>}
 
               <div className="flex items-center justify-end gap-2">
                 <button
@@ -265,10 +270,5 @@ export function ErrorEscalationBar(props: ErrorEscalationBarProps) {
     );
   }
 
-  return (
-    <EscalationWidget
-      {...props}
-      onEscalated={(refId) => setEscalated(refId)}
-    />
-  );
+  return <EscalationWidget {...props} onEscalated={(refId) => setEscalated(refId)} />;
 }

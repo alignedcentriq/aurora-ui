@@ -19,7 +19,9 @@ export function LLMControlsPage() {
             <ShieldAlert className="h-6 w-6" />
           </div>
           <h2 className="text-lg font-bold text-foreground">Access Restricted</h2>
-          <p className="text-sm text-muted-foreground mt-2">LLM Model Controls are reserved for Super Admin only.</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            LLM Model Controls are reserved for Super Admin only.
+          </p>
         </div>
       </div>
     );

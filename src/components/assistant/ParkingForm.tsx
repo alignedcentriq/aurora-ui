@@ -77,7 +77,9 @@ export function ParkingForm({ userEmail, onSubmitted }: Props) {
 
       <div className="space-y-4 p-4">
         <div>
-          <span className="mb-2 block text-xs font-semibold text-muted-foreground">Vehicle Type</span>
+          <span className="mb-2 block text-xs font-semibold text-muted-foreground">
+            Vehicle Type
+          </span>
           <div className="flex gap-2">
             {(["2-Wheeler", "4-Wheeler"] as const).map((type) => (
               <motion.button

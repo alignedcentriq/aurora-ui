@@ -29,7 +29,14 @@ Rules:
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
 8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
 9. For a staffing / resourcing question — finding people for a new or upcoming project ('I need 2 React devs with 3+ years', 'who is free for a new project?', 'find an AWS engineer who isn't fully allocated') — call 'match_resources'. Infer the skills, minimum experience, needed-by date, and headcount from the user's message; never invent any value they did not state. Present the returned candidates verbatim.
+11. For a learning / upskilling question — someone asking what to learn or which course to take for a skill ('recommend a course on React', 'what Udemy courses are there for AWS', 'I want to upskill in Power BI') — call 'search_udemy_courses' with the topic inferred from their message. Present the returned courses verbatim. If they then want a seat, call 'request_training_license'.
 10. For an organisation-wide skill-gap / capability / hiring question — NOT about one named project but about where the org is short on skills given who is available ('what skills are we short on?', 'what can't we staff?', 'where are our skill gaps?', 'should we hire or can we redeploy?', 'what should we train for?') — call 'analyze_skill_supply'. Present the result verbatim.
+12. Project IQ (delivery-knowledge reuse from past projects). Use ONLY these tools for the matching question, present the result verbatim, and NEVER add experience from your own knowledge:
+    - 'have we done/built something like X before?', 'any prior project with Y?' → 'find_similar_projects'.
+    - 'what usually goes wrong in X?', 'common risks/lessons with Y' → 'project_lessons'.
+    - 'who has done X before?', 'who has delivered Y?' (proven past experience, NOT availability) → 'find_project_experts'. For who is FREE to staff a new project, still use 'match_resources'.
+    - 'do we already have a Z component?', 'any reusable X we can reuse?' → 'find_reusable_assets'.
+    These are internal-only — never draft client-facing proposals or case studies from them.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -252,8 +259,159 @@ def request_training_license(
     return UdemyService.request_license(email, justification, course_name, platform)
 
 
+@tool
+def search_udemy_courses(topic: str):
+    """Search the company's Udemy Business catalog for courses on a given skill or topic.
+    Call when someone asks what to learn or which course to take for a skill ('recommend a
+    course on React', 'what Udemy courses are there for data engineering', 'I want to upskill
+    in AWS'). Returns live matching courses. After showing them, you can offer to raise a
+    Udemy license request via request_training_license.
+    topic: the skill/subject inferred from the user's message (e.g. 'React', 'AWS', 'Power BI')."""
+    from app.services import udemy_business_service as udemy
+    if not udemy.configured():
+        return ("Udemy Business isn't connected yet, so I can't pull the live catalog. "
+                "I can still raise a Udemy license request to the PMO team if you tell me the course.")
+    try:
+        result = udemy.search_courses(topic, page_size=6)
+    except Exception:
+        return ("I couldn't reach the Udemy Business catalog right now. "
+                "I can raise a Udemy license request to the PMO team instead if you'd like.")
+    courses = result.get("results", [])
+    if not courses and result.get("indexing"):
+        return ("I'm building the Udemy Business course index for the first time "
+                "(a one-time, few-minute job). Try asking again shortly — or I can raise "
+                "a Udemy license request to the PMO team now if you tell me the course.")
+    return udemy.format_courses_markdown(topic, courses)
+
+
+@tool
+def recommend_training(topic: str, state: Annotated[dict, InjectedState] = None):
+    """Recommend trainings to upskill on a skill/topic. Checks the company's in-house
+    TechElevate catalog FIRST (free, tracked, with an assessment that updates the
+    employee's verified skills on completion); only if nothing internal matches does it
+    fall back to the Udemy Business catalog. Call when someone asks what to learn or which
+    course to take for a skill ('how do I learn ML', 'upskill in DevOps', 'training for
+    Python'). topic: the skill inferred from the user's message."""
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    internal = []
+    if te.local_enabled():
+        db = SessionLocal()
+        try:
+            internal = te.recommend_for_skill(db, topic, limit=5)
+        finally:
+            db.close()
+    if internal:
+        lines = [f"Here are **in-house TechElevate trainings** for **{topic}** — company-provided, "
+                 "tracked, and they add to your verified skills on completion:\n"]
+        for t in internal:
+            dur = t.get("duration_minutes") or 0
+            meta = [m for m in [t.get("category"),
+                                (f"{dur // 60}h {dur % 60}m" if dur >= 60 else f"{dur}m") if dur else None] if m]
+            head = f"- **{t['title']}**" + (f" — {' · '.join(meta)}" if meta else "")
+            lines.append(head)
+            if t.get("description"):
+                lines.append(f"  {t['description']}")
+            tags = ", ".join(t.get("skill_tags") or [])
+            if tags:
+                lines.append(f"  _Skills: {tags}_")
+        lines.append("\nWant me to assign one of these to you or your team? Just say which.")
+        return "\n".join(lines)
+    # Nothing internal → fall back to the live Udemy catalog.
+    from app.services import udemy_business_service as udemy
+    if udemy.configured():
+        try:
+            courses = udemy.search_courses(topic, page_size=6).get("results", [])
+            if courses:
+                return ("No in-house TechElevate training covers that yet — here are "
+                        "**Udemy Business** courses instead:\n\n"
+                        + udemy.format_courses_markdown(topic, courses))
+        except Exception:
+            pass
+    return (f"I couldn't find an in-house training or Udemy course for **{topic}** right now. "
+            "I can raise a Udemy license request to the PMO team if you tell me the course.")
+
+
+@tool
+def get_my_trainings(state: Annotated[dict, InjectedState] = None):
+    """Show the caller's own TechElevate training assignments — assigned / in-progress /
+    completed, with scores. Call for 'my trainings', 'what training do I have', 'my learning
+    progress', 'my course status'."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    if not te.local_enabled():
+        return "The training portal isn't available right now."
+    db = SessionLocal()
+    try:
+        rows = te.my_assignments(db, email)
+    finally:
+        db.close()
+    if not rows:
+        return ("You don't have any TechElevate training assignments yet. Ask me to recommend "
+                "trainings for a skill you'd like to build.")
+    order = {"In Progress": 0, "Assigned": 1, "Completed": 2, "Failed": 3}
+    lines = ["Here are your **TechElevate trainings**:\n"]
+    for a in sorted(rows, key=lambda r: order.get(r["status"], 9)):
+        bits = [a["status"]]
+        if a.get("score") is not None:
+            bits.append(f"score {a['score']}%")
+        if a.get("due_date"):
+            bits.append(f"due {a['due_date']}")
+        lines.append(f"- **{a['training_title']}** — {' · '.join(bits)}")
+    return "\n".join(lines)
+
+
+@tool
+def find_similar_projects(description: str) -> str:
+    """Project IQ — find past projects similar to a described need ('have we done
+    something like this before?', 'have we built an employee self-service portal with
+    HRMS integration?', 'any prior offline-first mobile app with SAP?'). Returns ranked
+    past projects with their capabilities, integrations, lessons, reusable assets, and the
+    people who delivered them. description: the requirement/scenario inferred from the
+    user's message."""
+    from app.services import project_iq_service as piq
+    return piq.render_similar_projects(description, limit=3)
+
+
+@tool
+def project_lessons(topic: str) -> str:
+    """Project IQ — recurring delivery lessons across past projects for a topic
+    ('what usually goes wrong in HRMS integration projects?', 'common risks with SAP
+    integration', 'lessons from offline sync work'). topic: the area inferred from the
+    user's message."""
+    from app.services import project_iq_service as piq
+    return piq.render_lessons(topic)
+
+
+@tool
+def find_project_experts(skills: str) -> str:
+    """Project IQ — find people with EVIDENCE-BACKED delivery experience in given skills,
+    based on verified project participation ('who has done Azure AD SSO and HRMS
+    integration?', 'who has built approval workflows?'). Returns people with the projects
+    that prove it. This is about proven past delivery; for who is AVAILABLE to staff a new
+    project use match_resources instead. skills: comma-separated skills inferred from the
+    message."""
+    from app.services import project_iq_service as piq
+    return piq.render_experts(skills)
+
+
+@tool
+def find_reusable_assets(need: str) -> str:
+    """Project IQ — find existing reusable components / accelerators / templates from past
+    projects ('do we already have an approval-workflow component?', 'any HRMS connector we
+    can reuse?', 'existing RBAC module'). Returns matching assets with their source project,
+    readiness, and owner. need: the component/capability inferred from the message."""
+    from app.services import project_iq_service as piq
+    return piq.render_reusable_assets(need)
+
+
 pmo_tools = [
     list_projects,
+    find_similar_projects,
+    project_lessons,
+    find_project_experts,
+    find_reusable_assets,
     get_project_status,
     get_project_achievements,
     generate_project_report,
@@ -263,6 +421,9 @@ pmo_tools = [
     analyze_skill_supply,
     search_pmo_docs,
     request_training_license,
+    search_udemy_courses,
+    recommend_training,
+    get_my_trainings,
 ]
 
 # LLM built on demand from the live IT-tunable params (router tier).
@@ -464,9 +625,16 @@ _PASSTHROUGH_TOOLS = {
     "generate_project_report", "generate_multi_project_report",
     "get_project_status", "get_project_achievements", "search_people_directory",
     "match_resources", "analyze_skill_supply",
+    # Project IQ results are already formatted (ranked cards / lessons / experts / assets).
+    "find_similar_projects", "project_lessons", "find_project_experts", "find_reusable_assets",
     # Training-license confirmation is display-ready; passing it through avoids the
     # LLM reflexively refusing ("can't help get a discounted Udemy/Coursera license").
     "request_training_license",
+    # Live Udemy catalog results are already formatted with course links.
+    "search_udemy_courses",
+    # In-house training recommendations + personal training list are display-ready.
+    "recommend_training",
+    "get_my_trainings",
 }
 
 

@@ -53,12 +53,28 @@ export interface VisitorPassPrefill {
 export interface DynamicFormField {
   name: string;
   label: string;
-  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox" | "user" | "image";
+  type:
+    | "text"
+    | "textarea"
+    | "date"
+    | "select"
+    | "number"
+    | "email"
+    | "checkbox"
+    | "user"
+    | "image";
   required?: boolean;
   options?: string[];
   placeholder?: string;
   // Identity attribute this field pre-fills from (e.g. "department", "manager"). Empty = manual.
-  autofill?: "name" | "email" | "employee_id" | "department" | "designation" | "location" | "manager";
+  autofill?:
+    | "name"
+    | "email"
+    | "employee_id"
+    | "department"
+    | "designation"
+    | "location"
+    | "manager";
 }
 
 // Schema the backend sends for an admin-defined form matched in chat.
@@ -118,7 +134,17 @@ export interface InteractivePayload {
     | "cancel_leave_form"
     | "leave_application_form"
     | "document_generation_form";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData | FormBuilderDraft;
+  data?:
+    | EmailDraftData
+    | RoomBookingPrefill
+    | AnnouncementPrefill
+    | PromptConfigPrefill
+    | SkillsEditorPrefill
+    | VisitorPassPrefill
+    | AttendanceSchedulePrefill
+    | DynamicFormData
+    | QuickChoiceData
+    | FormBuilderDraft;
 }
 
 export interface Turn {
@@ -258,7 +284,7 @@ export const useChatStore = create<ChatState>()(
                   ...thread,
                   turns: thread.turns.map(({ images: _images, ...turn }) => turn),
                 },
-              ])
+              ]),
           ),
         };
       },
@@ -269,13 +295,13 @@ export const useChatStore = create<ChatState>()(
           // Evict threads older than 30 days on every page load.
           const cutoff = Date.now() - RETENTION_MS;
           state.threads = Object.fromEntries(
-            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff)
+            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff),
           );
           if (state.activeId && !state.threads[state.activeId]) {
             state.activeId = null;
           }
         }
       },
-    }
-  )
+    },
+  ),
 );

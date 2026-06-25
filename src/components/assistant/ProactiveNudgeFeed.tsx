@@ -158,7 +158,9 @@ export function ProactiveNudgeFeed() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium leading-snug">{n.title}</p>
-                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{n.body}</p>
+                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                          {n.body}
+                        </p>
                         {n.action_type && (
                           <button
                             onClick={() => act(n)}

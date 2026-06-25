@@ -98,14 +98,20 @@ export function DocumentGenerationWidget({ userEmail, userRole }: Props) {
               onError={() => setFrameError(true)}
             />
             <p className="mt-2.5 text-[11px] text-muted-foreground">
-              Generate your letter or document in Zoho People — pick the template, fill in the details, and download or e-sign it there.
+              Generate your letter or document in Zoho People — pick the template, fill in the
+              details, and download or e-sign it there.
             </p>
             {frameError && (
               <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   The page couldn't be embedded here.{" "}
-                  <a href={url} target="_blank" rel="noopener noreferrer" className="font-semibold underline">
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold underline"
+                  >
                     Open it in Zoho People
                   </a>{" "}
                   instead.

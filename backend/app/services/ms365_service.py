@@ -5,7 +5,9 @@ Provides async functions to read emails, send emails, read calendar,
 search calendar, and read Teams chats using a delegated user token.
 """
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import httpx
@@ -14,6 +16,20 @@ log = logging.getLogger("aurora-logger")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 _TIMEOUT = 15.0
+
+# ── Profile-photo cache ──────────────────────────────────────────────────────
+# The Employee Directory renders hundreds of avatars, each an <img> that hits the
+# photo proxy. Without a server-side cache every render is a live Graph call, and a
+# burst of them gets throttled (429) → faces intermittently fall back to initials.
+# We cache the bytes per email (and remember "this user genuinely has no photo")
+# so each user is fetched from Graph at most once per TTL across all viewers, and a
+# small semaphore caps how many photo calls hit Graph at once so we never flood it.
+#   value = (bytes | None, content_type, expires_at).  bytes is None for a real 404.
+_photo_cache: dict[str, tuple[bytes | None, str, float]] = {}
+_PHOTO_POS_TTL = 24 * 3600   # a real photo is stable — cache a day
+_PHOTO_NEG_TTL = 6 * 3600    # "no photo" — re-check occasionally in case one is added
+_PHOTO_CACHE_MAX = 5000
+_photo_semaphore = asyncio.Semaphore(6)
 
 
 def _headers(token: str, extra: dict | None = None) -> dict:
@@ -88,20 +104,51 @@ async def fetch_user_photo(user: str) -> tuple[bytes, str] | None:
     """Fetch a user's profile photo bytes from Graph (app-only User.Read.All).
 
     `user` is an email/UPN or id. Returns (bytes, content_type) or None when the
-    user has no photo (404) or the call fails — the frontend then shows initials.
+    user has no photo or the call fails — the frontend then shows initials.
+
+    Server-side cached so a directory full of avatars hits Graph at most once per
+    user per TTL, with a concurrency cap so a render burst doesn't get throttled.
+    A genuine 404 ("no photo") is cached as a negative; transient errors (429/5xx/
+    timeout) are NOT cached, so a throttled face recovers on a later request.
     """
     from urllib.parse import quote
+
+    key = user.strip().lower()
+    now = time.time()
+
+    cached = _photo_cache.get(key)
+    if cached and cached[2] > now:
+        bytes_, ctype, _ = cached
+        return (bytes_, ctype) if bytes_ is not None else None
+
     url = f"{GRAPH_BASE}/users/{quote(user.strip())}/photo/$value"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                url, headers={"Authorization": f"Bearer {_app_token()}"}
-            )
-        if resp.status_code == 200 and resp.content:
-            return resp.content, resp.headers.get("content-type", "image/jpeg")
-        return None
+        async with _photo_semaphore:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {_app_token()}"}
+                )
     except Exception:
+        return None  # transient (timeout/network) — don't cache, let it retry
+
+    if resp.status_code == 200 and resp.content:
+        ctype = resp.headers.get("content-type", "image/jpeg")
+        _photo_cache_put(key, (resp.content, ctype, now + _PHOTO_POS_TTL))
+        return resp.content, ctype
+
+    if resp.status_code == 404:
+        # User genuinely has no photo — remember it so we stop asking Graph.
+        _photo_cache_put(key, (None, "", now + _PHOTO_NEG_TTL))
         return None
+
+    # 429 / 5xx / other — transient or throttled; don't poison the cache.
+    return None
+
+
+def _photo_cache_put(key: str, value: tuple[bytes | None, str, float]) -> None:
+    if len(_photo_cache) >= _PHOTO_CACHE_MAX:
+        _photo_cache.clear()  # cheap bounded-size guard
+    _photo_cache[key] = value
 
 
 async def fetch_user_manager(user: str) -> dict:

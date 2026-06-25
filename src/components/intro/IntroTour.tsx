@@ -155,7 +155,10 @@ const sceneFade = {
 /* ================================================================== */
 function Scene1() {
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex flex-col items-center justify-center"
+    >
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -174,7 +177,8 @@ function Scene1() {
           Every system. Connected.
         </p>
         <h2 className="mt-3 text-2xl font-light text-white/80">
-          Meet Aligned Automation's <span className="font-black text-white">intelligence layer</span>
+          Meet Aligned Automation's{" "}
+          <span className="font-black text-white">intelligence layer</span>
         </h2>
       </motion.div>
     </motion.div>
@@ -193,7 +197,7 @@ function Scene2() {
   const { shown, done } = useTypewriter(
     "You get 18 annual leave days and 12 casual/sick days a year, with carry-forward up to 30 days. Want the full policy doc?",
     stage === "answer",
-    15
+    15,
   );
 
   return (
@@ -255,7 +259,10 @@ const SYSTEMS = [
 function Scene3() {
   const radius = 280;
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex flex-col items-center justify-center"
+    >
       <ParticleField density={34} linkDist={100} speed={0.12} />
       <motion.p
         initial={{ opacity: 0 }}
@@ -348,7 +355,7 @@ function Scene4() {
   const { shown, done } = useTypewriter(
     "I've raised IT ticket #IT-4821 for a system heating issue. A technician will reach you within 2 business days.",
     stage === "answer",
-    15
+    15,
   );
   React.useEffect(() => {
     if (done) setStage("done");
@@ -446,7 +453,10 @@ const CAPS = [
 
 function SceneCapabilities() {
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex flex-col items-center justify-center"
+    >
       <ParticleField density={32} linkDist={100} speed={0.12} />
       <motion.p
         initial={{ opacity: 0 }}
@@ -557,7 +567,10 @@ function Scene5() {
 /* ================================================================== */
 function Scene6() {
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex items-center justify-center overflow-hidden">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex items-center justify-center overflow-hidden"
+    >
       <ParticleField density={50} linkDist={130} speed={0.2} />
 
       {/* Data streams */}
@@ -598,7 +611,11 @@ function Scene6() {
               <div className="h-1.5 w-10 rounded-full bg-white/30" />
               <div className="mt-2 flex items-end gap-1">
                 {[10, 18, 12, 22].map((hh, k) => (
-                  <div key={k} className="w-2 rounded-sm" style={{ height: hh, background: BRAND }} />
+                  <div
+                    key={k}
+                    className="w-2 rounded-sm"
+                    style={{ height: hh, background: BRAND }}
+                  />
                 ))}
               </div>
             </motion.div>
@@ -617,7 +634,10 @@ function Scene6() {
           boxShadow: "0 0 100px 24px color-mix(in oklab, var(--clarity) 55%, transparent)",
         }}
       >
-        <motion.div animate={{ scale: [1, 1.06, 1] }} transition={{ duration: 2, repeat: Infinity }}>
+        <motion.div
+          animate={{ scale: [1, 1.06, 1] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
           <Logo size="md" />
         </motion.div>
       </motion.div>
@@ -631,7 +651,10 @@ function Scene6() {
 function Scene7() {
   const lines = ["One Assistant.", "Every System.", "Every Employee."];
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex flex-col items-center justify-center"
+    >
       <ParticleField density={30} linkDist={90} speed={0.1} />
       <div className="relative z-10 flex flex-col items-center gap-1 text-center">
         {lines.map((l, i) => (
@@ -660,7 +683,10 @@ function Scene7() {
 /* ================================================================== */
 function Scene8({ onComplete, onReplay }: { onComplete: () => void; onReplay: () => void }) {
   return (
-    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
+    <motion.div
+      {...sceneFade}
+      className="absolute inset-0 flex flex-col items-center justify-center"
+    >
       <ParticleField density={70} linkDist={150} speed={0.18} />
       <motion.div
         initial={{ opacity: 0, scale: 0.6, filter: "blur(14px)" }}

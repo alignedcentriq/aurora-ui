@@ -53,7 +53,7 @@ export const SparklesCore = ({
 
     const initParticles = () => {
       particles.current = [];
-      const count = Math.floor((canvas.width * canvas.height) / (10000 / particleDensity) * 0.1);
+      const count = Math.floor(((canvas.width * canvas.height) / (10000 / particleDensity)) * 0.1);
       for (let i = 0; i < (count || 40); i++) {
         particles.current.push({
           x: Math.random() * canvas.width,
@@ -105,7 +105,9 @@ export const SparklesCore = ({
   }, [context, particleDensity, minSize, maxSize, particleColor, speed]);
 
   const hexToRgb = (hex: string) => {
-    let r = 255, g = 255, b = 255;
+    let r = 255,
+      g = 255,
+      b = 255;
     const cleanHex = hex.replace("#", "");
     if (cleanHex.length === 3) {
       r = parseInt(cleanHex[0] + cleanHex[0], 16);

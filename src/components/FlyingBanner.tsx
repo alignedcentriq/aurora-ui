@@ -1,10 +1,6 @@
 import * as React from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import {
-  flyBanner,
-  subscribeFlyBanner,
-  type FlyBannerItem,
-} from "@/lib/fly-banner";
+import { flyBanner, subscribeFlyBanner, type FlyBannerItem } from "@/lib/fly-banner";
 
 const LANE_HEIGHT = 64; // vertical spacing between concurrent flights
 
@@ -25,8 +21,7 @@ export function FlyingBanner() {
 
     // Dev convenience: trigger from the browser console while testing.
     if (import.meta.env.DEV) {
-      (window as unknown as { flyBanner?: typeof flyBanner }).flyBanner =
-        flyBanner;
+      (window as unknown as { flyBanner?: typeof flyBanner }).flyBanner = flyBanner;
     }
 
     return unsubscribe;
@@ -40,12 +35,7 @@ export function FlyingBanner() {
     <div className="pointer-events-none fixed inset-0 z-[100] overflow-hidden">
       <AnimatePresence>
         {flights.map((item, index) => (
-          <Flight
-            key={item.id}
-            item={item}
-            lane={index}
-            onDone={() => remove(item.id)}
-          />
+          <Flight key={item.id} item={item} lane={index} onDone={() => remove(item.id)} />
         ))}
       </AnimatePresence>
     </div>
@@ -88,14 +78,7 @@ function PlaneSvg() {
   const bg = "var(--background)";
   const accent = "var(--primary)";
   return (
-    <svg
-      width="140"
-      height="52"
-      viewBox="0 0 140 52"
-      fill="none"
-      className="shrink-0"
-      aria-hidden
-    >
+    <svg width="140" height="52" viewBox="0 0 140 52" fill="none" className="shrink-0" aria-hidden>
       {/* Swept T-tail */}
       <path d="M18 18 L30 2 L37 3 L28 20 Z" fill={fg} />
       <path d="M27 3 L45 0 L45 3 L30 6 Z" fill={fg} />
@@ -130,15 +113,7 @@ function PlaneSvg() {
   );
 }
 
-function Flight({
-  item,
-  lane,
-  onDone,
-}: {
-  item: FlyBannerItem;
-  lane: number;
-  onDone: () => void;
-}) {
+function Flight({ item, lane, onDone }: { item: FlyBannerItem; lane: number; onDone: () => void }) {
   const prefersReducedMotion = useReducedMotion();
   const measureRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState<number | null>(null);
@@ -170,11 +145,7 @@ function Flight({
   // Measure pass: render hidden so we can compute a true off-screen start.
   if (width === null) {
     return (
-      <div
-        ref={measureRef}
-        className="invisible absolute left-0 whitespace-nowrap"
-        style={{ top }}
-      >
+      <div ref={measureRef} className="invisible absolute left-0 whitespace-nowrap" style={{ top }}>
         <BannerContents message={item.message} />
       </div>
     );

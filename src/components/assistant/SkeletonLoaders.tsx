@@ -9,21 +9,15 @@ export function MessageSkeleton({ count = 3 }: { count?: number }) {
     <div className="space-y-6 animate-[fade-in_.3s_ease-out_both]">
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className={cn("flex gap-3", i % 2 === 0 ? "justify-start" : "justify-end")}>
-          {i % 2 === 0 && (
-            <div className="h-6 w-6 rounded-xl shimmer shrink-0 mt-1" />
-          )}
+          {i % 2 === 0 && <div className="h-6 w-6 rounded-xl shimmer shrink-0 mt-1" />}
           <div className={cn("space-y-2", i % 2 === 0 ? "max-w-[65%]" : "max-w-[50%]")}>
-            <div className={cn(
-              "h-4 rounded-lg shimmer",
-              i % 2 === 0 ? "w-full" : "w-3/4 ml-auto",
-            )} />
-            <div className={cn(
-              "h-4 rounded-lg shimmer",
-              i % 2 === 0 ? "w-4/5" : "w-full ml-auto",
-            )} />
-            {i % 2 === 0 && (
-              <div className="h-4 w-2/3 rounded-lg shimmer" />
-            )}
+            <div
+              className={cn("h-4 rounded-lg shimmer", i % 2 === 0 ? "w-full" : "w-3/4 ml-auto")}
+            />
+            <div
+              className={cn("h-4 rounded-lg shimmer", i % 2 === 0 ? "w-4/5" : "w-full ml-auto")}
+            />
+            {i % 2 === 0 && <div className="h-4 w-2/3 rounded-lg shimmer" />}
           </div>
         </div>
       ))}
@@ -70,7 +64,9 @@ export function SidebarSkeleton() {
       {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-xl">
           <div className="h-[18px] w-[18px] rounded shimmer shrink-0" />
-          <div className={cn("h-3.5 rounded shimmer", i === 0 ? "w-12" : i === 1 ? "w-16" : "w-20")} />
+          <div
+            className={cn("h-3.5 rounded shimmer", i === 0 ? "w-12" : i === 1 ? "w-16" : "w-20")}
+          />
         </div>
       ))}
     </div>

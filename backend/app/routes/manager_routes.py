@@ -295,6 +295,45 @@ def get_team_skills(user: CurrentUser = Depends(require_functional_manager)):
         db.close()
 
 
+# ── Team readiness + weekly digest (deterministic SQL; no LLM) ────────────────
+
+@router.get("/team/digest")
+def get_team_digest(user: CurrentUser = Depends(require_functional_manager)):
+    """Weekly operational brief: rolloffs, bench, overdue/soon training, and
+    allocation-vs-training conflicts across the manager's hierarchy."""
+    manager, team = _get_team(user.email)
+    if not manager or not team:
+        return {"ok": True, "team_size": 0, "rolling_off": [], "on_bench": [],
+                "training_overdue": [], "training_due_soon": [], "load_training_conflicts": []}
+    db = SessionLocal()
+    try:
+        from app.services import team_readiness_service
+        return team_readiness_service.weekly_digest(db, team)
+    finally:
+        db.close()
+
+
+class ReadinessBody(BaseModel):
+    skills: str
+
+
+@router.post("/team/readiness")
+def post_team_readiness(
+    body: ReadinessBody,
+    user: CurrentUser = Depends(require_functional_manager),
+):
+    """For required skills, classify each report ready / one-course-away / gap."""
+    manager, team = _get_team(user.email)
+    if not manager or not team:
+        return {"ok": True, "required_skills": [], "summary": {}, "rows": []}
+    db = SessionLocal()
+    try:
+        from app.services import team_readiness_service
+        return team_readiness_service.readiness_for_project(db, team, body.skills)
+    finally:
+        db.close()
+
+
 # ── Onboarding requests ───────────────────────────────────────────────────────
 
 class OnboardingBody(BaseModel):

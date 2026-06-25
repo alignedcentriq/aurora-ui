@@ -108,11 +108,10 @@ const shutdownDockerInfra = () => {
   console.log("\n--- Stopping Docker infrastructure ---");
   try {
     const wslPath = windowsPathToWslPath(repoRoot);
-    execFileSync(
-      "wsl",
-      ["--cd", wslPath, "docker", "compose", "-f", infraComposeFile, "down"],
-      { stdio: "inherit", timeout: 30_000 }
-    );
+    execFileSync("wsl", ["--cd", wslPath, "docker", "compose", "-f", infraComposeFile, "down"], {
+      stdio: "inherit",
+      timeout: 30_000,
+    });
     console.log("--- Docker infrastructure stopped ---");
   } catch (err) {
     console.warn("Could not stop Docker infrastructure:", err.message);
@@ -146,7 +145,7 @@ const main = async () => {
   startBackend(["run", "dev:backend"]);
   console.log(
     "Waiting for backend on http://127.0.0.1:8080 " +
-    "(may take up to 5 min on first run while Docker starts and deps install)..."
+      "(may take up to 5 min on first run while Docker starts and deps install)...",
   );
   await waitForPort(8080);
   startFrontend(["run", "dev"]);

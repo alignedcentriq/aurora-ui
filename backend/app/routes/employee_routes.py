@@ -762,22 +762,50 @@ def my_requests(
         db.close()
 
 
+def _attach_enrichment(employees: list[dict]) -> None:
+    """Merge cached Alchemy skills/projects into directory rows in place, so the client
+    has everything in one payload (no per-profile fetch). Only rows present in the cache
+    get `skills`/`projects`; others are left without (the client lazy-loads those).
+    Fail-soft — any error leaves the directory untouched."""
+    try:
+        from app.services import alchemy_service
+        codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
+        cache = alchemy_service.get_cached_enrichment_map(codes)
+        if not cache:
+            return
+        for e in employees:
+            hit = cache.get(e.get("employee_code"))
+            if hit is not None:
+                e["skills"] = hit["skills"]
+                e["projects"] = hit["projects"]
+    except Exception:
+        pass
+
+
 @router.get("/directory")
 def employee_directory(user: CurrentUser = Depends(get_current_user)):
     """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
 
-    Primary source is the synced MS365 / Azure AD directory (full ~600-person
-    roster + profile photos), enriched per-person by the Zoho HR profile
-    (designation, function, reporting/functional manager, work phone) and the
-    Employee row (AASPL employee code, office location) where those are present.
-    Open to every authenticated user; photos load via the public MS365 photo
-    proxy keyed by email.
+    Primary source (when ZOHO_DBURL is configured) is the live Zoho People profile
+    VIEW on the separate HR Postgres server — the authoritative roster with full
+    coverage of employee code, designation, department, managers, phone and
+    birthday (see services/zoho_directory_service.py).
 
-    NOTE: fields the portal shows but this app doesn't sync (employee code,
-    phone, location, functional manager, birthday) are blank for most people —
-    only the MS365-carried fields (designation, department, reporting manager)
-    have full coverage here. Populating the Zoho profile sync would fill them.
+    Fallback source is the synced MS365 / Azure AD directory enriched per-person by
+    the local Zoho HR overlay + Employee row, used when the Zoho DB is unset or
+    unreachable. Open to every authenticated user; photos load via the public MS365
+    photo proxy keyed by email.
     """
+    from app.services import zoho_directory_service
+
+    # Live HR view is the source of truth when configured; fall back to MS365 only
+    # if it's unset or returns nothing (connection error / empty).
+    if zoho_directory_service.is_configured():
+        employees = zoho_directory_service.fetch_directory()
+        if employees:
+            _attach_enrichment(employees)
+            return {"count": len(employees), "employees": employees, "source": "zoho"}
+
     from app.models import MS365User
     from app.services.ms365_service import _is_non_human
 
@@ -824,9 +852,21 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
                 "birthday": "",    # DOB not synced
             })
         out.sort(key=lambda x: x["name"].lower())
-        return {"count": len(out), "employees": out}
+        _attach_enrichment(out)
+        return {"count": len(out), "employees": out, "source": "ms365"}
     finally:
         db.close()
+
+
+@router.get("/directory/{employee_code}/enrichment")
+def directory_enrichment(employee_code: str, user: CurrentUser = Depends(get_current_user)):
+    """Skills + projects for a directory person, pulled live from Alchemy by AASPL code.
+
+    Returns {available, skills, projects}. Fail-soft: available=false when Alchemy
+    has no service token configured / is unreachable, so the profile still renders.
+    """
+    from app.services import alchemy_service
+    return alchemy_service.get_profile_enrichment(employee_code)
 
 
 # NOTE: keep this LAST — a bare /{employee_id} path param would otherwise shadow

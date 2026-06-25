@@ -19,7 +19,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
         onMouseMove={handleMouseMove}
         className={cn(
           "relative rounded-2xl border bg-card text-card-foreground shadow-sm transition-all duration-300 overflow-hidden group/card hover:shadow-md hover:border-border-strong/60",
-          className
+          className,
         )}
         {...props}
       >
@@ -38,7 +38,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
         <div className="relative z-10 h-full w-full">{props.children}</div>
       </div>
     );
-  }
+  },
 );
 Card.displayName = "Card";
 
@@ -51,11 +51,7 @@ CardHeader.displayName = "CardHeader";
 
 const CardTitle = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn("font-bold leading-none tracking-tight", className)}
-      {...props}
-    />
+    <div ref={ref} className={cn("font-bold leading-none tracking-tight", className)} {...props} />
   ),
 );
 CardTitle.displayName = "CardTitle";

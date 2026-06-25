@@ -287,6 +287,8 @@ def _sync_files_into_policies(
             if not content or len(content) < 50:
                 errors.append(f"Empty/too short: {filename}")
                 continue
+            # Strip NUL bytes — Postgres rejects strings containing \x00.
+            content = content.replace("\x00", "")
 
             # ── Create Policy record ──────────────────────────────────────
             title = (

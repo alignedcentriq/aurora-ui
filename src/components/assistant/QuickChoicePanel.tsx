@@ -1,5 +1,13 @@
 import { useEffect } from "react";
-import { ExternalLink, HelpCircle, ChevronRight, Sparkles, Globe, BookOpen, CornerDownLeft } from "lucide-react";
+import {
+  ExternalLink,
+  HelpCircle,
+  ChevronRight,
+  Sparkles,
+  Globe,
+  BookOpen,
+  CornerDownLeft,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import type { QuickChoiceData } from "@/lib/chat-store";
 
@@ -30,7 +38,11 @@ export function QuickChoicePanel({ data, onMessage, hotkeysEnabled = true }: Pro
       if (Number.isNaN(idx) || idx < 0 || idx >= data.options.length) return;
       const target = e.target as HTMLElement | null;
       // Never steal digits the user is typing into a field.
-      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)) return;
+      if (
+        target &&
+        (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)
+      )
+        return;
       const opt = data.options[idx];
       e.preventDefault();
       if (opt.action === "link") {
@@ -95,11 +107,22 @@ export function QuickChoicePanel({ data, onMessage, hotkeysEnabled = true }: Pro
           const className =
             "group flex w-full items-center gap-3 rounded-xl border border-border/60 bg-background/60 px-3 py-2.5 transition-all hover:-translate-y-px hover:border-primary/40 hover:bg-primary/[0.06] hover:shadow-md hover:shadow-primary/10 active:translate-y-0";
           return opt.action === "link" ? (
-            <a key={i} href={opt.value} target="_blank" rel="noopener noreferrer" className={className}>
+            <a
+              key={i}
+              href={opt.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={className}
+            >
               {inner}
             </a>
           ) : (
-            <button key={i} type="button" onClick={() => onMessage(opt.value)} className={className}>
+            <button
+              key={i}
+              type="button"
+              onClick={() => onMessage(opt.value)}
+              className={className}
+            >
               {inner}
             </button>
           );

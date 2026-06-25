@@ -109,7 +109,13 @@ export function MetricChart({
             </linearGradient>
           </defs>
           {axes}
-          <Area type="monotone" dataKey="value" stroke={ACCENT} fill="url(#metricGrad)" strokeWidth={2} />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke={ACCENT}
+            fill="url(#metricGrad)"
+            strokeWidth={2}
+          />
         </AreaChart>
       ) : (
         <BarChart data={data}>

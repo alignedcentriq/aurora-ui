@@ -47,7 +47,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         </CommandEmpty>
 
         {(["it", "admin", "hr"] as const).map((cat, i) => {
-          const items = queries.filter(q => q.category === cat);
+          const items = queries.filter((q) => q.category === cat);
           if (items.length === 0) return null;
           return (
             <span key={cat}>
@@ -56,7 +56,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 {items.map(({ label, prompt, icon, iconColor }) => {
                   const Icon = ICON_MAP[icon] || Search;
                   return (
-                    <CommandItem key={label} onSelect={() => runQuickAction(prompt)} className="group flex items-center justify-between">
+                    <CommandItem
+                      key={label}
+                      onSelect={() => runQuickAction(prompt)}
+                      className="group flex items-center justify-between"
+                    >
                       <div className="flex items-center gap-2">
                         <Icon className={`h-4 w-4 ${iconColor}`} />
                         <span>{label}</span>
@@ -79,8 +83,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             </span>
           );
         })}
-
-
       </CommandList>
     </CommandDialog>
   );

@@ -58,7 +58,7 @@ function useAuthHeaders() {
       ...(user?.email ? { "x-user-email": user.email } : {}),
       ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
     }),
-    [user?.email, user?.role]
+    [user?.email, user?.role],
   );
 }
 
@@ -100,13 +100,7 @@ function KpiCard({
   );
 }
 
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
       <h3 className="text-[15px] font-semibold text-foreground mb-4">{title}</h3>
@@ -145,7 +139,7 @@ export function RoiDashboard() {
       const data = await res.json();
       return data.series || [];
     },
-    [authHeaders, period]
+    [authHeaders, period],
   );
 
   const fetchAll = useCallback(async () => {
@@ -153,7 +147,7 @@ export function RoiDashboard() {
     try {
       const [s, dom, ot, sat] = await Promise.all([
         fetch(`/api/analytics/roi/summary?period=${period}`, { headers: authHeaders }).then((r) =>
-          r.ok ? r.json() : null
+          r.ok ? r.json() : null,
         ),
         query("requests", "domain"),
         query("requests", timeDim),
@@ -181,7 +175,9 @@ export function RoiDashboard() {
   }, [fetchDigests]);
 
   const exportPdf = async () => {
-    const res = await fetch(`/api/analytics/roi/export.pdf?period=${period}`, { headers: authHeaders });
+    const res = await fetch(`/api/analytics/roi/export.pdf?period=${period}`, {
+      headers: authHeaders,
+    });
     if (!res.ok) {
       alert("Export failed (Admin only).");
       return;
@@ -234,7 +230,9 @@ export function RoiDashboard() {
                   onClick={() => setPeriod(p)}
                   className={cn(
                     "px-3.5 py-2 text-[13px] font-medium transition-colors",
-                    period === p ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                    period === p
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {p}
@@ -418,7 +416,7 @@ function DigestList({
                   "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors",
                   d.is_active
                     ? "bg-emerald-500/15 text-emerald-400"
-                    : "bg-[var(--muted)] text-muted-foreground hover:text-foreground"
+                    : "bg-[var(--muted)] text-muted-foreground hover:text-foreground",
                 )}
               >
                 <Power className="h-3.5 w-3.5" />
@@ -502,8 +500,8 @@ function ScheduleDialog({
   return (
     <Modal title="Schedule ROI Email" onClose={onClose}>
       <p className="text-[12px] text-muted-foreground mb-4">
-        Creates a recurring ROI digest (PDF attached). It stays <b>disabled</b> until you turn it
-        on from the dashboard.
+        Creates a recurring ROI digest (PDF attached). It stays <b>disabled</b> until you turn it on
+        from the dashboard.
       </p>
       <label className="block text-[12px] font-medium text-foreground mb-1">Frequency</label>
       <select

@@ -93,6 +93,14 @@ async def list_forms(_: CurrentUser = Depends(require_admin)):
     return FormLibraryService.list_all(include_disabled=True)
 
 
+@router.get("/keyword-suggestions")
+async def form_keyword_suggestions(window_days: int = 30, _: CurrentUser = Depends(require_admin)):
+    """Mine recent real chat queries for trigger keywords each form is missing.
+    Read-only — nothing is changed; the admin accepts suggestions via the normal PUT."""
+    window_days = max(1, min(window_days, 180))
+    return FormLibraryService.suggest_keywords(window_days=window_days)
+
+
 @router.post("/generate")
 async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends(require_admin)):
     """LLM-draft a form template (name, description, fields) from a natural-language request.
@@ -100,10 +108,8 @@ async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends
     Returns a DRAFT only — nothing is persisted. The client shows a preview the admin can
     edit and confirm, which then goes through the normal POST create endpoint.
     """
-    import json
-    import re
-
     from app.services import llm_controls_service as llm_controls
+    from app.services.llm_json import invoke_json
 
     text = (req.prompt or "").strip()
     if not text:
@@ -125,20 +131,9 @@ async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends
         "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
         "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
     )
-    try:
-        response = model.invoke(prompt)
-        raw = (response.content or "").strip()
-    except Exception:
-        raise HTTPException(status_code=503, detail="The model is unavailable right now — try again shortly.")
-
-    # Models occasionally wrap JSON in fences or prepend chatter — extract the outermost object.
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise HTTPException(status_code=502, detail="Couldn't draft the form — the model returned no usable JSON.")
-    try:
-        draft = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="Couldn't draft the form — the model returned invalid JSON.")
+    draft = invoke_json(model, prompt, attempts=2)
+    if draft is None:
+        raise HTTPException(status_code=502, detail="Couldn't draft the form — the model didn't return usable JSON. Try again or rephrase.")
 
     fields = _sanitize_generated_fields(draft.get("fields") or [])
     if not fields:
@@ -161,9 +156,9 @@ async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(requ
     shows the same editable preview, which the admin confirms via the PUT update endpoint.
     """
     import json
-    import re
 
     from app.services import llm_controls_service as llm_controls
+    from app.services.llm_json import invoke_json
 
     instruction = (req.instruction or "").strip()
     if not instruction:
@@ -191,19 +186,9 @@ async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(requ
         "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
         "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
     )
-    try:
-        response = model.invoke(prompt)
-        raw = (response.content or "").strip()
-    except Exception:
-        raise HTTPException(status_code=503, detail="The model is unavailable right now — try again shortly.")
-
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        raise HTTPException(status_code=502, detail="Couldn't revise the form — the model returned no usable JSON.")
-    try:
-        draft = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="Couldn't revise the form — the model returned invalid JSON.")
+    draft = invoke_json(model, prompt, attempts=2)
+    if draft is None:
+        raise HTTPException(status_code=502, detail="Couldn't revise the form — the model didn't return usable JSON. Try again or rephrase.")
 
     fields = _sanitize_generated_fields(draft.get("fields") or [])
     if not fields:

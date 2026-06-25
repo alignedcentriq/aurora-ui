@@ -2,7 +2,16 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Composer } from "./Composer";
 import { UserMessage, AIMessage, AnswerCard } from "./Message";
-import { Download, Sparkles, X, ArrowDown, BookOpen, Library as LibraryIcon, RefreshCw, Activity } from "lucide-react";
+import {
+  Download,
+  Sparkles,
+  X,
+  ArrowDown,
+  BookOpen,
+  Library as LibraryIcon,
+  RefreshCw,
+  Activity,
+} from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
@@ -59,17 +68,32 @@ function getGreeting(name: string): { heading: string; subheading: string } {
   const hour = new Date().getHours();
 
   if (hour >= 5 && hour < 9) {
-    return { heading: `Early start, ${firstName}.`, subheading: "Let's make the most of the morning." };
+    return {
+      heading: `Early start, ${firstName}.`,
+      subheading: "Let's make the most of the morning.",
+    };
   } else if (hour >= 9 && hour < 12) {
-    return { heading: `Good morning, ${firstName}.`, subheading: "What can I help you with today?" };
+    return {
+      heading: `Good morning, ${firstName}.`,
+      subheading: "What can I help you with today?",
+    };
   } else if (hour >= 12 && hour < 14) {
     return { heading: `Good afternoon, ${firstName}.`, subheading: "What's on your plate?" };
   } else if (hour >= 14 && hour < 17) {
-    return { heading: `Afternoon, ${firstName}.`, subheading: "How can I help you power through the day?" };
+    return {
+      heading: `Afternoon, ${firstName}.`,
+      subheading: "How can I help you power through the day?",
+    };
   } else if (hour >= 17 && hour < 20) {
-    return { heading: `Good evening, ${firstName}.`, subheading: "Wrapping up or just getting started?" };
+    return {
+      heading: `Good evening, ${firstName}.`,
+      subheading: "Wrapping up or just getting started?",
+    };
   } else if (hour >= 20 && hour < 23) {
-    return { heading: `Night owl mode, ${firstName}.`, subheading: "I'm here. What's on your mind?" };
+    return {
+      heading: `Night owl mode, ${firstName}.`,
+      subheading: "I'm here. What's on your mind?",
+    };
   } else {
     return { heading: `Up late, ${firstName}.`, subheading: "The quiet hours. What do you need?" };
   }
@@ -89,19 +113,25 @@ import { useServerLoad } from "@/hooks/use-server-load";
 // extension intents. Matches the same phrasings the backend router covers, so
 // the user is taken straight to the right page without waiting for an LLM call.
 
-const BOOK_DISCOVER_RE = /\b(?:bookshelf|book\s*shelf|company\s+library|office\s+library|library\s+(?:catalog|catalogue|books?)|available\s+books?|books?\s+available|browse\s+(?:the\s+)?(?:library|books)|show\s+(?:me\s+)?(?:some\s+|the\s+|any\s+)?(?:books?|library)|recommend\s+(?:me\s+)?(?:a\s+)?book|(?:i\s+)?(?:want|need|like)\s+(?:a\s+|an\s+|some\s+)?book|looking\s+for\s+(?:a\s+|an\s+|some\s+)?(?:book|reading\s+material|something\s+to\s+read)|(?:learning|reading|study)\s+material|borrow\s+a\s+book|issue\s+a\s+book|lend\s+me\s+a\s+book)\b/i;
+const BOOK_DISCOVER_RE =
+  /\b(?:bookshelf|book\s*shelf|company\s+library|office\s+library|library\s+(?:catalog|catalogue|books?)|available\s+books?|books?\s+available|browse\s+(?:the\s+)?(?:library|books)|show\s+(?:me\s+)?(?:some\s+|the\s+|any\s+)?(?:books?|library)|recommend\s+(?:me\s+)?(?:a\s+)?book|(?:i\s+)?(?:want|need|like)\s+(?:a\s+|an\s+|some\s+)?book|looking\s+for\s+(?:a\s+|an\s+|some\s+)?(?:book|reading\s+material|something\s+to\s+read)|(?:learning|reading|study)\s+material|borrow\s+a\s+book|issue\s+a\s+book|lend\s+me\s+a\s+book)\b/i;
 
-const BOOK_MY_RE = /\b(?:my\s+(?:borrowed\s+)?(?:books?|library|borrows?|book\s+requests?)|books?\s+i\s+(?:have\s+)?borrowed|check\s+(?:my\s+)?book\s+request|my\s+book\s+request\s+status|return\s+(?:my\s+|the\s+|a\s+)?book|i\s+(?:have\s+)?finished\s+(?:reading|the\s+book)|extend\s+(?:my\s+|the\s+)?(?:book|due\s+date|borrow)|renew\s+(?:my\s+|the\s+|a\s+)?book|(?:need|want)\s+more\s+time\s+(?:on|for|with)\s+(?:my\s+|the\s+)?book)\b/i;
+const BOOK_MY_RE =
+  /\b(?:my\s+(?:borrowed\s+)?(?:books?|library|borrows?|book\s+requests?)|books?\s+i\s+(?:have\s+)?borrowed|check\s+(?:my\s+)?book\s+request|my\s+book\s+request\s+status|return\s+(?:my\s+|the\s+|a\s+)?book|i\s+(?:have\s+)?finished\s+(?:reading|the\s+book)|extend\s+(?:my\s+|the\s+)?(?:book|due\s+date|borrow)|renew\s+(?:my\s+|the\s+|a\s+)?book|(?:need|want)\s+more\s+time\s+(?:on|for|with)\s+(?:my\s+|the\s+)?book)\b/i;
 
 // Stationery-style phrases that look like book intents but are not.
-const NOT_BOOK_RE = /\bborrow\s+(?:a\s+)?(?:pen|pencil|charger|cable|notebook(?!\s+book)|stapler|marker)\b/i;
+const NOT_BOOK_RE =
+  /\bborrow\s+(?:a\s+)?(?:pen|pencil|charger|cable|notebook(?!\s+book)|stapler|marker)\b/i;
 
 function normalizeBullets(text: string): string {
   // Convert Unicode bullet markers (•) used as inline or line-start separators
   // into proper markdown list items so ReactMarkdown renders them correctly.
   // Only triggers when 2+ bullet-delimited segments are found.
   if (!/[•·]/.test(text)) return text;
-  const parts = text.split(/\s*[•·]\s*/).map((s) => s.trim()).filter(Boolean);
+  const parts = text
+    .split(/\s*[•·]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (parts.length < 2) return text;
   return parts.map((p) => `- ${p}`).join("\n");
 }
@@ -133,7 +163,8 @@ const ROLE_GATES: Array<{ re: RegExp; allowed: string[]; denial: string }> = [
   {
     re: /\b(hr\s+portal|hr\s+(?:admin|tools?|dashboard|management)|manage\s+(?:all\s+)?employees|employee\s+management)\b/i,
     allowed: ["hr"],
-    denial: "The HR Portal is only available to the HR team. If you have an HR-related question, just ask and I'll help.",
+    denial:
+      "The HR Portal is only available to the HR team. If you have an HR-related question, just ask and I'll help.",
   },
   {
     re: /\b(admin\s+portal|admin\s+(?:panel|tools?|dashboard|settings))\b/i,
@@ -163,15 +194,26 @@ const ROLE_GATES: Array<{ re: RegExp; allowed: string[]; denial: string }> = [
 ];
 
 // ── Document types the catalogue supports ────────────────────────────────────
-const DOC_TYPE_RE = /\b(?:noc|no[- ]?objection(?:\s+cert(?:ificate)?)?|experience\s+cert(?:ificate)?|employment\s+verif(?:ication)?|address\s+proof|relieving\s+letter|internship\s+cert(?:ificate)?|recommendation\s+letter|travel\s+support(?:\s+letter)?|project\s+proposal)\b/i;
-const DOC_GEN_RE = /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:letter|certificate|document)\b/i;
+const DOC_TYPE_RE =
+  /\b(?:noc|no[- ]?objection(?:\s+cert(?:ificate)?)?|experience\s+cert(?:ificate)?|employment\s+verif(?:ication)?|address\s+proof|relieving\s+letter|internship\s+cert(?:ificate)?|recommendation\s+letter|travel\s+support(?:\s+letter)?|project\s+proposal)\b/i;
+const DOC_GEN_RE =
+  /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:letter|certificate|document)\b/i;
 
 // ── My-requests navigation ────────────────────────────────────────────────────
-const MY_REQUESTS_VIEW_RE = /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
+const MY_REQUESTS_VIEW_RE =
+  /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
 
 export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
-  const { threads, activeId, thinkingThreads, setActiveId, setThinking, addTurn, updateLastAITurn, createThread } =
-    useChatStore();
+  const {
+    threads,
+    activeId,
+    thinkingThreads,
+    setActiveId,
+    setThinking,
+    addTurn,
+    updateLastAITurn,
+    createThread,
+  } = useChatStore();
   // The active chat is "thinking" only if it is the thread currently generating a response
   // (pre-first-token phase — drives the ThinkingBuddy bubble).
   const thinking = activeId ? !!thinkingThreads[activeId] : false;
@@ -187,8 +229,18 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   // URL Library links — pre-fetched once so the leave intercept can resolve a Zoho URL synchronously.
-  const urlLinksRef = useRef<{ name: string; url: string; purpose?: string; trigger_keywords?: string }[]>([]);
-  const formsRef = useRef<{ id: number; name: string; description: string; fields: DynamicFormField[]; trigger_keywords?: string }[]>([]);
+  const urlLinksRef = useRef<
+    { name: string; url: string; purpose?: string; trigger_keywords?: string }[]
+  >([]);
+  const formsRef = useRef<
+    {
+      id: number;
+      name: string;
+      description: string;
+      fields: DynamicFormField[];
+      trigger_keywords?: string;
+    }[]
+  >([]);
   // Last form created/edited via the assistant this session — lets follow-up edit requests
   // ("add a phone field", "make email required") target it without the admin naming it.
   const lastFormRef = useRef<{ id: number; name: string } | null>(null);
@@ -229,18 +281,25 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   // Pre-fetch URL Library links and Forms once (fail-soft) for chat intercepts.
   useEffect(() => {
     if (!user?.email) return;
-    const headers = { "x-user-email": user.email, "x-user-role": (user.role || "employee").toLowerCase() };
+    const headers = {
+      "x-user-email": user.email,
+      "x-user-role": (user.role || "employee").toLowerCase(),
+    };
     fetch("/api/links", { headers })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => { if (Array.isArray(data)) urlLinksRef.current = data; })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) urlLinksRef.current = data;
+      })
       .catch(() => {});
     fetch("/api/forms/list", { headers })
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => { if (Array.isArray(data)) formsRef.current = data; })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) formsRef.current = data;
+      })
       .catch(() => {});
     // Role-aware "what can you do" starters + live signals for the empty state.
     fetch("/api/capabilities", { headers })
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.starters)) {
           setCaps({ starters: data.starters, live: Array.isArray(data.live) ? data.live : [] });
@@ -254,16 +313,20 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     return subscribeFormTrigger((detail) => {
       const tid = activeId;
       if (!tid) return;
-      addTurn(tid, { role: "ai", text: detail.description || `Here is the ${detail.name} form:`, interactive: {
-        type: "dynamic_form",
-        data: {
-          template_id: detail.formId,
-          name: detail.name,
-          description: detail.description,
-          fields: detail.fields,
-          submit_endpoint: detail.submitEndpoint,
+      addTurn(tid, {
+        role: "ai",
+        text: detail.description || `Here is the ${detail.name} form:`,
+        interactive: {
+          type: "dynamic_form",
+          data: {
+            template_id: detail.formId,
+            name: detail.name,
+            description: detail.description,
+            fields: detail.fields,
+            submit_endpoint: detail.submitEndpoint,
+          },
         },
-      }});
+      });
     });
   }, [activeId, addTurn]);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -332,8 +395,6 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     return () => window.removeEventListener("centriq:quick-action", handler as EventListener);
   }, [activeId, threads]);
 
-
-
   const activeThread = activeId && threads[activeId] ? threads[activeId] : { id: "", turns: [] };
 
   // The newest unanswered quick-choice — rendered as a panel docked above the composer
@@ -342,7 +403,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const lastTurn =
     activeThread.turns.length > 0 ? activeThread.turns[activeThread.turns.length - 1] : undefined;
   const pendingChoice =
-    lastTurn?.role === "ai" && lastTurn.interactive?.type === "quick_choice" && lastTurn.interactive.data
+    lastTurn?.role === "ai" &&
+    lastTurn.interactive?.type === "quick_choice" &&
+    lastTurn.interactive.data
       ? (lastTurn.interactive.data as import("@/lib/chat-store").QuickChoiceData)
       : null;
 
@@ -368,7 +431,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     const localISO = (offsetDays = 0) => {
       const d = new Date();
       d.setDate(d.getDate() + offsetDays);
-      return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+      return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-");
     };
     if (/\btomorrow\b/.test(lower)) date = localISO(1);
     else if (/\btoday\b/.test(lower)) date = localISO(0);
@@ -382,30 +449,38 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       if (p.toLowerCase() === "am" && h === 12) hr = 0;
       return `${String(hr).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
     };
-    const tRe = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i;
+    const tRe =
+      /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i;
     const tm = text.match(tRe);
     if (tm) {
       const p2 = tm[6];
       const p1 = tm[3] ?? p2;
       startTime = to24(parseInt(tm[1]), parseInt(tm[2] ?? "0"), p1);
-      endTime   = to24(parseInt(tm[4]), parseInt(tm[5] ?? "0"), p2);
+      endTime = to24(parseInt(tm[4]), parseInt(tm[5] ?? "0"), p2);
     }
 
     // Room hint: words after "book"/"reserve" before a preposition/date word
     let roomHint: string | undefined;
-    const rRe = /\b(?:book|reserve)(?:ing)?\s+([\w\s]+?)\s+(?:for\b|on\b|at\b|from\b|tomorrow\b|today\b|\d)/i;
+    const rRe =
+      /\b(?:book|reserve)(?:ing)?\s+([\w\s]+?)\s+(?:for\b|on\b|at\b|from\b|tomorrow\b|today\b|\d)/i;
     const rm = text.match(rRe);
     if (rm) roomHint = rm[1].trim();
 
     // Title: after "title", "titled", "called"
     let title: string | undefined;
-    const titRe = /\b(?:title(?:d)?|called)\s+([^\n]+?)(?:\s+(?:no\s+attendees?|with(?:\s+no)?\s+attendees?|attendees?\s*(?:needed)?)\b.*)?$/i;
+    const titRe =
+      /\b(?:title(?:d)?|called)\s+([^\n]+?)(?:\s+(?:no\s+attendees?|with(?:\s+no)?\s+attendees?|attendees?\s*(?:needed)?)\b.*)?$/i;
     const tit = text.match(titRe);
-    if (tit) title = tit[1].trim().replace(/\s+(?:no\s+attendees?|attendees?\s*(?:needed)?).*$/i, "").trim();
+    if (tit)
+      title = tit[1]
+        .trim()
+        .replace(/\s+(?:no\s+attendees?|attendees?\s*(?:needed)?).*$/i, "")
+        .trim();
 
     // Attendees: explicit "no attendees" → empty string
     let attendees: string | undefined;
-    if (/\bno\s+attendees?\b/.test(lower) || /\battendees?\s+(?:not\s+)?needed\b/.test(lower)) attendees = "";
+    if (/\bno\s+attendees?\b/.test(lower) || /\battendees?\s+(?:not\s+)?needed\b/.test(lower))
+      attendees = "";
 
     return { date, startTime, endTime, roomHint, title, attendees };
   }
@@ -415,15 +490,24 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   function parseAnnouncement(text: string) {
     const lower = text.toLowerCase();
     const DOMAIN_KW: Record<string, string> = {
-      hr: "hr", "human resource": "hr",
-      it: "it_support", "it support": "it_support", tech: "it_support",
-      pmo: "pmo", project: "pmo",
-      admin: "admin", facilit: "admin", office: "admin",
+      hr: "hr",
+      "human resource": "hr",
+      it: "it_support",
+      "it support": "it_support",
+      tech: "it_support",
+      pmo: "pmo",
+      project: "pmo",
+      admin: "admin",
+      facilit: "admin",
+      office: "admin",
     };
     let domain: string | undefined;
     let category: string | undefined;
     for (const [kw, dom] of Object.entries(DOMAIN_KW)) {
-      if (lower.includes(kw)) { domain = dom; break; }
+      if (lower.includes(kw)) {
+        domain = dom;
+        break;
+      }
     }
     if (/\bholiday\b/.test(lower)) category = "Holiday";
     else if (/\bpolicy\b/.test(lower)) category = "Policy Update";
@@ -441,15 +525,21 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   function parsePromptConfig(text: string) {
     const lower = text.toLowerCase();
     const DOMAIN_KW: Record<string, string> = {
-      hr: "hr", "human resource": "hr",
-      "it support": "it_support", it: "it_support",
-      pmo: "pmo", project: "pmo",
+      hr: "hr",
+      "human resource": "hr",
+      "it support": "it_support",
+      it: "it_support",
+      pmo: "pmo",
+      project: "pmo",
       admin: "admin",
       manager: "functional_manager",
     };
     let domain: string | undefined;
     for (const [kw, dom] of Object.entries(DOMAIN_KW)) {
-      if (lower.includes(kw)) { domain = dom; break; }
+      if (lower.includes(kw)) {
+        domain = dom;
+        break;
+      }
     }
     const promptKey = /\bguardrail\b/.test(lower) ? "guardrail" : "system_prompt";
     let value: string | undefined;
@@ -469,9 +559,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
 
       // ── Role-gate: block portal/admin access for unauthorised roles ────────
       const role = (user?.role || "employee").toLowerCase();
-      const gateHit = ROLE_GATES.find(
-        (g) => g.re.test(text) && !g.allowed.includes(role),
-      );
+      const gateHit = ROLE_GATES.find((g) => g.re.test(text) && !g.allowed.includes(role));
       if (gateHit) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, { role: "ai", text: gateHit.denial });
@@ -480,7 +568,8 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       }
 
       // ── Document generation navigation ─────────────────────────────────────
-      const isDocGen = (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
+      const isDocGen =
+        (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
         /\b(?:generate|create|make|draft|prepare|issue|get|need|want|request)\b/i.test(text) &&
         !/\b(?:expense|claim|reimburse)\b/i.test(text);
       if (isDocGen) {
@@ -498,10 +587,17 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // ── My-requests navigation ─────────────────────────────────────────────
       if (MY_REQUESTS_VIEW_RE.test(text)) {
         const statusFilter: "all" | "open" | "in-progress" | "closed" =
-          /\b(pending|open|waiting|submitted|new)\b/i.test(text) ? "open"
-          : /\b(approved|done|completed|resolved|closed|finished|processed|cancelled)\b/i.test(text) ? "closed"
-          : /\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(text) ? "in-progress"
-          : "all";
+          /\b(pending|open|waiting|submitted|new)\b/i.test(text)
+            ? "open"
+            : /\b(approved|done|completed|resolved|closed|finished|processed|cancelled)\b/i.test(
+                  text,
+                )
+              ? "closed"
+              : /\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(
+                    text,
+                  )
+                ? "in-progress"
+                : "all";
         const statusLabel: Record<string, string> = {
           all: "all",
           open: "pending",
@@ -542,11 +638,20 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       const travelLower = text.toLowerCase();
       if (
         !DOC_TYPE_RE.test(text) &&
-        (travelLower.includes("travel") || travelLower.includes("trip") || travelLower.includes("visa")) &&
-        (travelLower.includes("business") || travelLower.includes("official") || travelLower.includes("work") ||
-         travelLower.includes("request") || travelLower.includes("apply") || travelLower.includes("submit") ||
-         travelLower.includes("create") || travelLower.includes("plan") || travelLower.includes("book") ||
-         travelLower.includes("need to travel") || travelLower.includes("travelling for"))
+        (travelLower.includes("travel") ||
+          travelLower.includes("trip") ||
+          travelLower.includes("visa")) &&
+        (travelLower.includes("business") ||
+          travelLower.includes("official") ||
+          travelLower.includes("work") ||
+          travelLower.includes("request") ||
+          travelLower.includes("apply") ||
+          travelLower.includes("submit") ||
+          travelLower.includes("create") ||
+          travelLower.includes("plan") ||
+          travelLower.includes("book") ||
+          travelLower.includes("need to travel") ||
+          travelLower.includes("travelling for"))
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -562,7 +667,12 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Intercept travel expense submissions
       if (
         (travelLower.includes("travel") || travelLower.includes("trip")) &&
-        (travelLower.includes("expense") || travelLower.includes("claim") || travelLower.includes("back from") || travelLower.includes("post-trip") || travelLower.includes("post trip") || travelLower.includes("after trip"))
+        (travelLower.includes("expense") ||
+          travelLower.includes("claim") ||
+          travelLower.includes("back from") ||
+          travelLower.includes("post-trip") ||
+          travelLower.includes("post trip") ||
+          travelLower.includes("after trip"))
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -596,12 +706,23 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Does NOT rely on hardcoded room names — uses structure instead.
       const isRoomBooking =
         /\b(book|reserve)\b.{0,40}\b(rooms?|conference|meeting rooms?|conf rooms?)\b/i.test(text) ||
-        /\b(rooms?|conference rooms?|meeting rooms?)\b.{0,40}\b(book|reserve|available|availability|free)\b/i.test(text) ||
-        /\b(available|free|availability)\b.{0,25}\b(rooms?|meeting rooms?|conference rooms?)\b/i.test(text) ||
-        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(text);
+        /\b(rooms?|conference rooms?|meeting rooms?)\b.{0,40}\b(book|reserve|available|availability|free)\b/i.test(
+          text,
+        ) ||
+        /\b(available|free|availability)\b.{0,25}\b(rooms?|meeting rooms?|conference rooms?)\b/i.test(
+          text,
+        ) ||
+        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(
+          text,
+        );
       if (isRoomBooking) {
         const prefill = parseRoomBooking(text);
-        const hasContext = !!(prefill.roomHint && prefill.date && prefill.startTime && prefill.endTime);
+        const hasContext = !!(
+          prefill.roomHint &&
+          prefill.date &&
+          prefill.startTime &&
+          prefill.endTime
+        );
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
@@ -615,8 +736,12 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       }
 
       // Intercept room cancellation requests
-      if (/\b(cancel|cancell?ation|delete|remove)\b.{0,30}\b(booking|reservation|room|meeting room|conference)\b/i.test(text) ||
-          /\b(booking|reservation|room booking)\b.{0,30}\b(cancel|delete|remove)\b/i.test(text)) {
+      if (
+        /\b(cancel|cancell?ation|delete|remove)\b.{0,30}\b(booking|reservation|room|meeting room|conference)\b/i.test(
+          text,
+        ) ||
+        /\b(booking|reservation|room booking)\b.{0,30}\b(cancel|delete|remove)\b/i.test(text)
+      ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
@@ -629,7 +754,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
 
       // Intercept leave cancellation / withdrawal requests
       if (
-        /\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time[- ]?off)\b/i.test(text) ||
+        /\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time[- ]?off)\b/i.test(
+          text,
+        ) ||
         /\b(leave|time[- ]?off)\b.{0,30}\b(cancel|withdraw|revoke|recall)\b/i.test(text)
       ) {
         addTurn(activeId, { role: "user", text });
@@ -647,10 +774,16 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // questions ("how many leaves", "leave balance", "leave policy") which aren't form actions.
       const leaveLower = text.toLowerCase();
       const isApplyLeave =
-        (/\b(apply|book|take|request|submit|put in|raise|file)\b.{0,30}\b(leave|time[- ]?off|day off|days off|vacation|pto)\b/i.test(text) ||
+        (/\b(apply|book|take|request|submit|put in|raise|file)\b.{0,30}\b(leave|time[- ]?off|day off|days off|vacation|pto)\b/i.test(
+          text,
+        ) ||
           /\b(leave|time[- ]?off|vacation|pto)\b.{0,20}\b(application|request)\b/i.test(text) ||
-          /\bi\s+(want|need|would like|wish)\s+(to\s+)?(take|apply|book|request)\b.{0,20}\b(leave|time[- ]?off|day off|vacation)\b/i.test(text)) &&
-        !/\b(balance|how many|remaining|left|available|status|policy|cancel|withdraw|revoke|recall)\b/i.test(text);
+          /\bi\s+(want|need|would like|wish)\s+(to\s+)?(take|apply|book|request)\b.{0,20}\b(leave|time[- ]?off|day off|vacation)\b/i.test(
+            text,
+          )) &&
+        !/\b(balance|how many|remaining|left|available|status|policy|cancel|withdraw|revoke|recall)\b/i.test(
+          text,
+        );
       if (isApplyLeave) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -665,7 +798,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
 
       // Intercept "show my schedule / my meetings / upcoming bookings" — read-only calendar pull, zero LLM.
       if (
-        /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(text) ||
+        /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(
+          text,
+        ) ||
         /\bwhat('?s| is| are)\b.{0,30}\b(my )?(schedule|meetings?|calendar|agenda)\b/i.test(text)
       ) {
         addTurn(activeId, { role: "user", text });
@@ -681,13 +816,19 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Intercept "update/add my skills / certifications", "set primary skill",
       // "years of experience". Self-serve for all roles — zero LLM. Structural, not name-based.
       const isSkillsEditor =
-        /\b(update|edit|add|change|manage|set)\b.{0,30}\b(skill|skills|certification|certificate|cert|expertise)\b/i.test(text) ||
-        /\b(skill|skills|certification|certificate|expertise)\b.{0,30}\b(update|edit|add|upload|manage|change)\b/i.test(text) ||
+        /\b(update|edit|add|change|manage|set)\b.{0,30}\b(skill|skills|certification|certificate|cert|expertise)\b/i.test(
+          text,
+        ) ||
+        /\b(skill|skills|certification|certificate|expertise)\b.{0,30}\b(update|edit|add|upload|manage|change)\b/i.test(
+          text,
+        ) ||
         /\bprimary skill\b/i.test(text) ||
         /\byears? of experience\b/i.test(text) ||
         /\bupload\b.{0,20}\bcertif/i.test(text);
       if (isSkillsEditor) {
-        const m = text.match(/\badd\s+(?:a\s+|an\s+|my\s+)?([A-Za-z][A-Za-z0-9+.# ]{1,30}?)\s+(?:skill|certification|cert)\b/i);
+        const m = text.match(
+          /\badd\s+(?:a\s+|an\s+|my\s+)?([A-Za-z][A-Za-z0-9+.# ]{1,30}?)\s+(?:skill|certification|cert)\b/i,
+        );
         const prefill = { skill: m?.[1]?.trim() };
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -706,25 +847,44 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // "generate/show attendance for everyone under me / my team / my hierarchy" -> report view.
       // "email me / schedule / automate ... attendance ... every month/week/day" -> schedule setup.
       const mentionsAttendance = /\battendance\b/i.test(text);
-      const mentionsTeamScope = /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(text);
+      const mentionsTeamScope =
+        /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(
+          text,
+        );
       if (role === "functional manager" && mentionsAttendance && mentionsTeamScope) {
-        const isRecurring = /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(text);
+        const isRecurring =
+          /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(
+            text,
+          );
         addTurn(activeId, { role: "user", text });
         if (isRecurring) {
           // Parse cadence cues.
-          const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text) ? "daily"
-            : /\b(weekly|every week|each week)\b/i.test(text) ? "weekly"
-            : /\b(monthly|every month|each month)\b/i.test(text) ? "monthly"
-            : "monthly";
-          const dows = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-          const dowIdx = dows.findIndex(d => new RegExp(`\\b${d}\\b`, "i").test(text));
+          const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text)
+            ? "daily"
+            : /\b(weekly|every week|each week)\b/i.test(text)
+              ? "weekly"
+              : /\b(monthly|every month|each month)\b/i.test(text)
+                ? "monthly"
+                : "monthly";
+          const dows = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+          ];
+          const dowIdx = dows.findIndex((d) => new RegExp(`\\b${d}\\b`, "i").test(text));
           const hourM = text.match(/\bat\s+(\d{1,2})\s*(am|pm)?\b/i);
           let hour: number | undefined;
           if (hourM) {
             hour = Number(hourM[1]) % 12;
             if (/pm/i.test(hourM[2] || "")) hour += 12;
           }
-          const prefill: Record<string, number | string> = { frequency: dowIdx >= 0 ? "weekly" : freq };
+          const prefill: Record<string, number | string> = {
+            frequency: dowIdx >= 0 ? "weekly" : freq,
+          };
           if (dowIdx >= 0) prefill.day_of_week = dowIdx;
           if (hour !== undefined) prefill.hour = hour;
           addTurn(activeId, {
@@ -747,7 +907,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       if (
         mentionsAttendance &&
         !mentionsTeamScope &&
-        /\b(my\s+attendance|attendance\s+(this|for)\s+(month|june|july|august|september|october|november|december|january|february|march|april|may)|show\s+(my\s+)?attendance|view\s+(my\s+)?attendance|attendance\s+(summary|report)|days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark)\b/i.test(text)
+        /\b(my\s+attendance|attendance\s+(this|for)\s+(month|june|july|august|september|october|november|december|january|february|march|april|may)|show\s+(my\s+)?attendance|view\s+(my\s+)?attendance|attendance\s+(summary|report)|days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark)\b/i.test(
+          text,
+        )
       ) {
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -760,7 +922,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       }
 
       // Intercept "create/add an announcement …"
-      if (isManager && /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)) {
+      if (
+        isManager &&
+        /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)
+      ) {
         const prefill = parseAnnouncement(text);
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
@@ -775,7 +940,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Intercept "update/change the … prompt/guardrail/system prompt …"
       if (
         isManager &&
-        /\b(update|change|edit|set|add|configure|tweak)\b.{0,40}\b(prompt|config(?:uration)?|guardrail|system prompt|instruction)\b/i.test(text)
+        /\b(update|change|edit|set|add|configure|tweak)\b.{0,40}\b(prompt|config(?:uration)?|guardrail|system prompt|instruction)\b/i.test(
+          text,
+        )
       ) {
         const prefill = parsePromptConfig(text);
         addTurn(activeId, { role: "user", text });
@@ -805,9 +972,24 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Single-word generic keywords that are too broad to safely trigger a URL/form intercept.
       // Multi-word phrases are always allowed. This is evaluated by keywordMatches() below.
       const GENERIC_KEYWORDS = new Set([
-        "request", "requests", "report", "reports", "form", "forms",
-        "ticket", "tickets", "apply", "status", "help", "issue", "issues",
-        "new", "portal", "app", "submit", "my",
+        "request",
+        "requests",
+        "report",
+        "reports",
+        "form",
+        "forms",
+        "ticket",
+        "tickets",
+        "apply",
+        "status",
+        "help",
+        "issue",
+        "issues",
+        "new",
+        "portal",
+        "app",
+        "submit",
+        "my",
       ]);
 
       // Shared keyword matcher used by both the URL Library and Form Library intercepts.
@@ -835,7 +1017,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // one most recently created/edited this session. Runs BEFORE the create intercept so
       // "add a date field to the form" revises it rather than spawning a brand-new draft.
       const editVerb =
-        /\b(add|remove|delete|drop|rename|change|make|set|mark|update|include|require|reorder|move)\b/i.test(text);
+        /\b(add|remove|delete|drop|rename|change|make|set|mark|update|include|require|reorder|move)\b/i.test(
+          text,
+        );
       const fieldSignal =
         /\bfield\b/i.test(text) ||
         /\b(required|optional|mandatory)\b/i.test(text) ||
@@ -846,7 +1030,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           f.name &&
           new RegExp(`\\b${f.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text),
       );
-      const editTarget = namedForm ? { id: namedForm.id, name: namedForm.name } : lastFormRef.current;
+      const editTarget = namedForm
+        ? { id: namedForm.id, name: namedForm.name }
+        : lastFormRef.current;
       const isEditFormIntent =
         role === "admin" &&
         !isInfoQuery &&
@@ -860,7 +1046,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
         const capturedId = activeId;
         addTurn(capturedId, { role: "user", text });
         setInput("");
-        addTurn(capturedId, { role: "ai", text: `Updating **"${editTarget.name}"** — one moment…` });
+        addTurn(capturedId, {
+          role: "ai",
+          text: `Updating **"${editTarget.name}"** — one moment…`,
+        });
         const editHeaders: Record<string, string> = { "Content-Type": "application/json" };
         if (user?.email) editHeaders["X-User-Email"] = user.email;
         if (user?.role) editHeaders["X-User-Role"] = user.role.toLowerCase();
@@ -966,11 +1155,14 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       const isLeaveApplication =
         !isInfoQuery &&
         !isCreateFormIntent &&
-        !text.endsWith(ASSISTANT_HANDOFF_SUFFIX) && (
-          /\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(text) ||
+        !text.endsWith(ASSISTANT_HANDOFF_SUFFIX) &&
+        (/\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(
+          text,
+        ) ||
           /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
-          /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(text)
-        );
+          /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(
+            text,
+          ));
       if (isLeaveApplication) {
         const zohoPeopleLink =
           urlLinksRef.current.find((l) => /leave|people/i.test(l.purpose ?? "")) ??
@@ -1011,7 +1203,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Skipped for create-form, handoff continuations, and information-style questions.
       // Uses keywordMatches() which filters out single generic words like "requests".
       if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
-        const triggeredLink = urlLinksRef.current.find((l) => keywordMatches(l.trigger_keywords, text));
+        const triggeredLink = urlLinksRef.current.find((l) =>
+          keywordMatches(l.trigger_keywords, text),
+        );
         if (triggeredLink) {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
@@ -1046,7 +1240,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // Form Library intercept — open the matched form inline without going through the LLM.
       // Uses keywordMatches() with the same specificity rules as URL Library.
       if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
-        const triggeredForm = formsRef.current.find((f) => keywordMatches(f.trigger_keywords, text));
+        const triggeredForm = formsRef.current.find((f) =>
+          keywordMatches(f.trigger_keywords, text),
+        );
         if (triggeredForm) {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
@@ -1133,7 +1329,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           if (!res.ok) {
             const errorData = await res.json().catch(() => ({}));
             const detail = errorData.detail;
-            throw new Error(typeof detail === "string" ? detail : "Server error. Please try again.");
+            throw new Error(
+              typeof detail === "string" ? detail : "Server error. Please try again.",
+            );
           }
 
           // SSE stream reader
@@ -1146,7 +1344,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           const processLine = (line: string) => {
             if (!line.startsWith("data: ")) return;
             let evt: Record<string, unknown>;
-            try { evt = JSON.parse(line.slice(6)); } catch { return; }
+            try {
+              evt = JSON.parse(line.slice(6));
+            } catch {
+              return;
+            }
 
             if (evt.type === "queued") {
               // Server is at capacity; our request is waiting for a slot.
@@ -1218,10 +1420,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                   errCode === "TOOL_FAILURE"
                     ? `I couldn't complete that step — ${errMsg || "a tool call failed"}. Please try rephrasing or try again.`
                     : errCode === "CONTEXT_LIMIT"
-                    ? "This conversation is getting long. Start a new chat to continue with a fresh context."
-                    : errCode === "MODEL_UNAVAILABLE"
-                    ? "The AI model is temporarily unavailable. Please try again in a moment."
-                    : errMsg || "Something went wrong. Please try again.";
+                      ? "This conversation is getting long. Start a new chat to continue with a fresh context."
+                      : errCode === "MODEL_UNAVAILABLE"
+                        ? "The AI model is temporarily unavailable. Please try again in a moment."
+                        : errMsg || "Something went wrong. Please try again.";
                 addTurn(threadId, { role: "ai", text: friendlyText, isError: true });
                 aiTurnAdded = true;
               }
@@ -1310,7 +1512,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     const rec = recognitionRef.current;
     if (rec) {
       rec.onend = null; // prevent auto-restart on a deliberate stop
-      try { rec.stop(); } catch { /* already stopped */ }
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
       recognitionRef.current = null;
     }
   }, []);
@@ -1356,7 +1562,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       if (s.voiceMode && s.voiceState === "listening") startListening();
     };
     recognitionRef.current = rec;
-    try { rec.start(); } catch { /* already started */ }
+    try {
+      rec.start();
+    } catch {
+      /* already started */
+    }
   }, [setLiveTranscript]);
 
   // Drive the microphone from the loop phase: listen only while "listening".
@@ -1375,7 +1585,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     }
     const turns = (activeId ? threads[activeId]?.turns : []) || [];
     let idx = -1;
-    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "ai") { idx = i; break; }
+    for (let i = turns.length - 1; i >= 0; i--)
+      if (turns[i].role === "ai") {
+        idx = i;
+        break;
+      }
     lastSpokenIndexRef.current = idx;
     lastSpokenLenRef.current = idx >= 0 ? turns[idx].text.length : 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1391,7 +1605,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     if (!voiceMode) return;
     const turns = activeThread.turns;
     let idx = -1;
-    for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === "ai") { idx = i; break; }
+    for (let i = turns.length - 1; i >= 0; i--)
+      if (turns[i].role === "ai") {
+        idx = i;
+        break;
+      }
     if (idx === -1) return;
     const turn = turns[idx];
 
@@ -1433,7 +1651,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const handleFeedback = (rating: "up" | "down", index: number, feedbackText?: string) => {
     const turns = (activeId ? threads[activeId]?.turns : undefined) || [];
     const aiTurn = turns[index];
-    const prevUserTurn = turns.slice(0, index).reverse().find((t: Turn) => t.role === "user");
+    const prevUserTurn = turns
+      .slice(0, index)
+      .reverse()
+      .find((t: Turn) => t.role === "user");
     fetch("/api/feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1501,8 +1722,6 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
-
-
         {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
         <AnimatePresence>
           {serverBusy && !loadBannerDismissed && (
@@ -1514,9 +1733,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
             >
               <Activity className="h-4 w-4 shrink-0" />
               <span>
-                <strong>Server is busy right now</strong> — replies may take a little longer than usual.
-                You can still send your message{waiting > 0 ? ` (${waiting} ahead of you)` : ""}; it'll be
-                answered as soon as a slot frees up.
+                <strong>Server is busy right now</strong> — replies may take a little longer than
+                usual. You can still send your message
+                {waiting > 0 ? ` (${waiting} ahead of you)` : ""}; it'll be answered as soon as a
+                slot frees up.
               </span>
               <button
                 onClick={() => setLoadBannerDismissed(true)}
@@ -1535,11 +1755,15 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           onScroll={handleScroll}
           className="relative flex-1 overflow-y-auto scroll-smooth"
         >
-          <div className={cn(
-            "mx-auto w-full flex flex-col",
-            isCopilot ? "max-w-xl px-4" : "max-w-5xl px-4 sm:px-8",
-            activeThread.turns.length === 0 ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12" : "pt-4 md:pt-8 pb-6 md:pb-12",
-          )}>
+          <div
+            className={cn(
+              "mx-auto w-full flex flex-col",
+              isCopilot ? "max-w-xl px-4" : "max-w-5xl px-4 sm:px-8",
+              activeThread.turns.length === 0
+                ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12"
+                : "pt-4 md:pt-8 pb-6 md:pb-12",
+            )}
+          >
             {activeThread.turns.length === 0 ? (
               isCopilot ? (
                 /* ──── Simplified Copilot Empty State ──── */
@@ -1565,129 +1789,141 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                     How can I help you today?
                   </h2>
                   <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-                    Ask me questions about this page, operational data, or request workspace actions.
+                    Ask me questions about this page, operational data, or request workspace
+                    actions.
                   </p>
                 </motion.section>
               ) : (
                 /* ──── Empty State ──── */
                 <motion.section
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.6 }}
-                className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-0 py-2 sm:py-4"
-              >
-                <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
-                  <SparklesCore id="chat-sparkles" minSize={0.4} maxSize={1.0} particleDensity={60} speed={0.4} particleColor="#3B8FE8" />
-                </div>
-                {(() => {
-                  const { heading, subheading } = getGreeting(user?.name || "there");
-                  return (
-                    <>
-                      <motion.h1
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-                        className="text-2xl sm:text-4xl font-extrabold tracking-tight md:text-5xl mb-1 sm:mb-2 text-glow"
-                      >
-                        <span className="text-gradient">{heading}</span>
-                      </motion.h1>
-                      <motion.p
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.2 }}
-                        className="text-xs sm:text-base text-muted-foreground mb-4 sm:mb-8"
-                      >
-                        {subheading}
-                      </motion.p>
-                    </>
-                  );
-                })()}
-
-                {/* Smart Widgets */}
-                <motion.div
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.3 }}
-                  className="w-full max-w-4xl mb-4 sm:mb-6 hidden sm:block"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.6 }}
+                  className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-0 py-2 sm:py-4"
                 >
-                  <SmartWidgets onAction={(prompt) => !busy && send(prompt)} />
-                </motion.div>
-
-                {/* Starter prompt chips */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.4 }}
-                  className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
-                >
-                  <div className="try-asking-container">
-                    {/* Live signals — surface anything waiting on the user up front. */}
-                    {caps?.live && caps.live.length > 0 && (
-                      <div className="flex flex-wrap justify-center gap-2 mb-3">
-                        {caps.live.map((l) => (
-                          <button
-                            key={l.title}
-                            onClick={() => !busy && send(l.prompt)}
-                            className="group flex items-center gap-2 rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] sm:text-[12px] font-semibold text-amber-700 dark:text-amber-300 shadow-sm transition-all hover:bg-amber-400/20 hover:scale-[1.02]"
-                          >
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            {l.title}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">Try asking…</p>
-                    {caps?.starters && caps.starters.length > 0 ? (
-                      /* Role-aware capability starters (static, from /api/capabilities). */
-                      <div className="flex flex-wrap justify-center gap-2">
-                        {caps.starters.map((s) => (
-                          <button
-                            key={s.prompt}
-                            title={s.title}
-                            onClick={() => !busy && send(s.prompt)}
-                            className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
-                          >
-                            <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                              <Sparkles className="h-2.5 w-2.5 text-primary" />
-                            </span>
-                            {s.prompt}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <AnimatePresence mode="wait">
-                        <motion.div
-                          key={starterPage}
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -6 }}
-                          transition={{ duration: 0.3 }}
-                          className="flex flex-wrap justify-center gap-2"
-                        >
-                          {queries.slice(
-                            starterPage * STARTER_PAGE_SIZE,
-                            starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
-                          ).map((q) => {
-                            const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
-                            return (
-                              <button
-                                key={q.prompt}
-                                onClick={() => !busy && send(q.prompt)}
-                                className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
-                              >
-                                <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                                  <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
-                                </span>
-                                {q.label}
-                              </button>
-                            );
-                          })}
-                        </motion.div>
-                      </AnimatePresence>
-                    )}
+                  <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
+                    <SparklesCore
+                      id="chat-sparkles"
+                      minSize={0.4}
+                      maxSize={1.0}
+                      particleDensity={60}
+                      speed={0.4}
+                      particleColor="#3B8FE8"
+                    />
                   </div>
-                </motion.div>
-              </motion.section>
+                  {(() => {
+                    const { heading, subheading } = getGreeting(user?.name || "there");
+                    return (
+                      <>
+                        <motion.h1
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+                          className="text-2xl sm:text-4xl font-extrabold tracking-tight md:text-5xl mb-1 sm:mb-2 text-glow"
+                        >
+                          <span className="text-gradient">{heading}</span>
+                        </motion.h1>
+                        <motion.p
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.5, delay: 0.2 }}
+                          className="text-xs sm:text-base text-muted-foreground mb-4 sm:mb-8"
+                        >
+                          {subheading}
+                        </motion.p>
+                      </>
+                    );
+                  })()}
+
+                  {/* Smart Widgets */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5, delay: 0.3 }}
+                    className="w-full max-w-4xl mb-4 sm:mb-6 hidden sm:block"
+                  >
+                    <SmartWidgets onAction={(prompt) => !busy && send(prompt)} />
+                  </motion.div>
+
+                  {/* Starter prompt chips */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: 0.4 }}
+                    className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
+                  >
+                    <div className="try-asking-container">
+                      {/* Live signals — surface anything waiting on the user up front. */}
+                      {caps?.live && caps.live.length > 0 && (
+                        <div className="flex flex-wrap justify-center gap-2 mb-3">
+                          {caps.live.map((l) => (
+                            <button
+                              key={l.title}
+                              onClick={() => !busy && send(l.prompt)}
+                              className="group flex items-center gap-2 rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] sm:text-[12px] font-semibold text-amber-700 dark:text-amber-300 shadow-sm transition-all hover:bg-amber-400/20 hover:scale-[1.02]"
+                            >
+                              <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              {l.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">
+                        Try asking…
+                      </p>
+                      {caps?.starters && caps.starters.length > 0 ? (
+                        /* Role-aware capability starters (static, from /api/capabilities). */
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {caps.starters.map((s) => (
+                            <button
+                              key={s.prompt}
+                              title={s.title}
+                              onClick={() => !busy && send(s.prompt)}
+                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                            >
+                              <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                <Sparkles className="h-2.5 w-2.5 text-primary" />
+                              </span>
+                              {s.prompt}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <AnimatePresence mode="wait">
+                          <motion.div
+                            key={starterPage}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.3 }}
+                            className="flex flex-wrap justify-center gap-2"
+                          >
+                            {queries
+                              .slice(
+                                starterPage * STARTER_PAGE_SIZE,
+                                starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
+                              )
+                              .map((q) => {
+                                const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
+                                return (
+                                  <button
+                                    key={q.prompt}
+                                    onClick={() => !busy && send(q.prompt)}
+                                    className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                                  >
+                                    <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                      <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
+                                    </span>
+                                    {q.label}
+                                  </button>
+                                );
+                              })}
+                          </motion.div>
+                        </AnimatePresence>
+                      )}
+                    </div>
+                  </motion.div>
+                </motion.section>
               )
             ) : (
               /* ──── Chat Messages ──── */
@@ -1703,7 +1939,12 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                         layout
                       >
                         <UserMessage
-                          initials={user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                          initials={
+                            user?.name
+                              ?.split(" ")
+                              .map((n) => n[0])
+                              .join("") || "U"
+                          }
                           text={t.text}
                           onSaveQuickSearch={handleOpenSavePrompt}
                         >
@@ -1724,7 +1965,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                         layout
                       >
                         <AIMessage
-                          onFeedback={(rating, feedbackText) => handleFeedback(rating, i, feedbackText)}
+                          onFeedback={(rating, feedbackText) =>
+                            handleFeedback(rating, i, feedbackText)
+                          }
                           domain={t.role === "ai" ? t.domain : undefined}
                           text={t.text}
                           live={t.streaming}
@@ -1737,55 +1980,75 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                           }
                         >
                           <div className="space-y-4">
-                            {t.text && (() => {
-                              const navTokens: { path: string; label: string }[] = [];
-                              const cleaned = normalizeBullets(
-                                t.text.replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
-                                  navTokens.push({ path: String(path).trim(), label: String(label).trim() });
-                                  return "";
-                                }).trim()
-                              );
-                              return (
-                                <>
-                                  {cleaned && (
-                                    <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
-                                      <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
-                                        components={{
-                                          a: ({ href, children }) => (
-                                            <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-                                          ),
-                                        }}
-                                      >{cleaned}</ReactMarkdown>
-                                      {t.streaming && (
-                                        <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
-                                      )}
-                                    </div>
-                                  )}
-                                  {navTokens.length > 0 && !t.streaming && (
-                                    <div className="flex flex-wrap gap-2 mt-2">
-                                      {navTokens.map((n, idx) => {
-                                        const Icon = n.path === "/my-library" ? LibraryIcon : BookOpen;
-                                        return (
-                                          <button
-                                            key={idx}
-                                            onClick={() => navigate({ to: n.path })}
-                                            className="inline-flex items-center gap-2 rounded-xl bg-primary/15 px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/25 transition-colors border border-primary/20"
-                                          >
-                                            <Icon className="h-3.5 w-3.5" />
-                                            {n.label}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </>
-                              );
-                            })()}
+                            {t.text &&
+                              (() => {
+                                const navTokens: { path: string; label: string }[] = [];
+                                const cleaned = normalizeBullets(
+                                  t.text
+                                    .replace(/<<NAV:([^|>]+)\|([^>]+)>>/g, (_m, path, label) => {
+                                      navTokens.push({
+                                        path: String(path).trim(),
+                                        label: String(label).trim(),
+                                      });
+                                      return "";
+                                    })
+                                    .trim(),
+                                );
+                                return (
+                                  <>
+                                    {cleaned && (
+                                      <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
+                                        <ReactMarkdown
+                                          remarkPlugins={[remarkGfm]}
+                                          components={{
+                                            a: ({ href, children }) => (
+                                              <a
+                                                href={href}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                              >
+                                                {children}
+                                              </a>
+                                            ),
+                                          }}
+                                        >
+                                          {cleaned}
+                                        </ReactMarkdown>
+                                        {t.streaming && (
+                                          <span className="inline-block w-[2px] h-[1em] ml-[1px] bg-foreground/70 align-middle animate-pulse" />
+                                        )}
+                                      </div>
+                                    )}
+                                    {navTokens.length > 0 && !t.streaming && (
+                                      <div className="flex flex-wrap gap-2 mt-2">
+                                        {navTokens.map((n, idx) => {
+                                          const Icon =
+                                            n.path === "/my-library" ? LibraryIcon : BookOpen;
+                                          return (
+                                            <button
+                                              key={idx}
+                                              onClick={() => navigate({ to: n.path })}
+                                              className="inline-flex items-center gap-2 rounded-xl bg-primary/15 px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/25 transition-colors border border-primary/20"
+                                            >
+                                              <Icon className="h-3.5 w-3.5" />
+                                              {n.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             {t.images && t.images.length > 0 && (
                               <div className="mt-3 flex flex-col gap-3">
                                 {t.images.map((url, imgIdx) => (
-                                  <a key={imgIdx} href={url} target="_blank" rel="noopener noreferrer">
+                                  <a
+                                    key={imgIdx}
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
                                     <img
                                       src={url}
                                       alt={`Policy image ${imgIdx + 1}`}
@@ -1813,7 +2076,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                 title="Leave Balance · 2026"
                                 meta="System Source: HR Connect"
                                 rows={[
-                                  { label: "Total Earned Leaves", value: "12 days", highlight: true },
+                                  {
+                                    label: "Total Earned Leaves",
+                                    value: "12 days",
+                                    highlight: true,
+                                  },
                                   { label: "Casual Leaves", value: "4 days" },
                                   { label: "Sick Leaves", value: "7 days" },
                                   { label: "Upcoming (May 4)", value: "2 days" },
@@ -1821,11 +2088,14 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                 cta={{
                                   label: "File Leave Request",
                                   onClick: () => {
-                                    toast.promise(new Promise((resolve) => setTimeout(resolve, 1500)), {
-                                      loading: "Processing request...",
-                                      success: "Leave request filed with Priya!",
-                                      error: "Failed to file request",
-                                    });
+                                    toast.promise(
+                                      new Promise((resolve) => setTimeout(resolve, 1500)),
+                                      {
+                                        loading: "Processing request...",
+                                        success: "Leave request filed with Priya!",
+                                        error: "Failed to file request",
+                                      },
+                                    );
                                   },
                                 }}
                               />
@@ -1834,16 +2104,22 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <ParkingForm
                                 userEmail={user?.email || ""}
                                 onSubmitted={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
                             {t.interactive?.type === "visitor_pass_form" && (
                               <VisitorPassForm
                                 userEmail={user?.email || ""}
-                                prefill={t.interactive.data as import("@/lib/chat-store").VisitorPassPrefill | undefined}
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").VisitorPassPrefill
+                                    | undefined
+                                }
                                 onSubmitted={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
@@ -1851,7 +2127,8 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <TravelRequestForm
                                 userEmail={user?.email || ""}
                                 onSubmitted={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
@@ -1859,13 +2136,16 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <TravelExpenseForm
                                 userEmail={user?.email || ""}
                                 onSubmitted={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
                             {t.interactive?.type === "dynamic_form" && t.interactive.data && (
                               <DynamicFormWidget
-                                data={t.interactive.data as import("@/lib/chat-store").DynamicFormData}
+                                data={
+                                  t.interactive.data as import("@/lib/chat-store").DynamicFormData
+                                }
                                 userEmail={user?.email || ""}
                                 userRole={user?.role}
                                 onSubmitted={(msg) =>
@@ -1875,7 +2155,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                             )}
                             {t.interactive?.type === "form_builder" && t.interactive.data && (
                               <FormBuilderWidget
-                                draft={t.interactive.data as import("@/lib/chat-store").FormBuilderDraft}
+                                draft={
+                                  t.interactive.data as import("@/lib/chat-store").FormBuilderDraft
+                                }
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || ""}
                                 onCreated={(msg, form) => {
@@ -1887,24 +2169,32 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                   if (user?.email) h["X-User-Email"] = user.email;
                                   fetch("/api/forms/list", { headers: h })
                                     .then((r) => (r.ok ? r.json() : []))
-                                    .then((d) => { if (Array.isArray(d)) formsRef.current = d; })
+                                    .then((d) => {
+                                      if (Array.isArray(d)) formsRef.current = d;
+                                    })
                                     .catch(() => {});
                                 }}
                               />
                             )}
-                            {t.interactive?.type === "quick_choice" && t.interactive.data &&
+                            {t.interactive?.type === "quick_choice" &&
+                              t.interactive.data &&
                               i !== activeThread.turns.length - 1 && (
-                              <ChoiceWidget
-                                data={t.interactive.data as import("@/lib/chat-store").QuickChoiceData}
-                                onMessage={(text) => send(text)}
-                              />
-                            )}
+                                <ChoiceWidget
+                                  data={
+                                    t.interactive.data as import("@/lib/chat-store").QuickChoiceData
+                                  }
+                                  onMessage={(text) => send(text)}
+                                />
+                              )}
                             {t.interactive?.type === "email_draft" && t.interactive.data && (
                               <InteractiveEmailDraft
-                                data={t.interactive.data as import("@/lib/chat-store").EmailDraftData}
+                                data={
+                                  t.interactive.data as import("@/lib/chat-store").EmailDraftData
+                                }
                                 userEmail={user?.email}
                                 onSent={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "it_support" })
                                 }
                               />
                             )}
@@ -1912,9 +2202,14 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <RoomBookingWidget
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
-                                prefill={t.interactive.data as import("@/lib/chat-store").RoomBookingPrefill | undefined}
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").RoomBookingPrefill
+                                    | undefined
+                                }
                                 onBooked={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
                                 }
                               />
                             )}
@@ -1923,7 +2218,8 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
                                 onCancelled={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "ms365" })
                                 }
                               />
                             )}
@@ -1932,7 +2228,8 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
                                 onCancelled={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}
@@ -1958,9 +2255,14 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <SkillsEditorWidget
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
-                                prefill={t.interactive.data as import("@/lib/chat-store").SkillsEditorPrefill | undefined}
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").SkillsEditorPrefill
+                                    | undefined
+                                }
                                 onSaved={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}
@@ -1968,9 +2270,14 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <AnnouncementWidget
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
-                                prefill={t.interactive.data as import("@/lib/chat-store").AnnouncementPrefill | undefined}
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").AnnouncementPrefill
+                                    | undefined
+                                }
                                 onPublished={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
@@ -1978,20 +2285,35 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                               <PromptConfigWidget
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
-                                prefill={t.interactive.data as import("@/lib/chat-store").PromptConfigPrefill | undefined}
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").PromptConfigPrefill
+                                    | undefined
+                                }
                                 onSaved={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "admin" })
                                 }
                               />
                             )}
-                            {(t.interactive?.type === "team_attendance" || t.interactive?.type === "attendance_schedule") && (
+                            {(t.interactive?.type === "team_attendance" ||
+                              t.interactive?.type === "attendance_schedule") && (
                               <AttendanceScheduleWidget
                                 userEmail={user?.email || ""}
                                 userRole={user?.role || "employee"}
-                                mode={t.interactive.type === "attendance_schedule" ? "schedule" : "report"}
-                                prefill={t.interactive.data as import("@/lib/chat-store").AttendanceSchedulePrefill | undefined}
+                                mode={
+                                  t.interactive.type === "attendance_schedule"
+                                    ? "schedule"
+                                    : "report"
+                                }
+                                prefill={
+                                  t.interactive.data as
+                                    | import("@/lib/chat-store").AttendanceSchedulePrefill
+                                    | undefined
+                                }
                                 onDone={(msg) =>
-                                  activeId && addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
+                                  activeId &&
+                                  addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
                                 }
                               />
                             )}
@@ -2162,7 +2484,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
             <Button variant="outline" onClick={() => setSavePromptOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSavePrompt} disabled={!promptLabel.trim() || !promptToSave.trim()}>
+            <Button
+              onClick={handleSavePrompt}
+              disabled={!promptLabel.trim() || !promptToSave.trim()}
+            >
               Save
             </Button>
           </DialogFooter>
@@ -2171,7 +2496,6 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     </div>
   );
 }
-
 
 function getActivitySteps(text: string) {
   const lower = text.toLowerCase();

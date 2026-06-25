@@ -67,7 +67,10 @@ DOMAIN_REGISTRY = {
                        "project status, completion percentage, project owner, next milestone, "
                        "PDF report generation, project summary, what projects exist, "
                        "training-platform licenses — an employee requesting a Udemy or Coursera license / online course access, "
-                       "assigning seats, checking who has access, revoking expired licenses",
+                       "assigning seats, checking who has access, revoking expired licenses, "
+                       "learning and upskilling — recommending or searching for online courses on a skill or topic "
+                       "('what course should I take to learn React', 'find Udemy courses on AWS', 'I want to upskill in Power BI'), "
+                       "browsing the company's Udemy Business catalog",
         "status": "active",
     },
     "functional_manager": {

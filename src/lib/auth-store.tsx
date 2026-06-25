@@ -40,7 +40,14 @@ const timeoutPromise = <T,>(promise: Promise<T>, ms: number, errorMsg = "Timeout
   });
 };
 
-export type Role = "Employee" | "HR" | "IT" | "PMO" | "Admin" | "Functional Manager" | "Super Admin";
+export type Role =
+  | "Employee"
+  | "HR"
+  | "IT"
+  | "PMO"
+  | "Admin"
+  | "Functional Manager"
+  | "Super Admin";
 
 export interface TeamMember {
   id: string;
@@ -55,7 +62,7 @@ export interface User {
   name: string;
   email: string;
   role: Role;
-  scopes: string[];       // Feature-level scopes for scoped Admin; [] = full role access
+  scopes: string[]; // Feature-level scopes for scoped Admin; [] = full role access
   avatarUrl?: string;
   team?: TeamMember[];
 }
@@ -71,11 +78,11 @@ interface AuthContextType {
 }
 
 const ROLE_MAP: Record<string, Role> = {
-  "employee": "Employee",
-  "hr": "HR",
-  "it": "IT",
-  "pmo": "PMO",
-  "admin": "Admin",
+  employee: "Employee",
+  hr: "HR",
+  it: "IT",
+  pmo: "PMO",
+  admin: "Admin",
   "functional manager": "Functional Manager",
   "super admin": "Super Admin",
 };
@@ -101,21 +108,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const checkAccount = async () => {
       // 1. Dev Bypass / Mock Mode
-      const isDev = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      const isDev =
+        window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
       const params = new URLSearchParams(window.location.search);
-      const mockEmail = params.get("mock-email") || localStorage.getItem("mock-email") || (isDev ? "shivam.sharma@alignedautomation.com" : null);
-      const mockRole = params.get("mock-role") || localStorage.getItem("mock-role") || (isDev ? "Employee" : null);
+      const mockEmail =
+        params.get("mock-email") ||
+        localStorage.getItem("mock-email") ||
+        (isDev ? "shivam.sharma@alignedautomation.com" : null);
+      const mockRole =
+        params.get("mock-role") || localStorage.getItem("mock-role") || (isDev ? "Employee" : null);
 
       if (mockEmail) {
         if (params.get("mock-email")) localStorage.setItem("mock-email", mockEmail);
-        if (params.get("mock-role")) localStorage.setItem("mock-role", mockRole);
-        
-        let effectiveRole: Role = ROLE_MAP[mockRole.toLowerCase()] ?? (mockRole as Role);
+        if (params.get("mock-role") && mockRole) localStorage.setItem("mock-role", mockRole);
+
+        const resolvedRole = mockRole || "Employee";
+        let effectiveRole: Role = ROLE_MAP[resolvedRole.toLowerCase()] ?? (resolvedRole as Role);
         let scopes: string[] = [];
         try {
-          const accessRes = await fetchWithTimeout("/api/access/me", {
-            headers: { "x-user-email": mockEmail, "x-user-role": mockRole.toLowerCase() },
-          }, 2000);
+          const accessRes = await fetchWithTimeout(
+            "/api/access/me",
+            {
+              headers: { "x-user-email": mockEmail, "x-user-role": resolvedRole.toLowerCase() },
+            },
+            2000,
+          );
           if (accessRes.ok) {
             const accessData = await accessRes.json();
             if (accessData.has_override && accessData.role) {
@@ -135,8 +152,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           scopes,
           avatarUrl: prev?.avatarUrl || undefined,
           team: [
-            { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
-            { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
+            {
+              id: "t1",
+              name: "Alice Smith",
+              role: "Employee",
+              department: "Engineering",
+              avatar: "AS",
+            },
+            {
+              id: "t2",
+              name: "Bob Jones",
+              role: "Employee",
+              department: "Engineering",
+              avatar: "BJ",
+            },
           ],
         }));
         setIsLoading(false);
@@ -154,9 +183,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Verify the user is on the backend allowlist before granting access.
           try {
-            const res = await fetchWithTimeout("/api/me", {
-              headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
-            }, 2000);
+            const res = await fetchWithTimeout(
+              "/api/me",
+              {
+                headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
+              },
+              2000,
+            );
             if (res.status === 403) {
               setAccessDenied(true);
               setIsLoading(false);
@@ -170,9 +203,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
           let scopes: string[] = [];
           try {
-            const accessRes = await fetchWithTimeout("/api/access/me", {
-              headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
-            }, 2000);
+            const accessRes = await fetchWithTimeout(
+              "/api/access/me",
+              {
+                headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
+              },
+              2000,
+            );
             if (accessRes.ok) {
               const accessData = await accessRes.json();
               if (accessData.has_override && accessData.role) {
@@ -193,8 +230,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             scopes,
             avatarUrl: prev?.avatarUrl || cachedAvatar,
             team: [
-              { id: "t1", name: "Alice Smith", role: "Employee", department: "Engineering", avatar: "AS" },
-              { id: "t2", name: "Bob Jones", role: "Employee", department: "Engineering", avatar: "BJ" },
+              {
+                id: "t1",
+                name: "Alice Smith",
+                role: "Employee",
+                department: "Engineering",
+                avatar: "AS",
+              },
+              {
+                id: "t2",
+                name: "Bob Jones",
+                role: "Employee",
+                department: "Engineering",
+                avatar: "BJ",
+              },
             ],
           }));
           setIsLoading(false);
@@ -320,7 +369,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isInteracting, accessDenied, login, logout, setRole }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, isInteracting, accessDenied, login, logout, setRole }}
+    >
       {children}
     </AuthContext.Provider>
   );

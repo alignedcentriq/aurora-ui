@@ -1,6 +1,9 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { AnnouncementBodyEditor, type ImageAction } from "@/components/assistant/AnnouncementBodyEditor";
+import {
+  AnnouncementBodyEditor,
+  type ImageAction,
+} from "@/components/assistant/AnnouncementBodyEditor";
 import {
   Server,
   Shield,
@@ -51,11 +54,14 @@ export function AdminDashboard() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [recallTarget, setRecallTarget] = useState<number | null>(null);
 
-  const authHeaders = useMemo(() => ({
-    "Content-Type": "application/json",
-    ...(user?.email ? { "x-user-email": user.email } : {}),
-    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
-  }), [user?.email, user?.role]);
+  const authHeaders = useMemo(
+    () => ({
+      "Content-Type": "application/json",
+      ...(user?.email ? { "x-user-email": user.email } : {}),
+      ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+    }),
+    [user?.email, user?.role],
+  );
 
   useEffect(() => {
     fetch("/api/announcements", { headers: authHeaders })
@@ -85,13 +91,20 @@ export function AdminDashboard() {
     setRecipientSearch(q);
     setShowRecipientDrop(q.length >= 2);
     if (recipientTimer.current) clearTimeout(recipientTimer.current);
-    if (q.length < 2) { setRecipientResults([]); return; }
+    if (q.length < 2) {
+      setRecipientResults([]);
+      return;
+    }
     recipientTimer.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/announcements/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders });
+        const res = await fetch(`/api/announcements/users/search?q=${encodeURIComponent(q)}`, {
+          headers: authHeaders,
+        });
         const data = await res.json();
         setRecipientResults(Array.isArray(data) ? data : []);
-      } catch { setRecipientResults([]); }
+      } catch {
+        setRecipientResults([]);
+      }
     }, 250);
   }
 
@@ -99,7 +112,9 @@ export function AdminDashboard() {
     if (!recipientTags.some((r) => r.email === u.email)) {
       setRecipientTags((prev) => [...prev, u]);
     }
-    setRecipientSearch(""); setRecipientResults([]); setShowRecipientDrop(false);
+    setRecipientSearch("");
+    setRecipientResults([]);
+    setShowRecipientDrop(false);
   }
 
   const handleCreateAnnouncement = async () => {
@@ -107,10 +122,14 @@ export function AdminDashboard() {
     setCreating(true);
     try {
       await fetch("/api/announcements", {
-        method: "POST", headers: authHeaders,
+        method: "POST",
+        headers: authHeaders,
         body: JSON.stringify({
-          title: newAnn.title, body: newAnn.body, category: newAnn.category,
-          created_by_domain: "admin", target_audience: audienceRole,
+          title: newAnn.title,
+          body: newAnn.body,
+          category: newAnn.category,
+          created_by_domain: "admin",
+          target_audience: audienceRole,
           email_recipients: recipientTags.length > 0 ? recipientTags.map((r) => r.email) : null,
           image_url: imageUrl ?? null,
           image_action: imageAction ?? null,
@@ -118,15 +137,23 @@ export function AdminDashboard() {
       });
       setNewAnn({ title: "", body: "", category: "General" });
       setAudienceRole("all");
-      setImageUrl(null); setImageAction(null);
-      setRecipientTags([]); setRecipientSearch(""); setRecipientResults([]);
+      setImageUrl(null);
+      setImageAction(null);
+      setRecipientTags([]);
+      setRecipientSearch("");
+      setRecipientResults([]);
       setShowForm(false);
       refreshAnnouncements();
-    } finally { setCreating(false); }
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleDeactivate = async (id: number, recall: boolean) => {
-    await fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers: authHeaders });
+    await fetch(`/api/announcements/${id}?recall=${recall}`, {
+      method: "DELETE",
+      headers: authHeaders,
+    });
     setRecallTarget(null);
     refreshAnnouncements();
   };
@@ -137,7 +164,9 @@ export function AdminDashboard() {
         <div className="text-center">
           <Shield className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <p className="text-lg font-medium text-foreground">Access Restricted</p>
-          <p className="text-sm text-muted-foreground mt-1">This dashboard is available to Administrators only.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            This dashboard is available to Administrators only.
+          </p>
         </div>
       </div>
     );
@@ -145,22 +174,25 @@ export function AdminDashboard() {
 
   const categoryColors: Record<string, string> = {
     "Policy Update": "bg-[#16a34a]/10 text-[#16a34a] border border-[#16a34a]/20",
-    "Holiday": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
-    "Events": "bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20",
+    Holiday:
+      "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+    Events: "bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/20",
     "IT Alert": "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
-    "General": "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+    General: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
   };
 
   const filterCategories = ["All", "Policy", "Events", "Alerts"];
   const activeAnnouncements = announcements.filter((a) => a.is_active);
-  const filteredAnnouncements = categoryFilter === "All"
-    ? announcements
-    : announcements.filter((a) => {
-        if (categoryFilter === "Policy") return a.category === "Policy Update";
-        if (categoryFilter === "Events") return a.category === "Events" || a.category === "Holiday";
-        if (categoryFilter === "Alerts") return a.category === "IT Alert";
-        return true;
-      });
+  const filteredAnnouncements =
+    categoryFilter === "All"
+      ? announcements
+      : announcements.filter((a) => {
+          if (categoryFilter === "Policy") return a.category === "Policy Update";
+          if (categoryFilter === "Events")
+            return a.category === "Events" || a.category === "Holiday";
+          if (categoryFilter === "Alerts") return a.category === "IT Alert";
+          return true;
+        });
 
   const formatTimeAgo = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -183,7 +215,9 @@ export function AdminDashboard() {
             <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
               System & Ops
             </p>
-            <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">Admin</h1>
+            <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">
+              Admin
+            </h1>
             <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">
               Manage announcements and monitor system status across the workspace.
             </p>
@@ -199,14 +233,19 @@ export function AdminDashboard() {
       </div>
 
       <div className="flex-1 p-8 space-y-6">
-
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-5 flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">Active Broadcasts</p>
-              <p className="text-[28px] font-bold text-[#0f172a] dark:text-white mt-1">{activeAnnouncements.length}</p>
-              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">+{Math.min(activeAnnouncements.length, 2)} this week</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+                Active Broadcasts
+              </p>
+              <p className="text-[28px] font-bold text-[#0f172a] dark:text-white mt-1">
+                {activeAnnouncements.length}
+              </p>
+              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">
+                +{Math.min(activeAnnouncements.length, 2)} this week
+              </p>
             </div>
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#00a29a]/10 dark:bg-[#00c4bb]/10">
               <Megaphone className="h-5 w-5 text-[#00a29a] dark:text-[#00c4bb]" />
@@ -215,9 +254,15 @@ export function AdminDashboard() {
 
           <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-5 flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">System Status</p>
-              <p className="text-[18px] font-bold text-[#0f172a] dark:text-white mt-1">Operational</p>
-              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">All services up</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+                System Status
+              </p>
+              <p className="text-[18px] font-bold text-[#0f172a] dark:text-white mt-1">
+                Operational
+              </p>
+              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">
+                All services up
+              </p>
             </div>
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#16a34a]/10 dark:bg-emerald-500/10">
               <CheckCircle2 className="h-5 w-5 text-[#16a34a] dark:text-emerald-400" />
@@ -226,9 +271,13 @@ export function AdminDashboard() {
 
           <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-5 flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">Open IT Alerts</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+                Open IT Alerts
+              </p>
               <p className="text-[28px] font-bold text-[#0f172a] dark:text-white mt-1">1</p>
-              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">Scheduled tonight</p>
+              <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">
+                Scheduled tonight
+              </p>
             </div>
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#f59e0b]/10 dark:bg-amber-500/10">
               <AlertTriangle className="h-5 w-5 text-[#f59e0b] dark:text-amber-400" />
@@ -237,7 +286,9 @@ export function AdminDashboard() {
 
           <div className="rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-5 flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">Engagement</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+                Engagement
+              </p>
               <p className="text-[28px] font-bold text-[#0f172a] dark:text-white mt-1">94%</p>
               <p className="text-[11px] text-[#94a3b8] dark:text-white/40 mt-0.5">Last 30 days</p>
             </div>
@@ -281,7 +332,9 @@ export function AdminDashboard() {
 
             {/* Audience */}
             <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-[#94a3b8]">Send to</p>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-[#94a3b8]">
+                Send to
+              </p>
               <div className="flex flex-wrap gap-1.5">
                 {AUDIENCE_ROLES.map((r) => (
                   <button
@@ -292,7 +345,7 @@ export function AdminDashboard() {
                       "rounded-full px-3 py-1 text-[12px] font-medium border transition-colors",
                       audienceRole === r.value
                         ? "bg-[#00a29a] dark:bg-[#00c4bb] text-white border-transparent"
-                        : "border-[#e2e8f0] dark:border-white/[0.1] text-[#64748b] dark:text-white/50 hover:border-[#00a29a]/40"
+                        : "border-[#e2e8f0] dark:border-white/[0.1] text-[#64748b] dark:text-white/50 hover:border-[#00a29a]/40",
                     )}
                   >
                     {r.label}
@@ -305,9 +358,19 @@ export function AdminDashboard() {
                 {recipientTags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {recipientTags.map((r) => (
-                      <span key={r.email} className="flex items-center gap-1 rounded-full bg-[#f1f5f9] dark:bg-white/[0.06] px-2.5 py-0.5 text-[12px] text-[#334155] dark:text-white/70">
+                      <span
+                        key={r.email}
+                        className="flex items-center gap-1 rounded-full bg-[#f1f5f9] dark:bg-white/[0.06] px-2.5 py-0.5 text-[12px] text-[#334155] dark:text-white/70"
+                      >
                         {r.name || r.email}
-                        <button onClick={() => setRecipientTags((p) => p.filter((x) => x.email !== r.email))} className="text-[#94a3b8] hover:text-rose-500">×</button>
+                        <button
+                          onClick={() =>
+                            setRecipientTags((p) => p.filter((x) => x.email !== r.email))
+                          }
+                          className="text-[#94a3b8] hover:text-rose-500"
+                        >
+                          ×
+                        </button>
                       </span>
                     ))}
                   </div>
@@ -326,12 +389,18 @@ export function AdminDashboard() {
                   {showRecipientDrop && recipientResults.length > 0 && (
                     <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-[#e2e8f0] dark:border-white/[0.1] rounded-xl shadow-lg w-full max-h-44 overflow-y-auto">
                       {recipientResults.map((u) => (
-                        <button key={u.email} type="button" onMouseDown={() => addRecipient(u)}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left">
+                        <button
+                          key={u.email}
+                          type="button"
+                          onMouseDown={() => addRecipient(u)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left"
+                        >
                           <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           <div className="min-w-0">
                             <div className="text-[12px] font-medium truncate">{u.name}</div>
-                            <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">
+                              {u.email}
+                            </div>
                           </div>
                         </button>
                       ))}
@@ -351,7 +420,16 @@ export function AdminDashboard() {
                 Publish
               </button>
               <button
-                onClick={() => { setShowForm(false); setNewAnn({ title: "", body: "", category: "General" }); setAudienceRole("all"); setImageUrl(null); setImageAction(null); setRecipientTags([]); setRecipientSearch(""); setRecipientResults([]); }}
+                onClick={() => {
+                  setShowForm(false);
+                  setNewAnn({ title: "", body: "", category: "General" });
+                  setAudienceRole("all");
+                  setImageUrl(null);
+                  setImageAction(null);
+                  setRecipientTags([]);
+                  setRecipientSearch("");
+                  setRecipientResults([]);
+                }}
                 className="rounded-lg border border-[#e2e8f0] dark:border-white/[0.1] px-4 py-2 text-[13px] font-medium text-[#64748b] dark:text-white/50 hover:text-[#0f172a] dark:hover:text-white transition-colors"
               >
                 Cancel
@@ -369,8 +447,12 @@ export function AdminDashboard() {
                 <Megaphone className="h-4 w-4 text-[#00a29a] dark:text-[#00c4bb]" />
               </div>
               <div>
-                <h3 className="text-[15px] font-bold text-[#0f172a] dark:text-white">Announcement Management</h3>
-                <p className="text-[12px] text-[#94a3b8] dark:text-white/40 mt-0.5">Create and manage broadcasts for all employees</p>
+                <h3 className="text-[15px] font-bold text-[#0f172a] dark:text-white">
+                  Announcement Management
+                </h3>
+                <p className="text-[12px] text-[#94a3b8] dark:text-white/40 mt-0.5">
+                  Create and manage broadcasts for all employees
+                </p>
               </div>
             </div>
 
@@ -383,7 +465,7 @@ export function AdminDashboard() {
                     "rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors",
                     categoryFilter === cat
                       ? "bg-[#f1f5f9] dark:bg-white/[0.08] text-[#0f172a] dark:text-white"
-                      : "text-[#94a3b8] dark:text-white/40 hover:text-[#64748b] dark:hover:text-white/60"
+                      : "text-[#94a3b8] dark:text-white/40 hover:text-[#64748b] dark:hover:text-white/60",
                   )}
                 >
                   {cat}
@@ -417,20 +499,46 @@ export function AdminDashboard() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2.5 flex-wrap">
-                        <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", ann.is_active ? "bg-[#00a29a] dark:bg-[#00c4bb]" : "bg-[#94a3b8]")} />
-                        <span className="text-[14px] font-bold text-[#0f172a] dark:text-white">{ann.title}</span>
-                        <span className={cn("rounded-full px-2.5 py-0.5 text-[10px] font-semibold", categoryColors[ann.category] ?? "bg-[#f1f5f9] dark:bg-white/[0.08] text-[#64748b] dark:text-white/50")}>
+                        <span
+                          className={cn(
+                            "h-2.5 w-2.5 rounded-full shrink-0",
+                            ann.is_active ? "bg-[#00a29a] dark:bg-[#00c4bb]" : "bg-[#94a3b8]",
+                          )}
+                        />
+                        <span className="text-[14px] font-bold text-[#0f172a] dark:text-white">
+                          {ann.title}
+                        </span>
+                        <span
+                          className={cn(
+                            "rounded-full px-2.5 py-0.5 text-[10px] font-semibold",
+                            categoryColors[ann.category] ??
+                              "bg-[#f1f5f9] dark:bg-white/[0.08] text-[#64748b] dark:text-white/50",
+                          )}
+                        >
                           {ann.category}
                         </span>
                         {!ann.is_active && (
-                          <span className="rounded-full bg-[#f1f5f9] dark:bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-[#94a3b8]">Inactive</span>
+                          <span className="rounded-full bg-[#f1f5f9] dark:bg-white/[0.08] px-2 py-0.5 text-[10px] font-semibold text-[#94a3b8]">
+                            Inactive
+                          </span>
                         )}
                       </div>
-                      <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-1.5 line-clamp-2 leading-relaxed">{ann.body}</p>
+                      <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-1.5 line-clamp-2 leading-relaxed">
+                        {ann.body}
+                      </p>
                       <div className="flex items-center gap-4 mt-2.5 text-[11px] text-[#94a3b8] dark:text-white/30">
-                        <span className="flex items-center gap-1"><AtSign className="h-3 w-3" />{ann.created_by}@{ann.created_by_domain}</span>
-                        <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatTimeAgo(ann.created_at)}</span>
-                        <span className="flex items-center gap-1"><Hash className="h-3 w-3" />{ann.created_by_domain}</span>
+                        <span className="flex items-center gap-1">
+                          <AtSign className="h-3 w-3" />
+                          {ann.created_by}@{ann.created_by_domain}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatTimeAgo(ann.created_at)}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Hash className="h-3 w-3" />
+                          {ann.created_by_domain}
+                        </span>
                       </div>
                     </div>
                     {ann.is_active && (
@@ -453,9 +561,12 @@ export function AdminDashboard() {
       {recallTarget !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="w-full max-w-sm mx-4 rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card p-6 shadow-2xl space-y-4">
-            <p className="text-[15px] font-bold text-[#0f172a] dark:text-white">Delete Announcement</p>
+            <p className="text-[15px] font-bold text-[#0f172a] dark:text-white">
+              Delete Announcement
+            </p>
             <p className="text-[13px] text-[#64748b] dark:text-white/50">
-              Do you also want to recall the email sent to recipients? A retraction notice will be sent.
+              Do you also want to recall the email sent to recipients? A retraction notice will be
+              sent.
             </p>
             <div className="flex flex-col gap-2">
               <button

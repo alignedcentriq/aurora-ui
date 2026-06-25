@@ -29,7 +29,8 @@ export function AnimatedBackground() {
           height: 480,
           top: "-12%",
           left: "-6%",
-          background: "radial-gradient(circle, color-mix(in oklab, var(--clarity) 22%, transparent), transparent 70%)",
+          background:
+            "radial-gradient(circle, color-mix(in oklab, var(--clarity) 22%, transparent), transparent 70%)",
           filter: "blur(80px)",
         }}
         animate={{ x: [0, 35, -20, 0], y: [0, 25, -12, 0] }}
@@ -44,7 +45,8 @@ export function AnimatedBackground() {
           height: 560,
           bottom: "-16%",
           right: "-8%",
-          background: "radial-gradient(circle, color-mix(in oklab, var(--connectivity) 20%, transparent), transparent 70%)",
+          background:
+            "radial-gradient(circle, color-mix(in oklab, var(--connectivity) 20%, transparent), transparent 70%)",
           filter: "blur(95px)",
         }}
         animate={{ x: [0, -28, 18, 0], y: [0, -35, 14, 0] }}
@@ -59,7 +61,8 @@ export function AnimatedBackground() {
           height: 350,
           top: "35%",
           right: "15%",
-          background: "radial-gradient(circle, color-mix(in oklab, var(--collaboration) 14%, transparent), transparent 70%)",
+          background:
+            "radial-gradient(circle, color-mix(in oklab, var(--collaboration) 14%, transparent), transparent 70%)",
           filter: "blur(75px)",
         }}
         animate={{ x: [0, -40, 25, 0], y: [0, 30, -20, 0] }}
@@ -74,7 +77,8 @@ export function AnimatedBackground() {
           height: 300,
           top: "55%",
           left: "5%",
-          background: "radial-gradient(circle, color-mix(in oklab, var(--capacity) 16%, transparent), transparent 70%)",
+          background:
+            "radial-gradient(circle, color-mix(in oklab, var(--capacity) 16%, transparent), transparent 70%)",
           filter: "blur(70px)",
         }}
         animate={{ x: [0, 45, -15, 0], y: [0, -20, 30, 0] }}
@@ -129,15 +133,71 @@ export function AnimatedBackground() {
           </linearGradient>
         </defs>
         {/* Horizontal circuit paths */}
-        <line x1="0" y1="30%" x2="100%" y2="30%" stroke="url(#circuit-grad)" strokeWidth="0.5" strokeDasharray="8 16" />
-        <line x1="0" y1="60%" x2="100%" y2="60%" stroke="url(#circuit-grad)" strokeWidth="0.5" strokeDasharray="6 20" />
-        <line x1="0" y1="80%" x2="100%" y2="80%" stroke="url(#circuit-grad)" strokeWidth="0.5" strokeDasharray="10 14" />
+        <line
+          x1="0"
+          y1="30%"
+          x2="100%"
+          y2="30%"
+          stroke="url(#circuit-grad)"
+          strokeWidth="0.5"
+          strokeDasharray="8 16"
+        />
+        <line
+          x1="0"
+          y1="60%"
+          x2="100%"
+          y2="60%"
+          stroke="url(#circuit-grad)"
+          strokeWidth="0.5"
+          strokeDasharray="6 20"
+        />
+        <line
+          x1="0"
+          y1="80%"
+          x2="100%"
+          y2="80%"
+          stroke="url(#circuit-grad)"
+          strokeWidth="0.5"
+          strokeDasharray="10 14"
+        />
         {/* Vertical connectors */}
-        <line x1="25%" y1="0" x2="25%" y2="100%" stroke="url(#circuit-grad)" strokeWidth="0.5" strokeDasharray="4 24" />
-        <line x1="70%" y1="0" x2="70%" y2="100%" stroke="url(#circuit-grad)" strokeWidth="0.5" strokeDasharray="6 18" />
+        <line
+          x1="25%"
+          y1="0"
+          x2="25%"
+          y2="100%"
+          stroke="url(#circuit-grad)"
+          strokeWidth="0.5"
+          strokeDasharray="4 24"
+        />
+        <line
+          x1="70%"
+          y1="0"
+          x2="70%"
+          y2="100%"
+          stroke="url(#circuit-grad)"
+          strokeWidth="0.5"
+          strokeDasharray="6 18"
+        />
         {/* Diagonal accent */}
-        <line x1="0" y1="0" x2="40%" y2="100%" stroke="var(--clarity)" strokeWidth="0.5" strokeDasharray="5 30" />
-        <line x1="60%" y1="0" x2="100%" y2="70%" stroke="var(--collaboration)" strokeWidth="0.5" strokeDasharray="5 30" />
+        <line
+          x1="0"
+          y1="0"
+          x2="40%"
+          y2="100%"
+          stroke="var(--clarity)"
+          strokeWidth="0.5"
+          strokeDasharray="5 30"
+        />
+        <line
+          x1="60%"
+          y1="0"
+          x2="100%"
+          y2="70%"
+          stroke="var(--collaboration)"
+          strokeWidth="0.5"
+          strokeDasharray="5 30"
+        />
       </svg>
 
       {/* Noise texture overlay for premium feel */}

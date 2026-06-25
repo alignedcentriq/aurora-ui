@@ -560,6 +560,123 @@ class FormLibraryService:
         finally:
             db.close()
 
+    # ── Trigger-keyword learning ──────────────────────────────────────────────────
+    @staticmethod
+    def suggest_keywords(window_days: int = 30, max_queries: int = 300, per_form: int = 6) -> dict:
+        """Mine recent real chat queries for trigger keywords each form is *missing*.
+
+        A query is a "near-miss" for form X when it matches X's embedding above the chat-time
+        match threshold (so X is the right form) yet contains none of X's existing trigger
+        keywords — meaning the inline form never auto-opened for it. The words people used in
+        those queries are the keywords worth adding. Mirrors AppDirectoryService.suggest_keywords
+        (whose phrase-mining helpers it reuses) but over FormTemplate. Fail-soft → empty result.
+        """
+        import re
+
+        from app.models import AiRequestLog
+        from app.services.app_directory_service import AppDirectoryService, _cosine
+
+        threshold = settings.FORM_MATCH_SIM_THRESHOLD
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=window_days)
+
+        db = SessionLocal()
+        try:
+            forms = (
+                db.query(FormTemplate)
+                .filter(FormTemplate.enabled.is_(True), FormTemplate.embedding.isnot(None))
+                .all()
+            )
+            if not forms:
+                return {"forms": [], "scanned": 0, "window_days": window_days}
+
+            form_meta = []
+            for f in forms:
+                kws = {k.strip().lower() for k in (f.trigger_keywords or "").split(",") if k.strip()}
+                form_meta.append({
+                    "id": f.id,
+                    "name": f.name,
+                    "embedding": [float(x) for x in f.embedding],
+                    "keywords": kws,
+                })
+
+            rows = (
+                db.query(AiRequestLog.user_message)
+                .filter(
+                    AiRequestLog.created_at >= cutoff,
+                    AiRequestLog.user_message.isnot(None),
+                    AiRequestLog.error.is_(None),
+                )
+                .order_by(AiRequestLog.created_at.desc())
+                .limit(max_queries * 5)
+                .all()
+            )
+        except Exception:
+            db.close()
+            return {"forms": [], "scanned": 0, "window_days": window_days}
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+        seen_norm: set[str] = set()
+        distinct: list[str] = []
+        for (msg,) in rows:
+            msg = (msg or "").strip()
+            if len(msg) < 6 or len(msg) > 300:
+                continue
+            norm = re.sub(r"\s+", " ", msg.lower())
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            distinct.append(msg)
+            if len(distinct) >= max_queries:
+                break
+
+        per_form_msgs: dict[int, list[str]] = {}
+        for msg in distinct:
+            emb = PolicyService._get_embedding(msg)
+            if not emb:
+                continue
+            best, best_sim = None, threshold
+            for fm in form_meta:
+                sim = _cosine(emb, fm["embedding"])
+                if sim >= best_sim:
+                    best, best_sim = fm, sim
+            if best is None:
+                continue
+            low = msg.lower()
+            if any(kw in low for kw in best["keywords"]):
+                continue  # already triggers → not a near-miss
+            per_form_msgs.setdefault(best["id"], []).append(msg)
+
+        results = []
+        for fm in form_meta:
+            msgs = per_form_msgs.get(fm["id"], [])
+            if not msgs:
+                continue
+            phrases = AppDirectoryService._candidate_phrases(msgs, fm["keywords"], fm["name"])
+            ranked = sorted(
+                (
+                    {"keyword": p, "count": d["count"], "samples": d["samples"]}
+                    for p, d in phrases.items()
+                    if d["count"] >= 2 or " " in p
+                ),
+                key=lambda x: (x["count"], 1 if " " in x["keyword"] else 0),
+                reverse=True,
+            )
+            clean = [r for r in ranked if validate_trigger_keywords(r["keyword"])[0]][:per_form]
+            if clean:
+                results.append({
+                    "form_id": fm["id"],
+                    "form_name": fm["name"],
+                    "near_miss_count": len(msgs),
+                    "suggestions": clean,
+                })
+
+        results.sort(key=lambda r: r["near_miss_count"], reverse=True)
+        return {"forms": results, "scanned": len(distinct), "window_days": window_days}
+
     # ── Submissions ───────────────────────────────────────────────────────────────
     @staticmethod
     def submit(form_template_id: int, employee_email: str, field_values: dict) -> dict:

@@ -215,6 +215,121 @@ class Project(Base):
     achievements = Column(Text)
 
 
+# ── Project IQ (Project DNA) ──────────────────────────────
+# Structured, reusable per-project profiles ("Project DNA") extracted by LLM from
+# the SharePoint "Project Showcase" corpus (transcripts + project files already
+# ingested into Policy/PolicyChunk, keyed sp:PROJECT/{slug}/...). Internal-only:
+# powers Find-Similar-Projects, Lessons Learned, Expertise matching, Reusable-Asset
+# discovery. Every extracted fact carries confidence (verified|inferred); profiles
+# start review_status='draft' until a PMO/admin reviews them.
+
+class ProjectProfile(Base):
+    __tablename__ = "project_profiles"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_slug = Column(String, unique=True, nullable=False, index=True)  # matches sp:PROJECT/{slug}/
+    name = Column(String, nullable=False, index=True)
+    client_industry = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+    business_problem = Column(Text, nullable=True)
+    solution_summary = Column(Text, nullable=True)
+    business_outcomes = Column(Text, nullable=True)
+    technology_stack = Column(JSON, nullable=True)        # list[str]
+    architecture_summary = Column(Text, nullable=True)
+    complexity_drivers = Column(JSON, nullable=True)      # list[str]
+    project_size = Column(String, nullable=True)
+    team_size = Column(String, nullable=True)
+    delivery_start_date = Column(String, nullable=True)
+    delivery_end_date = Column(String, nullable=True)
+    dna_summary = Column(Text, nullable=True)             # text fed to the embedder
+    embedding = Column(Vector(768), nullable=True)
+    confidence = Column(String, default="inferred")       # verified | inferred (overall)
+    review_status = Column(String, default="draft")       # draft | reviewed
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    source_doc_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    capabilities = relationship("ProjectCapability", back_populates="profile", cascade="all, delete-orphan")
+    integrations = relationship("ProjectIntegration", back_populates="profile", cascade="all, delete-orphan")
+    lessons = relationship("ProjectLesson", back_populates="profile", cascade="all, delete-orphan")
+    reusable_assets = relationship("ProjectReusableAsset", back_populates="profile", cascade="all, delete-orphan")
+    expertise = relationship("ProjectExpertise", back_populates="profile", cascade="all, delete-orphan")
+
+
+class ProjectCapability(Base):
+    __tablename__ = "project_capabilities"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    capability_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    maturity_level = Column(String, nullable=True)
+    confidence = Column(String, default="inferred")
+    evidence = Column(Text, nullable=True)
+    profile = relationship("ProjectProfile", back_populates="capabilities")
+
+
+class ProjectIntegration(Base):
+    __tablename__ = "project_integrations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    system_name = Column(String, nullable=False)
+    integration_type = Column(String, nullable=True)
+    complexity_level = Column(String, nullable=True)
+    lessons_learned = Column(Text, nullable=True)
+    confidence = Column(String, default="inferred")
+    profile = relationship("ProjectProfile", back_populates="integrations")
+
+
+class ProjectLesson(Base):
+    __tablename__ = "project_lessons"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    category = Column(String, nullable=True)
+    lesson = Column(Text, nullable=False)
+    impact_level = Column(String, nullable=True)
+    recommendation = Column(Text, nullable=True)
+    confidence = Column(String, default="inferred")
+    evidence = Column(Text, nullable=True)
+    profile = relationship("ProjectProfile", back_populates="lessons")
+
+
+class ProjectReusableAsset(Base):
+    __tablename__ = "project_reusable_assets"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    asset_name = Column(String, nullable=False)
+    asset_type = Column(String, nullable=True)
+    repository_url = Column(String, nullable=True)
+    owner = Column(String, nullable=True)
+    reuse_readiness = Column(String, nullable=True)
+    documentation_url = Column(String, nullable=True)
+    confidence = Column(String, default="inferred")
+    profile = relationship("ProjectProfile", back_populates="reusable_assets")
+
+
+class ProjectExpertise(Base):
+    __tablename__ = "project_expertise"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    person_name = Column(String, nullable=False)
+    role_on_project = Column(String, nullable=True)
+    capability = Column(String, nullable=True)
+    evidence_level = Column(String, default="inferred")  # verified | inferred
+    profile = relationship("ProjectProfile", back_populates="expertise")
 
 
 # ── Admin Domain ──────────────────────────
@@ -1228,6 +1343,121 @@ class EmployeeSkill(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     employee = relationship("Employee", back_populates="skills")
+
+
+# ── Local TechElevate LMS ─────────────────────────────────────────────────────
+# An in-house mirror of the external TechElevate training portal. The external API
+# is unreachable (no stored Microsoft refresh token), so these tables back the same
+# learning experience locally AND close the upskilling flywheel: each training is
+# tagged with Alchemy-aligned skills, and completing + passing it writes those back
+# as *verified* EmployeeSkill rows that resource-matching and Skill Supply then read.
+
+class TeTraining(Base):
+    """A course in the local TechElevate LMS. `skill_tags` are Alchemy-aligned skill
+    names; passing this training writes them back as verified EmployeeSkills."""
+    __tablename__ = "te_trainings"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True)            # Technical | Governance & Compliance | Business
+    training_type = Column(String, default="single")    # single | levels
+    duration_minutes = Column(Integer, default=0)
+    pass_percentage = Column(Float, default=60.0)
+    max_attempts = Column(Integer, default=3)
+    video_link = Column(String, nullable=True)
+    skill_tags = Column(JSON, nullable=True)            # ["Python","Machine Learning"] — Alchemy-aligned
+    photo_url = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    levels = relationship("TeTrainingLevel", back_populates="training",
+                          cascade="all, delete-orphan", order_by="TeTrainingLevel.sort_order")
+    questions = relationship("TeMcqQuestion", back_populates="training", cascade="all, delete-orphan")
+    assignments = relationship("TeAssignment", back_populates="training", cascade="all, delete-orphan")
+
+
+class TeTrainingLevel(Base):
+    """A level within a multi-level training (Basic / Intermediate / Advanced)."""
+    __tablename__ = "te_training_levels"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    name = Column(String, nullable=False)               # Basic | Intermediate | Advanced
+    sort_order = Column(Integer, default=0)
+    duration_minutes = Column(Integer, default=0)
+    pass_percentage = Column(Float, default=60.0)
+    description = Column(Text, nullable=True)
+
+    training = relationship("TeTraining", back_populates="levels")
+
+
+class TeMcqQuestion(Base):
+    """An MCQ assessment question. Grading these produces the score that drives pass/fail
+    (and therefore the verified-skill write-back)."""
+    __tablename__ = "te_mcq_questions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    level_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_training_levels.id", ondelete="CASCADE"), nullable=True)
+    question = Column(Text, nullable=False)
+    options = Column(JSON, nullable=True)               # {"A":..,"B":..,"C":..,"D":..}
+    correct_answer = Column(String, nullable=True)      # "A".."D"
+    marks = Column(Integer, default=1)
+    explanation = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="questions")
+
+
+class TeAssignment(Base):
+    """An employee's enrolment in a training. On pass, the training's skill_tags are
+    written back once (guarded by `skills_applied`) as verified EmployeeSkills."""
+    __tablename__ = "te_assignments"
+    __table_args__ = (
+        UniqueConstraint("training_id", "employee_id", name="uq_te_assignment_training_emp"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id", ondelete="SET NULL"), nullable=True, index=True)
+    employee_email = Column(String, index=True)
+    employee_name = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    status = Column(String, default="Assigned", index=True)   # Assigned | In Progress | Completed | Failed
+    score = Column(Float, nullable=True)
+    attempts = Column(Integer, default=0)
+    start_date = Column(Date, nullable=True)
+    due_date = Column(Date, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    skills_applied = Column(Boolean, default=False)     # guard: verified-skill write-back runs once
+    assigned_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="assignments")
+
+
+class TeGroup(Base):
+    """A named cohort of employees for bulk training assignment. Members are stored
+    inline as JSON [{employee_id, name, email, department}] for simple display."""
+    __tablename__ = "te_groups"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    project_name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    photo_url = Column(String, nullable=True)
+    members = Column(JSON, nullable=True)               # [{employee_id, name, email, department}]
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 class UdemyLicenseRequest(Base):

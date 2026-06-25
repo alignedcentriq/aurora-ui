@@ -25,7 +25,9 @@ function fmt12(hhmm: string) {
 function fmtDate(iso: string) {
   const [y, mo, d] = iso.slice(0, 10).split("-").map(Number);
   return new Date(y, mo - 1, d).toLocaleDateString("en-IN", {
-    weekday: "short", day: "numeric", month: "short",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
   });
 }
 
@@ -38,7 +40,7 @@ function fmtTimeRange(start: string, end: string) {
 export function MyScheduleWidget({ userEmail, userRole, days = 7 }: Props) {
   const auth = useMemo(
     () => ({ "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() }),
-    [userEmail, userRole]
+    [userEmail, userRole],
   );
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -51,9 +53,11 @@ export function MyScheduleWidget({ userEmail, userRole, days = 7 }: Props) {
         const res = await fetch(`/api/ms365/my-room-bookings?days=${days}`, { headers: auth });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(res.status === 401
-            ? "Microsoft account not connected. Go to Settings → Connected Accounts."
-            : data.detail ?? "Failed to load your schedule.");
+          setError(
+            res.status === 401
+              ? "Microsoft account not connected. Go to Settings → Connected Accounts."
+              : (data.detail ?? "Failed to load your schedule."),
+          );
           return;
         }
         setBookings(data.bookings ?? []);

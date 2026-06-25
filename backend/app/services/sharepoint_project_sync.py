@@ -87,10 +87,62 @@ def _list_project_folders(drive_id: str, root: str) -> list[str]:
     return [c["name"] for c in children if "folder" in c and c.get("name")]
 
 
+def _prune_deleted_projects(live_slugs: set[str]) -> dict:
+    """Remove Policy rows (+ chunks via CASCADE) and ProjectProfile DNA for project
+    slugs that no longer have a matching folder in SharePoint."""
+    from app.database import SessionLocal
+    from app.models import Policy, ProjectProfile
+
+    db = SessionLocal()
+    try:
+        # Find all slugs currently in the DB.
+        rows = db.query(Policy.source_key).filter(
+            Policy.source_key.like("sp:PROJECT/%")
+        ).all()
+        db_slugs: set[str] = set()
+        for (sk,) in rows:
+            parts = (sk or "").split("/")
+            if len(parts) >= 2:
+                db_slugs.add(parts[1])
+
+        orphaned = db_slugs - live_slugs
+        if not orphaned:
+            return {"pruned_projects": 0, "pruned_dna": 0}
+
+        pruned_policies = 0
+        pruned_dna = 0
+        for slug in orphaned:
+            prefix = f"sp:PROJECT/{slug}/"
+            n = db.query(Policy).filter(Policy.source_key.like(f"{prefix}%")).delete(
+                synchronize_session="fetch"
+            )
+            pruned_policies += n
+            n2 = db.query(ProjectProfile).filter(
+                ProjectProfile.project_slug == slug
+            ).delete(synchronize_session="fetch")
+            pruned_dna += n2
+            logger.info(
+                f"[Project sync] Pruned orphaned project '{slug}': "
+                f"{n} policy rows, {n2} DNA profile(s)"
+            )
+
+        db.commit()
+        return {"pruned_projects": len(orphaned), "pruned_policies": pruned_policies,
+                "pruned_dna": pruned_dna, "slugs": sorted(orphaned)}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def sync_projects() -> dict:
     """Sync every project folder under SHAREPOINT_PROJECTS_ROOT into the
     Project Showcase category. Project content is queried via the general agent,
-    so the 'general' answer cache is invalidated on any change."""
+    so the 'general' answer cache is invalidated on any change.
+
+    Also prunes Policy chunks and ProjectProfile DNA for any project whose
+    top-level folder has been deleted from SharePoint since the last sync."""
     site_url = settings.SHAREPOINT_SITE_URL
     if not site_url:
         return {"status": "error", "message": "SHAREPOINT_SITE_URL is not configured."}
@@ -111,9 +163,24 @@ def sync_projects() -> dict:
         logger.error(msg)
         return {"status": "error", "message": msg}
 
+    live_slugs = {_project_slug(name) for name in project_folders}
+
+    # Prune stale project data for folders that no longer exist in SharePoint.
+    prune_result: dict = {}
+    try:
+        prune_result = _prune_deleted_projects(live_slugs)
+        if prune_result.get("pruned_projects"):
+            logger.info(
+                f"[Project sync] Pruned {prune_result['pruned_projects']} deleted project(s): "
+                f"{prune_result.get('slugs', [])}"
+            )
+    except Exception as e:
+        logger.error(f"[Project sync] Prune step failed: {e}")
+
     if not project_folders:
         logger.info(f"[Project sync] No project subfolders found under '{root}'.")
-        return {"status": "success", "total_new": 0, "total_updated": 0, "results": []}
+        return {"status": "success", "total_new": 0, "total_updated": 0,
+                "total_deleted_projects": prune_result.get("pruned_projects", 0), "results": []}
 
     results = []
     for name in project_folders:
@@ -130,9 +197,12 @@ def sync_projects() -> dict:
 
     total_new = sum(r["new"] for r in results)
     total_updated = sum(r["updated"] for r in results)
+    total_deleted_files = sum(r.get("deleted", 0) for r in results)
     errors = [e for r in results for e in r.get("errors", [])]
 
-    # Re-embed any chunks still missing vectors (mirrors policy sync behaviour).
+    anything_changed = total_new or total_updated or total_deleted_files or prune_result.get("pruned_projects")
+
+    # Re-embed any chunks still missing vectors.
     if total_new or total_updated:
         try:
             from app.services.policy_service import PolicyService
@@ -140,11 +210,27 @@ def sync_projects() -> dict:
         except Exception as e:
             logger.error(f"[Project sync] Post-sync embed error: {e}")
 
+    # Rebuild Project IQ DNA for projects that had content changes.
+    if anything_changed:
+        try:
+            from app.services.project_iq_service import extract_project_dna
+            changed_slugs = set()
+            for r in results:
+                if r.get("new") or r.get("updated") or r.get("deleted"):
+                    changed_slugs.add(_project_slug(r["project"]))
+            for slug in changed_slugs:
+                logger.info(f"[Project sync] Triggering DNA rebuild for '{slug}'")
+                extract_project_dna(slug)
+        except Exception as e:
+            logger.error(f"[Project sync] DNA rebuild error: {e}")
+
     return {
         "status": "partial_error" if errors else "success",
         "projects": len(project_folders),
         "total_new": total_new,
         "total_updated": total_updated,
+        "total_deleted_files": total_deleted_files,
+        "total_deleted_projects": prune_result.get("pruned_projects", 0),
         "results": results,
     }
 

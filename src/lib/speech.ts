@@ -172,13 +172,13 @@ export function getVoiceByGender(gender: "male" | "female"): SpeechSynthesisVoic
   if (gender === "male") {
     // Look for typical male names or keywords
     const maleVoice = enVoices.find((v) =>
-      /david|mark|george|alex|daniel|guy|male|james|microsoft/i.test(v.name)
+      /david|mark|george|alex|daniel|guy|male|james|microsoft/i.test(v.name),
     );
     if (maleVoice) return maleVoice;
   } else {
     // Look for typical female names or keywords
     const femaleVoice = enVoices.find((v) =>
-      /samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name)
+      /samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name),
     );
     if (femaleVoice) return femaleVoice;
   }
@@ -186,14 +186,14 @@ export function getVoiceByGender(gender: "male" | "female"): SpeechSynthesisVoic
   // Fallback if no specific gender match was found
   if (gender === "male") {
     // Avoid known female names if possible
-    const fallbackMale = enVoices.find((v) =>
-      !/samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name)
+    const fallbackMale = enVoices.find(
+      (v) => !/samantha|zira|hazel|aria|jenny|female|susan|karen/i.test(v.name),
     );
     if (fallbackMale) return fallbackMale;
   } else {
     // Avoid known male names if possible
-    const fallbackFemale = enVoices.find((v) =>
-      !/david|mark|george|alex|daniel|guy|male|james/i.test(v.name)
+    const fallbackFemale = enVoices.find(
+      (v) => !/david|mark|george|alex|daniel|guy|male|james/i.test(v.name),
     );
     if (fallbackFemale) return fallbackFemale;
   }

@@ -219,6 +219,11 @@ class Config:
     CHAT_MAX_QUEUE = int(os.getenv("CHAT_MAX_QUEUE", "50"))
     CHAT_QUEUE_TIMEOUT = float(os.getenv("CHAT_QUEUE_TIMEOUT_SECONDS", "90"))
 
+    # Company website — the public portal the Company Context can be auto-pulled from.
+    # The super-admin "Pull from portal" action fetches this site, extracts the text, and
+    # the LLM distills it into a factual company profile (see company_settings_service).
+    COMPANY_WEBSITE_URL = os.getenv("COMPANY_WEBSITE_URL", "https://alignedautomation.com")
+
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
     PORT = int(os.getenv("PORT", "8080"))
@@ -397,6 +402,18 @@ class Config:
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
 
+    # ── Zoho employee-profile DB (read-only directory source) ─────────────────
+    # A separate Postgres server exposes a SQL VIEW of Zoho People profiles
+    # (vb_employees). The Employee Directory reads this view live instead of the
+    # synced MS365/Zoho-overlay tables. ZOHO_DBURL may be a full SQLAlchemy URL
+    # (postgresql://host:port/db, creds optional) or a bare host[:port][/db];
+    # username/password/view are supplied separately. Empty = feature disabled
+    # (directory falls back to the MS365 source). See services/zoho_directory_service.py.
+    ZOHO_DBURL     = os.getenv("ZOHO_DBURL", "")
+    ZOHO_USERNAME  = os.getenv("ZOHO_USERNAME", "")
+    ZOHO_PASSWORD  = os.getenv("ZOHO_PASSWORD", "")
+    ZOHO_VIEW      = os.getenv("ZOHO_VIEW", "vb_employees")
+
     # ── Alchemy Skills Portal (Azure AD-secured internal API) ─────────────────
     ALCHEMY_BASE_URL          = os.getenv("ALCHEMY_BASE_URL", "https://apps.alignedautomation.com/alchemyapi/api/v1")
     # Prefix prepended to numeric employee IDs when calling the Alchemy API.
@@ -406,6 +423,10 @@ class Config:
     #   true  → query the authoritative Alchemy Skills Portal (skill name → id → users)
     #   false → fall back to the internal DB directory (dummy/demo data)
     ALCHEMY_SKILL_SEARCH_ENABLED = os.getenv("ALCHEMY_SKILL_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+    # Email of a connected-Microsoft account used as the shared SERVICE identity to read
+    # any employee's Alchemy skills/projects for the directory (Alchemy allows cross-user
+    # reads with one token). Blank → fall back to the first active Microsoft connection.
+    ALCHEMY_SERVICE_EMAIL = os.getenv("ALCHEMY_SERVICE_EMAIL", "")
 
     # ── TechElevate Training Portal (Azure AD-secured, same App ID as Alchemy) ─
     TECHELEVATE_BASE_URL = os.getenv("TECHELEVATE_BASE_URL", "https://training.alignedautomation.com/api")
@@ -416,6 +437,32 @@ class Config:
     TECHELEVATE_SA_PASSWORD = os.getenv("TECHELEVATE_SA_PASSWORD", "")
     # Dev bypass: set to a raw TechElevate JWT to skip all auth in local dev.
     TECHELEVATE_DEV_JWT  = os.getenv("TECHELEVATE_DEV_JWT", "")
+    # Local LMS mode: when true, TechElevate trainings/assignments are served from
+    # our own DB (seeded dummy data) instead of the unreachable external API. This
+    # powers the upskilling flywheel (completion → verified EmployeeSkill write-back).
+    TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
+    # Seed sample assignments/completions onto REAL employees (writes verified
+    # EmployeeSkills). OFF by default — the catalog seeds either way, but this
+    # mutates live employee skill profiles, so it's opt-in (safe for shared DBs).
+    TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
+
+    # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────
+    # Org-level service credential — NOT per-user OAuth. The client id/secret are
+    # base64-encoded as Basic auth against https://{subdomain}.udemy.com/api-2.0.
+    # Catalog + reporting endpoints are scoped to the numeric organization id.
+    UDEMY_SUBDOMAIN     = os.getenv("UDEMY_SUBDOMAIN", "alignedautomation")
+    UDEMY_ORG_ID        = os.getenv("UDEMY_ORG_ID", "178490")
+    UDEMY_CLIENT_ID     = os.getenv("UDEMY_CLIENT_ID", "")
+    UDEMY_CLIENT_SECRET = os.getenv("UDEMY_CLIENT_SECRET", "")
+    UDEMY_ENABLED       = os.getenv("UDEMY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+    @property
+    def UDEMY_API_BASE(self) -> str:
+        return f"https://{self.UDEMY_SUBDOMAIN}.udemy.com/api-2.0"
+
+    @property
+    def UDEMY_PORTAL_BASE(self) -> str:
+        return f"https://{self.UDEMY_SUBDOMAIN}.udemy.com"
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

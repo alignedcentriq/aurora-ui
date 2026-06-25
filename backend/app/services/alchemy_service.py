@@ -279,6 +279,310 @@ def get_user_roles(token: str, employee_id: str) -> dict:
     return _check(resp, f"user-roles/{employee_id}")
 
 
+def get_user_projects(token: str, employee_id: str) -> list[dict]:
+    """GET /users/{employee_id}/projects — the employee's project history.
+
+    Each entry: {ProjectName, Role, ClientName, ProjectManagerName, StartDate,
+    EndDate, ProjectStatus, SkillsUsed, ApprovalStatus, ...}.
+    """
+    with httpx.Client(timeout=15, follow_redirects=True) as client:
+        resp = client.get(f"{_BASE}/users/{employee_id}/projects", headers=_headers(token))
+    data = _check(resp, f"projects/{employee_id}")
+    if isinstance(data, dict):
+        return data.get("data", []) or []
+    return data if isinstance(data, list) else []
+
+
+# ── Directory profile enrichment (shared service token, cross-user reads) ─────
+# The Employee Directory shows any of ~800 people, but only a couple of users have
+# connected Microsoft. Alchemy permits reading another employee's skills/projects
+# with one valid token, so we mint a single SERVICE token (from a designated
+# connected account) and fetch on-demand when a profile is opened, cached per person.
+
+_svc_token_cache: dict = {"token": None, "exp": 0.0}
+_svc_lock = __import__("threading").Lock()
+# How stale a cached row may get before the background sync refreshes it.
+_ENRICH_MAX_AGE_HOURS = 24
+# Background sync cadence.
+_ENRICH_SYNC_INTERVAL_SEC = 6 * 3600
+
+
+def _service_email() -> str | None:
+    em = (settings.ALCHEMY_SERVICE_EMAIL or "").strip().lower()
+    if em:
+        return em
+    from app.database import SessionLocal
+    from app.models import ConnectedAccount
+    db = SessionLocal()
+    try:
+        acc = (
+            db.query(ConnectedAccount)
+            .filter(ConnectedAccount.provider == "microsoft", ConnectedAccount.status == "active")
+            .order_by(ConnectedAccount.id)
+            .first()
+        )
+        return acc.user_email if acc else None
+    finally:
+        db.close()
+
+
+def get_service_token() -> str | None:
+    """Mint/cache an Alchemy access token from a designated service account's stored
+    Microsoft refresh token (sync, so callers can run in FastAPI's threadpool)."""
+    now = time.time()
+    if _svc_token_cache["token"] and _svc_token_cache["exp"] > now:
+        return _svc_token_cache["token"]
+    with _svc_lock:
+        if _svc_token_cache["token"] and _svc_token_cache["exp"] > now:
+            return _svc_token_cache["token"]
+        email = _service_email()
+        if not email:
+            return None
+        from app.database import SessionLocal
+        from app.models import ConnectedAccount
+        from app.services.oauth_service import decrypt_token, MICROSOFT_AUTHORITY
+        db = SessionLocal()
+        try:
+            acc = (
+                db.query(ConnectedAccount)
+                .filter(
+                    ConnectedAccount.user_email == email,
+                    ConnectedAccount.provider == "microsoft",
+                    ConnectedAccount.status == "active",
+                )
+                .first()
+            )
+            if not acc or not acc.refresh_token_enc:
+                return None
+            refresh = decrypt_token(acc.refresh_token_enc)
+        finally:
+            db.close()
+
+        tenant = settings.MICROSOFT_OAUTH_TENANT_ID or "common"
+        token_url = f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/token"
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(token_url, data={
+                    "client_id": settings.MICROSOFT_OAUTH_CLIENT_ID,
+                    "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET,
+                    "refresh_token": refresh,
+                    "grant_type": "refresh_token",
+                    "scope": "api://4a7dad8b-1372-499d-ade0-a91fe84ae4d6/access_as_user",
+                })
+            if resp.status_code != 200:
+                log.warning("[alchemy] service token exchange failed: %s", resp.text[:200])
+                return None
+            tok = resp.json().get("access_token")
+        except Exception as e:  # noqa: BLE001
+            log.warning("[alchemy] service token error: %s", e)
+            return None
+        if not tok:
+            return None
+        _svc_token_cache.update({"token": tok, "exp": now + 50 * 60})
+        return tok
+
+
+def _norm_skill(s: dict) -> dict:
+    return {
+        "skill": s.get("skill_name") or "",
+        "category": s.get("skill_category_name") or "",
+        "competency": s.get("competency") or "",
+        "certified": str(s.get("certified") or "").strip().lower() == "yes",
+        "certificate_url": s.get("certificate_url") or s.get("certificate_link") or "",
+        "primary_skill": bool(s.get("primary_skill")),
+        "secondary_skill": bool(s.get("secondary_skill")),
+        "primary_interest": bool(s.get("primary_interest")),
+        "instructor": bool(s.get("instructor_flag")),
+        "years_experience": str(s.get("yoe") or "").strip(),
+        "last_used": s.get("last_used") or "",
+    }
+
+
+def _norm_project(p: dict) -> dict:
+    return {
+        "name": p.get("ProjectName") or "",
+        "role": p.get("Role") or "",
+        "client": p.get("ClientName") or "",
+        "manager": p.get("ProjectManagerName") or "",
+        "status": p.get("ProjectStatus") or "",
+        "start_date": p.get("StartDate") or "",
+        "end_date": p.get("EndDate") or "",
+        "skills_used": p.get("SkillsUsed") or "",
+    }
+
+
+def _fetch_enrichment_live(tok: str, code: str) -> dict | None:
+    """Pull one employee's skills+projects straight from Alchemy. None on total failure."""
+    skills: list[dict] = []
+    projects: list[dict] = []
+    ok = False
+    try:
+        raw = get_my_skills(tok, code)
+        if isinstance(raw, list):
+            skills = sorted(
+                (_norm_skill(s) for s in raw),
+                key=lambda x: (not x["primary_skill"], not x["certified"], x["skill"].lower()),
+            )
+            ok = True
+    except Exception as e:  # noqa: BLE001
+        log.warning("[alchemy] skills for %s failed: %s", code, e)
+    try:
+        raw = get_user_projects(tok, code)
+        projects = sorted(
+            (_norm_project(p) for p in raw),
+            key=lambda x: (x["end_date"] or x["start_date"] or ""),
+            reverse=True,
+        )
+        ok = True
+    except Exception as e:  # noqa: BLE001
+        log.warning("[alchemy] projects for %s failed: %s", code, e)
+    if not ok:
+        return None
+    return {"skills": skills, "projects": projects}
+
+
+def _cache_upsert(code: str, skills: list, projects: list) -> None:
+    import json
+    from app.database import SessionLocal
+    from app.models import SCHEMA
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                f'INSERT INTO "{SCHEMA}".alchemy_profile_cache '
+                f"(employee_code, skills, projects, available, fetched_at) "
+                f"VALUES (:c, CAST(:s AS JSONB), CAST(:p AS JSONB), TRUE, NOW()) "
+                f"ON CONFLICT (employee_code) DO UPDATE SET "
+                f"skills = EXCLUDED.skills, projects = EXCLUDED.projects, "
+                f"available = TRUE, fetched_at = NOW()"
+            ),
+            {"c": code, "s": json.dumps(skills), "p": json.dumps(projects)},
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("[alchemy] cache upsert for %s failed: %s", code, e)
+    finally:
+        db.close()
+
+
+def get_cached_enrichment_map(codes) -> dict[str, dict]:
+    """Bulk-read cached skills/projects for many employee codes (for the directory
+    join). Returns {code: {skills, projects}} only for codes present in the cache.
+    Fail-soft → {}."""
+    codes = [c for c in {(c or "").strip() for c in codes} if c]
+    if not codes:
+        return {}
+    from app.database import SessionLocal
+    from app.models import SCHEMA
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                f'SELECT employee_code, skills, projects '
+                f'FROM "{SCHEMA}".alchemy_profile_cache WHERE employee_code = ANY(:codes)'
+            ),
+            {"codes": codes},
+        ).all()
+        return {
+            r[0]: {"skills": r[1] or [], "projects": r[2] or []}
+            for r in rows
+        }
+    except Exception as e:  # noqa: BLE001
+        log.warning("[alchemy] bulk cache read failed: %s", e)
+        return {}
+    finally:
+        db.close()
+
+
+def get_profile_enrichment(employee_code: str) -> dict:
+    """Skills + projects for one employee (by AASPL code).
+
+    Serves the DB cache when present (instant); on a cache miss falls back to a live
+    Alchemy fetch and writes the result through to the cache. Fail-soft."""
+    code = (employee_code or "").strip()
+    if not code:
+        return {"available": False, "skills": [], "projects": []}
+
+    cached = get_cached_enrichment_map([code]).get(code)
+    if cached is not None:
+        return {"available": True, "skills": cached["skills"], "projects": cached["projects"]}
+
+    tok = get_service_token()
+    if not tok:
+        return {"available": False, "skills": [], "projects": []}
+    live = _fetch_enrichment_live(tok, code)
+    if live is None:
+        return {"available": False, "skills": [], "projects": []}
+    _cache_upsert(code, live["skills"], live["projects"])
+    return {"available": True, "skills": live["skills"], "projects": live["projects"]}
+
+
+def sync_directory_enrichment(max_age_hours: int = _ENRICH_MAX_AGE_HOURS) -> int:
+    """Refresh the Alchemy enrichment cache for every directory employee whose row is
+    missing or older than max_age_hours. Runs in the background; returns rows updated."""
+    from app.services import zoho_directory_service
+    from app.database import SessionLocal
+    from app.models import SCHEMA
+    from sqlalchemy import text
+
+    tok = get_service_token()
+    if not tok:
+        return 0  # no service identity connected → nothing to sync
+
+    try:
+        codes = [
+            (e.get("employee_code") or "").strip()
+            for e in zoho_directory_service.fetch_directory()
+        ]
+        codes = [c for c in codes if c]
+    except Exception as e:  # noqa: BLE001
+        log.warning("[alchemy] sync: directory fetch failed: %s", e)
+        return 0
+
+    # Which codes are already fresh (skip them)?
+    fresh: set[str] = set()
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                f"SELECT employee_code FROM \"{SCHEMA}\".alchemy_profile_cache "
+                f"WHERE fetched_at > NOW() - (:h || ' hours')::interval"
+            ),
+            {"h": str(max_age_hours)},
+        ).all()
+        fresh = {r[0] for r in rows}
+    except Exception as e:  # noqa: BLE001
+        log.warning("[alchemy] sync: freshness query failed: %s", e)
+    finally:
+        db.close()
+
+    updated = 0
+    for code in codes:
+        if code in fresh:
+            continue
+        live = _fetch_enrichment_live(tok, code)
+        if live is not None:
+            _cache_upsert(code, live["skills"], live["projects"])
+            updated += 1
+        time.sleep(0.05)  # be gentle on the Alchemy API
+    if updated:
+        log.info("[alchemy] enrichment sync refreshed %d profiles", updated)
+    return updated
+
+
+def alchemy_enrichment_sync_loop() -> None:
+    """Daemon loop: keep the directory enrichment cache warm."""
+    while True:
+        try:
+            sync_directory_enrichment()
+        except Exception as e:  # noqa: BLE001
+            log.warning("[alchemy] enrichment sync loop error: %s", e)
+        time.sleep(_ENRICH_SYNC_INTERVAL_SEC)
+
+
 def get_skills_stats_summary(token: str) -> dict:
     """GET /skills/stats-summary — org-wide skills stats summary."""
     with httpx.Client(timeout=15) as client:

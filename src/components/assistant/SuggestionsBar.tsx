@@ -85,9 +85,7 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
               onClick={() => onCategoryChange(cat.id as SuggestionCategory)}
               className={cn(
                 "relative flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[11px] font-bold transition-colors z-10",
-                isActive
-                  ? "text-white"
-                  : "text-muted-foreground hover:text-foreground",
+                isActive ? "text-white" : "text-muted-foreground hover:text-foreground",
               )}
             >
               {isActive && (
@@ -97,7 +95,12 @@ export function SuggestionsBar({ activeCategory, onCategoryChange, onSelect }: P
                   transition={{ type: "spring", stiffness: 500, damping: 35 }}
                 />
               )}
-              <Icon className={cn("relative z-10 h-3.5 w-3.5", isActive ? "text-white" : "text-primary")} />
+              <Icon
+                className={cn(
+                  "relative z-10 h-3.5 w-3.5",
+                  isActive ? "text-white" : "text-primary",
+                )}
+              />
               <span className="relative z-10">{cat.label}</span>
             </motion.button>
           );

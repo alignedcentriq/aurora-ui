@@ -1,4 +1,16 @@
-import { Send, Plus, FileText, X, Loader2, AudioLines, Square, Hash, ExternalLink, LayoutGrid, BookOpen } from "lucide-react";
+import {
+  Send,
+  Plus,
+  FileText,
+  X,
+  Loader2,
+  AudioLines,
+  Square,
+  Hash,
+  ExternalLink,
+  LayoutGrid,
+  BookOpen,
+} from "lucide-react";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -41,14 +53,26 @@ interface MentionUser {
 
 type SlashItem =
   | { kind: "form"; id: number; name: string; description: string; category: string }
-  | { kind: "url";  id: number; name: string; url: string; purpose: string }
+  | { kind: "url"; id: number; name: string; url: string; purpose: string }
   | { kind: "route"; id: string; name: string; path: string; description: string };
 
 // Static in-app destinations exposed through the /slash picker so users can jump
 // to a page without it living in the top nav. Always shown above forms & URLs.
 const NAV_SLASH_ITEMS: SlashItem[] = [
-  { kind: "route", id: "library", name: "Library", path: "/books", description: "Browse and request company books" },
-  { kind: "route", id: "my-library", name: "My Library", path: "/my-library", description: "Track your borrows, requests, and extensions" },
+  {
+    kind: "route",
+    id: "library",
+    name: "Library",
+    path: "/books",
+    description: "Browse and request company books",
+  },
+  {
+    kind: "route",
+    id: "my-library",
+    name: "My Library",
+    path: "/my-library",
+    description: "Track your borrows, requests, and extensions",
+  },
 ];
 
 export function Composer({
@@ -91,7 +115,11 @@ export function Composer({
 
   const RECENT_KEY = "centriq-recent-mentions";
   const getRecentMentions = (): MentionUser[] => {
-    try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch { return []; }
+    try {
+      return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    } catch {
+      return [];
+    }
   };
   const saveRecentMention = (user: MentionUser) => {
     const prev = getRecentMentions().filter((u) => u.id !== user.id);
@@ -106,12 +134,12 @@ export function Composer({
   }, [value]);
 
   useEffect(() => {
-    const handler = () => { ref.current?.focus(); };
+    const handler = () => {
+      ref.current?.focus();
+    };
     window.addEventListener("centriq:focus-composer", handler);
     return () => window.removeEventListener("centriq:focus-composer", handler);
   }, []);
-
-
 
   useEffect(() => {
     if (disabled) {
@@ -128,44 +156,62 @@ export function Composer({
         fetch("/api/urls/list"),
       ]);
       const forms: SlashItem[] = formsRes.ok
-        ? (await formsRes.json()).map((f: { id: number; name: string; description: string; category: string }) => ({ kind: "form" as const, ...f }))
+        ? (await formsRes.json()).map(
+            (f: { id: number; name: string; description: string; category: string }) => ({
+              kind: "form" as const,
+              ...f,
+            }),
+          )
         : [];
       const urls: SlashItem[] = urlsRes.ok
-        ? (await urlsRes.json()).map((u: { id: number; name: string; url: string; purpose: string }) => ({ kind: "url" as const, ...u }))
+        ? (await urlsRes.json()).map(
+            (u: { id: number; name: string; url: string; purpose: string }) => ({
+              kind: "url" as const,
+              ...u,
+            }),
+          )
         : [];
       setSlashItems([...NAV_SLASH_ITEMS, ...forms, ...urls]);
-    } catch { /* silent fail */ }
+    } catch {
+      /* silent fail */
+    }
   }, []);
 
-  const detectSlashCommand = useCallback((text: string, cursor: number): boolean => {
-    const before = text.slice(0, cursor);
-    const match = before.match(/(^|[\s\n])\/(\w*)$/);
-    if (match) {
-      const leadLen = (match[1] || "").length;
-      setSlashStart(cursor - match[0].length + leadLen);
-      setSlashQuery(match[2] || "");
-      setSlashIndex(0);
-      fetchSlashItems();
-      return true;
-    }
-    setSlashQuery(null);
-    return false;
-  }, [fetchSlashItems]);
+  const detectSlashCommand = useCallback(
+    (text: string, cursor: number): boolean => {
+      const before = text.slice(0, cursor);
+      const match = before.match(/(^|[\s\n])\/(\w*)$/);
+      if (match) {
+        const leadLen = (match[1] || "").length;
+        setSlashStart(cursor - match[0].length + leadLen);
+        setSlashQuery(match[2] || "");
+        setSlashIndex(0);
+        fetchSlashItems();
+        return true;
+      }
+      setSlashQuery(null);
+      return false;
+    },
+    [fetchSlashItems],
+  );
 
-  const selectSlashItem = useCallback((item: SlashItem) => {
-    const cursor = ref.current?.selectionStart ?? value.length;
-    const before = value.slice(0, slashStart);
-    const after = value.slice(cursor);
-    onChange(before + after);
-    setSlashQuery(null);
-    if (item.kind === "url") {
-      window.open(item.url, "_blank", "noreferrer");
-    } else if (item.kind === "route") {
-      onNavigate?.(item.path);
-    } else {
-      onQuickAction?.(item.name);
-    }
-  }, [value, slashStart, onChange, onQuickAction, onNavigate]);
+  const selectSlashItem = useCallback(
+    (item: SlashItem) => {
+      const cursor = ref.current?.selectionStart ?? value.length;
+      const before = value.slice(0, slashStart);
+      const after = value.slice(cursor);
+      onChange(before + after);
+      setSlashQuery(null);
+      if (item.kind === "url") {
+        window.open(item.url, "_blank", "noreferrer");
+      } else if (item.kind === "route") {
+        onNavigate?.(item.path);
+      } else {
+        onQuickAction?.(item.name);
+      }
+    },
+    [value, slashStart, onChange, onQuickAction, onNavigate],
+  );
 
   const fetchMentions = useCallback(async (q: string) => {
     if (q === "") {
@@ -191,40 +237,44 @@ export function Composer({
     }
   }, []);
 
-  const detectMention = useCallback((text: string, cursor: number) => {
-    const before = text.slice(0, cursor);
-    const match = before.match(/@(\w*)$/);
-    if (match) {
-      const q = match[1];
-      setMentionStart(cursor - match[0].length);
-      setMentionIndex(0);
-      setMentionQuery(q);
-      if (mentionTimerRef.current) clearTimeout(mentionTimerRef.current);
-      mentionTimerRef.current = setTimeout(() => fetchMentions(q), 150);
-    } else {
+  const detectMention = useCallback(
+    (text: string, cursor: number) => {
+      const before = text.slice(0, cursor);
+      const match = before.match(/@(\w*)$/);
+      if (match) {
+        const q = match[1];
+        setMentionStart(cursor - match[0].length);
+        setMentionIndex(0);
+        setMentionQuery(q);
+        if (mentionTimerRef.current) clearTimeout(mentionTimerRef.current);
+        mentionTimerRef.current = setTimeout(() => fetchMentions(q), 150);
+      } else {
+        setMentionQuery(null);
+        setMentionResults([]);
+      }
+    },
+    [fetchMentions],
+  );
+
+  const selectMention = useCallback(
+    (user: MentionUser) => {
+      saveRecentMention(user);
+      const cursor = ref.current?.selectionStart ?? value.length;
+      const before = value.slice(0, mentionStart);
+      const after = value.slice(cursor);
+      const inserted = `@${user.name} `;
+      const newValue = before + inserted + after;
+      onChange(newValue);
       setMentionQuery(null);
       setMentionResults([]);
-    }
-  }, [fetchMentions]);
-
-  const selectMention = useCallback((user: MentionUser) => {
-    saveRecentMention(user);
-    const cursor = ref.current?.selectionStart ?? value.length;
-    const before = value.slice(0, mentionStart);
-    const after = value.slice(cursor);
-    const inserted = `@${user.name} `;
-    const newValue = before + inserted + after;
-    onChange(newValue);
-    setMentionQuery(null);
-    setMentionResults([]);
-    requestAnimationFrame(() => {
-      ref.current?.focus();
-      const pos = before.length + inserted.length;
-      ref.current?.setSelectionRange(pos, pos);
-    });
-  }, [value, mentionStart, onChange]);
-
-
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+        const pos = before.length + inserted.length;
+        ref.current?.setSelectionRange(pos, pos);
+      });
+    },
+    [value, mentionStart, onChange],
+  );
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -232,8 +282,16 @@ export function Composer({
     e.target.value = "";
 
     const allowedExtensions = [".pdf", ".txt", ".csv", ".json", ".md", ".xml", ".log"];
-    const allowedMime = ["application/pdf", "text/plain", "text/csv", "application/json", "text/markdown", "application/xml", "text/xml"];
-    const hasValidExt = allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+    const allowedMime = [
+      "application/pdf",
+      "text/plain",
+      "text/csv",
+      "application/json",
+      "text/markdown",
+      "application/xml",
+      "text/xml",
+    ];
+    const hasValidExt = allowedExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
     if (!allowedMime.includes(file.type) && !hasValidExt) {
       toast.error("Supported formats: PDF, TXT, CSV, JSON, MD, XML, LOG");
       return;
@@ -282,10 +340,7 @@ export function Composer({
     <div className="relative w-full max-w-4xl mx-auto">
       {/* Contextual suggestion chips */}
       {suggestions && suggestions.length > 0 && (
-        <SuggestionChips
-          suggestions={suggestions}
-          onSelect={onSuggestionSelect ?? (() => {})}
-        />
+        <SuggestionChips suggestions={suggestions} onSelect={onSuggestionSelect ?? (() => {})} />
       )}
 
       {/* Attached file chip */}
@@ -298,7 +353,9 @@ export function Composer({
             className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 w-fit"
           >
             <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
-            <span className="text-[12px] font-medium text-foreground truncate max-w-[240px]">{attached.filename}</span>
+            <span className="text-[12px] font-medium text-foreground truncate max-w-[240px]">
+              {attached.filename}
+            </span>
             <button
               onClick={() => setAttached(null)}
               className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-rose-500 transition-colors"
@@ -335,106 +392,148 @@ export function Composer({
           }}
         >
           {/* /slash picker — forms + URLs */}
-          {slashQuery !== null && slashItems.length > 0 && (() => {
-            const filtered = slashItems.filter(f => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()));
-            return (
-              <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
-                <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1.5 sticky top-0 bg-card/95 backdrop-blur-xl border-b border-border/40">
-                  <Hash className="h-3 w-3" />
-                  {slashQuery ? `Results for "/${slashQuery}"` : "Forms & Apps"}
+          {slashQuery !== null &&
+            slashItems.length > 0 &&
+            (() => {
+              const filtered = slashItems.filter(
+                (f) => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()),
+              );
+              return (
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
+                  <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1.5 sticky top-0 bg-card/95 backdrop-blur-xl border-b border-border/40">
+                    <Hash className="h-3 w-3" />
+                    {slashQuery ? `Results for "/${slashQuery}"` : "Forms & Apps"}
+                  </div>
+                  {filtered.length === 0 ? (
+                    <div className="px-4 py-3 text-[13px] text-muted-foreground">
+                      No matches for &quot;/{slashQuery}&quot;
+                    </div>
+                  ) : (
+                    filtered.map((item, i) => (
+                      <button
+                        key={`${item.kind}-${item.id}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          selectSlashItem(item);
+                        }}
+                        className={cn(
+                          "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
+                          i === slashIndex ? "bg-primary/10" : "hover:bg-secondary/50",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                            item.kind === "form"
+                              ? "bg-primary/10 text-primary"
+                              : item.kind === "route"
+                                ? "bg-emerald-500/10 text-emerald-500"
+                                : "bg-blue-500/10 text-blue-500",
+                          )}
+                        >
+                          {item.kind === "form" ? (
+                            <FileText className="h-3.5 w-3.5" />
+                          ) : item.kind === "route" ? (
+                            <BookOpen className="h-3.5 w-3.5" />
+                          ) : (
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-[13px] font-medium text-foreground truncate">
+                              {item.name}
+                            </p>
+                            <span
+                              className={cn(
+                                "shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border",
+                                item.kind === "form"
+                                  ? "text-primary border-primary/20 bg-primary/5"
+                                  : item.kind === "route"
+                                    ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
+                                    : "text-blue-500 border-blue-500/20 bg-blue-500/5",
+                              )}
+                            >
+                              {item.kind === "form"
+                                ? "Form"
+                                : item.kind === "route"
+                                  ? "Page"
+                                  : "App"}
+                            </span>
+                          </div>
+                          {(item.kind === "form"
+                            ? item.description || item.category
+                            : item.kind === "route"
+                              ? item.description
+                              : item.purpose) && (
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              {item.kind === "form"
+                                ? `${item.category ? item.category + " · " : ""}${item.description}`
+                                : item.kind === "route"
+                                  ? item.description
+                                  : item.purpose}
+                            </p>
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  )}
                 </div>
-                {filtered.length === 0 ? (
-                  <div className="px-4 py-3 text-[13px] text-muted-foreground">No matches for &quot;/{slashQuery}&quot;</div>
+              );
+            })()}
+
+          {/* @mention dropdown */}
+          {mentionQuery !== null &&
+            (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
+              <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+                {mentionQuery === "" && mentionResults.length > 0 && (
+                  <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                    Recent
+                  </div>
+                )}
+                {loadingMentions && mentionResults.length === 0 ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : mentionResults.length === 0 ? (
+                  <div className="px-4 py-3 text-[13px] text-muted-foreground">
+                    No users found for &quot;{mentionQuery}&quot;
+                  </div>
                 ) : (
-                  filtered.map((item, i) => (
+                  mentionResults.map((user, i) => (
                     <button
-                      key={`${item.kind}-${item.id}`}
-                      onMouseDown={(e) => { e.preventDefault(); selectSlashItem(item); }}
+                      key={user.id}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectMention(user);
+                      }}
                       className={cn(
                         "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
-                        i === slashIndex ? "bg-primary/10" : "hover:bg-secondary/50"
+                        i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50",
                       )}
                     >
-                      <div className={cn(
-                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                        item.kind === "form" ? "bg-primary/10 text-primary"
-                          : item.kind === "route" ? "bg-emerald-500/10 text-emerald-500"
-                          : "bg-blue-500/10 text-blue-500"
-                      )}>
-                        {item.kind === "form"
-                          ? <FileText className="h-3.5 w-3.5" />
-                          : item.kind === "route"
-                          ? <BookOpen className="h-3.5 w-3.5" />
-                          : <ExternalLink className="h-3.5 w-3.5" />
-                        }
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
+                        {user.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[13px] font-medium text-foreground truncate">{item.name}</p>
-                          <span className={cn(
-                            "shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full border",
-                            item.kind === "form"
-                              ? "text-primary border-primary/20 bg-primary/5"
-                              : item.kind === "route"
-                              ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
-                              : "text-blue-500 border-blue-500/20 bg-blue-500/5"
-                          )}>
-                            {item.kind === "form" ? "Form" : item.kind === "route" ? "Page" : "App"}
-                          </span>
-                        </div>
-                        {(item.kind === "form" ? (item.description || item.category) : item.kind === "route" ? item.description : item.purpose) && (
-                          <p className="text-[11px] text-muted-foreground truncate">
-                            {item.kind === "form"
-                              ? `${item.category ? item.category + " · " : ""}${item.description}`
-                              : item.kind === "route"
-                              ? item.description
-                              : item.purpose}
-                          </p>
-                        )}
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-medium text-foreground truncate">
+                          {user.name}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {user.designation}
+                          {user.department ? ` · ${user.department}` : ""}
+                        </p>
                       </div>
                     </button>
                   ))
                 )}
               </div>
-            );
-          })()}
-
-          {/* @mention dropdown */}
-          {mentionQuery !== null && (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
-              {mentionQuery === "" && mentionResults.length > 0 && (
-                <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-                  Recent
-                </div>
-              )}
-              {loadingMentions && mentionResults.length === 0 ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                </div>
-              ) : mentionResults.length === 0 ? (
-                <div className="px-4 py-3 text-[13px] text-muted-foreground">No users found for &quot;{mentionQuery}&quot;</div>
-              ) : (
-                mentionResults.map((user, i) => (
-                  <button
-                    key={user.id}
-                    onMouseDown={(e) => { e.preventDefault(); selectMention(user); }}
-                    className={cn(
-                      "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
-                      i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50"
-                    )}
-                  >
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
-                      {user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-foreground truncate">{user.name}</p>
-                      <p className="text-[11px] text-muted-foreground truncate">{user.designation}{user.department ? ` · ${user.department}` : ""}</p>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+            )}
 
           <textarea
             ref={ref}
@@ -457,20 +556,56 @@ export function Composer({
               fetch("/api/warmup", { method: "POST" }).catch(() => {});
             }}
             onKeyDown={(e) => {
-              const filtered = slashQuery !== null
-                ? slashItems.filter(f => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()))
-                : [];
+              const filtered =
+                slashQuery !== null
+                  ? slashItems.filter(
+                      (f) => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()),
+                    )
+                  : [];
               if (slashQuery !== null && filtered.length > 0) {
-                if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => Math.min(i + 1, filtered.length - 1)); return; }
-                if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => Math.max(i - 1, 0)); return; }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(filtered[slashIndex]); return; }
-                if (e.key === "Escape") { e.preventDefault(); setSlashQuery(null); return; }
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((i) => Math.min(i + 1, filtered.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  selectSlashItem(filtered[slashIndex]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setSlashQuery(null);
+                  return;
+                }
               }
               if (mentionQuery !== null && mentionResults.length > 0) {
-                if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1)); return; }
-                if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => Math.max(i - 1, 0)); return; }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectMention(mentionResults[mentionIndex]); return; }
-                if (e.key === "Escape") { e.preventDefault(); setMentionQuery(null); setMentionResults([]); return; }
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setMentionIndex((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  selectMention(mentionResults[mentionIndex]);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setMentionQuery(null);
+                  setMentionResults([]);
+                  return;
+                }
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -492,7 +627,11 @@ export function Composer({
                 className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground disabled:opacity-50"
                 title="Attach file"
               >
-                {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Plus className="h-5 w-5" strokeWidth={1.5} />}
+                {uploading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Plus className="h-5 w-5" strokeWidth={1.5} />
+                )}
               </motion.button>
             </div>
 
@@ -506,11 +645,14 @@ export function Composer({
                   "flex h-9 w-9 items-center justify-center rounded-full transition-all",
                   voiceMode
                     ? "bg-primary/15 text-primary ring-2 ring-primary/30"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
                 title={voiceMode ? "Exit voice mode" : "Hands-free voice mode"}
               >
-                <AudioLines className={cn("h-4 w-4", voiceMode && "animate-pulse")} strokeWidth={1.5} />
+                <AudioLines
+                  className={cn("h-4 w-4", voiceMode && "animate-pulse")}
+                  strokeWidth={1.5}
+                />
               </motion.button>
 
               {/* Forms & Apps Picker Toggle */}
@@ -530,14 +672,12 @@ export function Composer({
                   "flex h-9 w-9 items-center justify-center rounded-full transition-all",
                   slashQuery !== null
                     ? "bg-primary/15 text-primary ring-2 ring-primary/30"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
                 title="Forms & Apps Menu"
               >
                 <LayoutGrid className="h-4 w-4" strokeWidth={1.5} />
               </motion.button>
-
-
 
               {/* Stop button while a response is generating, else Send button */}
               <AnimatePresence mode="wait" initial={false}>

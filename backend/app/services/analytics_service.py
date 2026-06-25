@@ -16,13 +16,14 @@ import json
 import logging
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.models import (
     AiRequestLog, ChatFeedback, ConnectorCallLog, ConnectorOperation, CompanySettings,
-    Leave, Employee,
+    Leave, Employee, EmployeeAllocation,
 )
+from app.services.allocation_snapshot_service import latest_snapshot_date
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +159,20 @@ _AIRL_DIMS = ["domain", "sub_intent", "served_from", "model_name", "day", "week"
 _FB_DIMS = ["domain", "day", "week", "month"]
 _CONN_DIMS = ["status", "day", "week", "month"]
 _LEAVE_DIMS = ["leave_type", "status", "day", "week", "month"]
+# Allocation (workforce) — categorical breakdowns plus a month time-trend.
+_ALLOC_DIMS = ["function", "client_master", "project_type", "billing", "month"]
+
+
+def _latest_snapshot_filter(M, db, dimension):
+    """Restrict allocation metrics to each query's scope: the single latest snapshot
+    for a categorical breakdown (current state), or ALL months for a time-trend.
+    Always drops Inactive rows. Pure SQL — no LLM, no per-row Python."""
+    conds = [func.lower(func.coalesce(M.status, "")) != "inactive"]
+    if dimension not in _TIME_BUCKETS:
+        d = latest_snapshot_date(db)
+        if d is not None:
+            conds.append(M.allocation_date == d)
+    return and_(*conds)
 
 METRIC_CATALOG: dict[str, dict] = {
     "requests": {
@@ -231,6 +246,38 @@ METRIC_CATALOG: dict[str, dict] = {
         "category": "personal", "person_col": "employee_id",
         "scopes": ["me", "my-team", "org"],
     },
+    # ── Workforce / allocation metrics — deterministic SQL over the LATEST snapshot ──
+    # `no_period` + `base_filter` opt out of the created_at/period window and instead
+    # scope to the current snapshot (or all months for a month time-trend).
+    "utilization_pct": {
+        "label": "Utilization % (avg effort)", "table": EmployeeAllocation,
+        "agg": lambda M: func.avg(M.efforts_percent), "time_col": "allocation_date",
+        "dims": _ALLOC_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "percent",
+        "category": "workforce", "no_period": True, "base_filter": _latest_snapshot_filter,
+    },
+    "billable_pct": {
+        "label": "Billable %", "table": EmployeeAllocation,
+        "agg": lambda M: func.avg(case((func.lower(func.coalesce(M.billing, "")) == "billable", 1.0),
+                                        else_=0.0)),
+        "time_col": "allocation_date",
+        "dims": _ALLOC_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "pct",
+        "category": "workforce", "no_period": True, "base_filter": _latest_snapshot_filter,
+    },
+    "bench_headcount": {
+        "label": "Bench Headcount", "table": EmployeeAllocation,
+        "agg": lambda M: func.count(func.distinct(M.employee_name)).filter(
+            func.lower(func.coalesce(M.billing, "")).in_(["pipeline", "for allocation"])),
+        "time_col": "allocation_date",
+        "dims": _ALLOC_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "count",
+        "category": "workforce", "no_period": True, "base_filter": _latest_snapshot_filter,
+    },
+    "allocation_headcount": {
+        "label": "Allocated Headcount", "table": EmployeeAllocation,
+        "agg": lambda M: func.count(func.distinct(M.employee_name)),
+        "time_col": "allocation_date",
+        "dims": _ALLOC_DIMS, "domain_col": None, "chart_hint": "bar", "unit": "count",
+        "category": "workforce", "no_period": True, "base_filter": _latest_snapshot_filter,
+    },
 }
 
 # Dimension → (column-name on the metric's table) OR a date_trunc bucket key.
@@ -242,6 +289,10 @@ DIMENSION_CATALOG: dict[str, dict] = {
     "model_name": {"label": "Model"},
     "status": {"label": "Status"},
     "leave_type": {"label": "Leave type"},
+    "function": {"label": "Function"},
+    "client_master": {"label": "Client"},
+    "project_type": {"label": "Project type"},
+    "billing": {"label": "Billing"},
     "day": {"label": "Day"},
     "week": {"label": "Week"},
     "month": {"label": "Month"},
@@ -284,8 +335,8 @@ def personal_catalog(db: Session, user_email: str) -> dict:
     return cat
 
 
-def _bucket_expr(model, bucket: str):
-    col = getattr(model, "created_at")
+def _bucket_expr(model, bucket: str, time_col: str = "created_at"):
+    col = getattr(model, time_col)
     return func.date_trunc(bucket, col)
 
 
@@ -313,11 +364,20 @@ def run_query(
     agg = spec["agg"](M).label("value")
 
     if dimension in _TIME_BUCKETS:
-        group_expr = _bucket_expr(M, dimension).label("grp")
+        group_expr = _bucket_expr(M, dimension, spec.get("time_col", "created_at")).label("grp")
     else:
         group_expr = getattr(M, dimension).label("grp")
 
-    q = db.query(group_expr, agg).filter(getattr(M, spec["time_col"]) >= _period_cutoff(period))
+    q = db.query(group_expr, agg)
+    # Time window: most metrics filter to a rolling period; snapshot-style metrics
+    # (no_period) opt out and instead scope via their base_filter.
+    if not spec.get("no_period"):
+        q = q.filter(getattr(M, spec["time_col"]) >= _period_cutoff(period))
+    base_filter = spec.get("base_filter")
+    if base_filter is not None:
+        cond = base_filter(M, db, dimension)
+        if cond is not None:
+            q = q.filter(cond)
 
     # Role-based domain scoping (only where the table carries a domain column).
     dom_scope = _domain_scope(role)

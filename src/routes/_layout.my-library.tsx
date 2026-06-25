@@ -114,10 +114,13 @@ function MyLibrary() {
   const returnBook = async (req: BorrowRequest) => {
     setActing(req.ticket_id);
     try {
-      const res = await fetch(`/api/portal/library/requests/${encodeURIComponent(req.ticket_id)}/return`, {
-        method: "PUT",
-        headers: authHeaders,
-      });
+      const res = await fetch(
+        `/api/portal/library/requests/${encodeURIComponent(req.ticket_id)}/return`,
+        {
+          method: "PUT",
+          headers: authHeaders,
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail || "Return failed");
       toast.success(`Returned "${req.book_title}"`);
@@ -213,8 +216,13 @@ function MyLibrary() {
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-foreground text-[14px]">{r.book_title}</span>
-                            <Badge label={overdue ? "Overdue" : "Issued"} status={overdue ? "Overdue" : "Approved"} />
+                            <span className="font-semibold text-foreground text-[14px]">
+                              {r.book_title}
+                            </span>
+                            <Badge
+                              label={overdue ? "Overdue" : "Issued"}
+                              status={overdue ? "Overdue" : "Approved"}
+                            />
                             {(r.extension_count ?? 0) > 0 && (
                               <span className="text-[11px] text-muted-foreground">
                                 · Extended {r.extension_count}×
@@ -268,7 +276,10 @@ function MyLibrary() {
               )}
             </Section>
 
-            <Section title="Extension Requests" count={extensions.filter((e) => e.status === "Pending").length}>
+            <Section
+              title="Extension Requests"
+              count={extensions.filter((e) => e.status === "Pending").length}
+            >
               {extensions.length === 0 ? (
                 <Empty text="You haven't requested any extensions." />
               ) : (
@@ -280,7 +291,9 @@ function MyLibrary() {
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-foreground text-[14px]">{e.book_title}</span>
+                          <span className="font-medium text-foreground text-[14px]">
+                            {e.book_title}
+                          </span>
                           <Badge status={e.status} />
                           <span className="text-[11px] text-muted-foreground">
                             +{e.additional_days} day{e.additional_days === 1 ? "" : "s"}
@@ -334,7 +347,9 @@ function MyLibrary() {
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-[12px] font-medium text-muted-foreground">Additional days (1-30)</label>
+                <label className="text-[12px] font-medium text-muted-foreground">
+                  Additional days (1-30)
+                </label>
                 <input
                   type="number"
                   min={1}
@@ -345,7 +360,9 @@ function MyLibrary() {
                 />
               </div>
               <div>
-                <label className="text-[12px] font-medium text-muted-foreground">Reason (optional)</label>
+                <label className="text-[12px] font-medium text-muted-foreground">
+                  Reason (optional)
+                </label>
                 <textarea
                   rows={3}
                   value={extReason}
@@ -355,7 +372,8 @@ function MyLibrary() {
                 />
               </div>
               <p className="text-[11.5px] text-muted-foreground">
-                Current due date: <span className="font-medium">{extModal.due_date || "—"}</span> · Admin will review your request.
+                Current due date: <span className="font-medium">{extModal.due_date || "—"}</span> ·
+                Admin will review your request.
               </p>
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">

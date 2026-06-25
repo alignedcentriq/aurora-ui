@@ -1,6 +1,15 @@
 import { useAuth, Role } from "@/lib/auth-store";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Search, Shield, Trash2, Loader2, UserCheck, RefreshCw, X, ShieldAlert } from "lucide-react";
+import {
+  Search,
+  Shield,
+  Trash2,
+  Loader2,
+  UserCheck,
+  RefreshCw,
+  X,
+  ShieldAlert,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -74,9 +83,12 @@ export function RoleManagement() {
     const delayDebounceFn = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const res = await fetch(`/api/employees/autocomplete?q=${encodeURIComponent(searchQuery)}`, {
-          headers: authHeaders,
-        });
+        const res = await fetch(
+          `/api/employees/autocomplete?q=${encodeURIComponent(searchQuery)}`,
+          {
+            headers: authHeaders,
+          },
+        );
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data);
@@ -111,7 +123,9 @@ export function RoleManagement() {
     setDropdownOpen(false);
     setSearchQuery("");
     // Find current role of selected user from list if exists, default to Employee
-    const activeOverride = assignedRoles.find((r) => r.email.toLowerCase() === emp.email.toLowerCase());
+    const activeOverride = assignedRoles.find(
+      (r) => r.email.toLowerCase() === emp.email.toLowerCase(),
+    );
     setSelectedRole(activeOverride ? activeOverride.role : "Employee");
   };
 
@@ -284,7 +298,9 @@ export function RoleManagement() {
               </div>
             ) : (
               <div className="h-full flex items-center justify-center border border-dashed border-[var(--border)] rounded-xl p-6 text-center text-muted-foreground">
-                <p className="text-[12px]">Select an employee from the search results to configure their role override.</p>
+                <p className="text-[12px]">
+                  Select an employee from the search results to configure their role override.
+                </p>
               </div>
             )}
           </div>
@@ -311,7 +327,13 @@ export function RoleManagement() {
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--border)] text-left">
-                    {["Employee Details", "Designation", "Department", "Assigned Role", "Actions"].map((h) => (
+                    {[
+                      "Employee Details",
+                      "Designation",
+                      "Department",
+                      "Assigned Role",
+                      "Actions",
+                    ].map((h) => (
                       <th
                         key={h}
                         className="pb-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/60"
@@ -331,10 +353,17 @@ export function RoleManagement() {
                         <div className="font-semibold text-foreground">{record.name}</div>
                         <div className="text-[11px] text-muted-foreground">{record.email}</div>
                       </td>
-                      <td className="py-3.5 pr-4 text-foreground/80">{record.designation || "—"}</td>
+                      <td className="py-3.5 pr-4 text-foreground/80">
+                        {record.designation || "—"}
+                      </td>
                       <td className="py-3.5 pr-4 text-foreground/80">{record.department || "—"}</td>
                       <td className="py-3.5 pr-4">
-                        <span className={cn("rounded-full px-2.5 py-0.5 text-[11px] font-medium border", ROLE_COLORS[record.role])}>
+                        <span
+                          className={cn(
+                            "rounded-full px-2.5 py-0.5 text-[11px] font-medium border",
+                            ROLE_COLORS[record.role],
+                          )}
+                        >
                           {record.role}
                         </span>
                       </td>

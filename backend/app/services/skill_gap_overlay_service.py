@@ -28,7 +28,7 @@ from sqlalchemy import func
 from app.database import SessionLocal
 from app.models import EmployeeAllocation
 from app.services import alchemy_service
-from app.services.resource_matching_service import _alchemy_token, _is_current
+from app.services.resource_matching_service import _alchemy_token
 
 import logging
 log = logging.getLogger("aurora-logger")
@@ -161,37 +161,23 @@ class SkillSupplyService:
 
     @classmethod
     def _availability_map(cls, names: set[str], today: datetime.date) -> dict:
-        """name(lower) → {load, free, earliest_free} for everyone named, in one query.
+        """name(lower) → {load, free, earliest_free} for everyone named, in one pass.
 
-        A name with no allocation row is treated as fully free (same convention as
-        resource_matching_service) and so is simply absent from the map.
+        Capacity is computed from each person's LATEST allocation snapshot (not summed
+        across months) and `earliest_free` is the real project rolloff (next-snapshot
+        diff) — NOT the LWD/attrition date. Delegates to allocation_snapshot_service so
+        the math matches resource matching. A name with no rows is absent (fully free).
         """
         if not names:
             return {}
-        lowered = [n.lower() for n in names]
+        from app.services import allocation_snapshot_service as snap
         db = SessionLocal()
         try:
-            rows = (db.query(EmployeeAllocation)
-                    .filter(func.lower(EmployeeAllocation.employee_name).in_(lowered))
-                    .all())
+            full = snap.current_load_map(db, names, as_of=today)
         finally:
             db.close()
-
-        by_name: dict[str, list] = {}
-        for a in rows:
-            if _is_current(a):
-                by_name.setdefault((a.employee_name or "").strip().lower(), []).append(a)
-
-        out: dict[str, dict] = {}
-        for key, allocs in by_name.items():
-            load = sum(float(a.efforts_percent or 0) for a in allocs)
-            ends = [a.expected_end_date for a in allocs if a.expected_end_date]
-            out[key] = {
-                "load": load,
-                "free": max(0.0, 100.0 - load),
-                "earliest_free": min(ends) if ends else None,
-            }
-        return out
+        return {k: {"load": v["load"], "free": v["free"], "earliest_free": v["earliest_free"]}
+                for k, v in full.items()}
 
     @staticmethod
     def _classify(demand: float, coverage_count: int, deployable: int, rolloff: int):
