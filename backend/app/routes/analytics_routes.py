@@ -18,6 +18,7 @@ from app.models import SavedDashboard
 from app.services import analytics_service as svc
 from app.services import automation_service as autosvc
 from app.services import analytics_builder_service as builder_svc
+from app.services import analytics_export_service as export_svc
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -46,6 +47,43 @@ def run_query(body: QueryBody, user: CurrentUser = Depends(require_non_employee)
                              role=user.role, filters=body.filters)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Chart export (ARB #42) ─────────────────────────────────────────────────────
+# Accept a ChartSpec (the same payload the Studio / Builder render) and stream
+# back a downloadable file. Whitelisted to non-employee analytics users.
+
+def _export_filename(spec: dict, ext: str) -> str:
+    raw = (spec.get("title") or "analytics_chart").strip() or "analytics_chart"
+    safe = "".join(c if c.isalnum() or c in (" ", "-", "_") else "" for c in raw)
+    return f"{safe.strip().replace(' ', '_') or 'analytics_chart'}.{ext}"
+
+
+@router.post("/export/pdf")
+def export_pdf(spec: dict, _: CurrentUser = Depends(require_non_employee)):
+    """Render a chart spec to a PDF (vector chart + data table)."""
+    try:
+        pdf = export_svc.chart_to_pdf(spec)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not render PDF: {e}")
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_export_filename(spec, "pdf")}"'},
+    )
+
+
+@router.post("/export/pptx")
+def export_pptx(spec: dict, _: CurrentUser = Depends(require_non_employee)):
+    """Render a chart spec to a PowerPoint deck with a native, editable chart."""
+    try:
+        pptx = export_svc.chart_to_pptx(spec)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not render PPTX: {e}")
+    return Response(
+        content=pptx,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{_export_filename(spec, "pptx")}"'},
+    )
 
 
 # ── Personal + team analytics (item 9) ────────────────────────────────────────────

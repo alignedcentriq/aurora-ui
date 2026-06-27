@@ -222,3 +222,111 @@ class PendingActionService:
             return bool(n)
         finally:
             db.close()
+
+    @staticmethod
+    def list_pending(session_key: str) -> list[dict]:
+        """Return ALL live (non-expired) pending actions for the session.
+
+        Lazily expires any rows that have passed their TTL.  Used by the
+        orchestration pipeline pre-hook to surface pending action types in state.
+        """
+        db = SessionLocal()
+        try:
+            rows = (db.query(PendingAction)
+                    .filter(PendingAction.session_key == session_key,
+                            PendingAction.status == "pending")
+                    .order_by(PendingAction.created_at.desc())
+                    .all())
+            result = []
+            now = _now()
+            for row in rows:
+                if row.expires_at and row.expires_at < now:
+                    row.status = "expired"
+                    row.updated_at = now
+                else:
+                    result.append({
+                        "id": row.id,
+                        "action_type": row.action_type,
+                        "payload": row.payload or {},
+                        "idempotency_key": row.idempotency_key,
+                        "expires_at": row.expires_at,
+                    })
+            db.commit()
+            return result
+        finally:
+            db.close()
+
+    @staticmethod
+    def expire_session(session_key: str) -> int:
+        """Mark all pending actions for a session as expired.
+
+        Call when a session is closed or a user logs out to eagerly clean up
+        stale confirmations rather than waiting for TTL.
+        Returns the count of rows expired.
+        """
+        db = SessionLocal()
+        try:
+            n = (db.query(PendingAction)
+                 .filter(PendingAction.session_key == session_key,
+                         PendingAction.status == "pending")
+                 .update({"status": "expired", "updated_at": _now()},
+                         synchronize_session=False))
+            db.commit()
+            return n
+        finally:
+            db.close()
+
+    @staticmethod
+    def purge_expired(older_than_hours: int = 48) -> int:
+        """Hard-delete terminal (expired/cancelled/executed) rows older than `older_than_hours`.
+
+        Keeps the pending_action table lean.  Run periodically from the background
+        scheduler in main.py.  Returns the number of rows deleted.
+        """
+        db = SessionLocal()
+        try:
+            cutoff = _now() - datetime.timedelta(hours=older_than_hours)
+            n = (db.query(PendingAction)
+                 .filter(PendingAction.status.in_(["expired", "cancelled", "executed"]),
+                         PendingAction.updated_at <= cutoff)
+                 .delete(synchronize_session=False))
+            db.commit()
+            log.debug("pending_action purge: deleted %d stale rows (older than %dh)", n, older_than_hours)
+            return n
+        except Exception:
+            log.exception("pending_action purge failed")
+            return 0
+        finally:
+            db.close()
+
+    @staticmethod
+    def expire_stale(batch_size: int = 500) -> int:
+        """Proactively flip past-TTL 'pending' rows to 'expired' in bulk.
+
+        The lazy approach (flipping on read) is correct for correctness but leaves
+        stale rows visible in DB queries.  This batch job cleans them up.
+        Run from the background scheduler in main.py alongside purge_expired().
+        """
+        db = SessionLocal()
+        try:
+            ids = (db.query(PendingAction.id)
+                   .filter(PendingAction.status == "pending",
+                           PendingAction.expires_at <= _now())
+                   .limit(batch_size)
+                   .all())
+            if not ids:
+                return 0
+            id_list = [row.id for row in ids]
+            n = (db.query(PendingAction)
+                 .filter(PendingAction.id.in_(id_list))
+                 .update({"status": "expired", "updated_at": _now()},
+                         synchronize_session=False))
+            db.commit()
+            if n:
+                log.debug("pending_action expiry: flipped %d stale rows to 'expired'", n)
+            return n
+        except Exception:
+            log.exception("pending_action expire_stale failed")
+            return 0
+        finally:
+            db.close()

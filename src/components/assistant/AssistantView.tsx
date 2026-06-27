@@ -58,6 +58,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
+import { CitationsCard } from "@/components/assistant/CitationsCard";
+import { MorningBriefing } from "@/components/assistant/MorningBriefing";
 import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
 
 import type { Turn, DynamicFormField } from "@/lib/chat-store";
@@ -1446,6 +1448,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                   Array.isArray(evt.images) && evt.images.length > 0
                     ? (evt.images as string[])
                     : undefined,
+                citations:
+                  Array.isArray(evt.citations) && evt.citations.length > 0
+                    ? (evt.citations as Turn["citations"])
+                    : undefined,
               });
               fetchSuggestions(text, accumulatedText, (evt.domain as string) ?? "general");
             } else if (evt.type === "error") {
@@ -1864,6 +1870,11 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                     );
                   })()}
 
+                  {/* Morning Briefing — proactive daily digest (ARB #39) */}
+                  {!activeMode && (
+                    <MorningBriefing onAction={(prompt) => !busy && send(prompt)} />
+                  )}
+
                   {/* Smart Widgets */}
                   <motion.div
                     initial={{ opacity: 0, y: 12 }}
@@ -2106,6 +2117,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                   </a>
                                 ))}
                               </div>
+                            )}
+                            {t.role === "ai" && !t.streaming && t.citations && (
+                              <CitationsCard citations={t.citations} />
                             )}
                             {t.downloadUrl && (
                               <motion.a

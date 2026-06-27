@@ -421,6 +421,111 @@ def _extract_text_from_pptx_bytes(data: bytes) -> str:
         return ""
 
 
+def _chunk_text_structured(text: str, max_tokens: int = 400, overlap_sentences: int = 2) -> list[dict]:
+    """Structure-aware chunker — ARB #30.
+
+    Respects document structure (Markdown/Word headings, numbered sections, bullet lists)
+    so that retrieval chunks always contain their section heading as context. This avoids
+    the common failure mode where a fixed-size chunk starts mid-paragraph and the model
+    has no idea what topic it belongs to.
+
+    Algorithm:
+      1. Split the document on heading / section boundaries.
+      2. Within each section, apply the sentence-aware chunker.
+      3. Prepend the section heading to every chunk produced from that section.
+      4. Return list of dicts: {text, heading, section_index}
+
+    The caller (``_chunk_and_embed``) can join ``heading + "\\n\\n" + text`` to form
+    the embedding input and store the heading for citation display (#31).
+    """
+    if not text:
+        return []
+
+    # ── Heading detection ────────────────────────────────────────────────────
+    # Match: Markdown headings (#, ##, ###), numbered sections (1. / 1.1 / A.),
+    # ALL-CAPS lines (often section titles in plain-text Word exports), and
+    # lines ending with a colon that are short (≤60 chars → likely a label).
+    _HEADING_RE = re.compile(
+        r"^(#{1,4}\s+.+|"           # Markdown headings
+        r"\d+(\.\d+)*\.?\s+[A-Z].+|"  # "1." / "1.1" / "A." numbered sections
+        r"[A-Z][A-Z\s&/,\-]{4,59}|"   # ALL-CAPS lines (Word-export titles)
+        r".{5,60}:)\s*$",              # Short line ending with colon
+        re.MULTILINE,
+    )
+
+    lines = text.split("\n")
+    sections: list[tuple[str, str]] = []   # [(heading, body), ...]
+    current_heading = ""
+    current_body_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped and _HEADING_RE.match(stripped) and len(stripped) < 120:
+            # Flush current section
+            if current_body_lines:
+                sections.append((current_heading, "\n".join(current_body_lines).strip()))
+            current_heading = stripped.rstrip(":")
+            current_body_lines = []
+        else:
+            current_body_lines.append(line)
+
+    if current_body_lines:
+        sections.append((current_heading, "\n".join(current_body_lines).strip()))
+
+    # If no sections detected fall back to sentence chunker
+    if not sections or all(body == "" for _, body in sections):
+        plain = _chunk_text_sentences(text, max_tokens=max_tokens, overlap_sentences=overlap_sentences)
+        return [{"text": c, "heading": "", "section_index": i} for i, c in enumerate(plain)]
+
+    result: list[dict] = []
+    for sec_idx, (heading, body) in enumerate(sections):
+        if not body:
+            continue
+        sub_chunks = _chunk_text_sentences(body, max_tokens=max_tokens,
+                                           overlap_sentences=overlap_sentences)
+        for chunk_text in sub_chunks:
+            # Prepend heading so every chunk is self-contained
+            full_text = f"{heading}\n\n{chunk_text}" if heading else chunk_text
+            result.append({"text": full_text, "heading": heading, "section_index": sec_idx})
+
+    return result or [{"text": text[:max_tokens * 4], "heading": "", "section_index": 0}]
+
+
+def _rerank_chunks(query: str, chunks: list[dict], top_k: int | None = None) -> list[dict]:
+    """Lightweight query-chunk reranker — ARB #29.
+
+    Uses query-term frequency in the chunk (normalised TF overlap) as a fast,
+    zero-LLM relevance signal to re-order the candidates after hybrid retrieval.
+    This is NOT a cross-encoder but materially improves precision for keyword-dense
+    queries on a weak 8B model (the top chunk matters most for the grounded answer).
+
+    Each chunk dict must have a 'text' key.  Returns the list re-sorted by relevance
+    (highest first), with a '_rerank_score' key added for observability.
+    """
+    if not chunks or not query:
+        return chunks
+
+    query_tokens = set(re.findall(r"[a-z0-9']{2,}", query.lower()))
+    if not query_tokens:
+        return chunks
+
+    def _score(chunk: dict) -> float:
+        text_tokens = re.findall(r"[a-z0-9']{2,}", (chunk.get("text") or "").lower())
+        if not text_tokens:
+            return 0.0
+        total = len(text_tokens)
+        matches = sum(1 for t in text_tokens if t in query_tokens)
+        # Normalised TF: fraction of chunk tokens that are query tokens,
+        # scaled by query recall: fraction of query tokens present in chunk.
+        recall = sum(1 for qt in query_tokens if any(qt in t for t in text_tokens)) / max(len(query_tokens), 1)
+        tf = matches / max(total, 1)
+        return 0.6 * tf + 0.4 * recall
+
+    scored = [dict(c, _rerank_score=_score(c)) for c in chunks]
+    scored.sort(key=lambda x: x["_rerank_score"], reverse=True)
+    return scored[:top_k] if top_k else scored
+
+
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list:
     """Character-based chunker (legacy — kept for backward compatibility)."""
     if not text:
@@ -649,9 +754,10 @@ class PolicyService:
 
     @staticmethod
     def _chunk_and_embed(policy: Policy, db, chunk_images: dict = None):
-        """
-        Internal: chunk one Policy and store PolicyChunk rows in the given session.
-        Uses sentence-aware chunking (~400 tokens, 2-sentence overlap).
+        """Internal: chunk one Policy and store PolicyChunk rows in the given session.
+
+        Uses structure-aware chunking (ARB #30) — respects headings/sections so
+        every chunk carries its section context for better retrieval and citation.
         Embedding is best-effort — chunks are stored even without embeddings.
         chunk_images: optional {chunk_index: [PolicyImage.id, ...]} mapping
         """
@@ -659,8 +765,10 @@ class PolicyService:
 
         db.query(PolicyChunk).filter(PolicyChunk.policy_id == policy.id).delete()
 
-        chunks = _chunk_text_sentences(policy.content or "")
-        for i, chunk_text_val in enumerate(chunks):
+        # Structure-aware chunking: each item is {text, heading, section_index}
+        structured_chunks = _chunk_text_structured(policy.content or "")
+        for i, chunk_info in enumerate(structured_chunks):
+            chunk_text_val = chunk_info["text"]
             embed_input = f"{policy.title}\n\n{chunk_text_val}"
             emb = PolicyService._get_embedding(embed_input)
             img_keys = (chunk_images or {}).get(i) or None
@@ -671,7 +779,7 @@ class PolicyService:
                 embedding=emb,
                 image_urls=img_keys if img_keys else None,
             ))
-        return len(chunks)
+        return len(structured_chunks)
 
     @staticmethod
     def embed_all_policies():
@@ -774,6 +882,60 @@ class PolicyService:
         return PolicyService._hybrid_search(
             query, limit, category_not_in=[PROJECT_CATEGORY], char_budget=char_budget
         )
+
+    @staticmethod
+    def search_policies_with_citations(
+        query: str, limit: int = 4, char_budget: int | None = None
+    ) -> dict:
+        """Like search_policies() but returns a structured result with inline citations.
+
+        ARB #31 — Surface citations consistently.
+
+        Returns::
+
+            {
+                "context": "<combined text for LLM prompt>",
+                "citations": [
+                    {"title": "Leave Policy", "category": "Leave & Attendance",
+                     "excerpt": "first 120 chars of the matching chunk"},
+                    ...
+                ]
+            }
+
+        The caller can append a ``[CITATIONS] ...`` block at the end of the LLM
+        prompt so the model knows to reference the sources, and the frontend can
+        render clickable citation chips.
+        """
+        from app.models import PolicyChunk
+        from app.database import SessionLocal
+
+        context_str = PolicyService._hybrid_search(
+            query, limit, category_not_in=[PROJECT_CATEGORY], char_budget=char_budget
+        )
+
+        # Re-run a lightweight DB query to fetch the top matching Policy titles
+        # (the text is already in context_str; we just need the metadata).
+        citations: list[dict] = []
+        try:
+            db = SessionLocal()
+            try:
+                # Parse out the policy titles from the formatted context string.
+                # Format is "**Title** (Category):\n<text>\n\n---\n\n..."
+                import re as _re
+                for m in _re.finditer(r"\*\*(.+?)\*\*\s*\((.+?)\):\n([\s\S]*?)(?=\n\n---|\Z)",
+                                      context_str):
+                    title, category, excerpt = m.group(1), m.group(2), m.group(3).strip()
+                    citations.append({
+                        "title": title,
+                        "category": category,
+                        "excerpt": excerpt[:150].strip(),
+                    })
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+        return {"context": context_str, "citations": citations}
 
     @staticmethod
     def search_projects(query: str, limit: int = 6) -> str:
@@ -936,7 +1098,8 @@ class PolicyService:
                 chunks_by_id = {
                     c.id: c for c in db.query(PolicyChunk).filter(PolicyChunk.id.in_(candidate_ids)).all()
                 }
-                reranked = []
+                # Build candidate list: apply title-keyword boost + token-overlap rerank (ARB #29)
+                candidate_dicts = []
                 for cid in candidate_ids:
                     c = chunks_by_id.get(cid)
                     if c is None or PolicyService._is_metadata_chunk(c.text):
@@ -946,8 +1109,17 @@ class PolicyService:
                         0.1 for kw in query_keywords
                         if kw in title and kw not in ("policy", "what", "the", "for", "and")
                     )
-                    final_score = fused_scores[cid] + title_bonus
-                    reranked.append((final_score, c))
+                    candidate_dicts.append({
+                        "text": c.text, "chunk_obj": c,
+                        "_rrf_score": fused_scores[cid] + title_bonus,
+                    })
+
+                # Reranker: re-score by query-token overlap, then blend with RRF score
+                reranked_dicts = _rerank_chunks(query, candidate_dicts, top_k=len(candidate_dicts))
+                reranked = []
+                for d in reranked_dicts:
+                    combined = 0.7 * d["_rrf_score"] + 0.3 * d["_rerank_score"]
+                    reranked.append((combined, d["chunk_obj"]))
 
                 reranked.sort(key=lambda x: x[0], reverse=True)
 

@@ -95,13 +95,7 @@ def get_or_refresh(email: str) -> dict:
     """
     from app.config import settings
     if settings.ZOHO_DEMO_MODE:
-        from app.services import zoho_demo_data
-        return {
-            "success":   True,
-            "balances":  zoho_demo_data.leave_balances(),
-            "source":    "demo",
-            "cached_at": datetime.datetime.utcnow().isoformat(),
-        }
+        return _demo_result(email)
 
     cached = _read_cache(email)
     if cached and cached["age_seconds"] < CACHE_TTL and cached["sync_status"] == "ok":
@@ -114,11 +108,71 @@ def get_or_refresh(email: str) -> dict:
     return _fetch_and_cache(email)
 
 
+# ── Demo source (real CSV, per-user) ──────────────────────────────────────────────
+
+def _resolve_employee(email: str) -> tuple[str, str]:
+    """Map an email to (employee_code, name) via the Employee directory. ('','') if unknown."""
+    if not email:
+        return "", ""
+    db = SessionLocal()
+    try:
+        from app.models import Employee
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if emp:
+            return (emp.employee_id or ""), (emp.name or "")
+    except Exception:
+        pass
+    finally:
+        db.close()
+    return "", ""
+
+
+def _have_csv() -> bool:
+    """True if the leave-balance CSV roster is present (used as offline fallback)."""
+    from app.services import leave_balance_data
+    return leave_balance_data.has_data()
+
+
+def _demo_result(email: str) -> dict:
+    """Standard success envelope around the CSV-backed per-user balances."""
+    return {
+        "success":   True,
+        "balances":  _demo_balances(email),
+        "source":    "demo",
+        "cached_at": datetime.datetime.utcnow().isoformat(),
+    }
+
+
+def _demo_balances(email: str) -> list[dict]:
+    """
+    Per-user leave balances for demo mode.
+
+    Prefer the real CSV (app/data/leave_balances.csv) matched to the signed-in user;
+    fall back to a configured demo employee, then to the generic static fixture.
+    """
+    from app.config import settings
+    from app.services import leave_balance_data, zoho_demo_data
+
+    if leave_balance_data.has_data():
+        code, name = _resolve_employee(email)
+        balances = leave_balance_data.balances_for(code, name)
+        if balances is None and settings.LEAVE_BALANCE_DEMO_EMPLOYEE:
+            balances = leave_balance_data.balances_for(settings.LEAVE_BALANCE_DEMO_EMPLOYEE)
+        if balances:
+            return balances
+
+    return zoho_demo_data.leave_balances()
+
+
 # ── Internal helpers ────────────────────────────────────────────────────────────
 
 def _fetch_and_cache(email: str) -> dict:
     token = _get_zoho_token(email)
     if not token:
+        # No live Zoho connection — serve the real CSV roster instead of an error,
+        # so leave balances work even before per-user OAuth is wired up.
+        if _have_csv():
+            return _demo_result(email)
         return {"success": False, "error": "not_connected"}
 
     try:
@@ -134,6 +188,8 @@ def _fetch_and_cache(email: str) -> dict:
         code = exc.response.status_code if exc.response is not None else 0
         if code in (401, 403):
             _persist(email, None, "auth_error", str(exc))
+            if _have_csv():
+                return _demo_result(email)
             return {"success": False, "error": "not_connected"}
         _persist(email, None, "error", str(exc))
         return {"success": False, "error": f"Zoho API error {code} — please try again."}

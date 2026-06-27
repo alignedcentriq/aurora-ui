@@ -45,13 +45,15 @@ class Leave(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
-    leave_type = Column(String) # Casual, Sick, Earned, Optional
+    leave_type = Column(String)
     start_date = Column(Date)
     end_date = Column(Date)
-    status = Column(String, default="Pending") # Pending, Approved, Rejected, Cancelled
+    days = Column(Float, nullable=True)
+    status = Column(String, default="Pending")
     reason = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
+    zoho_id = Column(String, unique=True, nullable=True)
+
     employee = relationship("Employee", back_populates="leaves")
 
 class Attendance(Base):
@@ -2104,3 +2106,44 @@ class OnboardingDocSubmission(Base):
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     journey = relationship("OnboardingJourney", back_populates="documents")
+
+
+# ── Insight Bus (ARB #48) ──────────────────────────────────────────────────────
+
+class InsightSignalLog(Base):
+    """Persistent log of all signals emitted to the InsightBus.
+
+    Enables audit, replay on restart, and cross-worker signal sharing (future).
+    """
+    __tablename__ = "insight_signal_log"
+    __table_args__ = {"schema": SCHEMA}
+
+    id          = Column(Integer, primary_key=True, index=True)
+    signal_type = Column(String, nullable=False, index=True)   # delivery_risk | skill_gap | …
+    source_domain = Column(String, nullable=True)
+    payload     = Column(JSON, nullable=True)                  # full signal as JSON
+    emitted_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    processed   = Column(Boolean, default=False)               # True once all reactors ran
+
+
+class InsightNudgeLog(Base):
+    """Audit trail for nudges proposed by InsightBus reactors.
+
+    Separate from the live Nudge table — this is the immutable record of what
+    was proposed and when, even if the Nudge was later dismissed.
+    """
+    __tablename__ = "insight_nudge_log"
+    __table_args__ = {"schema": SCHEMA}
+
+    id            = Column(Integer, primary_key=True, index=True)
+    signal_log_id = Column(Integer, ForeignKey(f"{SCHEMA}.insight_signal_log.id"),
+                           nullable=True, index=True)
+    nudge_type    = Column(String, nullable=False)
+    target_email  = Column(String, nullable=True, index=True)
+    title         = Column(String, nullable=True)
+    body          = Column(Text, nullable=True)
+    priority      = Column(String, default="medium")
+    action_hint   = Column(String, nullable=True)
+    action_payload= Column(JSON, nullable=True)
+    human_gate    = Column(Boolean, default=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow)

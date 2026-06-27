@@ -233,34 +233,39 @@ export function ManagerPortal() {
   }, [auth]);
 
   return (
-    <div className="h-full overflow-y-auto w-full px-4 py-6">
+    <div className="h-full overflow-y-auto w-full px-6 py-8 bg-gradient-to-b from-background via-background to-muted/20">
       {/* Header */}
-      <div className="mb-5 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--collaboration)]/15">
-          <UserCog className="h-5 w-5 text-[var(--collaboration)]" />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-foreground">My Team</h1>
-          <p className="text-sm text-muted-foreground">Manage your whole reporting hierarchy.</p>
+      <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border/60">
+        <div className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
+            <UserCog className="h-7 w-7 text-[var(--collaboration)] animate-pulse" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">My Team</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Manage hierarchy allocations, track readiness, skills, and appreciations.
+            </p>
+          </div>
         </div>
       </div>
 
       {/* Tab bar */}
-      <div className="mb-5 flex gap-1 overflow-x-auto no-scrollbar rounded-2xl border border-border bg-muted/30 p-1">
+      <div className="mb-6 flex gap-1.5 overflow-x-auto no-scrollbar rounded-2xl border border-border/80 bg-muted/40 p-1.5 backdrop-blur-sm max-w-fit">
         {TABS.map((t) => {
           const Icon = t.icon;
+          const isActive = activeTab === t.id;
           return (
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id)}
               className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
-                activeTab === t.id
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
+                "flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200",
+                isActive
+                  ? "bg-background text-foreground shadow-sm scale-102 border border-border/50"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
               )}
             >
-              <Icon className="h-3.5 w-3.5" />
+              <Icon className={cn("h-4 w-4 transition-transform duration-200", isActive && "scale-110 text-primary")} />
               {t.label}
             </button>
           );
@@ -268,13 +273,15 @@ export function ManagerPortal() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "attendance" && <AttendanceTab auth={auth} />}
-      {activeTab === "allocations" && <AllocationsTab auth={auth} />}
-      {activeTab === "readiness" && <ReadinessTab auth={auth} />}
-      {activeTab === "skills" && <SkillsTab auth={auth} />}
-      {activeTab === "onboarding" && <OnboardingTab auth={auth} team={team} />}
-      {activeTab === "pmo-requests" && <PMORequestsTab auth={auth} team={team} />}
-      {activeTab === "appreciations" && <AppreciationsTab auth={auth} team={team} />}
+      <div className="space-y-6">
+        {activeTab === "attendance" && <AttendanceTab auth={auth} />}
+        {activeTab === "allocations" && <AllocationsTab auth={auth} />}
+        {activeTab === "readiness" && <ReadinessTab auth={auth} />}
+        {activeTab === "skills" && <SkillsTab auth={auth} />}
+        {activeTab === "onboarding" && <OnboardingTab auth={auth} team={team} />}
+        {activeTab === "pmo-requests" && <PMORequestsTab auth={auth} team={team} />}
+        {activeTab === "appreciations" && <AppreciationsTab auth={auth} team={team} />}
+      </div>
     </div>
   );
 }
@@ -384,125 +391,135 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
   const totals = report?.totals;
 
   return (
-    <div>
+    <div className="space-y-8">
       {/* Email automations at top */}
       <SchedulesSection auth={auth} />
 
-      {/* Controls */}
-      <div className="mb-5 mt-6 flex flex-wrap items-center gap-2">
-        <select
-          value={month}
-          onChange={(e) => setMonth(Number(e.target.value))}
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm flex-1 sm:flex-none"
-        >
-          {MONTHS.map((m, i) => (
-            <option key={m} value={i + 1}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <select
-          value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
-          className="rounded-xl border border-border bg-background px-3 py-2 text-sm flex-1 sm:flex-none"
-        >
-          {[year - 1, year, year + 1]
-            .filter((v, i, a) => a.indexOf(v) === i)
-            .map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
+      {/* Controls bar */}
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/60 bg-card/40 px-5 py-4 backdrop-blur-sm shadow-sm">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <select
+            value={month}
+            onChange={(e) => setMonth(Number(e.target.value))}
+            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+          >
+            {MONTHS.map((m, i) => (
+              <option key={m} value={i + 1}>{m}</option>
             ))}
-        </select>
-        <button
-          onClick={loadReport}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted flex-1 sm:flex-none"
-        >
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-        </button>
-        <div className="hidden sm:block flex-1" />
-        <div className="flex w-full sm:w-auto items-center gap-2 mt-1 sm:mt-0">
+          </select>
+          <select
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+          >
+            {[year - 1, year, year + 1]
+              .filter((v, i, a) => a.indexOf(v) === i)
+              .map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+          </select>
+          <button
+            onClick={loadReport}
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium hover:bg-muted hover:shadow-sm transition-all"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
           <button
             onClick={downloadCsv}
             disabled={!report?.success}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-4 py-2.5 text-sm font-semibold hover:bg-muted hover:shadow-sm transition-all disabled:opacity-40"
           >
             <Download className="h-3.5 w-3.5" /> CSV
           </button>
           <button
             onClick={emailNow}
             disabled={!report?.success || emailing}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 whitespace-nowrap"
+            className="flex items-center gap-2 rounded-xl bg-[var(--collaboration)] px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 whitespace-nowrap shadow-md"
           >
-            {emailing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Mail className="h-3.5 w-3.5" />
-            )}
-            Email me the report
+            {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+            Email Report
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2.5 py-8 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading attendance…
+        <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm font-medium">Loading attendance data…</p>
         </div>
       ) : !report?.success ? (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          {report?.message || "No employees report up to you."}
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 text-sm text-amber-600 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+          <p className="leading-relaxed">{report?.message || "No employees report up to you."}</p>
         </div>
       ) : (
         <>
-          <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {/* Stats grid */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              { label: "Team Size", value: report.headcount },
-              { label: "Present", value: totals!.present },
-              { label: "Absent", value: totals!.absent },
-              { label: "WFH", value: totals!.wfh },
-              { label: "Late", value: totals!.late },
-              { label: "Half-day", value: totals!.half_day },
+              { label: "Team Size", value: report.headcount, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
+              { label: "Present", value: totals!.present, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+              { label: "Absent", value: totals!.absent, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+              { label: "WFH", value: totals!.wfh, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+              { label: "Late", value: totals!.late, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+              { label: "Half-day", value: totals!.half_day, color: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20" },
             ].map((c) => (
-              <div key={c.label} className="rounded-2xl border border-border bg-card/50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {c.label}
-                </p>
-                <p className="mt-1 text-2xl font-bold text-foreground">{c.value}</p>
+              <div key={c.label} className={`rounded-2xl border ${c.border} ${c.bg} px-4 py-4 backdrop-blur-sm hover:shadow-md transition-all duration-200 group`}>
+                <p className={`text-[10.5px] font-bold uppercase tracking-[0.1em] ${c.color} mb-2`}>{c.label}</p>
+                <p className="text-3xl font-extrabold text-foreground group-hover:scale-105 transition-transform origin-left">{c.value}</p>
               </div>
             ))}
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-border">
+
+          {/* Attendance table */}
+          <div className="overflow-x-auto rounded-2xl border border-border/60 shadow-sm">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-2.5 font-semibold">Employee</th>
-                  <th className="px-3 py-2.5 font-semibold">Department</th>
-                  <th className="px-3 py-2.5 font-semibold">Reports To</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Present</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Absent</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">WFH</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Late</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Half-day</th>
+                <tr className="border-b border-border/60 bg-muted/60 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                  <th className="px-5 py-3.5">Employee</th>
+                  <th className="px-5 py-3.5">Department</th>
+                  <th className="px-5 py-3.5">Reports To</th>
+                  <th className="px-5 py-3.5 text-center">Present</th>
+                  <th className="px-5 py-3.5 text-center">Absent</th>
+                  <th className="px-5 py-3.5 text-center">WFH</th>
+                  <th className="px-5 py-3.5 text-center">Late</th>
+                  <th className="px-5 py-3.5 text-center">Half-day</th>
                 </tr>
               </thead>
               <tbody>
                 {report.members!.map((m, i) => (
                   <tr
                     key={m.email || i}
-                    className={cn("border-t border-border", i % 2 ? "bg-muted/20" : "")}
+                    className={cn(
+                      "border-t border-border/40 transition-colors hover:bg-primary/[0.03]",
+                      i % 2 ? "bg-muted/10" : "bg-background/60"
+                    )}
                   >
-                    <td className="px-3 py-2.5">
-                      <div className="font-medium text-foreground">{m.employee}</div>
-                      <div className="text-[11px] text-muted-foreground">{m.designation}</div>
+                    <td className="px-5 py-3.5">
+                      <div className="font-semibold text-foreground">{m.employee}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{m.designation}</div>
                     </td>
-                    <td className="px-3 py-2.5 text-muted-foreground">{m.department}</td>
-                    <td className="px-3 py-2.5 text-muted-foreground">{m.reports_to}</td>
-                    <td className="px-3 py-2.5 text-center">{m.present}</td>
-                    <td className="px-3 py-2.5 text-center">{m.absent}</td>
-                    <td className="px-3 py-2.5 text-center">{m.wfh}</td>
-                    <td className="px-3 py-2.5 text-center">{m.late}</td>
-                    <td className="px-3 py-2.5 text-center">{m.half_day}</td>
+                    <td className="px-5 py-3.5">
+                      <span className="inline-flex items-center rounded-lg bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">{m.department}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-sm text-muted-foreground">{m.reports_to}</td>
+                    <td className="px-5 py-3.5 text-center">
+                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{m.present}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-rose-500/10 text-sm font-bold text-rose-600">{m.absent}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sm font-bold text-sky-600">{m.wfh}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-sm font-bold text-amber-600">{m.late}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-orange-500/10 text-sm font-bold text-orange-600">{m.half_day}</span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -557,87 +574,91 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
   };
 
   return (
-    <div className="mb-6">
-      <div className="mb-3 flex flex-row items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
-        <div className="flex items-center gap-2">
-          <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
-          <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
-            Email Automations
-          </h2>
+    <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-sm p-5 shadow-sm">
+      <div className="mb-4 flex flex-row items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--collaboration)]/10 border border-[var(--collaboration)]/20">
+            <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
+          </span>
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Email Automations</h2>
+            <p className="text-[11px] text-muted-foreground">Auto-schedule attendance reports to your inbox</p>
+          </div>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted shrink-0"
+          className="flex items-center gap-1.5 rounded-xl border border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 px-3.5 py-2 text-xs font-bold text-[var(--collaboration)] hover:bg-[var(--collaboration)]/10 transition-all shrink-0"
         >
-          <Plus className="h-3.5 w-3.5" /> New automation
+          <Plus className="h-3.5 w-3.5" /> New Automation
         </button>
       </div>
       {showForm && (
-        <ScheduleForm
-          auth={auth}
-          onCreated={() => {
-            setShowForm(false);
-            load();
-          }}
-        />
+        <div className="mb-4">
+          <ScheduleForm
+            auth={auth}
+            onCreated={() => { setShowForm(false); load(); }}
+          />
+        </div>
       )}
       {loading ? (
-        <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading automations…
         </div>
       ) : schedules.length === 0 ? (
-        <p className="py-3 text-sm text-muted-foreground">
-          No automations yet. Add one to get your team's attendance emailed on a schedule.
-        </p>
+        <div className="flex flex-col items-center gap-2 py-8 text-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+            <CalendarClock className="h-5 w-5" />
+          </span>
+          <p className="text-sm font-medium text-muted-foreground">No automations yet</p>
+          <p className="text-xs text-muted-foreground/70">Add one to get attendance reports emailed on a schedule.</p>
+        </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {schedules.map((s) => (
             <div
               key={s.id}
-              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-border bg-card/50 px-4 py-3"
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-border/50 bg-background/60 px-5 py-3.5 hover:shadow-sm transition-all"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-foreground">{describeCadence(s)}</span>
                   {!s.active && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground shrink-0">
+                    <span className="rounded-full border border-border bg-muted/60 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                       Paused
                     </span>
                   )}
                   {s.period_mode === "prev_period" && (
-                    <span className="rounded-full bg-[var(--collaboration)]/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--collaboration)] shrink-0">
+                    <span className="rounded-full border border-[var(--collaboration)]/25 bg-[var(--collaboration)]/8 px-2.5 py-0.5 text-[10px] font-bold text-[var(--collaboration)]">
                       Prev. period
                     </span>
                   )}
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 text-[11px] text-muted-foreground">
-                  <span className="flex items-center gap-1">
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
                     <Clock className="h-3 w-3" /> Next: {fmtDateTime(s.next_run)}
                   </span>
                   <span>To: {s.recipients.length ? s.recipients.join(", ") : "you"}</span>
                   {s.last_status && (
-                    <span>
-                      Last: {s.last_status} ({fmtDateTime(s.last_run)})
-                    </span>
+                    <span>Last: {s.last_status} ({fmtDateTime(s.last_run)})</span>
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5 justify-end sm:justify-start">
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   onClick={() => toggle(s)}
                   title={s.active ? "Pause" : "Resume"}
                   className={cn(
-                    "flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-semibold",
+                    "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all",
                     s.active
-                      ? "border-border hover:bg-muted"
-                      : "border-emerald-500/30 bg-emerald-500/5 text-emerald-600",
+                      ? "border-border bg-background hover:bg-muted"
+                      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-600 hover:bg-emerald-500/15",
                   )}
                 >
                   <Power className="h-3.5 w-3.5" /> {s.active ? "Pause" : "Resume"}
                 </button>
                 <button
                   onClick={() => remove(s)}
-                  className="flex items-center gap-1 rounded-xl border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                  className="flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs font-bold text-destructive hover:bg-destructive/10 transition-all"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

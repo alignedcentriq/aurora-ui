@@ -226,6 +226,10 @@ class Config:
 
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
+    # Demo leave balances: when the signed-in user can't be matched to a row in
+    # app/data/leave_balances.csv, fall back to this employee code (AASPL-####) so
+    # the demo still shows real CSV data. Empty -> use the generic static fixture.
+    LEAVE_BALANCE_DEMO_EMPLOYEE = os.getenv("LEAVE_BALANCE_DEMO_EMPLOYEE", "AASPL-1333")
     PORT = int(os.getenv("PORT", "8080"))
     HOST = os.getenv("HOST", "0.0.0.0")
 

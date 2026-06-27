@@ -285,6 +285,18 @@ class SendEmailDraftRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
+    # ARB #32 — warn early if running with >1 worker so operators know the
+    # module-level TTL caches in agent.py (_feedback_count_cache etc.) are
+    # per-process and will cause cache-miss churn.  Harmless at single-worker.
+    import os as _os
+    _worker_count = int(_os.environ.get("WEB_CONCURRENCY", "1"))
+    if _worker_count > 1:
+        logging.warning(
+            "[ARB#32] Running with WEB_CONCURRENCY=%s — module-level TTL caches "
+            "in agent.py are NOT shared across workers. Migrate them to Redis "
+            "before scaling horizontally.", _worker_count
+        )
+
     try:
         await asyncio.to_thread(init_db)
     except Exception as e:
@@ -383,6 +395,26 @@ async def startup_event():
             await asyncio.sleep(6 * 3600)  # every 6 hours
 
     asyncio.create_task(chat_retention_scheduler())
+
+    # ── Action-safety maintenance (ARB #26) ────────────────────────────────
+    # Proactively expire past-TTL pending_action rows and purge terminal rows
+    # older than 48 h.  Runs every hour — low-cost table scans, keeps the
+    # table lean and makes DB queries accurate (no stale 'pending' phantoms).
+    async def pending_action_maintenance_scheduler():
+        from app.services.pending_action_service import PendingActionService as _PAS
+        await asyncio.sleep(90)  # let startup settle
+        while True:
+            try:
+                await asyncio.to_thread(_PAS.expire_stale)
+            except Exception:
+                pass
+            try:
+                await asyncio.to_thread(_PAS.purge_expired, 48)
+            except Exception:
+                pass
+            await asyncio.sleep(3600)  # every hour
+
+    asyncio.create_task(pending_action_maintenance_scheduler())
 
     # ── Proactive nudge scan ───────────────────────────────────────────────
     # Turns the assistant proactive: deterministic detectors (zero LLM) surface
@@ -1065,6 +1097,42 @@ _form_builder_re = re.compile(r'\[FORM_BUILDER_START\](.*?)\[FORM_BUILDER_END\]'
 _quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
 _chart_re = re.compile(r'\[CHART_START\](.*?)\[CHART_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
+# ARB #41 — citation extraction. RAG search tools (search_policies / search_projects /
+# search_it_docs / …) all format hits as "**Title** (Category):\n<text>" joined by
+# "\n\n---\n\n" (see PolicyService._hybrid_search). We parse that out of the ToolMessages
+# so the answer can be surfaced with its grounding sources in a trust UI.
+_citation_re = re.compile(
+    r"\*\*(.+?)\*\*\s*\((.+?)\):\n([\s\S]*?)(?=\n\n---|\n\n\[POLICY_IMG|\Z)"
+)
+
+
+def _extract_citations(all_messages: list) -> list[dict]:
+    """Pull grounding sources out of RAG tool outputs in the message history.
+
+    Returns a deduped list of ``{"title", "category", "excerpt"}`` in first-seen
+    order. Empty when the answer wasn't grounded in any retrieved document
+    (e.g. a pure-action turn), so the frontend simply renders no trust card.
+    """
+    citations: list[dict] = []
+    seen: set[str] = set()
+    for msg in all_messages:
+        content = getattr(msg, "content", None)
+        if not isinstance(content, str) or "**" not in content:
+            continue
+        for m in _citation_re.finditer(content):
+            title = m.group(1).strip()
+            category = m.group(2).strip()
+            excerpt = re.sub(r"\[POLICY_IMG:[^\]]*\]", "", m.group(3)).strip()
+            key = title.lower()
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            citations.append({
+                "title": title,
+                "category": category,
+                "excerpt": excerpt[:180].strip(),
+            })
+    return citations
 
 
 def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: float) -> dict:
@@ -1243,11 +1311,14 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
                     break
         final_message = _rescue if _rescue else "I'm sorry, I wasn't able to generate a response. Please try again or rephrase your question."
 
+    citations = _extract_citations(all_messages)
+
     return {
         "final_message": final_message,
         "download_url": download_url,
         "interactive": interactive,
         "images": policy_images if policy_images else None,
+        "citations": citations if citations else None,
         "processing_time": f"{time.time() - start_time:.2f}s",
     }
 
@@ -1424,6 +1495,7 @@ async def chat(
         llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
         completed_calls: list[dict] = []   # finished LLM calls for DB insert
         error_msg: str | None = None
+        ttft_ms: int | None = None         # ms from request start to first streamed token
 
         # Create Langfuse trace at the START so child spans can attach
         tracing = TracingContext(
@@ -1581,6 +1653,8 @@ async def chat(
                             content = chunk.content if hasattr(chunk, "content") else ""
                             # Only stream plain text — skip tool-call argument dicts
                             if isinstance(content, str) and content:
+                                if ttft_ms is None:
+                                    ttft_ms = int((time.time() - start_time) * 1000)
                                 accumulated_text += content
                                 yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
@@ -1645,7 +1719,8 @@ async def chat(
         latency_ms = int((time.time() - start_time) * 1000)
         post = {
             "final_message": accumulated_text, "download_url": None,
-            "interactive": None, "images": None, "processing_time": latency_ms,
+            "interactive": None, "images": None, "citations": None,
+            "processing_time": latency_ms,
         }
         final_message = accumulated_text
         try:
@@ -1678,6 +1753,7 @@ async def chat(
                     response_text=final_message[:2000] if final_message else None,
                     response_length=len(final_message) if final_message else 0,
                     total_latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
                     llm_call_count=len(completed_calls),
                     total_prompt_tokens=sum(c.get("prompt_tokens") or 0 for c in completed_calls),
                     total_completion_tokens=sum(c.get("completion_tokens") or 0 for c in completed_calls),
@@ -1730,7 +1806,7 @@ async def chat(
         except Exception as _se:
             pass
 
-        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -2255,6 +2331,24 @@ async def cancel_leave(leave_id: int, user: CurrentUser = Depends(get_current_us
         return {"message": f"Leave cancelled.{balance_note}", "was_approved": was_approved}
     finally:
         db.close()
+
+
+# ── Morning Briefing (ARB #39) ───────────────────────────────────────────────
+
+@app.get("/api/briefing/me")
+async def get_my_briefing(user: CurrentUser = Depends(get_current_user)):
+    """A personalized daily digest fusing the caller's nudges, leave balance,
+    and self-scoped personal metrics. Read-only; every section degrades to empty."""
+    from app.services import briefing_service
+
+    def _build():
+        db = SessionLocal()
+        try:
+            return briefing_service.build_briefing(db, user.email, user.role, name="")
+        finally:
+            db.close()
+
+    return await asyncio.to_thread(_build)
 
 
 # ── Proactive nudges (system-initiated feed) ─────────────────────────────────

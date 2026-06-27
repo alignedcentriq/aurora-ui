@@ -20,6 +20,7 @@ import {
   GitMerge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { ChartCanvas, type ChartSpec } from "@/components/analytics/ChartCanvas";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -113,6 +114,34 @@ function exportChartCsv(spec: ChartSpec) {
   a.href = URL.createObjectURL(blob);
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// ── Server export helper (PDF / PPTX) ──────────────────────────────────────────
+// The backend renders a real vector chart (PDF) or a native editable chart (PPTX)
+// from the same ChartSpec we're displaying — see analytics_export_service.py.
+
+async function exportChartServer(
+  spec: ChartSpec,
+  format: "pdf" | "pptx",
+  authHeaders: Record<string, string>,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/analytics/export/${format}`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify(spec),
+    });
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.download = `${spec.title.replace(/\s+/g, "_") || "analytics_chart"}.${format}`;
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Save to board helper ──────────────────────────────────────────────────────
@@ -400,6 +429,30 @@ export function AnalyticsBuilder() {
                   className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Download className="h-3 w-3" /> PNG
+                </button>
+                <button
+                  onClick={() =>
+                    toast.promise(exportChartServer(activeChart, "pdf", authHeaders), {
+                      loading: "Building PDF…",
+                      success: (ok: boolean) => (ok ? "PDF downloaded" : "Export failed"),
+                      error: "Export failed",
+                    })
+                  }
+                  className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Download className="h-3 w-3" /> PDF
+                </button>
+                <button
+                  onClick={() =>
+                    toast.promise(exportChartServer(activeChart, "pptx", authHeaders), {
+                      loading: "Building PPTX…",
+                      success: (ok: boolean) => (ok ? "PPTX downloaded" : "Export failed"),
+                      error: "Export failed",
+                    })
+                  }
+                  className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Download className="h-3 w-3" /> PPTX
                 </button>
                 <button
                   onClick={handleSave}

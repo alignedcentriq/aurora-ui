@@ -16,7 +16,7 @@ try:
 except Exception:
     pass
 
-from app.services.resolver import Resolver, Decision, RouteContext
+from app.orchestration.resolver import Resolver, Decision, RouteContext
 from app.agent import (
     _clarify_reply_strategy, _leave_balance_strategy, _leave_params_strategy,
     _exact_dict_strategy, _keyword_high_strategy, _semantic_high_strategy,

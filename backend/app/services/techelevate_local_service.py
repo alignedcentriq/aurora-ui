@@ -447,13 +447,24 @@ def set_assignment_status(db: Session, assignment_id: int, status: str,
 
 def _apply_verified_skills(db: Session, a: TeAssignment) -> list[str]:
     """Write the completed training's skill_tags back to the employee as verified
-    EmployeeSkills. Idempotent (guarded by `skills_applied`; never duplicates a skill)."""
+    EmployeeSkills. Idempotent (guarded by `skills_applied`; never duplicates a skill).
+
+    ARB #52 — learning flywheel: after writing verified skills, emits a SkillGapSignal
+    to the InsightBus so Resource Finder and Skill Supply are immediately aware that
+    this person now has the skill. The signal is best-effort and never blocks the commit.
+    """
     if a.skills_applied or not a.training or not a.employee_id:
         return []
     tags = a.training.skill_tags or []
     if not tags:
         a.skills_applied = True
         return []
+
+    # Resolve employee email for the InsightBus signal (best-effort)
+    from app.models import Employee
+    emp = db.query(Employee).filter(Employee.id == a.employee_id).first()
+    emp_email = getattr(emp, "email", None) or ""
+
     existing = {
         (s.skill or "").strip().lower()
         for s in db.query(EmployeeSkill).filter(EmployeeSkill.employee_id == a.employee_id).all()
@@ -473,7 +484,37 @@ def _apply_verified_skills(db: Session, a: TeAssignment) -> list[str]:
     if added:
         log.info("[techelevate-local] verified %d skill(s) for emp %s via '%s': %s",
                  len(added), a.employee_id, a.training.title, added)
+        # ARB #52 flywheel: emit signals so downstream (Resource Finder, Skill Supply, manager)
+        # can react to newly verified skills without polling.
+        _emit_verified_skill_signals(added, emp_email, a.training.title)
     return added
+
+
+def _emit_verified_skill_signals(skills: list[str], emp_email: str, course_title: str) -> None:
+    """Emit SkillGapSignal(s) to the InsightBus after a skill is verified.
+
+    Each newly verified skill may close a known gap — the bus's skill_gap_to_training
+    reactor will surface a nudge to relevant managers.  Best-effort; never raises.
+    """
+    try:
+        from app.services.insight_bus import InsightBus, SkillGapSignal
+        for skill in skills:
+            # gap_count=-1 signals a gap CLOSURE (one more person now has the skill).
+            # Reactors can check gap_count < 0 to differentiate closure from gap signals.
+            sig = SkillGapSignal(
+                skill=skill,
+                gap_count=-1,   # negative = gap closure
+                recommended_action="verified",
+                candidate_emails=[emp_email] if emp_email else [],
+                context={
+                    "course_title": course_title,
+                    "event": "skill_verified",
+                    "emp_email": emp_email,
+                },
+            )
+            InsightBus.emit(sig)
+    except Exception:
+        log.debug("[techelevate-local] InsightBus emit failed (non-fatal)")
 
 
 # ── Flywheel: recommend internal trainings for a skill (Udemy is the fallback) ─

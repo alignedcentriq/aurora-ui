@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
-import { useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { HoverEffect } from "@/components/ui/card-hover-effect";
@@ -32,31 +32,73 @@ import {
   Brain,
 } from "lucide-react";
 
-// Page components live outside the routes folder so they are code-split
-import { AdminDashboard } from "@/pages/AdminDashboard";
-import { AdminPortal } from "@/pages/AdminPortal";
-import { HRPortal } from "@/pages/HRPortal";
-import { ITPortal } from "@/pages/ITPortal";
-import { PMOPortal } from "@/pages/PMOPortal";
-import { LeadershipPortal } from "@/pages/LeadershipPortal";
-import { AutomationHub } from "@/pages/AutomationHub";
-import { ManagerPortal } from "@/pages/ManagerPortal";
-import { PeoplePage } from "@/pages/PeoplePage";
-import { ConfigPage } from "@/pages/ConfigPage";
-import { UrlLibrary } from "@/pages/UrlLibrary";
-import { FormLibrary } from "@/pages/FormLibrary";
-import ConnectorStudio from "@/pages/ConnectorStudio";
-import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
-import { RoiDashboard } from "@/pages/RoiDashboard";
-import { AnalyticsStudio } from "@/pages/AnalyticsStudio";
-import { AnalyticsBuilder } from "@/pages/AnalyticsBuilder";
-import { LLMControlsPage } from "@/pages/LLMControlsPage";
-import { AccessManagement } from "@/pages/AccessManagement";
-import { CabinDirectory } from "@/pages/CabinDirectory";
-import { TechElevateLocalPortal } from "@/pages/TechElevateLocalPortal";
-import { UdemyBusinessPortal } from "@/pages/UdemyBusinessPortal";
-import { ProjectIQPortal } from "@/pages/ProjectIQPortal";
-import { OnboardingTracker } from "@/pages/OnboardingTracker";
+// Page components are lazy-loaded so the Control Hub route ships only the shell;
+// the heavy portal bundle for a tab is fetched on demand the first time it opens.
+// (Only one tab renders at a time, so eagerly bundling all 23 wasted the initial download.)
+const AdminDashboard = lazy(() =>
+  import("@/pages/AdminDashboard").then((m) => ({ default: m.AdminDashboard })),
+);
+const AdminPortal = lazy(() =>
+  import("@/pages/AdminPortal").then((m) => ({ default: m.AdminPortal })),
+);
+const HRPortal = lazy(() => import("@/pages/HRPortal").then((m) => ({ default: m.HRPortal })));
+const ITPortal = lazy(() => import("@/pages/ITPortal").then((m) => ({ default: m.ITPortal })));
+const PMOPortal = lazy(() => import("@/pages/PMOPortal").then((m) => ({ default: m.PMOPortal })));
+const LeadershipPortal = lazy(() =>
+  import("@/pages/LeadershipPortal").then((m) => ({ default: m.LeadershipPortal })),
+);
+const AutomationHub = lazy(() =>
+  import("@/pages/AutomationHub").then((m) => ({ default: m.AutomationHub })),
+);
+const ManagerPortal = lazy(() =>
+  import("@/pages/ManagerPortal").then((m) => ({ default: m.ManagerPortal })),
+);
+const PeoplePage = lazy(() =>
+  import("@/pages/PeoplePage").then((m) => ({ default: m.PeoplePage })),
+);
+const ConfigPage = lazy(() =>
+  import("@/pages/ConfigPage").then((m) => ({ default: m.ConfigPage })),
+);
+const UrlLibrary = lazy(() =>
+  import("@/pages/UrlLibrary").then((m) => ({ default: m.UrlLibrary })),
+);
+const FormLibrary = lazy(() =>
+  import("@/pages/FormLibrary").then((m) => ({ default: m.FormLibrary })),
+);
+const ConnectorStudio = lazy(() => import("@/pages/ConnectorStudio"));
+const ObservabilityDashboard = lazy(() =>
+  import("@/pages/ObservabilityDashboard").then((m) => ({ default: m.ObservabilityDashboard })),
+);
+const RoiDashboard = lazy(() =>
+  import("@/pages/RoiDashboard").then((m) => ({ default: m.RoiDashboard })),
+);
+const AnalyticsStudio = lazy(() =>
+  import("@/pages/AnalyticsStudio").then((m) => ({ default: m.AnalyticsStudio })),
+);
+const AnalyticsBuilder = lazy(() =>
+  import("@/pages/AnalyticsBuilder").then((m) => ({ default: m.AnalyticsBuilder })),
+);
+const LLMControlsPage = lazy(() =>
+  import("@/pages/LLMControlsPage").then((m) => ({ default: m.LLMControlsPage })),
+);
+const AccessManagement = lazy(() =>
+  import("@/pages/AccessManagement").then((m) => ({ default: m.AccessManagement })),
+);
+const CabinDirectory = lazy(() =>
+  import("@/pages/CabinDirectory").then((m) => ({ default: m.CabinDirectory })),
+);
+const TechElevateLocalPortal = lazy(() =>
+  import("@/pages/TechElevateLocalPortal").then((m) => ({ default: m.TechElevateLocalPortal })),
+);
+const UdemyBusinessPortal = lazy(() =>
+  import("@/pages/UdemyBusinessPortal").then((m) => ({ default: m.UdemyBusinessPortal })),
+);
+const ProjectIQPortal = lazy(() =>
+  import("@/pages/ProjectIQPortal").then((m) => ({ default: m.ProjectIQPortal })),
+);
+const OnboardingTracker = lazy(() =>
+  import("@/pages/OnboardingTracker").then((m) => ({ default: m.OnboardingTracker })),
+);
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -373,6 +415,17 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
     "Browse the company's Udemy Business course catalog and track learner activity.",
 };
 
+function TabLoadingFallback() {
+  return (
+    <div className="flex flex-1 h-full items-center justify-center bg-[#f5f7fa] dark:bg-background">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
+        <div className="h-8 w-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+        <p className="text-[13px] font-medium">Loading portal…</p>
+      </div>
+    </div>
+  );
+}
+
 interface ControlHubOverviewProps {
   allowedTabs: TabItem[];
   onTabChange: (tabId: TabId) => void;
@@ -535,7 +588,9 @@ function ControlHubPage() {
 
                 {/* Viewport content */}
                 <div className="flex-1 h-full overflow-hidden flex flex-col bg-[#f5f7fa] dark:bg-background">
-                  <ActiveComponent />
+                  <Suspense fallback={<TabLoadingFallback />}>
+                    <ActiveComponent />
+                  </Suspense>
                 </div>
               </div>
             ) : (

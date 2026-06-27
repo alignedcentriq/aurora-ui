@@ -296,6 +296,124 @@ CAPABILITIES: tuple[Capability, ...] = (
 
 _BY_KEY = {c.key: c for c in CAPABILITIES}
 
+
+# ── Skill / Mode dispatch spine (ARB #45) ────────────────────────────────────
+# Replaces the hardcoded ``_MODE_ROUTES`` dict in agent.py with a declarative
+# registry.  Each focus mode is a ``SkillSpec`` that declares not just the
+# routing target but also the retrieval scope, the available tool groups, a
+# prompt fragment that nudges tool selection, required permissions, and the
+# risk class for the action-safety layer.
+#
+# Migration:  ``_active_mode_strategy`` in agent.py reads from
+# ``SKILL_REGISTRY.route_for_mode()`` instead of the hardcoded dict.
+# New skills are added here (data) rather than as code branches.
+
+@dataclass(frozen=True)
+class SkillSpec:
+    """Declarative skill definition for a focus mode.
+
+    key          — stable id matching the active_mode string ("analytics" etc.)
+    domain       — LangGraph routing domain
+    sub_intent   — LangGraph sub-intent
+    display_name — human-readable name shown in the UI / greeting
+    retrieval_scope — which policy/document categories to include in RAG
+                      (None = default scope for the domain)
+    tool_groups  — names of tool groups the agent should prefer (hints only;
+                   the full tool list is always available for safety)
+    prompt_fragment — appended to the system prompt to nudge tool selection
+    roles        — frozenset of roles that may enter this mode, or None = all
+    risk_class   — "read", "low", "medium", "high" — informs confirmation gates
+    """
+    key: str
+    domain: str
+    sub_intent: str
+    display_name: str
+    retrieval_scope: Optional[tuple[str, ...]] = None
+    tool_groups: tuple[str, ...] = ()
+    prompt_fragment: str = ""
+    roles: Optional[frozenset] = None
+    risk_class: str = "read"
+
+
+SKILL_REGISTRY: tuple[SkillSpec, ...] = (
+    SkillSpec(
+        key="analytics",
+        domain="analytics",
+        sub_intent="builder",
+        display_name="Analytics Builder",
+        tool_groups=("analytics",),
+        prompt_fragment=(
+            "[ACTIVE MODE: Analytics Builder] The user has activated Analytics Builder mode. "
+            "Prioritise structured metric queries, chart generation, and the analytics catalog. "
+            "Do not answer free-form conversational questions — redirect to analytics tools."
+        ),
+        roles=_r("hr", "manager", "pmo", "admin"),
+        risk_class="read",
+    ),
+    SkillSpec(
+        key="training",
+        domain="pmo",
+        sub_intent="training",
+        display_name="Learning Advisor",
+        retrieval_scope=("PMO",),
+        tool_groups=("udemy", "techelevate", "skill_gap"),
+        prompt_fragment=(
+            "[ACTIVE MODE: Learning Advisor] The user has activated Learning Advisor mode. "
+            "Prioritise course recommendations (Udemy, TechElevate), skill gap analysis, "
+            "and learning plans."
+        ),
+        risk_class="read",
+    ),
+    SkillSpec(
+        key="project",
+        domain="pmo",
+        sub_intent="project_iq",
+        display_name="Project IQ",
+        retrieval_scope=("Project Showcase",),
+        tool_groups=("project_iq",),
+        prompt_fragment=(
+            "[ACTIVE MODE: Project IQ] The user has activated Project IQ mode. "
+            "Prioritise project insights, similar project discovery, lessons learned, "
+            "SME identification, and reusable assets."
+        ),
+        roles=_r("pmo", "manager", "admin"),
+        risk_class="read",
+    ),
+    SkillSpec(
+        key="resource",
+        domain="hr",
+        sub_intent="resource_match",
+        display_name="Resource Finder",
+        tool_groups=("resource_match", "skill_supply"),
+        prompt_fragment=(
+            "[ACTIVE MODE: Resource Finder] The user has activated Resource Finder mode. "
+            "Prioritise skill-to-availability matching, bench status, and staffing recommendations."
+        ),
+        roles=_r("pmo", "manager", "admin"),
+        risk_class="read",
+    ),
+)
+
+_SKILL_BY_KEY: dict[str, SkillSpec] = {s.key: s for s in SKILL_REGISTRY}
+
+
+def get_skill(mode_key: str) -> Optional[SkillSpec]:
+    """Return the SkillSpec for the given active_mode key, or None."""
+    return _SKILL_BY_KEY.get(mode_key)
+
+
+def route_for_mode(mode_key: str) -> Optional[tuple[str, str, str]]:
+    """Return (domain, sub_intent, prompt_fragment) for the given mode, or None.
+
+    This replaces the hardcoded ``_MODE_ROUTES`` dict in agent.py (ARB #45).
+    Returns None for unknown modes so callers can fall through to the normal
+    routing pipeline.
+    """
+    skill = _SKILL_BY_KEY.get((mode_key or "").strip())
+    if not skill:
+        return None
+    return skill.domain, skill.sub_intent, skill.prompt_fragment
+
 _STOPWORDS = {
     "the", "a", "an", "my", "me", "i", "is", "are", "do", "does", "to", "for",
     "of", "in", "on", "at", "how", "what", "whats", "can", "you", "your", "and",

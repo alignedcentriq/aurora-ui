@@ -159,9 +159,18 @@ export interface Turn {
   domain?: string;
   interactive?: InteractivePayload;
   images?: string[];
+  /** Grounding sources for the answer (ARB #41) — rendered as a cited-answer trust card. */
+  citations?: Citation[];
   streaming?: boolean;
   /** True when this turn was generated from an error/failure, enabling the escalation prompt */
   isError?: boolean;
+}
+
+/** A single grounding source behind a cited answer (ARB #41). */
+export interface Citation {
+  title: string;
+  category: string;
+  excerpt: string;
 }
 
 export interface Thread {

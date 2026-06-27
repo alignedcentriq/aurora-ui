@@ -21,7 +21,7 @@ import datetime
 import re
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from app.config import settings
 from app.database import SessionLocal
@@ -143,21 +143,42 @@ class ResourceMatchingService:
                     "Try a broader or alternative skill term."
                 )
 
-            # ── enrich with DB allocation availability + score ───────────────
+            # ── experience floor FIRST, so the (DB) availability work below only runs
+            # for candidates we'll actually consider ────────────────────────────────
+            # Experience floor: when the user asks for "N+ years" we only keep people we
+            # can CONFIRM meet it. A candidate whose matched-skill experience is below the
+            # floor — or unknown (max_years == 0, e.g. no years recorded on that skill) —
+            # is dropped. (The old `and c["max_years"]` guard let unknown-experience
+            # people slip past a "5+ years" ask.)
+            kept = [c for c in candidates.values()
+                    if not (min_years and c["max_years"] < float(min_years))]
+
+            # ── batch-enrich: ONE directory query + ONE availability map for the whole
+            # shortlist, instead of 2-3 DB round-trips per candidate (the old N+1). The
+            # allocation feed is linked to candidates by name via canonical normalization
+            # (ARB #46: normalize_name() reduces homonym/casing failures). ──
+            from app.services.allocation_snapshot_service import current_load_map
+            from app.services.employee_identity import normalize_name
+            names = [c["name"] for c in kept if c.get("name")]
+            directory = cls._directory_map(db, names)
+            load_map = current_load_map(db, names) if names else {}
+
             scored = []
-            for c in candidates.values():
-                if min_years and c["max_years"] and c["max_years"] < float(min_years):
-                    continue
+            for c in kept:
+                key = normalize_name(c["name"] or "")
 
                 # Alchemy gives names but not email/designation — fill from the directory.
-                if not c.get("email") or not c.get("designation"):
-                    emp = (db.query(Employee)
-                           .filter(Employee.name.ilike(c["name"])).first())
-                    if emp:
-                        c["email"] = c.get("email") or emp.email
-                        c["designation"] = c.get("designation") or emp.designation
+                emp = directory.get(key)
+                if emp:
+                    c["email"] = c.get("email") or emp[0]
+                    c["designation"] = c.get("designation") or emp[1]
 
-                load, free, earliest_free, current = cls._availability(db, c["name"], c.get("email"))
+                a = load_map.get(key)
+                if a:
+                    free, earliest_free, current = a["free"], a["earliest_free"], a["rows"]
+                    load = a["load"]
+                else:
+                    load, free, earliest_free, current = 0.0, 100.0, None, []
 
                 skill_score = len(c["matched"]) / len(terms)
                 # experience: quantified years, else competency floor
@@ -280,23 +301,30 @@ class ResourceMatchingService:
                     c["matched"][t] = 0.0
         return out
 
-    # ── availability (always from the DB allocation feed) ───────────────────
+    # ── directory enrichment (batched) ──────────────────────────────────────
 
     @classmethod
-    def _availability(cls, db, name: str, email: Optional[str]):
-        """Return (load%, free%, earliest_free_date, current_allocations) for a person,
-        computed from their LATEST allocation snapshot (not summed across months).
+    def _directory_map(cls, db, names: list[str]) -> dict[str, tuple]:
+        """Batch name → (email, designation) from the employee directory in ONE query.
 
-        Delegates to allocation_snapshot_service so capacity math has one definition.
-        Matched by name (the shared identifier), falling back to employee_id code.
+        Keyed by normalize_name() (ARB #46) so matching is robust to casing and
+        honorifics.  Falls back to lowercased simple match for entries that don't
+        appear in the normalized map.
         """
-        from app.services import allocation_snapshot_service as snap
-        emp_code = None
-        if email:
-            emp = db.query(Employee).filter(Employee.email == email).first()
-            emp_code = emp.employee_id if emp else None
-        a = snap.availability_for(db, name=name, employee_id=emp_code)
-        return a["load"], a["free"], a["earliest_free"], a["rows"]
+        from app.services.employee_identity import normalize_name
+        normed = [normalize_name(n) for n in (names or []) if n and n.strip()]
+        lowered = [n.strip().lower() for n in (names or []) if n and n.strip()]
+        all_terms = list(set(normed + lowered))
+        if not all_terms:
+            return {}
+        rows = (db.query(Employee)
+                .filter(func.lower(Employee.name).in_(all_terms)).all())
+        result = {}
+        for e in rows:
+            for key in (normalize_name(e.name or ""), (e.name or "").strip().lower()):
+                if key and key not in result:
+                    result[key] = (e.email, e.designation)
+        return result
 
     # ── rendering ───────────────────────────────────────────────────────────
 

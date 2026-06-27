@@ -52,7 +52,7 @@ from app.services.prompt_service import PromptService
 from app.services.feedback_service import FeedbackService
 from app.services.pending_action_service import PendingActionService
 from app.services import helpdesk_mail
-from app.services.resolver import Resolver, Decision, RouteContext
+from app.orchestration.resolver import Resolver, Decision, RouteContext
 
 log = logging.getLogger("aurora-logger")
 
@@ -411,8 +411,7 @@ def get_my_leaves(email: str = "", state: Annotated[dict, InjectedState] = None)
     """List the logged-in user's leave requests (id, type, dates, status, days).
     Call before cancel_leave so the user can pick which leave to cancel."""
     from app.database import SessionLocal
-    from app.models import Leave, Employee
-    # Always the requester's own leaves — ignore any email the model supplies.
+    from app.models import Leave
     email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
     db = SessionLocal()
     try:
@@ -423,15 +422,19 @@ def get_my_leaves(email: str = "", state: Annotated[dict, InjectedState] = None)
             db.query(Leave)
             .filter(Leave.employee_id == emp.id)
             .order_by(Leave.created_at.desc())
-            .limit(10)
+            .limit(20)
             .all()
         )
         if not leaves:
             return "No leave records found."
         lines = []
         for l in leaves:
-            days = ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else "?"
-            lines.append(f"ID {l.id}: {l.leave_type} | {l.start_date} to {l.end_date} | {days} day(s) | Status: {l.status}")
+            days = l.days if l.days is not None else (
+                (l.end_date - l.start_date).days + 1 if l.start_date and l.end_date else "?"
+            )
+            period = f"{l.start_date} to {l.end_date}" if l.start_date != l.end_date else str(l.start_date)
+            reason = f" — {l.reason}" if l.reason else ""
+            lines.append(f"ID {l.id}: {l.leave_type} | {period} | {days} day(s) | {l.status}{reason}")
         return "\n".join(lines)
     finally:
         db.close()
@@ -1658,6 +1661,15 @@ def _extract_resource_match_args(text: str) -> tuple[str, Optional[float], str, 
         "week", "weeks", "role", "roles", "position", "positions", "slot", "slots",
         "requirement", "requirements", "upcoming", "staff", "staffing",
         "at", "least", "minimum", "min", "around", "about", "over", "more", "than",
+        # Follow-up / reference words: a message like "show their current project
+        # allocation" refers back to an earlier result, not a NEW skill search. Drop
+        # these so no fake skill survives — the query then falls through to the HR
+        # agent (which has the conversation history + availability/allocation tools)
+        # instead of failing with "no employees found with their/current/allocation".
+        "show", "list", "display", "give", "get", "tell", "see", "view", "current",
+        "currently", "allocation", "allocations", "allocated", "status", "their",
+        "them", "they", "his", "her", "its", "the", "an", "now", "please", "who",
+        "whats", "what", "of", "to", "in", "for", "and", "is", "are",
     }
     skill_tokens = []
     for t in raw.split():
@@ -2889,13 +2901,22 @@ _MODE_ROUTES: dict[str, tuple[str, str]] = {
 def _active_mode_strategy(ctx: RouteContext) -> Optional[Decision]:
     """An explicit assistant mode makes routing sticky to that mode's domain.
 
-    While a focus mode is active the frontend tags every message with active_mode
-    and pins routing here, until the user leaves the mode — the frontend intercepts
-    /<mode> and /exit locally and only toggles active_mode, so the backend never
-    sees those commands and there's nothing to special-case. Confirmation and
-    clarify strategies above this point still win, so a pending yes/no isn't
-    swallowed. Within the pinned domain, _MODE_HINTS further nudges tool selection."""
+    Reads from the SkillSpec registry (ARB #45) instead of the hardcoded
+    _MODE_ROUTES dict — new modes are added as data in capability_registry.py.
+    Confirmation and clarify strategies above this point still win, so a
+    pending yes/no isn't swallowed while in a focus mode.
+    """
     mode = (ctx.state.get("active_mode") or "").strip()
+    if not mode:
+        return None
+    # Try the declarative registry first (ARB #45)
+    from app.services.capability_registry import route_for_mode
+    spec = route_for_mode(mode)
+    if spec:
+        domain, sub_intent, _ = spec
+        return Decision(domain=domain, sub_intent=sub_intent,
+                        reasoning=f"{mode} mode active — routing pinned to {domain} (skill registry).")
+    # Fallback: legacy _MODE_ROUTES for any mode not yet in the registry
     route = _MODE_ROUTES.get(mode)
     if route:
         domain, sub_intent = route
@@ -3165,6 +3186,13 @@ async def intent_router(state: AgentState):
             "sub_intent": "unknown", "entities": {}}
 
 
+# ── Module-level TTL caches ───────────────────────────────────────────────────
+# MULTI-WORKER NOTE: these dicts live in the worker process's heap.  In a
+# single-worker deployment (the current topology) they are safe.  In a
+# multi-worker deployment (>1 uvicorn/gunicorn workers) each worker gets its
+# own copy — no data corruption, but cache misses multiply by worker count.
+# Migration path: swap for Redis SETEX calls via get_redis_client() when
+# multi-worker is needed.  Track issue: ARB item #32.
 _feedback_count_cache: dict = {"count": 0, "ts": 0.0}
 _FEEDBACK_COUNT_TTL = 300.0  # re-check every 5 minutes
 
