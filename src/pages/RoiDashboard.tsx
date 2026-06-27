@@ -17,6 +17,17 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MetricChart } from "@/components/analytics/MetricChart";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 type Period = "7d" | "30d" | "90d";
 
@@ -83,29 +94,37 @@ function KpiCard({
   loading?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-card p-6 hover:shadow-lg transition-all">
-      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--muted)] mb-4">
-        <Icon className={cn("h-5 w-5", iconColor)} />
-      </div>
-      {loading ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      ) : (
-        <>
-          <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
-          <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground/60">{sub}</p>
-        </>
-      )}
-    </div>
+    <Card className="hover:shadow-lg transition-all">
+      <CardContent className="p-6">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted mb-4">
+          <Icon className={cn("h-5 w-5", iconColor)} />
+        </div>
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-9 w-24" />
+            <Skeleton className="h-3.5 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        ) : (
+          <>
+            <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
+            <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/60">{sub}</p>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-      <h3 className="text-[15px] font-semibold text-foreground mb-4">{title}</h3>
-      {children}
-    </div>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-[15px] font-semibold">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   );
 }
 

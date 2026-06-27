@@ -41,6 +41,8 @@ import {
 import { cn } from "@/lib/utils";
 import { FeedbackTriageTab } from "./FeedbackTriageTab";
 import { AdoptionTab } from "./AdoptionTab";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {
@@ -155,22 +157,28 @@ function KpiCard({
   loading?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-card p-6 hover:shadow-lg transition-all">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--muted)]">
-          <Icon className={cn("h-5 w-5", iconColor)} />
+    <Card className="hover:shadow-lg transition-all">
+      <CardContent className="p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted">
+            <Icon className={cn("h-5 w-5", iconColor)} />
+          </div>
         </div>
-      </div>
-      {loading ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      ) : (
-        <>
-          <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
-          <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground/60">{sub}</p>
-        </>
-      )}
-    </div>
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-9 w-24" />
+            <Skeleton className="h-3.5 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        ) : (
+          <>
+            <p className="text-3xl font-bold tracking-tight text-foreground">{value}</p>
+            <p className="mt-1 text-[13px] text-muted-foreground">{title}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/60">{sub}</p>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

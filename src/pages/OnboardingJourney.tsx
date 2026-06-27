@@ -767,7 +767,7 @@ export function OnboardingJourney() {
                           <div className="rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-4 space-y-3">
                             <div>
                               <span className="text-[10px] uppercase text-violet-500 font-extrabold tracking-wider">
-                                TechElevate Learn
+                                Company Training
                               </span>
                               <h4 className="text-[14px] font-bold text-foreground mt-0.5">
                                 Centriq Platform Security & Compliance Induction

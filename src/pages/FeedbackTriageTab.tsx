@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Loader2, RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const DOMAIN_BADGE: Record<string, string> = {
   hr: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
@@ -126,8 +127,21 @@ export function FeedbackTriageTab() {
 
   if (loading) {
     return (
-      <div className="flex h-[40vh] items-center justify-center text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" />
+      <div className="space-y-3 p-1">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-border bg-card p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <Skeleton className="h-4 w-64" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-4/5" />
+            <div className="flex gap-2 pt-1">
+              <Skeleton className="h-7 w-32 rounded-lg" />
+              <Skeleton className="h-7 w-32 rounded-lg" />
+            </div>
+          </div>
+        ))}
       </div>
     );
   }

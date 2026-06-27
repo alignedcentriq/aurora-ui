@@ -263,7 +263,22 @@ def _send(
         logger.warning("[email] No Graph token for %s — email not sent. Connect MS365 in Settings.", user_email)
         return False
 
-    to_list = [to] if isinstance(to, str) else to
+    to_list = [to] if isinstance(to, str) else list(to)
+
+    # ── Test-mode intercept ────────────────────────────────────────────────────
+    # In test mode every outbound email is redirected to NOTIFY_TO_EMAIL so no
+    # real employee or manager receives system mail during development.
+    # Flip EMAIL_TEST_MODE=false in .env to send to the real recipients.
+    if settings.EMAIL_TEST_MODE:
+        notify = settings.NOTIFY_TO_EMAIL
+        if not notify:
+            logger.warning("[email][test-mode] EMAIL_TEST_MODE is on but NOTIFY_TO_EMAIL is unset — email dropped.")
+            return False
+        original_recipients = ", ".join(to_list)
+        if sorted(to_list) != [notify]:
+            logger.info("[email][test-mode] Redirecting %s → %s (was: %s)", subject, notify, original_recipients)
+            to_list = [notify]
+            subject = f"[TEST → {original_recipients}] {subject}"
     message = {
         "subject": subject,
         "body": {"contentType": "HTML", "content": html_body},

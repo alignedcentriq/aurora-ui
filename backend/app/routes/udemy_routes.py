@@ -10,8 +10,10 @@ Prefix: /api/portal/udemy
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user
+from app.database import get_db
 from app.services import udemy_business_service as udemy
 
 router = APIRouter(prefix="/api/portal/udemy", tags=["Udemy Business"])
@@ -96,3 +98,71 @@ async def udemy_user_activity(
         raise
     except Exception as e:
         _err(e)
+
+
+@router.get("/analytics/user-course-activity")
+async def udemy_user_course_activity(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Per-user, per-course breakdown: completion %, minutes consumed, completion date."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Reporting is restricted to HR / PMO / Admin.")
+    try:
+        return udemy.get_user_course_activity(page=page, page_size=page_size)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+
+@router.get("/analytics/user-progress")
+async def udemy_user_progress(
+    from_date: str | None = Query(None, description="Filter completions from this date (YYYY-MM-DD)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Completion events per user. Pass from_date=YYYY-MM-DD for incremental pulls."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Reporting is restricted to HR / PMO / Admin.")
+    try:
+        return udemy.get_user_progress(from_date=from_date, page=page, page_size=page_size)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+
+@router.post("/analytics/sync-skills")
+async def udemy_sync_skills(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Pull Udemy completions and write verified skills to employee profiles.
+    Idempotent — safe to run multiple times. HR / PMO / Admin only.
+    """
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Skill sync is restricted to HR / PMO / Admin.")
+    try:
+        result = udemy.sync_completions_to_skills(db)
+        if "error" in result:
+            raise HTTPException(status_code=503, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+
+@router.get("/analytics/sync-skills/status")
+async def udemy_sync_skills_status(user: CurrentUser = Depends(get_current_user)):
+    """Last skill sync result (in-memory — resets on server restart)."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    return udemy.last_sync_status()

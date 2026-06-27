@@ -17,6 +17,7 @@ from app.database import get_db
 from app.models import SavedDashboard
 from app.services import analytics_service as svc
 from app.services import automation_service as autosvc
+from app.services import analytics_builder_service as builder_svc
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -264,6 +265,24 @@ def update_dashboard(board_id: int, body: BoardBody,
     db.commit()
     db.refresh(d)
     return _board_dict(d, user.email)
+
+
+# ── Analytics Builder (conversational chart agent) ────────────────────────────
+
+class BuilderChatBody(BaseModel):
+    message: str
+    history: list = []           # [{role, content}] — last few turns for context
+
+
+@router.post("/builder/chat")
+def builder_chat(body: BuilderChatBody, user: CurrentUser = Depends(require_non_employee),
+                 db: Session = Depends(get_db)):
+    """Conversational chart-building agent. Returns ChartSpec + explanation."""
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Empty message.")
+    return builder_svc.builder_chat(db, msg, body.history or [], role=user.role,
+                                    user_email=user.email)
 
 
 @router.delete("/dashboards/{board_id}")

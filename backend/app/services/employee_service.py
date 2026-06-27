@@ -68,12 +68,16 @@ class EmployeeService:
             rows = []
             for p in results:
                 name = f"{p.first_name or ''} {p.last_name or ''}".strip()
+                phone = p.work_phone or "N/A"
+                if p.extension:
+                    phone = f"{phone} ext. {p.extension}" if phone != "N/A" else f"ext. {p.extension}"
                 rows.append([
                     name, p.designation, p.function,
                     p.reporting_manager, p.official_email,
+                    phone, p.sub_location or "N/A",
                 ])
             table = _employee_table(
-                ["Name", "Designation", "Function", "Reporting To", "Email"], rows
+                ["Name", "Designation", "Function", "Reporting To", "Email", "Phone", "Seat"], rows
             )
             return f"Found {len(results)} employee(s):\n\n{table}"
         finally:
@@ -100,12 +104,13 @@ class EmployeeService:
                 return None
             table_rows = []
             for u in rows:
+                phone = u.business_phone or "N/A"
                 table_rows.append([
                     u.name or u.email, u.job_title, u.department,
-                    u.manager_name, u.email,
+                    u.manager_name, u.email, phone,
                 ])
             table = _employee_table(
-                ["Name", "Designation", "Department", "Reporting To", "Email"],
+                ["Name", "Designation", "Department", "Reporting To", "Email", "Phone"],
                 table_rows,
             )
             return (
@@ -202,7 +207,20 @@ class EmployeeService:
             lines = []
             lines.append(f"### 👤 Employee Profile: **{name}**\n")
 
-            table_rows = [
+            # Contact fields — work numbers only (no personal mobile/personal email per policy)
+            work_phone = pick(
+                profile.work_phone if profile else None,
+                ms.business_phone if ms else None,
+            )
+            extension = profile.extension if profile else None
+
+            def _row(label: str, value) -> Optional[list]:
+                """Return a table row only when the value is real (not N/A / None / blank)."""
+                v = str(value).strip() if value not in (None, "", "N/A") else None
+                return [label, v] if v and v != "N/A" else None
+
+            # Always-shown core fields
+            table_rows: list[list[str]] = [
                 ["Email", email],
                 ["Designation", pick(ms.job_title if ms else None, profile.designation if profile else None)],
                 ["Department / Function", pick(ms.department if ms else None, profile.function if profile else None)],
@@ -210,19 +228,40 @@ class EmployeeService:
                 ["Reporting Manager", pick(ms.manager_name if ms else None, profile.reporting_manager if profile else None)],
             ]
 
-            if profile:
-                table_rows.extend([
-                    ["Level / Grade", f"{profile.level or 'N/A'} / {profile.grade or 'N/A'}"],
-                    ["Employment Type", pick(profile.employment_type, ms.employee_type if ms else None)],
-                    ["Total Experience", f"{profile.total_experience} years" if profile.total_experience else "N/A"],
-                    ["Languages Known", profile.language_known or "N/A"]
-                ])
+            # Optional fields — only emitted when data exists
+            for row in filter(None, [
+                _row("Seat / Sub-location", profile.sub_location if profile else None),
+                _row("Work Phone", work_phone),
+                _row("Extension", extension),
+                _row("Functional Manager", profile.functional_manager if profile else None),
+                _row("Project Manager", profile.project_manager if profile else None),
+                _row("Level / Grade",
+                     f"{profile.level} / {profile.grade}"
+                     if profile and (profile.level or profile.grade) else None),
+                _row("Employment Type",
+                     pick(profile.employment_type if profile else None,
+                          ms.employee_type if ms else None)),
+                _row("Date of Joining",
+                     profile.date_of_joining.strftime("%d %b %Y")
+                     if profile and profile.date_of_joining
+                     else (ms.hire_date.strftime("%d %b %Y") if ms and ms.hire_date else None)),
+                _row("Tenure at Company", profile.tenure_in_aa if profile else None),
+                _row("Total Experience",
+                     f"{profile.total_experience} years" if profile and profile.total_experience else None),
+                _row("Blood Group", profile.blood_group if profile else None),
+                _row("Languages Known", profile.language_known if profile else None),
+                _row("Nationality", profile.nationality if profile else None),
+            ]):
+                table_rows.append(row)
 
             lines.append(_employee_table(["Field", "Detail"], table_rows))
             lines.append("")
 
             if profile and profile.expertise:
                 lines.append(f"**Expertise / Ask Me About:**\n{profile.expertise}\n")
+
+            if profile and profile.about_me:
+                lines.append(f"**About:**\n{profile.about_me}\n")
 
             lines.append("**Skills & Certifications:**")
             if skills:

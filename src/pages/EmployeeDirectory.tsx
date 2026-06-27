@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Search,
   Users,
   Loader2,
-  X,
   RefreshCw,
-  ChevronDown,
   SlidersHorizontal,
   Network,
   Star,
@@ -14,10 +11,30 @@ import {
   Sparkles,
   GraduationCap,
   Briefcase,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 
 // Shape returned by GET /api/employees/directory (Zoho HR profile ⋈ Employee).
 interface DirEmployee {
@@ -371,25 +388,11 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
     ["Birthday", emp.birthday],
     ["City", emp.city],
   ];
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-md rounded-2xl bg-white/90 dark:bg-zinc-900/95 backdrop-blur-xl border border-slate-200/50 dark:border-white/[0.08] shadow-2xl overflow-hidden max-h-[95vh] sm:max-h-[90vh] flex flex-col scale-in duration-200"
-        onClick={(e) => e.stopPropagation()}
-      >
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-full max-w-md p-0 overflow-hidden gap-0 max-h-[95vh] sm:max-h-[90vh] flex flex-col">
         {/* Navy/Gradient header with centred avatar */}
-        <div className="relative bg-gradient-to-br from-[#0e2a47] via-[#12395f] to-[#164775] px-4 pt-6 pb-4 sm:px-6 sm:pt-8 sm:pb-6 text-center">
-          <button
-            onClick={onClose}
-            className="absolute top-3.5 right-3.5 rounded-full bg-white/15 p-1.5 text-white hover:bg-white/30 hover:scale-105 active:scale-95 transition-all cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
+        <div className="relative bg-gradient-to-br from-[#0e2a47] via-[#12395f] to-[#164775] px-4 pt-6 pb-4 sm:px-6 sm:pt-8 sm:pb-6 text-center shrink-0">
           <Avatar
             email={emp.email}
             name={emp.name}
@@ -408,82 +411,85 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
         </div>
 
         {/* Detail rows */}
-        <div className="flex-1 overflow-y-auto px-4 py-3.5 sm:px-6 sm:py-4">
-          <dl className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-            {rows.map(([label, value]) => (
-              <div
-                key={label}
-                className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 py-2.5 sm:py-3 text-[13px]"
-              >
-                <dt className="sm:w-32 shrink-0 font-bold text-slate-500 dark:text-slate-400">
-                  {label}
-                </dt>
-                <dd className="min-w-0 flex-1 font-semibold text-slate-800 dark:text-slate-200 break-words">
-                  {label === "Email ID" && value ? (
-                    <a
-                      href={`mailto:${value}`}
-                      className="text-[#1f86e0] dark:text-primary hover:underline"
-                    >
-                      {value}
-                    </a>
-                  ) : (
-                    value || "—"
-                  )}
-                </dd>
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-4 py-3.5 sm:px-6 sm:py-4">
+            <dl className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+              {rows.map(([label, value]) => (
+                <div
+                  key={label}
+                  className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 py-2.5 sm:py-3 text-[13px]"
+                >
+                  <dt className="sm:w-32 shrink-0 font-bold text-slate-500 dark:text-slate-400">
+                    {label}
+                  </dt>
+                  <dd className="min-w-0 flex-1 font-semibold text-slate-800 dark:text-slate-200 break-words">
+                    {label === "Email ID" && value ? (
+                      <a
+                        href={`mailto:${value}`}
+                        className="text-[#1f86e0] dark:text-primary hover:underline"
+                      >
+                        {value}
+                      </a>
+                    ) : (
+                      value || "—"
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+
+            {/* Skills & Projects (Alchemy, loaded on demand) */}
+            {enrich.loading ? (
+              <div className="flex items-center gap-2 py-4 text-[12px] text-slate-400">
+                <Skeleton className="h-4 w-4 rounded-full" />
+                <Skeleton className="h-3 w-36" />
               </div>
-            ))}
-          </dl>
-
-          {/* Skills & Projects (Alchemy, loaded on demand) */}
-          {enrich.loading ? (
-            <div className="flex items-center gap-2 py-4 text-[12px] text-slate-400">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading skills & projects…
-            </div>
-          ) : (
-            <>
-              {enrich.skills.length > 0 && (
-                <div className="pt-4 mt-1 border-t border-slate-100 dark:border-white/[0.04]">
-                  <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
-                    <Sparkles className="h-3.5 w-3.5 text-[#1f86e0]" /> Skills
-                    <span className="text-slate-400 font-bold normal-case tracking-normal">
-                      ({enrich.skills.length})
-                    </span>
-                  </h3>
-                  <div className="flex flex-wrap gap-1.5">
-                    {enrich.skills.map((s) => (
-                      <SkillPill key={`${s.skill}-${s.category}`} s={s} />
-                    ))}
+            ) : (
+              <>
+                {enrich.skills.length > 0 && (
+                  <div className="pt-4 mt-1 border-t border-slate-100 dark:border-white/[0.04]">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
+                      <Sparkles className="h-3.5 w-3.5 text-[#1f86e0]" /> Skills
+                      <span className="text-slate-400 font-bold normal-case tracking-normal">
+                        ({enrich.skills.length})
+                      </span>
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {enrich.skills.map((s) => (
+                        <SkillPill key={`${s.skill}-${s.category}`} s={s} />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {enrich.projects.length > 0 && (
-                <div className="pt-4 mt-3 border-t border-slate-100 dark:border-white/[0.04]">
-                  <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
-                    <Briefcase className="h-3.5 w-3.5 text-[#1f86e0]" /> Projects
-                    <span className="text-slate-400 font-bold normal-case tracking-normal">
-                      ({enrich.projects.length})
-                    </span>
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    {enrich.projects.map((p, i) => (
-                      <ProjectRow key={`${p.name}-${i}`} p={p} />
-                    ))}
+                {enrich.projects.length > 0 && (
+                  <div className="pt-4 mt-3 border-t border-slate-100 dark:border-white/[0.04]">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2.5">
+                      <Briefcase className="h-3.5 w-3.5 text-[#1f86e0]" /> Projects
+                      <span className="text-slate-400 font-bold normal-case tracking-normal">
+                        ({enrich.projects.length})
+                      </span>
+                    </h3>
+                    <div className="flex flex-col gap-2">
+                      {enrich.projects.map((p, i) => (
+                        <ProjectRow key={`${p.name}-${i}`} p={p} />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {enrich.available && enrich.skills.length === 0 && enrich.projects.length === 0 && (
-                <p className="py-4 text-[12px] text-slate-400 dark:text-slate-500">
-                  No skills or projects on record.
-                </p>
-              )}
-            </>
-          )}
-        </div>
+                {enrich.available && enrich.skills.length === 0 && enrich.projects.length === 0 && (
+                  <p className="py-4 text-[12px] text-slate-400 dark:text-slate-500">
+                    No skills or projects on record.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </ScrollArea>
 
         {/* Footer actions */}
-        <div className="flex items-center justify-end border-t border-slate-100 dark:border-white/[0.08] px-4 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50/50 dark:bg-zinc-950/20">
+        <DialogFooter className="border-t border-slate-100 dark:border-white/[0.08] px-4 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50/50 dark:bg-zinc-950/20 shrink-0">
           <a
             href={teamsChatUrl(emp.email)}
             target="_blank"
@@ -493,10 +499,9 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
           >
             <TeamsIcon className="h-6 w-6" />
           </a>
-        </div>
-      </div>
-    </div>,
-    document.body,
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -538,146 +543,137 @@ function OrgChartModal({
 
   const connector = <div className="mx-auto h-5 w-px bg-slate-300 dark:bg-white/15" />;
 
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200"
-      onClick={onClose}
-    >
-      <div
-        className="relative w-full max-w-lg rounded-2xl bg-[#f3f6fa] dark:bg-zinc-900/95 backdrop-blur-xl border border-slate-200/50 dark:border-white/[0.08] shadow-2xl overflow-hidden max-h-[95vh] sm:max-h-[90vh] flex flex-col scale-in duration-200"
-        onClick={(e) => e.stopPropagation()}
-      >
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-full max-w-lg p-0 overflow-hidden gap-0 max-h-[95vh] sm:max-h-[90vh] flex flex-col bg-[#f3f6fa] dark:bg-zinc-900/95">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-slate-200/60 dark:border-white/[0.06] bg-white/80 dark:bg-card px-4 py-3 sm:px-5 sm:py-3.5">
-          <h2 className="text-[15px] font-black text-[#0f2a4a] dark:text-white truncate">
+        <DialogHeader className="flex-row items-center justify-between gap-3 border-b border-slate-200/60 dark:border-white/[0.06] bg-white/80 dark:bg-card px-4 py-3 sm:px-5 sm:py-3.5 shrink-0 space-y-0">
+          <DialogTitle className="text-[15px] font-black text-[#0f2a4a] dark:text-white truncate">
             {focus.name}{" "}
             <span className="text-slate-400 dark:text-slate-500 font-bold">— Hierarchy</span>
-          </h2>
-          <button
-            onClick={onClose}
-            className="shrink-0 rounded-full bg-[#0e2a47] p-1.5 text-white hover:bg-[#12395f] hover:scale-105 active:scale-95 transition-all cursor-pointer"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+          </DialogTitle>
+        </DialogHeader>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
-          {/* Reports to (immediate manager) */}
-          {manager && (
-            <>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/80 dark:bg-white/[0.02] p-3 sm:px-3.5 sm:py-3 shadow-sm">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar
-                    email={manager.email}
-                    name={manager.name}
-                    className="h-10 w-10 sm:h-11 sm:w-11 rounded-full border border-slate-200/60 dark:border-white/10 shrink-0"
-                    textClassName="text-xs"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-[#1f86e0] dark:text-primary/70">
-                      Reports to
-                    </p>
-                    <p className="text-[13px] sm:text-[14px] font-black text-slate-800 dark:text-white truncate">
-                      {manager.name}
-                    </p>
-                    <p className="text-[11px] sm:text-[12px] font-semibold text-slate-500 dark:text-slate-400 truncate">
-                      {manager.designation || "—"}
-                    </p>
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-4 py-3 sm:px-5 sm:py-4 space-y-3">
+            {/* Reports to (immediate manager) */}
+            {manager && (
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/80 dark:bg-white/[0.02] p-3 sm:px-3.5 sm:py-3 shadow-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar
+                      email={manager.email}
+                      name={manager.name}
+                      className="h-10 w-10 sm:h-11 sm:w-11 rounded-full border border-slate-200/60 dark:border-white/10 shrink-0"
+                      textClassName="text-xs"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-[#1f86e0] dark:text-primary/70">
+                        Reports to
+                      </p>
+                      <p className="text-[13px] sm:text-[14px] font-black text-slate-800 dark:text-white truncate">
+                        {manager.name}
+                      </p>
+                      <p className="text-[11px] sm:text-[12px] font-semibold text-slate-500 dark:text-slate-400 truncate">
+                        {manager.designation || "—"}
+                      </p>
+                    </div>
                   </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFocus(manager)}
+                    className="w-full sm:w-auto"
+                  >
+                    View
+                  </Button>
                 </div>
-                <button
-                  onClick={() => setFocus(manager)}
-                  className="w-full sm:w-auto text-center shrink-0 rounded-lg border border-slate-200 dark:border-white/10 px-3 py-1 text-[11px] sm:text-[12px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 active:scale-95 transition-all cursor-pointer"
-                >
-                  View
-                </button>
-              </div>
-              {connector}
-            </>
-          )}
+                {connector}
+              </>
+            )}
 
-          {/* Selected (focus) */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-gradient-to-br from-[#0e2a47] via-[#12395f] to-[#164775] p-3.5 sm:px-4 sm:py-3.5 shadow-lg">
-            <div className="flex items-center gap-3 min-w-0">
-              <Avatar
-                email={focus.email}
-                name={focus.name}
-                className="h-11 w-11 sm:h-12.5 sm:w-12.5 rounded-full border-2 border-white/20 shrink-0"
-                textClassName="text-sm"
-              />
-              <div className="min-w-0">
-                <p className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-[#4cc6d6]">
-                  Selected
-                </p>
-                <p className="text-[15px] sm:text-[16px] font-black text-white truncate">
-                  {focus.name}
-                </p>
-                <p className="text-[11px] sm:text-[12px] font-semibold text-white/70 truncate">
-                  {focus.designation || "—"}
-                </p>
+            {/* Selected (focus) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-gradient-to-br from-[#0e2a47] via-[#12395f] to-[#164775] p-3.5 sm:px-4 sm:py-3.5 shadow-lg">
+              <div className="flex items-center gap-3 min-w-0">
+                <Avatar
+                  email={focus.email}
+                  name={focus.name}
+                  className="h-11 w-11 sm:h-12.5 sm:w-12.5 rounded-full border-2 border-white/20 shrink-0"
+                  textClassName="text-sm"
+                />
+                <div className="min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider text-[#4cc6d6]">
+                    Selected
+                  </p>
+                  <p className="text-[15px] sm:text-[16px] font-black text-white truncate">
+                    {focus.name}
+                  </p>
+                  <p className="text-[11px] sm:text-[12px] font-semibold text-white/70 truncate">
+                    {focus.designation || "—"}
+                  </p>
+                </div>
               </div>
+              <Button
+                size="sm"
+                onClick={() => onShowProfile(focus)}
+                className="w-full sm:w-auto bg-[#1f86e0] hover:bg-[#1a75c4] text-white"
+              >
+                Details
+              </Button>
             </div>
-            <button
-              onClick={() => onShowProfile(focus)}
-              className="w-full sm:w-auto text-center shrink-0 rounded-lg bg-[#1f86e0] px-3.5 py-1.5 text-[11px] sm:text-[12px] font-bold text-white hover:bg-[#1a75c4] active:scale-95 transition-all cursor-pointer"
-            >
-              Details
-            </button>
-          </div>
 
-          {/* Direct reports */}
-          {connector}
-          <p className="text-center text-[12px] font-bold text-slate-500 dark:text-slate-400 mb-3">
-            Direct Reports{reports.length ? ` (${reports.length})` : ""}
-          </p>
-          {reports.length === 0 ? (
-            <p className="text-center text-[12px] text-slate-400 dark:text-slate-500 py-2">
-              No direct reports.
+            {/* Direct reports */}
+            {connector}
+            <p className="text-center text-[12px] font-bold text-slate-500 dark:text-slate-400">
+              Direct Reports{reports.length ? ` (${reports.length})` : ""}
             </p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {reports.map((r) => (
-                <button
-                  key={r.email}
-                  onClick={() => setFocus(r)}
-                  title={`View ${r.name.split(" ")[0]}'s org chart`}
-                  className="flex items-center gap-2.5 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/80 dark:bg-white/[0.02] px-3 py-2.5 text-left hover:border-[#1f86e0]/40 dark:hover:border-primary/40 hover:shadow-md active:scale-[0.99] transition-all cursor-pointer"
-                >
-                  <Avatar
-                    email={r.email}
-                    name={r.name}
-                    className="h-9 w-9 rounded-full border border-slate-200/60 dark:border-white/10 shrink-0"
-                    textClassName="text-[10px]"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-[12.5px] font-bold text-[#1f86e0] dark:text-primary/80 truncate">
-                      {r.name}
-                    </p>
-                    <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">
-                      {r.designation || "—"}
-                    </p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+            {reports.length === 0 ? (
+              <p className="text-center text-[12px] text-slate-400 dark:text-slate-500 py-2">
+                No direct reports.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {reports.map((r) => (
+                  <button
+                    key={r.email}
+                    onClick={() => setFocus(r)}
+                    title={`View ${r.name.split(" ")[0]}'s org chart`}
+                    className="flex items-center gap-2.5 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/80 dark:bg-white/[0.02] px-3 py-2.5 text-left hover:border-[#1f86e0]/40 dark:hover:border-primary/40 hover:shadow-md active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <Avatar
+                      email={r.email}
+                      name={r.name}
+                      className="h-9 w-9 rounded-full border border-slate-200/60 dark:border-white/10 shrink-0"
+                      textClassName="text-[10px]"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[12.5px] font-bold text-[#1f86e0] dark:text-primary/80 truncate">
+                        {r.name}
+                      </p>
+                      <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate">
+                        {r.designation || "—"}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
 
         {/* Footer */}
-        <div className="flex items-center justify-end border-t border-slate-200/60 dark:border-white/[0.08] px-4 py-2.5 sm:px-5 sm:py-3 bg-white/70 dark:bg-zinc-950/20">
-          <button
+        <DialogFooter className="border-t border-slate-200/60 dark:border-white/[0.08] px-4 py-2.5 sm:px-5 sm:py-3 bg-white/70 dark:bg-zinc-950/20 shrink-0">
+          <Button
+            variant="outline"
             onClick={onClose}
-            className="flex items-center gap-1.5 rounded-xl bg-[#0e2a47] px-4 py-2 text-[13px] font-bold text-white hover:bg-[#12395f] active:scale-95 transition-all cursor-pointer"
+            className="bg-[#0e2a47] text-white border-none hover:bg-[#12395f]"
           >
             ← Directory
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -693,23 +689,19 @@ function FilterSelect({
   placeholder: string;
 }) {
   return (
-    <div className="relative w-full sm:w-52">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none w-full rounded-xl border border-slate-200/80 dark:border-white/[0.08] bg-white/70 dark:bg-zinc-900/50 backdrop-blur-md pl-3.5 pr-9 py-2 text-[13px] text-foreground outline-none focus:border-[#1f86e0]/60 dark:focus:border-primary/50 focus:ring-2 focus:ring-[#1f86e0]/10 dark:focus:ring-primary/10 transition-all cursor-pointer"
-      >
-        <option value="" className="bg-white dark:bg-zinc-900">
-          {placeholder}
-        </option>
+    <Select value={value} onValueChange={(v) => onChange(v === "__all__" ? "" : v)}>
+      <SelectTrigger className="w-full sm:w-52 rounded-xl border-slate-200/80 dark:border-white/[0.08] bg-white/70 dark:bg-zinc-900/50 backdrop-blur-md text-[13px]">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__all__">{placeholder}</SelectItem>
         {options.map((o) => (
-          <option key={o} value={o} className="bg-white dark:bg-zinc-900">
+          <SelectItem key={o} value={o}>
             {o}
-          </option>
+          </SelectItem>
         ))}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#1f86e0] dark:text-primary" />
-    </div>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -918,8 +910,20 @@ export function EmployeeDirectory() {
       {/* Body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {loading ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-[#1f86e0]" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-white/[0.02] p-4 space-y-3">
+                <div className="flex items-center gap-3.5">
+                  <Skeleton className="h-12 w-12 rounded-full shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                </div>
+                <Skeleton className="h-8 w-full rounded-lg" />
+              </div>
+            ))}
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex h-full items-center justify-center text-center">

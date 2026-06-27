@@ -27,6 +27,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const SEARCH_ROLES = new Set(["HR", "PMO", "Admin", "Functional Manager", "Super Admin"]);
 

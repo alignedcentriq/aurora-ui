@@ -2,8 +2,10 @@
 Document Library — company-wide file repository (PPTs, PDFs, DOCX, etc.).
 
 - GET  /api/document-library             → list all documents (any authenticated user)
+- GET  /api/document-library/policies    → list SharePoint policy documents
 - POST /api/document-library/upload      → upload a file (HR, Admin, Super Admin only)
 - GET  /api/document-library/{id}/download → download raw file bytes
+- GET  /api/document-library/policies/{id}/download → stream policy file from SharePoint
 - DELETE /api/document-library/{id}      → delete (HR, Admin, Super Admin only)
 """
 
@@ -14,7 +16,7 @@ from fastapi.responses import Response
 
 from app.auth import CurrentUser, get_current_user
 from app.database import SessionLocal
-from app.models import LibraryDocument
+from app.models import LibraryDocument, Policy
 
 router = APIRouter(prefix="/api/document-library", tags=["Document Library"])
 
@@ -62,6 +64,91 @@ def list_documents(
                 for d in docs
             ]
         }
+
+
+def _filename_from_source_key(source_key: str) -> str:
+    """sp:HR/SubDir/Leave Policy.pdf → 'Leave Policy.pdf'"""
+    path = source_key[3:] if source_key.startswith("sp:") else source_key
+    return path.split("/")[-1] if "/" in path else path
+
+
+def _ext_from_source_key(source_key: str) -> str:
+    filename = _filename_from_source_key(source_key)
+    return filename.rsplit(".", 1)[-1].lower() if "." in filename else "file"
+
+
+@router.get("/policies")
+def list_sharepoint_policies(
+    category: str | None = None,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Return all policy documents synced from SharePoint, formatted as LibraryDoc."""
+    with SessionLocal() as db:
+        q = db.query(Policy).filter(
+            Policy.source_key.like("sp:%"),
+            ~Policy.source_key.like("sp:PROJECT/%"),
+        )
+        if category:
+            q = q.filter(Policy.category == category)
+        policies = q.order_by(Policy.updated_at.desc()).all()
+        return {
+            "documents": [
+                {
+                    "id": p.id,
+                    "title": p.title,
+                    "description": None,
+                    "category": p.category,
+                    "filename": _filename_from_source_key(p.source_key),
+                    "file_type": _ext_from_source_key(p.source_key),
+                    "file_size": 0,
+                    "uploaded_by": "SharePoint",
+                    "created_at": p.updated_at.isoformat() if p.updated_at else None,
+                    "source": "sharepoint",
+                }
+                for p in policies
+            ]
+        }
+
+
+@router.get("/policies/{policy_id}/download")
+def download_sharepoint_policy(
+    policy_id: int,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Re-fetch a policy file from SharePoint and stream it to the client."""
+    from app.config import settings
+    from app.graph_sync import sp_client
+
+    with SessionLocal() as db:
+        policy = (
+            db.query(Policy)
+            .filter(Policy.id == policy_id, Policy.source_key.like("sp:%"))
+            .first()
+        )
+        if not policy:
+            raise HTTPException(status_code=404, detail="Policy not found.")
+        source_key = policy.source_key
+        filename = _filename_from_source_key(source_key)
+
+    # source_key "sp:HR/Leave Policy.pdf" → full path "IQ/HR/Leave Policy.pdf"
+    rel_path = source_key[3:]  # strip "sp:"
+    base = getattr(settings, "SHAREPOINT_BASE_FOLDER", "") or ""
+    full_path = f"{base}/{rel_path}" if base else rel_path
+
+    try:
+        site_id = sp_client.get_site_id(settings.SHAREPOINT_SITE_URL)
+        drive_id = sp_client.get_drive_id(site_id)
+        resp = sp_client.download_file_by_path(drive_id, full_path)
+        content = resp.content
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"SharePoint download failed: {e}")
+
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return Response(
+        content=content,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/categories")

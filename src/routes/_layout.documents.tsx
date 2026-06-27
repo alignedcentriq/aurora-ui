@@ -30,9 +30,13 @@ import {
   FileImage,
   FileArchive,
   Tag,
+  X,
+  ExternalLink,
+  Mail,
+  BookOpen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { flyBanner } from "@/lib/fly-banner";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,6 +49,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+  SheetClose,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export const Route = createFileRoute("/_layout/documents")({
   component: DocumentsPage,
@@ -64,13 +90,6 @@ interface DocField {
   options?: string[];
 }
 
-interface DocCatalogItem {
-  doc_type: string;
-  label: string;
-  requires_approval: boolean;
-  fields: DocField[];
-}
-
 interface DocTemplate {
   id: number;
   doc_type: string;
@@ -85,41 +104,6 @@ interface DocTemplate {
   updated_at: string | null;
 }
 
-interface EmployeeCard {
-  name: string;
-  employee_id: string;
-  department: string;
-  designation: string;
-  email: string;
-  joining_date: string | null;
-}
-
-interface DocSummary {
-  id: number;
-  doc_type: string;
-  label: string;
-  title: string;
-  subject_name: string;
-  subject_email: string;
-  generated_by_email: string;
-  status: string; // "draft" | "verified"
-  envelope_id: string | null;
-  verified_by_email: string | null;
-  verified_at: string | null;
-  created_at: string | null;
-}
-
-const DOC_META: Record<string, { icon: typeof FileText; desc?: string }> = {
-  no_objection_certificate: { icon: ShieldCheck },
-  experience_certificate: { icon: Award },
-  employment_verification: { icon: UserRound },
-  address_proof: { icon: Home },
-  relieving_letter: { icon: LogOut },
-  internship_certificate: { icon: GraduationCap },
-  recommendation_letter: { icon: ThumbsUp },
-  travel_support_letter: { icon: Plane },
-  project_proposal: { icon: Presentation },
-};
 
 function DocumentsPage() {
   const { user } = useAuth();
@@ -138,59 +122,12 @@ function DocumentsPage() {
     [user?.email, user?.role],
   );
 
-  const [mode, setMode] = useState<"generate" | "manage" | "library">("generate");
+  const [mode, setMode] = useState<"manage" | "library" | "hr-letters">("hr-letters");
   const isLibraryAdmin = !!user && LIBRARY_ADMIN_ROLES.has(user.role);
 
-  const [catalogue, setCatalogue] = useState<DocCatalogItem[]>([]);
-  const [docType, setDocType] = useState<string>("");
+  // Approver-role config (only HR/Admin can read this endpoint).
+  const fetchCatalogue = useCallback(() => {}, []);
 
-  const [nameQuery, setNameQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<EmployeeCard[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [employee, setEmployee] = useState<EmployeeCard | null>(null);
-
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-
-  // Generation / current document
-  const [generating, setGenerating] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState("");
-  const [documentId, setDocumentId] = useState<number | null>(null);
-  const [docStatus, setDocStatus] = useState<string>(""); // "" | "draft" | "verified"
-  const [envelopeId, setEnvelopeId] = useState<string | null>(null);
-  const [canApprove, setCanApprove] = useState(false);
-  const [approving, setApproving] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-
-  // Lists
-  const [myDocs, setMyDocs] = useState<DocSummary[]>([]);
-  const [pending, setPending] = useState<DocSummary[]>([]);
-
-  const selected = catalogue.find((d) => d.doc_type === docType);
-  const userFields = selected?.fields ?? [];
-  const isVerified = docStatus === "verified";
-
-  // ── Load catalogue + own record + lists ──
-  const fetchCatalogue = useCallback(() => {
-    fetch("/api/documents/catalogue", { headers: authHeaders })
-      .then((r) => r.json())
-      .then((d) => setCatalogue(d.documents || []))
-      .catch(() => toast.error("Failed to load document types"));
-  }, [authHeaders]);
-
-  useEffect(() => {
-    fetchCatalogue();
-  }, [fetchCatalogue]);
-
-  useEffect(() => {
-    if (isHr) return;
-    fetch("/api/documents/lookup", { headers: authHeaders })
-      .then((r) => r.json())
-      .then((d) => setEmployee(d.results?.[0] || null))
-      .catch(() => {});
-  }, [isHr, authHeaders]);
-
-  // Approver-role config (only HR/Admin can read this endpoint; everyone else stays a non-approver).
   const fetchApprovers = useCallback(() => {
     if (!isHr) return;
     fetch("/api/documents/settings", { headers: authHeaders })
@@ -202,184 +139,6 @@ function DocumentsPage() {
   useEffect(() => {
     fetchApprovers();
   }, [fetchApprovers]);
-
-  const refreshLists = useCallback(() => {
-    if (isHr) {
-      fetch("/api/documents/list?scope=pending", { headers: authHeaders })
-        .then((r) => r.json())
-        .then((d) => setPending(d.results || []))
-        .catch(() => {});
-    } else {
-      fetch("/api/documents/list", { headers: authHeaders })
-        .then((r) => r.json())
-        .then((d) => setMyDocs(d.results || []))
-        .catch(() => {});
-    }
-  }, [isHr, authHeaders]);
-
-  useEffect(() => {
-    refreshLists();
-  }, [refreshLists]);
-
-  // ── HR name search (debounced) ──
-  useEffect(() => {
-    if (!isHr) return;
-    if (!nameQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const ctrl = new AbortController();
-    setSearching(true);
-    const t = setTimeout(() => {
-      fetch(`/api/documents/lookup?name=${encodeURIComponent(nameQuery.trim())}`, {
-        headers: authHeaders,
-        signal: ctrl.signal,
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          setSearchResults(d.results || []);
-          setShowResults(true);
-        })
-        .catch(() => {})
-        .finally(() => setSearching(false));
-    }, 300);
-    return () => {
-      clearTimeout(t);
-      ctrl.abort();
-    };
-  }, [nameQuery, isHr, authHeaders]);
-
-  const pickEmployee = (emp: EmployeeCard) => {
-    setEmployee(emp);
-    setNameQuery(emp.name);
-    setShowResults(false);
-  };
-
-  // Reset current document + field values when the selected type changes.
-  useEffect(() => {
-    if (generating) return;
-    setPreviewHtml("");
-    setDocumentId(null);
-    setDocStatus("");
-    setEnvelopeId(null);
-    setCanApprove(false);
-    setFieldValues({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docType, employee?.email]);
-
-  const missingRequired = userFields.some((f) => f.required && !fieldValues[f.name]?.trim());
-  const canGenerate = !!docType && !!employee && !missingRequired && !generating;
-
-  const handleGenerate = useCallback(async () => {
-    if (!docType || !employee) return;
-    setGenerating(true);
-    setPreviewHtml("");
-    setDocumentId(null);
-    setDocStatus("");
-    setEnvelopeId(null);
-    setCanApprove(false);
-
-    try {
-      const res = await fetch("/api/documents/generate", {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({
-          doc_type: docType,
-          employee_email: employee.email,
-          field_values: fieldValues,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.detail || "Generation failed.");
-      }
-      setPreviewHtml(data.preview_html || "");
-      setDocumentId(data.document_id ?? null);
-      setDocStatus(data.status || "draft");
-      setEnvelopeId(data.envelope_id ?? null);
-      setCanApprove(!!data.can_approve);
-      if (data.status === "verified") {
-        flyBanner("Document ready");
-      } else if (!data.can_approve) {
-        flyBanner("Submitted for approval");
-      }
-      refreshLists();
-    } catch (err) {
-      toast.error((err as Error).message || "Generation failed.");
-    } finally {
-      setGenerating(false);
-    }
-  }, [docType, employee, fieldValues, authHeaders, refreshLists]);
-
-  const handleApprove = async (id: number) => {
-    setApproving(true);
-    try {
-      const res = await fetch(`/api/documents/${id}/approve`, {
-        method: "POST",
-        headers: authHeaders,
-      });
-      if (!res.ok) throw new Error("Approve failed");
-      const d = await res.json();
-      if (id === documentId) {
-        setDocStatus("verified");
-        // Re-fetch the released preview (now includes the signature block).
-        fetch(`/api/documents/${id}`, { headers: authHeaders })
-          .then((r) => r.json())
-          .then((doc) => setPreviewHtml(doc.preview_html || ""))
-          .catch(() => {});
-      }
-      flyBanner("Document approved & released");
-      void d;
-      refreshLists();
-    } catch {
-      toast.error("Could not approve the document.");
-    } finally {
-      setApproving(false);
-    }
-  };
-
-  const handleDownload = async (id: number, labelHint?: string) => {
-    setDownloading(true);
-    try {
-      const res = await fetch(`/api/documents/${id}/download`, { headers: authHeaders });
-      if (res.status === 403) {
-        toast.error("This document must be approved before it can be downloaded.");
-        return;
-      }
-      if (!res.ok) throw new Error("Download failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(labelHint || selected?.label || "document").replace(/\s+/g, "_")}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Could not download the PDF.");
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  // Load a doc into the preview (HR reviewing a pending draft, or viewing own).
-  const handleView = async (doc: DocSummary) => {
-    try {
-      const res = await fetch(`/api/documents/${doc.id}`, { headers: authHeaders });
-      if (!res.ok) throw new Error();
-      const d = await res.json();
-      setMode("generate");
-      setPreviewHtml(d.preview_html || "");
-      setDocumentId(doc.id);
-      setDocStatus(doc.status);
-      setEnvelopeId(doc.envelope_id ?? null);
-      setCanApprove(canRelease && doc.status !== "verified");
-      setDocType(doc.doc_type);
-    } catch {
-      toast.error("Could not load the document.");
-    }
-  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -396,16 +155,14 @@ function DocumentsPage() {
             <div>
               <h1 className="text-xl font-semibold leading-tight text-foreground">Documents</h1>
               <p className="text-[13px] text-muted-foreground">
-                {isHr
-                  ? "Generate from approved templates, review & release them, and manage the document catalogue."
-                  : "Generate a document from an approved template. It becomes downloadable once it's approved and released."}
+                Request letters and certificates, or browse the shared document library.
               </p>
             </div>
           </div>
 
           <div className="flex rounded-xl border border-[var(--border)] bg-card p-1 overflow-x-auto no-scrollbar max-w-full shrink-0">
-            <PillTab active={mode === "generate"} onClick={() => setMode("generate")}>
-              <FileText className="mr-1.5 h-3.5 w-3.5" /> Generate
+            <PillTab active={mode === "hr-letters"} onClick={() => setMode("hr-letters")}>
+              <BookOpen className="mr-1.5 h-3.5 w-3.5" /> Letters &amp; Certificates
             </PillTab>
             <PillTab active={mode === "library"} onClick={() => setMode("library")}>
               <Library className="mr-1.5 h-3.5 w-3.5" /> Document Library
@@ -429,330 +186,256 @@ function DocumentsPage() {
         ) : mode === "library" ? (
           <DocumentLibrary authHeaders={authHeaders} isLibraryAdmin={isLibraryAdmin} />
         ) : (
-          <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-4 sm:px-8 py-6 lg:grid-cols-2">
-            {/* ── Form ── */}
-            <div className="space-y-5">
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className="relative space-y-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-card/60 p-5 shadow-sm backdrop-blur-sm"
-              >
-                <div
-                  className="pointer-events-none absolute inset-x-0 top-0 h-[3px]"
-                  style={{ background: "var(--gradient-primary)" }}
-                />
-                {/* Doc type */}
-                <section>
-                  <Step n={1} title="Document type" />
-                  <Select value={docType} onValueChange={setDocType}>
-                    <SelectTrigger className="h-11 rounded-xl border-[var(--border)] bg-background text-[13px]">
-                      <SelectValue placeholder="Choose a document type…" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[320px]">
-                      {catalogue.length === 0 && (
-                        <div className="px-3 py-2 text-[12px] text-muted-foreground">
-                          No document types available yet.
-                        </div>
-                      )}
-                      {catalogue.map((d) => {
-                        const Icon = (DOC_META[d.doc_type] ?? { icon: FileText }).icon;
-                        return (
-                          <SelectItem key={d.doc_type} value={d.doc_type} className="rounded-lg">
-                            <span className="flex items-center gap-2.5">
-                              <Icon
-                                className="h-4 w-4 shrink-0"
-                                style={{ color: "var(--connectivity)" }}
-                              />
-                              {d.label}
-                            </span>
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                  {selected && (
-                    <p className="mt-2 text-[12px] text-muted-foreground">
-                      {selected.requires_approval
-                        ? "Requires approval before it can be downloaded."
-                        : "Released instantly — downloadable as soon as it's generated."}
-                    </p>
-                  )}
-                </section>
-
-                {/* Employee */}
-                <section>
-                  <Step n={2} title="Employee" hint={isHr ? "search anyone" : "you"} />
-                  {isHr ? (
-                    <div className="relative">
-                      <div className="relative">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          value={nameQuery}
-                          onChange={(e) => {
-                            setNameQuery(e.target.value);
-                            setEmployee(null);
-                          }}
-                          onFocus={() => searchResults.length && setShowResults(true)}
-                          placeholder="Search employee by name or email…"
-                          className="pl-9"
-                        />
-                        {searching && (
-                          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-                        )}
-                      </div>
-                      {showResults && searchResults.length > 0 && (
-                        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-[var(--border)] bg-popover shadow-xl">
-                          {searchResults.map((emp) => (
-                            <button
-                              key={emp.email || emp.employee_id}
-                              onClick={() => pickEmployee(emp)}
-                              className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/60"
-                            >
-                              <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0">
-                                <div className="truncate text-[13px] font-medium text-foreground">
-                                  {emp.name}
-                                </div>
-                                <div className="truncate text-[11px] text-muted-foreground">
-                                  {[emp.designation, emp.department, emp.email]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                </div>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {employee && (
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-muted/30 p-3">
-                      <Field label="Name" value={employee.name} />
-                      <Field label="Employee ID" value={employee.employee_id || "—"} />
-                      <Field label="Department" value={employee.department || "—"} />
-                      <Field label="Designation" value={employee.designation || "—"} />
-                    </div>
-                  )}
-                  {!employee && !isHr && (
-                    <p className="text-[12px] text-muted-foreground">Loading your details…</p>
-                  )}
-                </section>
-
-                {/* Dynamic details */}
-                <section className="space-y-3">
-                  <Step n={3} title="Details" />
-                  {!docType ? (
-                    <p className="text-[12px] text-muted-foreground">
-                      Pick a document type to see its fields.
-                    </p>
-                  ) : userFields.length === 0 ? (
-                    <p className="text-[12px] text-muted-foreground">
-                      No extra details needed — generate directly.
-                    </p>
-                  ) : (
-                    userFields.map((f) => (
-                      <FieldInput
-                        key={f.name}
-                        field={f}
-                        value={fieldValues[f.name] ?? ""}
-                        onChange={(v) => setFieldValues((p) => ({ ...p, [f.name]: v }))}
-                      />
-                    ))
-                  )}
-                </section>
-
-                {/* Actions */}
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={handleGenerate}
-                    disabled={!canGenerate}
-                    className={cn(
-                      "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all w-full sm:w-auto",
-                      canGenerate ? "hover:opacity-90" : "cursor-not-allowed opacity-40",
-                    )}
-                    style={{ background: "var(--gradient-primary)" }}
-                  >
-                    {generating ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    Generate
-                  </button>
-
-                  {/* HR: approve a draft */}
-                  {documentId != null && docStatus === "draft" && canApprove && (
-                    <button
-                      onClick={() => handleApprove(documentId)}
-                      disabled={approving}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-emerald-700 w-full sm:w-auto"
-                    >
-                      {approving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      Approve &amp; release
-                    </button>
-                  )}
-
-                  {/* Verified: download */}
-                  {documentId != null && isVerified && (
-                    <button
-                      onClick={() => handleDownload(documentId)}
-                      disabled={downloading}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--connectivity)] px-4 py-2.5 text-[13px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)] w-full sm:w-auto"
-                    >
-                      {downloading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Download className="h-4 w-4" />
-                      )}
-                      Download PDF
-                    </button>
-                  )}
-
-                  {/* Employee draft: awaiting approval note */}
-                  {documentId != null && docStatus === "draft" && !canApprove && (
-                    <span className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[12px] font-medium text-amber-600 dark:text-amber-400 w-full sm:w-auto text-center">
-                      <Clock className="h-3.5 w-3.5" /> Sent for approval — downloadable once
-                      released
-                    </span>
-                  )}
-                </div>
-              </motion.div>
-
-              {/* Lists */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: 0.05 }}
-                className="rounded-2xl border border-[var(--border)] bg-card/40 p-5 shadow-sm"
-              >
-                {isHr ? (
-                  <DocList
-                    title="Pending approval"
-                    docs={pending}
-                    emptyHint="No documents waiting for approval."
-                    onView={handleView}
-                    onApprove={handleApprove}
-                    onDownload={handleDownload}
-                    isHr
-                    canApprove={canRelease}
-                  />
-                ) : (
-                  <DocList
-                    title="My documents"
-                    docs={myDocs}
-                    emptyHint="You haven't generated any documents yet."
-                    onView={handleView}
-                    onDownload={handleDownload}
-                  />
-                )}
-              </motion.div>
-            </div>
-
-            {/* ── Preview ── */}
-            <div className="lg:sticky lg:top-0">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Preview
-                </h2>
-                {documentId != null &&
-                  (isVerified ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                      <CheckCircle2 className="h-3 w-3" /> Released — official
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                      <Clock className="h-3 w-3" /> Draft — pending release
-                    </span>
-                  ))}
-              </div>
-
-              <div className="relative min-h-[520px] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
-                {/* Letterhead */}
-                <div className="flex items-center justify-between border-b-2 border-[#00D4AA] px-4 sm:px-8 py-4">
-                  <span className="text-[15px] font-bold text-[#0A2540]">Aligned Automation</span>
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-[#00D4AA]">
-                    {selected?.label || "Document"}
-                  </span>
-                </div>
-
-                {envelopeId && (
-                  <div className="flex items-center justify-between border-b border-slate-100 px-4 sm:px-8 py-1.5 text-[10px] text-slate-400">
-                    <span>Document ID: {envelopeId}</span>
-                  </div>
-                )}
-
-                <div className="px-4 sm:px-8 py-6 overflow-x-auto">
-                  {previewHtml ? (
-                    <div
-                      className="aa-doc-preview text-[13px] leading-relaxed text-[#1E293B]"
-                      dangerouslySetInnerHTML={{ __html: previewHtml }}
-                    />
-                  ) : (
-                    <div className="flex h-[400px] flex-col items-center justify-center text-center text-muted-foreground">
-                      <ScrollText className="mb-3 h-10 w-10 opacity-30" />
-                      <p className="text-[13px]">
-                        {generating ? "Generating…" : "Your generated document will appear here."}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-                {isVerified
-                  ? "Officially released. The downloaded PDF carries the document ID on every page; recipients can confirm authenticity on the verification page."
-                  : "This is a draft preview. The signature is added only once the document is approved and released."}
-              </p>
-            </div>
-          </div>
+          <ZohoHRLetters />
         )}
       </div>
     </div>
   );
 }
 
-// ── Dynamic field input ───────────────────────────────────────────────────────
+// ── Zoho HR Letters ───────────────────────────────────────────────────────────
 
-function FieldInput({
-  field,
-  value,
-  onChange,
-}: {
-  field: DocField;
-  value: string;
-  onChange: (v: string) => void;
-}) {
+const ZOHO_ORG = "alignedautomationservices";
+const ZOHO_BASE = `https://people.zoho.com/${ZOHO_ORG}/zp#hrservices`;
+
+interface HRLetterDef {
+  key: string;
+  label: string;
+  desc: string;
+  icon: typeof FileText;
+  /** Zoho People hrservices URL slug. null = not yet enabled in Zoho instance. */
+  zohoPath: string | null;
+  fields?: string[];
+  category: "employment" | "certification" | "separation" | "admin";
+}
+
+const HR_LETTER_DEFS: HRLetterDef[] = [
+  // ── Employment proofs (most requested) ────────────────────────
+  {
+    key: "bonafide",
+    label: "Bonafide Letter",
+    desc: "Confirms current employment status for official or external use (bank account, higher studies, visa).",
+    icon: ShieldCheck,
+    zohoPath: "bonafideletter",
+    fields: ["Reason for request"],
+    category: "employment",
+  },
+  {
+    key: "experience",
+    label: "Experience Letter",
+    desc: "Certifies tenure, designation and function — required by future employers or background checks.",
+    icon: Award,
+    zohoPath: "experienceletter",
+    fields: ["Reason for request"],
+    category: "employment",
+  },
+  {
+    key: "employment_verification",
+    label: "Employment Verification Letter",
+    desc: "Formal letter verifying you are an active employee, issued to third parties on request.",
+    icon: UserRound,
+    zohoPath: null,
+    category: "employment",
+  },
+  {
+    key: "address_proof",
+    label: "Address Proof Letter",
+    desc: "Company-certified address verification for banks, government offices, or visa applications.",
+    icon: Home,
+    zohoPath: null,
+    fields: ["Purpose"],
+    category: "employment",
+  },
+  {
+    key: "noc",
+    label: "No Objection Certificate",
+    desc: "States the company has no objection to you pursuing a specific activity (studies, travel, side project).",
+    icon: CheckCircle2,
+    zohoPath: null,
+    fields: ["Purpose"],
+    category: "employment",
+  },
+  // ── Certifications ─────────────────────────────────────────────
+  {
+    key: "internship",
+    label: "Internship Completion Certificate",
+    desc: "Certifies successful completion of your internship, including duration and role.",
+    icon: GraduationCap,
+    zohoPath: null,
+    fields: ["Internship duration"],
+    category: "certification",
+  },
+  {
+    key: "recommendation",
+    label: "Recommendation Letter",
+    desc: "Professional recommendation from the company for higher studies or career opportunities.",
+    icon: ThumbsUp,
+    zohoPath: null,
+    fields: ["Purpose", "Recipient"],
+    category: "certification",
+  },
+  // ── Separation ─────────────────────────────────────────────────
+  {
+    key: "relieving",
+    label: "Relieving Letter",
+    desc: "Issued upon separation — confirms last working date, role, and formal clearance.",
+    icon: LogOut,
+    zohoPath: null,
+    fields: ["Last working date"],
+    category: "separation",
+  },
+  // ── Other admin letters ────────────────────────────────────────
+  {
+    key: "travel_support",
+    label: "Travel / Visa Support Letter",
+    desc: "Official letter supporting your visa application or business travel abroad.",
+    icon: Plane,
+    zohoPath: null,
+    fields: ["Destination", "Travel purpose", "Travel dates"],
+    category: "admin",
+  },
+];
+
+const CATEGORY_LABELS: Record<HRLetterDef["category"], string> = {
+  employment: "Employment Proofs",
+  certification: "Certificates",
+  separation: "Separation Letters",
+  admin: "Other Letters",
+};
+
+function ZohoHRLetters() {
+  const categories = Array.from(
+    new Set(HR_LETTER_DEFS.map((d) => d.category)),
+  ) as HRLetterDef["category"][];
+
+  const availableCount = HR_LETTER_DEFS.filter((d) => !!d.zohoPath).length;
+
   return (
-    <div>
-      <label className="mb-1 block text-[12px] font-medium text-foreground">
-        {field.label} {field.required && <span className="text-rose-500">*</span>}
-      </label>
-      {field.type === "textarea" ? (
-        <Textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} />
-      ) : field.type === "date" ? (
-        <Input type="date" value={value} onChange={(e) => onChange(e.target.value)} />
-      ) : field.type === "select" && field.options?.length ? (
-        <Select value={value} onValueChange={onChange}>
-          <SelectTrigger className="h-10 rounded-lg text-[13px]">
-            <SelectValue placeholder="Select…" />
-          </SelectTrigger>
-          <SelectContent>
-            {field.options.map((o) => (
-              <SelectItem key={o} value={o}>
-                {o}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <Input value={value} onChange={(e) => onChange(e.target.value)} />
-      )}
+    <div className="mx-auto max-w-4xl px-4 sm:px-8 py-6">
+      <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-[15px] font-semibold text-foreground">Letters &amp; Certificates</h2>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            Clicking "Request" opens the form — your details are pre-filled there.
+          </p>
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          {availableCount} of {HR_LETTER_DEFS.length} available now
+        </span>
+      </div>
+
+      <div className="space-y-6">
+        {categories.map((cat) => {
+          const defs = HR_LETTER_DEFS.filter((d) => d.category === cat);
+          return (
+            <div key={cat}>
+              <h3 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                {CATEGORY_LABELS[cat]}
+              </h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {defs.map((def) => {
+                  const Icon = def.icon;
+                  const available = !!def.zohoPath;
+                  const zohoUrl = available ? `${ZOHO_BASE}/${def.zohoPath}/add` : null;
+
+                  return (
+                    <div
+                      key={def.key}
+                      className={cn(
+                        "relative flex flex-col gap-3 overflow-hidden rounded-2xl border p-4 shadow-sm transition-shadow",
+                        available
+                          ? "border-[var(--border)] bg-card/70 hover:shadow-md"
+                          : "border-[var(--border)]/50 bg-muted/20",
+                      )}
+                    >
+                      {available && (
+                        <div
+                          className="pointer-events-none absolute inset-x-0 top-0 h-[2.5px]"
+                          style={{ background: "var(--gradient-primary)" }}
+                        />
+                      )}
+
+                      <div className="flex items-start gap-3 pt-0.5">
+                        <div
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                          style={{
+                            background: available
+                              ? "color-mix(in oklab, var(--connectivity) 12%, transparent)"
+                              : "color-mix(in oklab, var(--muted-foreground) 6%, transparent)",
+                          }}
+                        >
+                          <Icon
+                            className="h-4.5 w-4.5"
+                            style={{
+                              color: available ? "var(--connectivity)" : "var(--muted-foreground)",
+                              opacity: available ? 1 : 0.5,
+                            }}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p
+                              className={cn(
+                                "text-[13px] font-semibold leading-snug",
+                                available ? "text-foreground" : "text-muted-foreground",
+                              )}
+                            >
+                              {def.label}
+                            </p>
+                            {!available && (
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground/70">
+                                Coming soon
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                            {def.desc}
+                          </p>
+                          {def.fields && def.fields.length > 0 && (
+                            <p className="mt-1.5 text-[11px] text-muted-foreground/60">
+                              You'll need: {def.fields.join(", ")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {zohoUrl ? (
+                        <a
+                          href={zohoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 sm:w-auto sm:self-start"
+                          style={{ background: "var(--gradient-primary)" }}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Request in Zoho People
+                        </a>
+                      ) : (
+                        <button
+                          disabled
+                          className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-[var(--border)]/50 px-4 py-2 text-[12px] font-semibold text-muted-foreground/40 sm:w-auto sm:self-start"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Request in Zoho People
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex items-start gap-3 rounded-xl border border-[var(--border)]/60 bg-muted/30 p-4">
+        <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          Submitted requests follow the HR approval workflow in Zoho People. You'll receive an email
+          once your letter is ready to download.
+        </p>
+      </div>
     </div>
   );
 }
@@ -1119,96 +802,6 @@ function ManageTemplates({
   );
 }
 
-function DocList({
-  title,
-  docs,
-  emptyHint,
-  onView,
-  onApprove,
-  onDownload,
-  isHr,
-  canApprove,
-}: {
-  title: string;
-  docs: DocSummary[];
-  emptyHint: string;
-  onView: (d: DocSummary) => void;
-  onApprove?: (id: number) => void;
-  onDownload: (id: number, labelHint?: string) => void;
-  isHr?: boolean;
-  canApprove?: boolean;
-}) {
-  return (
-    <section className="pt-2">
-      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h2>
-      {docs.length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">{emptyHint}</p>
-      ) : (
-        <div className="space-y-2">
-          {docs.map((d) => {
-            const verified = d.status === "verified";
-            return (
-              <div
-                key={d.id}
-                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-[var(--border)] p-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium text-foreground">{d.label}</div>
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {isHr ? `${d.subject_name} · ` : ""}
-                    {d.created_at ? new Date(d.created_at).toLocaleString() : ""}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto sm:self-auto shrink-0 justify-end">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold mr-auto sm:mr-0",
-                      verified
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-                    )}
-                  >
-                    {verified ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : (
-                      <Clock className="h-3 w-3" />
-                    )}
-                    {verified ? "Released" : "Draft"}
-                  </span>
-                  <button
-                    onClick={() => onView(d)}
-                    className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted/60 flex-1 sm:flex-none text-center"
-                  >
-                    View
-                  </button>
-                  {canApprove && !verified && onApprove && (
-                    <button
-                      onClick={() => onApprove(d.id)}
-                      className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700 flex-1 sm:flex-none text-center"
-                    >
-                      Approve
-                    </button>
-                  )}
-                  {verified && (
-                    <button
-                      onClick={() => onDownload(d.id, d.label)}
-                      className="rounded-lg border border-[var(--connectivity)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)] flex-1 sm:flex-none text-center"
-                    >
-                      Download
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
 // ── Document Library ─────────────────────────────────────────────────────────
 
 interface LibraryDoc {
@@ -1221,6 +814,7 @@ interface LibraryDoc {
   file_size: number;
   uploaded_by: string;
   created_at: string | null;
+  source?: "upload" | "sharepoint";
 }
 
 const FILE_TYPE_ICON: Record<string, typeof FileText> = {
@@ -1253,8 +847,8 @@ function DocumentLibrary({
   authHeaders: Record<string, string>;
   isLibraryAdmin: boolean;
 }) {
-  const [docs, setDocs] = useState<LibraryDoc[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [uploadedDocs, setUploadedDocs] = useState<LibraryDoc[]>([]);
+  const [spDocs, setSpDocs] = useState<LibraryDoc[]>([]);
   const [filterCat, setFilterCat] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1267,6 +861,7 @@ function DocumentLibrary({
   const [uploadCat, setUploadCat] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const baseHeaders = useMemo(() => {
     const { "Content-Type": _, ...rest } = authHeaders;
@@ -1276,26 +871,26 @@ function DocumentLibrary({
   const fetchDocs = useCallback(async () => {
     setLoading(true);
     try {
-      const url = filterCat
-        ? `/api/document-library?category=${encodeURIComponent(filterCat)}`
-        : "/api/document-library";
-      const r = await fetch(url, { headers: baseHeaders });
-      const d = await r.json();
-      setDocs(d.documents || []);
+      const [uploadedRes, spRes] = await Promise.all([
+        fetch("/api/document-library", { headers: baseHeaders }),
+        fetch("/api/document-library/policies", { headers: baseHeaders }),
+      ]);
+      const uploadedData = await uploadedRes.json();
+      const spData = await spRes.json();
+      const uploaded: LibraryDoc[] = (uploadedData.documents || []).map((d: LibraryDoc) => ({
+        ...d,
+        source: "upload" as const,
+      }));
+      const sp: LibraryDoc[] = (spData.documents || []).map((d: LibraryDoc) => ({
+        ...d,
+        source: "sharepoint" as const,
+      }));
+      setUploadedDocs(uploaded);
+      setSpDocs(sp);
     } catch {
       toast.error("Failed to load document library");
     } finally {
       setLoading(false);
-    }
-  }, [filterCat, baseHeaders]);
-
-  const fetchCategories = useCallback(async () => {
-    try {
-      const r = await fetch("/api/document-library/categories", { headers: baseHeaders });
-      const d = await r.json();
-      setCategories(d.categories || []);
-    } catch {
-      // non-fatal
     }
   }, [baseHeaders]);
 
@@ -1303,9 +898,19 @@ function DocumentLibrary({
     fetchDocs();
   }, [fetchDocs]);
 
-  useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
+  // Combine and derive categories from all docs
+  const allDocs = useMemo(
+    () => [...uploadedDocs, ...spDocs],
+    [uploadedDocs, spDocs],
+  );
+
+  const categories = useMemo(() => {
+    const cats = new Set<string>();
+    allDocs.forEach((d) => {
+      if (d.category) cats.add(d.category);
+    });
+    return Array.from(cats).sort();
+  }, [allDocs]);
 
   const handleUpload = async () => {
     if (!uploadTitle.trim() || !uploadFile) {
@@ -1335,7 +940,6 @@ function DocumentLibrary({
       setUploadCat("");
       setUploadFile(null);
       fetchDocs();
-      fetchCategories();
     } catch (e: any) {
       toast.error(e.message || "Upload failed");
     } finally {
@@ -1345,7 +949,11 @@ function DocumentLibrary({
 
   const handleDownload = async (doc: LibraryDoc) => {
     try {
-      const r = await fetch(`/api/document-library/${doc.id}/download`, { headers: baseHeaders });
+      const endpoint =
+        doc.source === "sharepoint"
+          ? `/api/document-library/policies/${doc.id}/download`
+          : `/api/document-library/${doc.id}/download`;
+      const r = await fetch(endpoint, { headers: baseHeaders });
       if (!r.ok) throw new Error("Download failed");
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
@@ -1368,7 +976,7 @@ function DocumentLibrary({
       });
       if (!r.ok) throw new Error("Delete failed");
       toast.success("Document removed from library");
-      setDocs((prev) => prev.filter((d) => d.id !== id));
+      setUploadedDocs((prev) => prev.filter((d) => d.id !== id));
     } catch {
       toast.error("Delete failed");
     } finally {
@@ -1376,227 +984,413 @@ function DocumentLibrary({
     }
   };
 
-  const filtered = docs.filter(
+  const handleView = async (doc: LibraryDoc) => {
+    const endpoint =
+      doc.source === "sharepoint"
+        ? `/api/document-library/policies/${doc.id}/download`
+        : `/api/document-library/${doc.id}/download`;
+    try {
+      const r = await fetch(endpoint, { headers: baseHeaders });
+      if (!r.ok) throw new Error("Failed to load document");
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      if (doc.file_type === "pdf") {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = doc.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      toast.error("Could not open the document.");
+    }
+  };
+
+  const filtered = allDocs.filter(
     (d) =>
-      !searchQ ||
-      d.title.toLowerCase().includes(searchQ.toLowerCase()) ||
-      (d.category || "").toLowerCase().includes(searchQ.toLowerCase()) ||
-      d.filename.toLowerCase().includes(searchQ.toLowerCase()),
+      (!filterCat || d.category === filterCat) &&
+      (!searchQ ||
+        d.title.toLowerCase().includes(searchQ.toLowerCase()) ||
+        (d.category || "").toLowerCase().includes(searchQ.toLowerCase()) ||
+        d.filename.toLowerCase().includes(searchQ.toLowerCase())),
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-8 py-6">
-      {/* Toolbar */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px] w-full">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="Search by title, category or filename…"
-            className="pl-9 h-9 text-[13px]"
-          />
-        </div>
-        {categories.length > 0 && (
-          <Select
-            value={filterCat || "_all"}
-            onValueChange={(v) => setFilterCat(v === "_all" ? "" : v)}
-          >
-            <SelectTrigger className="h-9 text-[13px] w-full sm:w-44">
-              <Tag className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <SelectValue placeholder="All categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">All categories</SelectItem>
-              {categories.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        {isLibraryAdmin && (
-          <button
-            onClick={() => setUploadOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white w-full sm:w-auto"
-            style={{ background: "var(--gradient-primary)" }}
-          >
-            <Upload className="h-4 w-4" /> Upload document
-          </button>
-        )}
-      </div>
-
-      {/* Upload panel */}
-      {uploadOpen && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-5 rounded-2xl border border-[var(--border)] bg-card p-5 shadow-sm"
-        >
-          <h3 className="mb-4 text-[13px] font-semibold text-foreground">
-            Add document to library
-          </h3>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <TooltipProvider>
+      <div className="min-h-full">
+        {/* ── Page header ────────────────────────────────────────────────── */}
+        <div className="border-b border-border bg-card/60 backdrop-blur-sm px-4 sm:px-8 py-5">
+          <div className="mx-auto max-w-5xl flex items-center justify-between gap-4">
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Title <span className="text-destructive">*</span>
-              </label>
-              <Input
-                value={uploadTitle}
-                onChange={(e) => setUploadTitle(e.target.value)}
-                placeholder="e.g. Q1 2025 Company Overview"
-                className="text-[13px]"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Category
-              </label>
-              <Input
-                value={uploadCat}
-                onChange={(e) => setUploadCat(e.target.value)}
-                placeholder="e.g. Presentations, Policies, Training"
-                className="text-[13px]"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Description
-              </label>
-              <Textarea
-                value={uploadDesc}
-                onChange={(e) => setUploadDesc(e.target.value)}
-                placeholder="Short description of what this document contains…"
-                className="text-[13px]"
-                rows={2}
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                File <span className="text-destructive">*</span>
-              </label>
-              <input
-                type="file"
-                accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.zip"
-                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1 file:text-[12px] file:font-medium file:text-primary"
-              />
-              {uploadFile && (
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {uploadFile.name} · {formatBytes(uploadFile.size)}
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
-            <button
-              onClick={handleUpload}
-              disabled={uploading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50 w-full sm:w-auto"
-              style={{ background: "var(--gradient-primary)" }}
-            >
-              {uploading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
-              )}
-              {uploading ? "Uploading…" : "Upload"}
-            </button>
-            <button
-              onClick={() => setUploadOpen(false)}
-              className="rounded-xl border border-[var(--border)] px-4 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground w-full sm:w-auto text-center animate-none"
-            >
-              Cancel
-            </button>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Document grid */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-          <Library className="mb-3 h-10 w-10 opacity-30" />
-          <p className="text-[13px]">
-            {docs.length === 0
-              ? isLibraryAdmin
-                ? "No documents yet. Upload the first one."
-                : "No documents have been uploaded yet."
-              : "No documents match your search."}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((doc) => {
-            const Icon = FILE_TYPE_ICON[doc.file_type] ?? FileText;
-            return (
-              <motion.div
-                key={doc.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="group flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                    style={{
-                      background: "color-mix(in oklab, var(--connectivity) 12%, transparent)",
-                    }}
-                  >
-                    <Icon className="h-4.5 w-4.5" style={{ color: "var(--connectivity)" }} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-foreground">
-                      {doc.title}
-                    </p>
-                    {doc.category && (
-                      <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                        {doc.category}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {doc.description && (
-                  <p className="line-clamp-2 text-[12px] text-muted-foreground">
-                    {doc.description}
-                  </p>
-                )}
-                <div className="mt-auto flex items-center justify-between pt-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
+              <h2 className="text-[15px] font-bold text-foreground">Document Library</h2>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {loading ? (
+                  <Skeleton className="h-4 w-28" />
+                ) : (
+                  <span className="text-[12px] text-muted-foreground">
+                    {allDocs.length} document{allDocs.length !== 1 ? "s" : ""}
                   </span>
-                  <div className="flex items-center gap-2">
-                    {isLibraryAdmin && (
-                      <button
-                        onClick={() => handleDelete(doc.id)}
-                        disabled={deleting === doc.id}
-                        className="rounded-lg p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
-                      >
-                        {deleting === doc.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDownload(doc)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--connectivity)] px-2.5 py-1 text-[11px] font-semibold text-[var(--connectivity)] hover:bg-[color-mix(in_oklab,var(--connectivity)_8%,transparent)]"
+                )}
+              </div>
+            </div>
+
+            {isLibraryAdmin && (
+              <Sheet
+                open={uploadOpen}
+                onOpenChange={(open) => {
+                  setUploadOpen(open);
+                  if (!open) setUploadFile(null);
+                }}
+              >
+                <SheetTrigger asChild>
+                  <Button size="sm" className="shrink-0 gap-2">
+                    <Upload className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Upload</span>
+                  </Button>
+                </SheetTrigger>
+
+                <SheetContent
+                  side="right"
+                  className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+                >
+                  <SheetHeader className="border-b border-border px-6 py-5">
+                    <SheetTitle>Upload document</SheetTitle>
+                    <SheetDescription>
+                      Add a file to the shared document library.
+                    </SheetDescription>
+                  </SheetHeader>
+
+                  <div className="flex-1 overflow-y-auto px-6 py-5">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ul-title">
+                          Title <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          id="ul-title"
+                          value={uploadTitle}
+                          onChange={(e) => setUploadTitle(e.target.value)}
+                          placeholder="e.g. Q1 Company Overview"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="ul-cat">Category</Label>
+                        <Input
+                          id="ul-cat"
+                          value={uploadCat}
+                          onChange={(e) => setUploadCat(e.target.value)}
+                          placeholder="e.g. Policies, Training"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 space-y-1.5">
+                        <Label htmlFor="ul-desc">Description</Label>
+                        <Textarea
+                          id="ul-desc"
+                          value={uploadDesc}
+                          onChange={(e) => setUploadDesc(e.target.value)}
+                          placeholder="Brief description of this document…"
+                          className="resize-none"
+                          rows={3}
+                        />
+                      </div>
+                      <div className="sm:col-span-2 space-y-1.5">
+                        <Label>
+                          File <span className="text-destructive">*</span>
+                        </Label>
+                        <label
+                          className={cn(
+                            "relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors",
+                            dragOver
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-primary/40 hover:bg-muted/30",
+                          )}
+                          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                          onDragLeave={() => setDragOver(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOver(false);
+                            const f = e.dataTransfer.files?.[0];
+                            if (f) setUploadFile(f);
+                          }}
+                        >
+                          <input
+                            type="file"
+                            accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.zip"
+                            onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                          {uploadFile ? (
+                            <>
+                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                                <FileText className="h-5 w-5 text-primary" />
+                              </div>
+                              <p className="text-[13px] font-semibold text-foreground">
+                                {uploadFile.name}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {formatBytes(uploadFile.size)}
+                              </p>
+                              <span className="text-[11px] text-primary">Click to change</span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+                                <Upload className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <p className="text-[13px] font-medium text-foreground">
+                                Drag & drop or{" "}
+                                <span className="font-semibold text-primary">browse files</span>
+                              </p>
+                              <p className="text-[11px] text-muted-foreground">
+                                PDF, DOCX, PPTX, XLSX, PNG, ZIP · max 50 MB
+                              </p>
+                            </>
+                          )}
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <SheetFooter className="border-t border-border px-6 py-4 gap-2 sm:gap-2">
+                    <SheetClose asChild>
+                      <Button variant="outline" className="w-full sm:w-auto">
+                        Cancel
+                      </Button>
+                    </SheetClose>
+                    <Button
+                      onClick={handleUpload}
+                      disabled={uploading}
+                      className="w-full sm:w-auto gap-2"
                     >
-                      <Download className="h-3 w-3" /> Download
-                    </button>
+                      {uploading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      {uploading ? "Uploading…" : "Upload document"}
+                    </Button>
+                  </SheetFooter>
+                </SheetContent>
+              </Sheet>
+            )}
+          </div>
+        </div>
+
+        <div className="mx-auto max-w-5xl px-4 sm:px-8 py-5 space-y-4">
+          {/* ── Search ──────────────────────────────────────────────────── */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Search by title, category or filename…"
+              className="pl-10 h-10 rounded-xl"
+            />
+            {searchQ && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSearchQ("")}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 h-7 w-7"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+
+          {/* ── Category pills ──────────────────────────────────────────── */}
+          {categories.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <Button
+                size="sm"
+                variant={!filterCat ? "default" : "secondary"}
+                onClick={() => setFilterCat("")}
+                className="shrink-0 rounded-full"
+              >
+                All
+              </Button>
+              {categories.map((c) => (
+                <Button
+                  key={c}
+                  size="sm"
+                  variant={filterCat === c ? "default" : "secondary"}
+                  onClick={() => setFilterCat(filterCat === c ? "" : c)}
+                  className="shrink-0 rounded-full whitespace-nowrap"
+                >
+                  {c}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Document grid ───────────────────────────────────────────── */}
+          {loading ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex flex-col rounded-2xl border border-border bg-card overflow-hidden"
+                >
+                  <Skeleton className="h-[3px] w-full rounded-none shrink-0" />
+                  <div className="flex flex-col gap-3 p-4">
+                    <div className="flex items-start gap-3">
+                      <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
+                      <div className="flex-1 space-y-2 pt-1">
+                        <Skeleton className="h-3 w-3/4" />
+                        <Skeleton className="h-5 w-16" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-2.5 w-full" />
+                    <Skeleton className="h-2.5 w-4/5" />
+                    <Separator />
+                    <div className="flex items-center justify-between">
+                      <Skeleton className="h-2.5 w-10" />
+                      <Skeleton className="h-7 w-24 rounded-lg" />
+                    </div>
                   </div>
                 </div>
-              </motion.div>
-            );
-          })}
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-center">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                <Library className="h-7 w-7 text-muted-foreground" />
+              </div>
+              <p className="text-[14px] font-semibold text-foreground">
+                {allDocs.length === 0 ? "No documents yet" : "No results found"}
+              </p>
+              <p className="mt-1 max-w-xs text-[12px] text-muted-foreground">
+                {allDocs.length === 0
+                  ? isLibraryAdmin
+                    ? "Upload the first document to get started."
+                    : "No documents have been added yet."
+                  : "Try different keywords or clear the active filters."}
+              </p>
+              {allDocs.length === 0 && isLibraryAdmin && (
+                <Button
+                  className="mt-5 gap-2"
+                  onClick={() => setUploadOpen(true)}
+                >
+                  <Upload className="h-4 w-4" /> Upload document
+                </Button>
+              )}
+              {(searchQ || filterCat) && (
+                <Button
+                  variant="link"
+                  className="mt-2"
+                  onClick={() => { setSearchQ(""); setFilterCat(""); }}
+                >
+                  Clear filters
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((doc) => {
+                const Icon = FILE_TYPE_ICON[doc.file_type] ?? FileText;
+                const canPreview = doc.file_type === "pdf";
+                return (
+                  <Card
+                    key={`${doc.source ?? "upload"}-${doc.id}`}
+                    className="group/card flex flex-col [&>div:last-child]:flex [&>div:last-child]:flex-col"
+                  >
+                    <div
+                      className="h-[3px] w-full shrink-0"
+                      style={{ background: "var(--gradient-primary)" }}
+                    />
+
+                    <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-4">
+                      {/* Icon + title */}
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                          <Icon className="h-5 w-5 text-primary" />
+                        </div>
+                        <p className="line-clamp-2 flex-1 pt-0.5 text-[13px] font-semibold leading-snug text-foreground">
+                          {doc.title}
+                        </p>
+                      </div>
+
+                      {/* Category badge */}
+                      {doc.category && (
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge variant="default">{doc.category}</Badge>
+                        </div>
+                      )}
+
+                      {/* Description */}
+                      {doc.description && (
+                        <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
+                          {doc.description}
+                        </p>
+                      )}
+
+                      {/* Footer */}
+                      <div className="mt-auto">
+                        <Separator className="mb-3" />
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-medium text-muted-foreground">
+                            {doc.file_type.toUpperCase()}
+                            {doc.file_size > 0 && (
+                              <span className="text-muted-foreground/60">
+                                {" · "}{formatBytes(doc.file_size)}
+                              </span>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {isLibraryAdmin && doc.source !== "sharepoint" && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDelete(doc.id)}
+                                    disabled={deleting === doc.id}
+                                    className="h-7 w-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive opacity-0 group-hover/card:opacity-100 transition-opacity"
+                                  >
+                                    {deleting === doc.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete document</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {canPreview && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleView(doc)}
+                                className="h-7 gap-1.5 px-3 text-[11px]"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                View
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownload(doc)}
+                              className="h-7 gap-1.5 px-3 text-[11px]"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Download
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -1624,32 +1418,3 @@ function PillTab({
   );
 }
 
-function Step({ n, title, hint }: { n: number; title: string; hint?: string }) {
-  return (
-    <div className="mb-3 flex items-center gap-2.5">
-      <span
-        className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm"
-        style={{ background: "var(--gradient-primary)" }}
-      >
-        {n}
-      </span>
-      <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
-      {hint && (
-        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          {hint}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </div>
-      <div className="truncate text-[13px] text-foreground">{value}</div>
-    </div>
-  );
-}

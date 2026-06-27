@@ -44,6 +44,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 const FIELD_TYPES = [
   "text",
@@ -635,8 +637,21 @@ export function FormLibrary() {
         {tab === "forms" ? (
           <div>
             {loading ? (
-              <div className="flex items-center justify-center py-20 text-[#64748b] dark:text-white/50">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="rounded-2xl border border-border bg-white dark:bg-card p-5 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <Skeleton className="h-5 w-40" />
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    </div>
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-3/4" />
+                    <div className="flex gap-2 pt-1">
+                      <Skeleton className="h-8 w-20 rounded-xl" />
+                      <Skeleton className="h-8 w-20 rounded-xl" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : forms.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl bg-white dark:bg-card shadow-sm max-w-xl mx-auto">
@@ -765,8 +780,16 @@ export function FormLibrary() {
         ) : (
           <div>
             {subsLoading ? (
-              <div className="flex items-center justify-center py-20 text-[#64748b] dark:text-white/50">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading…
+              <div className="rounded-2xl border border-border overflow-hidden">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-border last:border-0">
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                  </div>
+                ))}
               </div>
             ) : submissions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl bg-white dark:bg-card shadow-sm max-w-xl mx-auto">

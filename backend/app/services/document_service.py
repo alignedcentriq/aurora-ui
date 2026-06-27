@@ -542,27 +542,53 @@ def _public_field(f: dict) -> dict:
 
 def doc_catalogue(db) -> list:
     """Public picker list — only HR-enabled templates, with their user-supplied fields.
-    Auto-filled fields are omitted (the server fills them at generation time)."""
+    Auto-filled fields are omitted (the server fills them at generation time).
+
+    When the DB has no enabled templates (e.g. first boot before seeding), the
+    Zoho-service catalogue is returned as a fallback so the UI is never empty.
+    """
     rows = (
         db.query(DocumentTemplate)
         .filter(DocumentTemplate.enabled == True)  # noqa: E712
         .order_by(DocumentTemplate.label)
         .all()
     )
-    seen: set[str] = set()
-    out = []
-    for r in rows:
-        if r.doc_type in seen:
-            continue
-        seen.add(r.doc_type)
-        user_fields, _ = engine.classify_fields(r.fields)
-        out.append({
-            "doc_type": r.doc_type,
-            "label": r.label or r.doc_type,
-            "requires_approval": bool(r.requires_approval),
-            "fields": [_public_field(f) for f in user_fields],
-        })
-    return out
+    if rows:
+        seen: set[str] = set()
+        out = []
+        for r in rows:
+            if r.doc_type in seen:
+                continue
+            seen.add(r.doc_type)
+            user_fields, _ = engine.classify_fields(r.fields)
+            out.append({
+                "doc_type": r.doc_type,
+                "label": r.label or r.doc_type,
+                "requires_approval": bool(r.requires_approval),
+                "fields": [_public_field(f) for f in user_fields],
+            })
+        return out
+
+    # Fallback: DB templates not yet seeded — use the Zoho-service catalogue.
+    from app.services import zoho_doc_service
+    return [
+        {
+            "doc_type": t["doc_type"],
+            "label": t["Template_Name"],
+            "requires_approval": t["requires_approval"],
+            "fields": [
+                {
+                    "name": f["name"],
+                    "label": f["label"],
+                    "type": f.get("type", "text"),
+                    "required": bool(f.get("required", True)),
+                    "source": "user",
+                }
+                for f in t["fields"]
+            ],
+        }
+        for t in zoho_doc_service.list_templates()
+    ]
 
 
 def get_template(db, doc_type: str) -> Optional[DocumentTemplate]:

@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
 import io
 import asyncio
 import datetime
@@ -65,7 +68,6 @@ from app.routes.skill_hr_routes import router as skill_hr_router
 from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
 from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
-from app.routes.techelevate_routes import router as techelevate_router
 from app.routes.techelevate_local_routes import router as techelevate_local_router
 from app.routes.udemy_routes import router as udemy_router
 from app.routes.project_iq_routes import router as project_iq_router
@@ -196,7 +198,6 @@ app.include_router(skill_it_router)
 app.include_router(skill_doc_router)
 app.include_router(connector_admin_router)
 app.include_router(connector_invoke_router)
-app.include_router(techelevate_router)
 app.include_router(techelevate_local_router)
 app.include_router(udemy_router)
 app.include_router(project_iq_router)
@@ -219,11 +220,22 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
+class PortalContext(BaseModel):
+    """What the user is currently looking at in the UI.
+    Passed by the frontend on every chat request so the agent can give
+    portal-aware answers and optionally return a portal_action to drive
+    the visible page (e.g. filter the directory list, highlight a row).
+    """
+    page: Optional[str] = None          # "directory" | "pmo" | "udemy" | "documents" | "team" | None
+    active_filters: Optional[dict] = {} # current filter state already applied on the portal
+
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     session_id: Optional[str] = "default_session_v2"
     is_private: Optional[bool] = False
+    portal_context: Optional[PortalContext] = None
+    active_mode: Optional[str] = None
 
 class FeedbackRequest(BaseModel):
     rating: str                          # "up" or "down"
@@ -996,7 +1008,7 @@ async def serve_policy_image(image_id: int):
 
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
-_SKIP_STREAMING_NODES = {"followup_resolver", "intent_router", "context_manager", "feedback_lookup", "context_gate", "state_tracker", "form_builder_agent"}
+_SKIP_STREAMING_NODES = {"followup_resolver", "intent_router", "context_manager", "feedback_lookup", "context_gate", "state_tracker", "form_builder_agent", "analytics_agent"}
 
 # Domains whose answers are safe & stable enough to serve from the semantic answer cache.
 # Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
@@ -1051,6 +1063,7 @@ _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', r
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
 _form_builder_re = re.compile(r'\[FORM_BUILDER_START\](.*?)\[FORM_BUILDER_END\]', re.DOTALL)
 _quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
+_chart_re = re.compile(r'\[CHART_START\](.*?)\[CHART_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
 
 
@@ -1126,6 +1139,18 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         except Exception as _e:
             logger.warning("Failed to parse QUICK_CHOICE marker JSON (widget dropped): %s; raw=%.200r", _e, qc_match.group(1))
             final_message = _quick_choice_re.sub("", final_message).strip()
+
+    # Extract analytics chart (ChartSpec) — must run BEFORE the JSON-blob stripping below so the
+    # chart JSON isn't mangled. The marker wraps the JSON, so it's removed before any blob regex.
+    chart_match = _chart_re.search(final_message)
+    if chart_match:
+        try:
+            chart_data = json.loads(chart_match.group(1))
+            interactive = {"type": "chart", "data": chart_data}
+            final_message = _chart_re.sub("", final_message).strip()
+        except Exception as _e:
+            logger.warning("Failed to parse CHART marker JSON (widget dropped): %s; raw=%.200r", _e, chart_match.group(1))
+            final_message = _chart_re.sub("", final_message).strip()
 
     # Extract download tag
     dl_match = _download_tag_re.search(final_message)
@@ -1307,7 +1332,11 @@ async def chat(
             return
 
         # ── Short-circuit "who is X" lookup (instant path, zero LLM) ──────────
-        name_match = re.search(r'^\s*who\s+is\s+([a-zA-Z0-9.-]+\s+[a-zA-Z0-9.-]+)[?.!\s]*$', request.message, re.IGNORECASE)
+        # Skipped while an assistant mode is active so mode stays sticky until /exit.
+        name_match = (
+            None if request.active_mode
+            else re.search(r'^\s*who\s+is\s+([a-zA-Z0-9.-]+\s+[a-zA-Z0-9.-]+)[?.!\s]*$', request.message, re.IGNORECASE)
+        )
         if name_match:
             person_name = name_match.group(1).strip()
             try:
@@ -1348,7 +1377,11 @@ async def chat(
         # If a near-identical informational question was answered recently, stream the saved
         # answer immediately and skip the concurrency gate + graph entirely. Guarded against
         # action phrasings so side-effecting requests never short-circuit.
-        if settings.ANSWER_CACHE_ENABLED and not request.is_private and not _CACHE_SKIP_RE.search(request.message):
+        # An active assistant mode (e.g. Analytics Builder) must drive routing — never let a
+        # stale cached text answer for the same phrasing preempt the mode's domain.
+        if (settings.ANSWER_CACHE_ENABLED and not request.is_private
+                and not request.active_mode
+                and not _CACHE_SKIP_RE.search(request.message)):
             try:
                 from app.services.answer_cache_service import AnswerCacheService
                 hit = await asyncio.to_thread(AnswerCacheService.lookup, request.message)
@@ -1435,6 +1468,8 @@ async def chat(
             "graph_token": effective_graph_token,
             "session_id": request.session_id,
             "user_location": user_location,
+            "portal_context": request.portal_context.model_dump() if request.portal_context else None,
+            "active_mode": request.active_mode or None,
         }
 
         try:

@@ -248,6 +248,11 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
+    # When EMAIL_TEST_MODE=true (the default), _send() intercepts every outbound email
+    # and redirects it to NOTIFY_TO_EMAIL regardless of the original recipient.
+    # The original To address is appended to the subject so you can see where it would
+    # have gone.  Set EMAIL_TEST_MODE=false in .env only when ready for real delivery.
+    EMAIL_TEST_MODE = os.getenv("EMAIL_TEST_MODE", "true").lower() not in ("false", "0", "no")
     HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "shivam.sharma@alignedautomation.com")
     # Mailbox used as the SENDER for unattended/background emails (parking reminders).
     # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
@@ -414,6 +419,21 @@ class Config:
     ZOHO_PASSWORD  = os.getenv("ZOHO_PASSWORD", "")
     ZOHO_VIEW      = os.getenv("ZOHO_VIEW", "vb_employees")
 
+    # ── eSSL Attendance DB (read-only SQL Server source) ──────────────────────
+    # A separate SQL Server database exposes a view of eSSL biometric attendance
+    # punches (dbo.vbUserTimeEntryLog). When configured, attendance queries use
+    # this live source instead of the locally-seeded dummy table. Employee records
+    # are matched by name (USERNAME column). ATTENDANCE_DBURL may be a JDBC-style
+    # URL (jdbc:sqlserver://;serverName=...;databaseName=...) or a plain MSSQL URL.
+    # Requires ODBC Driver 17 for SQL Server on the host OS.
+    ATTENDANCE_DBURL     = os.getenv("ATTENDANCE_DBURL", "")
+    ATTENDANCE_USERNAME  = os.getenv("ATTENDANCE_USERNAME", "")
+    ATTENDANCE_PASSWORD  = os.getenv("ATTENDANCE_PASSWORD", "")
+    ATTENDANCE_VIEW      = os.getenv("ATTENDANCE_VIEW", "dbo.vbUserTimeEntryLog")
+    # Check-in after this time (HH:MM, 24h) counts as "Late" on a Present day.
+    # Single source of truth for late-arrival across all attendance features.
+    ATTENDANCE_LATE_CUTOFF = os.getenv("ATTENDANCE_LATE_CUTOFF", "13:00")
+
     # ── Alchemy Skills Portal (Azure AD-secured internal API) ─────────────────
     ALCHEMY_BASE_URL          = os.getenv("ALCHEMY_BASE_URL", "https://apps.alignedautomation.com/alchemyapi/api/v1")
     # Prefix prepended to numeric employee IDs when calling the Alchemy API.
@@ -428,22 +448,8 @@ class Config:
     # reads with one token). Blank → fall back to the first active Microsoft connection.
     ALCHEMY_SERVICE_EMAIL = os.getenv("ALCHEMY_SERVICE_EMAIL", "")
 
-    # ── TechElevate Training Portal (Azure AD-secured, same App ID as Alchemy) ─
-    TECHELEVATE_BASE_URL = os.getenv("TECHELEVATE_BASE_URL", "https://training.alignedautomation.com/api")
-    TECHELEVATE_ENABLED  = os.getenv("TECHELEVATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-    # Service account for server-side token mint (ROPC). When set, the backend
-    # fetches TechElevate data without any per-user connect flow.
-    TECHELEVATE_SA_EMAIL    = os.getenv("TECHELEVATE_SA_EMAIL", "")
-    TECHELEVATE_SA_PASSWORD = os.getenv("TECHELEVATE_SA_PASSWORD", "")
-    # Dev bypass: set to a raw TechElevate JWT to skip all auth in local dev.
-    TECHELEVATE_DEV_JWT  = os.getenv("TECHELEVATE_DEV_JWT", "")
-    # Local LMS mode: when true, TechElevate trainings/assignments are served from
-    # our own DB (seeded dummy data) instead of the unreachable external API. This
-    # powers the upskilling flywheel (completion → verified EmployeeSkill write-back).
+    # ── TechElevate Local LMS ─────────────────────────────────────────────────
     TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
-    # Seed sample assignments/completions onto REAL employees (writes verified
-    # EmployeeSkills). OFF by default — the catalog seeds either way, but this
-    # mutates live employee skill profiles, so it's opt-in (safe for shared DBs).
     TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
 
     # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────

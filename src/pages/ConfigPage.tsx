@@ -37,6 +37,10 @@ import {
   AnnouncementBodyEditor,
   type ImageAction,
 } from "@/components/assistant/AnnouncementBodyEditor";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 
 interface PromptRow {
   domain: string;
@@ -781,8 +785,14 @@ export function ConfigPage() {
               </div>
 
               {loading ? (
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <div className="space-y-0 overflow-hidden rounded-2xl border border-border">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-border last:border-0">
+                      <Skeleton className="h-4 w-28" />
+                      <Skeleton className="h-4 flex-1" />
+                      <Skeleton className="h-7 w-16 rounded-lg" />
+                    </div>
+                  ))}
                 </div>
               ) : (
                 (() => {
@@ -1693,8 +1703,12 @@ export function ConfigPage() {
                 </div>
 
                 {loadingCompany ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  <div className="space-y-2 py-2">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-5/6" />
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
                   </div>
                 ) : (
                   <textarea

@@ -290,6 +290,7 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
 
 function LayoutComponent() {
   const [commandOpen, setCommandOpen] = useState(false);
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -449,7 +450,7 @@ function LayoutComponent() {
       >
         {user.name
           .split(" ")
-          .map((n) => n[0])
+          .map((n) => n[0]?.toUpperCase() ?? "")
           .join("")}
       </div>
     );
@@ -478,7 +479,10 @@ function LayoutComponent() {
 
         {/* Center: always-visible nav */}
         <div className="flex min-w-0 items-center justify-center">
-          <nav className="hidden lg:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1">
+          <nav
+            className="hidden lg:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1 relative"
+            onMouseLeave={() => setHoveredPath(null)}
+          >
             {navItems
               .filter((n) => n.show)
               .map((item) => {
@@ -489,21 +493,25 @@ function LayoutComponent() {
                   <Link
                     key={item.to}
                     to={item.to}
+                    onMouseEnter={() => setHoveredPath(item.to)}
                     className={cn(
-                      "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
+                      "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap z-10",
                       active
-                        ? "text-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                        ? "text-foreground font-bold"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
-                    style={
-                      active
-                        ? {
+                  >
+                    {active && (
+                      <motion.div
+                        layoutId="desktop-nav-active-pill"
+                        className="absolute inset-0 rounded-xl -z-10"
+                        style={{
                           background: `color-mix(in oklab, ${accentColor} 14%, var(--background))`,
                           boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
-                        }
-                        : undefined
-                    }
-                  >
+                        }}
+                        transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                      />
+                    )}
                     {active && (
                       <motion.div
                         layoutId="header-nav-active-dot"
@@ -512,10 +520,24 @@ function LayoutComponent() {
                         transition={{ type: "spring", stiffness: 400, damping: 28 }}
                       />
                     )}
-                    <Icon
-                      className="h-3.5 w-3.5 shrink-0"
-                      style={{ color: active ? accentColor : "inherit" }}
-                    />
+                    {hoveredPath === item.to && !active && (
+                      <motion.div
+                        layoutId="desktop-nav-hover-pill"
+                        className="absolute inset-0 rounded-xl bg-muted/60 -z-20"
+                        transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                      />
+                    )}
+                    <motion.div
+                      whileHover={{ scale: 1.15, rotate: [0, -5, 5, 0] }}
+                      animate={active ? { scale: 1.05 } : { scale: 1 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                      className="shrink-0 flex items-center justify-center"
+                    >
+                      <Icon
+                        className="h-3.5 w-3.5"
+                        style={{ color: active ? accentColor : "inherit" }}
+                      />
+                    </motion.div>
                     <span className="hidden xl:inline">{item.label}</span>
                   </Link>
                 );
@@ -849,6 +871,7 @@ function LayoutComponent() {
       <div
         className="flex lg:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none"
         style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 6px)" }}
+        onMouseLeave={() => setHoveredPath(null)}
       >
         {navItems
           .filter((n) => n.show)
@@ -862,21 +885,25 @@ function LayoutComponent() {
                 key={item.to}
                 to={item.to}
                 title={item.label}
+                onMouseEnter={() => setHoveredPath(item.to)}
                 className={cn(
-                  "group relative flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px]",
+                  "group relative flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px] z-10",
                   active
                     ? "text-foreground font-bold"
                     : "text-muted-foreground hover:text-foreground",
                 )}
-                style={
-                  active
-                    ? {
+              >
+                {active && (
+                  <motion.div
+                    layoutId="mobile-nav-active-pill"
+                    className="absolute inset-0 rounded-xl -z-10"
+                    style={{
                       background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
                       boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
-                    }
-                    : undefined
-                }
-              >
+                    }}
+                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  />
+                )}
                 {active && (
                   <motion.div
                     layoutId="dock-active-dot-mobile"
@@ -888,10 +915,24 @@ function LayoutComponent() {
                     transition={{ type: "spring", stiffness: 300, damping: 20 }}
                   />
                 )}
-                <Icon
-                  className="h-[18px] w-[18px] shrink-0"
-                  style={{ color: active ? accentColor : "inherit" }}
-                />
+                {hoveredPath === item.to && !active && (
+                  <motion.div
+                    layoutId="mobile-nav-hover-pill"
+                    className="absolute inset-0 rounded-xl bg-muted/40 -z-20"
+                    transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                  />
+                )}
+                <motion.div
+                  whileHover={{ scale: 1.15 }}
+                  animate={active ? { scale: 1.05 } : { scale: 1 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                  className="shrink-0 flex items-center justify-center"
+                >
+                  <Icon
+                    className="h-[18px] w-[18px]"
+                    style={{ color: active ? accentColor : "inherit" }}
+                  />
+                </motion.div>
                 <span className="mt-0.5 text-[9px] truncate max-w-[60px] leading-tight text-center">
                   {item.label}
                 </span>

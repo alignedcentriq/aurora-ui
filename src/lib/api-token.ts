@@ -27,27 +27,3 @@ export async function getApiToken(): Promise<string | null> {
     }
   }
 }
-
-/**
- * Acquire an Azure AD id_token for external SSO (e.g. TechElevate's /sso-login,
- * which validates an Azure id_token and returns its own JWT). Returns null if
- * MSAL is unavailable or no account is signed in (e.g. local dev without MSAL).
- */
-export async function getIdToken(): Promise<string | null> {
-  if (!msalInstance) return null;
-  const accounts = msalInstance.getAllAccounts();
-  if (accounts.length === 0) return null;
-  // openid scope guarantees an id_token is issued without requiring API consent.
-  const request = { scopes: ["openid", "profile", "email"], account: accounts[0] };
-  try {
-    const res = await msalInstance.acquireTokenSilent(request);
-    return res.idToken ?? null;
-  } catch {
-    try {
-      const res = await msalInstance.acquireTokenPopup(request);
-      return res.idToken ?? null;
-    } catch {
-      return null;
-    }
-  }
-}

@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { cleanUrlParams } from "./utils";
-import { getIdToken } from "./api-token";
 
 // Fast wrapper for fetch timeout
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 2000) => {
@@ -144,13 +143,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // ignore
         }
 
+        // Properly capitalize each word of the display name derived from the email
+        // (e.g. "shivam.sharma" → "Shivam Sharma").
+        const displayName = mockEmail
+          .split("@")[0]
+          .replace(/[._]/g, " ")
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+
+        // Load the cached avatar from localStorage (same as the MSAL path).
+        // Validate it's a real data URL to discard any corrupted entries.
+        const rawCached = localStorage.getItem(`avatar_${mockEmail}`);
+        const cachedMockAvatar =
+          rawCached && rawCached.startsWith("data:image/") ? rawCached : undefined;
+        if (rawCached && !cachedMockAvatar) {
+          // Evict the corrupted entry so a fresh fetch can succeed next time.
+          localStorage.removeItem(`avatar_${mockEmail}`);
+        }
+
         setUser((prev) => ({
           id: "mock-id",
-          name: mockEmail.split("@")[0].replace(/[._]/g, " "),
+          name: displayName,
           email: mockEmail,
           role: effectiveRole,
           scopes,
-          avatarUrl: prev?.avatarUrl || undefined,
+          avatarUrl: prev?.avatarUrl || cachedMockAvatar,
           team: [
             {
               id: "t1",
@@ -221,7 +239,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Fall through with MSAL role
           }
 
-          const cachedAvatar = localStorage.getItem(`avatar_${email}`) || undefined;
+          // Validate the cached avatar is a proper data URL before trusting it.
+          // A corrupted/truncated entry would cause a broken <img> and onError fallback.
+          const rawCachedAvatar = localStorage.getItem(`avatar_${email}`);
+          const cachedAvatar =
+            rawCachedAvatar && rawCachedAvatar.startsWith("data:image/")
+              ? rawCachedAvatar
+              : undefined;
+          if (rawCachedAvatar && !cachedAvatar) {
+            localStorage.removeItem(`avatar_${email}`);
+          }
           setUser((prev) => ({
             id: account.localAccountId,
             name: account.name || account.username || "User",
@@ -270,11 +297,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkAccount();
   }, [accounts, inProgress, instance]);
 
-  // Fetch actual profile photo from Microsoft Graph
+  // Guard: only fetch the Graph photo once per account to avoid race conditions
+  // where a re-run of this effect overwrites an avatarUrl that was already set.
+  const photoFetchedFor = React.useRef<string | null>(null);
+
+  // Fetch actual profile photo from Microsoft Graph (production / real MSAL accounts)
   useEffect(() => {
     const fetchGraphPhoto = async () => {
       if (accounts.length > 0 && inProgress === InteractionStatus.None) {
         const email = accounts[0].username;
+
+        // Skip if we already successfully fetched for this account.
+        if (photoFetchedFor.current === email) return;
+
         try {
           const request = {
             scopes: ["User.Read"],
@@ -290,17 +325,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (photoResponse.ok) {
             const blob = await photoResponse.blob();
-            // Convert to base64 for persistent caching across refreshes / restarts
+            // Convert to base64 for persistent caching across refreshes / restarts.
             const reader = new FileReader();
             reader.onloadend = () => {
               const base64 = reader.result as string;
-              localStorage.setItem(`avatar_${email}`, base64);
-              setUser((prev) => (prev ? { ...prev, avatarUrl: base64 } : prev));
+              // Guard against localStorage quota errors (5 MB limit).
+              // If the write fails, fall back to an object URL so the avatar
+              // still displays for the current session.
+              let avatarUrl = base64;
+              try {
+                localStorage.setItem(`avatar_${email}`, base64);
+              } catch {
+                // QuotaExceededError — use an ephemeral object URL instead.
+                avatarUrl = URL.createObjectURL(blob);
+              }
+              photoFetchedFor.current = email;
+              setUser((prev) => (prev ? { ...prev, avatarUrl } : prev));
             };
             reader.readAsDataURL(blob);
+          } else {
+            // Non-OK response (e.g. 404 = no photo set) — mark as fetched so
+            // we don't keep retrying on every effect re-run.
+            photoFetchedFor.current = email;
           }
         } catch {
-          // photo fetch failed — avatar stays unset
+          // photo fetch failed — avatar stays unset; will retry on next mount.
         }
       }
     };
@@ -308,33 +357,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchGraphPhoto();
   }, [accounts, instance, inProgress]);
 
-  // Pre-warm the TechElevate session at login: mint an Azure id_token silently
-  // and exchange it for a TechElevate JWT cached server-side, so the portal
-  // opens without a connect round-trip. Fire-and-forget — if it fails, the
-  // portal still establishes the session lazily on first use.
-  const teWarmedFor = React.useRef<string | null>(null);
+  // Fetch profile photo via the backend proxy for mock / dev mode.
+  // In mock mode, accounts.length is always 0, so the MS Graph effect above never
+  // runs. The backend proxy uses app-only credentials to fetch from Graph, so it
+  // works without a user-delegated token.
   useEffect(() => {
-    const warmTechElevate = async () => {
-      if (!user?.email || teWarmedFor.current === user.email) return;
-      teWarmedFor.current = user.email;
+    const fetchMockPhoto = async () => {
+      if (!user?.email) return;
+      if (accounts.length > 0) return; // handled by the MSAL effect above
+      if (photoFetchedFor.current === user.email) return; // already fetched
+      if (user.avatarUrl) return; // already have a photo
+
       try {
-        const idToken = await getIdToken();
-        if (!idToken) return;
-        await fetch("/api/portal/techelevate/connect", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-user-email": user.email,
-            "x-user-role": user.role.toLowerCase(),
-          },
-          body: JSON.stringify({ id_token: idToken }),
-        });
+        const photoResponse = await fetch(`/api/ms365/users/${encodeURIComponent(user.email)}/photo`);
+        if (photoResponse.ok) {
+          const blob = await photoResponse.blob();
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64 = reader.result as string;
+            let avatarUrl = base64;
+            try {
+              localStorage.setItem(`avatar_${user.email}`, base64);
+            } catch {
+              avatarUrl = URL.createObjectURL(blob);
+            }
+            photoFetchedFor.current = user.email;
+            setUser((prev) => (prev ? { ...prev, avatarUrl } : prev));
+          };
+          reader.readAsDataURL(blob);
+        } else {
+          // No photo for this user — stop retrying.
+          photoFetchedFor.current = user.email;
+        }
       } catch {
-        // non-fatal — portal connects lazily on first use
+        // Network error — will retry if the component re-renders.
       }
     };
-    warmTechElevate();
-  }, [user?.email, user?.role]);
+
+    fetchMockPhoto();
+  }, [user?.email, user?.avatarUrl, accounts.length]);
 
   const login = async () => {
     if (isInteracting) return;

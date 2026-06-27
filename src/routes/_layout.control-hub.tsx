@@ -49,10 +49,10 @@ import ConnectorStudio from "@/pages/ConnectorStudio";
 import { ObservabilityDashboard } from "@/pages/ObservabilityDashboard";
 import { RoiDashboard } from "@/pages/RoiDashboard";
 import { AnalyticsStudio } from "@/pages/AnalyticsStudio";
+import { AnalyticsBuilder } from "@/pages/AnalyticsBuilder";
 import { LLMControlsPage } from "@/pages/LLMControlsPage";
 import { AccessManagement } from "@/pages/AccessManagement";
 import { CabinDirectory } from "@/pages/CabinDirectory";
-import { TechElevatePortal } from "@/pages/TechElevatePortal";
 import { TechElevateLocalPortal } from "@/pages/TechElevateLocalPortal";
 import { UdemyBusinessPortal } from "@/pages/UdemyBusinessPortal";
 import { ProjectIQPortal } from "@/pages/ProjectIQPortal";
@@ -71,6 +71,7 @@ type TabId =
   | "dashboard"
   | "roi"
   | "analytics-studio"
+  | "analytics-builder"
   | "observability"
   | "llm-controls"
   | "role-control"
@@ -81,7 +82,6 @@ type TabId =
   | "pmo-portal"
   | "leadership-command"
   | "project-iq"
-  | "techelevate"
   | "te-lms"
   | "udemy-business"
   | "manager-portal"
@@ -134,6 +134,15 @@ const TABS: TabItem[] = [
     color: "#6366F1",
     show: (role) => role !== "Employee",
     component: AnalyticsStudio,
+  },
+  {
+    id: "analytics-builder",
+    label: "Chart Builder AI",
+    category: "System & Ops",
+    icon: Brain,
+    color: "#8B5CF6",
+    show: (role) => role !== "Employee",
+    component: AnalyticsBuilder,
   },
   {
     id: "role-control",
@@ -244,15 +253,6 @@ const TABS: TabItem[] = [
     component: ProjectIQPortal,
   },
   {
-    id: "techelevate",
-    label: "TechElevate",
-    category: "Management Portals",
-    icon: GraduationCap,
-    color: "#7C3AED",
-    show: () => true,
-    component: TechElevatePortal,
-  },
-  {
     id: "te-lms",
     label: "TechElevate LMS",
     category: "Management Portals",
@@ -344,6 +344,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   dashboard: "Broadcast alerts, policy changes, and official events to the workspace.",
   roi: "See time saved, ticket deflection, and cost — the assistant's business value.",
   "analytics-studio": "Build charts in plain English or dropdowns, then save dashboards.",
+  "analytics-builder": "AI chart builder — describe any visualization in natural language, iterate, export.",
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
@@ -366,7 +367,6 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "form-library": "Submit custom forms, view request archives, and check statuses.",
   "connector-studio":
     "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
-  techelevate: "View training assignments, level progress, study materials, and exam results.",
   "te-lms":
     "In-house LMS: browse trainings, assign them, and take assessments that earn verified skills.",
   "udemy-business":

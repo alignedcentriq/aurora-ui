@@ -10,7 +10,9 @@ import {
   ExternalLink,
   LayoutGrid,
   BookOpen,
+  Zap,
 } from "lucide-react";
+import { CHAT_MODES } from "@/lib/chat-modes";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { BrandName } from "@/components/BrandName";
@@ -54,11 +56,19 @@ interface MentionUser {
 type SlashItem =
   | { kind: "form"; id: number; name: string; description: string; category: string }
   | { kind: "url"; id: number; name: string; url: string; purpose: string }
-  | { kind: "route"; id: string; name: string; path: string; description: string };
+  | { kind: "route"; id: string; name: string; path: string; description: string }
+  | { kind: "mode"; id: string; name: string; command: string; description: string };
 
-// Static in-app destinations exposed through the /slash picker so users can jump
-// to a page without it living in the top nav. Always shown above forms & URLs.
+// Static in-app destinations exposed through the /slash picker.
 const NAV_SLASH_ITEMS: SlashItem[] = [
+  // Focus modes — shown first so they're discoverable
+  ...Object.values(CHAT_MODES).map((m) => ({
+    kind: "mode" as const,
+    id: m.key,
+    name: m.label,
+    command: m.command,
+    description: m.description,
+  })),
   {
     kind: "route",
     id: "library",
@@ -73,6 +83,15 @@ const NAV_SLASH_ITEMS: SlashItem[] = [
     path: "/my-library",
     description: "Track your borrows, requests, and extensions",
   },
+];
+
+const PLACEHOLDERS = [
+  "Ask about leave, IT tickets, travel, bookings, policies...",
+  "Can you check my remaining leave balance?",
+  "How do I submit an IT support ticket?",
+  "Book a cabin for my meeting in Pune office",
+  "Generate a travel request for Dubai",
+  "What is our work from home policy?",
 ];
 
 export function Composer({
@@ -97,6 +116,15 @@ export function Composer({
 
   const [isFocused, setIsFocused] = useState(false);
   const { voiceMode, toggleVoiceMode } = useVoiceStore();
+
+  const [currentPlaceholderIdx, setCurrentPlaceholderIdx] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentPlaceholderIdx((prev) => (prev + 1) % PLACEHOLDERS.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
   // @mention state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -206,6 +234,9 @@ export function Composer({
         window.open(item.url, "_blank", "noreferrer");
       } else if (item.kind === "route") {
         onNavigate?.(item.path);
+      } else if (item.kind === "mode") {
+        // Send the mode command as a message so AssistantView intercepts it
+        onQuickAction?.(item.command);
       } else {
         onQuickAction?.(item.name);
       }
@@ -428,13 +459,17 @@ export function Composer({
                               ? "bg-primary/10 text-primary"
                               : item.kind === "route"
                                 ? "bg-emerald-500/10 text-emerald-500"
-                                : "bg-blue-500/10 text-blue-500",
+                                : item.kind === "mode"
+                                  ? "bg-violet-500/10 text-violet-500"
+                                  : "bg-blue-500/10 text-blue-500",
                           )}
                         >
                           {item.kind === "form" ? (
                             <FileText className="h-3.5 w-3.5" />
                           ) : item.kind === "route" ? (
                             <BookOpen className="h-3.5 w-3.5" />
+                          ) : item.kind === "mode" ? (
+                            <Zap className="h-3.5 w-3.5" />
                           ) : (
                             <ExternalLink className="h-3.5 w-3.5" />
                           )}
@@ -451,27 +486,27 @@ export function Composer({
                                   ? "text-primary border-primary/20 bg-primary/5"
                                   : item.kind === "route"
                                     ? "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"
-                                    : "text-blue-500 border-blue-500/20 bg-blue-500/5",
+                                    : item.kind === "mode"
+                                      ? "text-violet-500 border-violet-500/20 bg-violet-500/5"
+                                      : "text-blue-500 border-blue-500/20 bg-blue-500/5",
                               )}
                             >
                               {item.kind === "form"
                                 ? "Form"
                                 : item.kind === "route"
                                   ? "Page"
-                                  : "App"}
+                                  : item.kind === "mode"
+                                    ? "Mode"
+                                    : "App"}
                             </span>
                           </div>
                           {(item.kind === "form"
                             ? item.description || item.category
-                            : item.kind === "route"
-                              ? item.description
-                              : item.purpose) && (
+                            : item.description) && (
                             <p className="text-[11px] text-muted-foreground truncate">
                               {item.kind === "form"
                                 ? `${item.category ? item.category + " · " : ""}${item.description}`
-                                : item.kind === "route"
-                                  ? item.description
-                                  : item.purpose}
+                                : item.description}
                             </p>
                           )}
                         </div>
@@ -535,87 +570,104 @@ export function Composer({
               </div>
             )}
 
-          <textarea
-            ref={ref}
-            value={value}
-            onChange={(e) => {
-              const text = e.target.value;
-              const cursor = e.target.selectionStart ?? text.length;
-              onChange(text);
-              const isSlash = detectSlashCommand(text, cursor);
-              if (isSlash) {
-                setMentionQuery(null);
-                setMentionResults([]);
-              } else {
-                detectMention(text, cursor);
-              }
-            }}
-            onFocus={() => {
-              // Pre-warm heavy model tiers so a cold-reload starts before the
-              // user hits Send. Fire-and-forget — errors are silently ignored.
-              fetch("/api/warmup", { method: "POST" }).catch(() => {});
-            }}
-            onKeyDown={(e) => {
-              const filtered =
-                slashQuery !== null
-                  ? slashItems.filter(
-                      (f) => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()),
-                    )
-                  : [];
-              if (slashQuery !== null && filtered.length > 0) {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setSlashIndex((i) => Math.min(i + 1, filtered.length - 1));
-                  return;
-                }
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setSlashIndex((i) => Math.max(i - 1, 0));
-                  return;
-                }
-                if (e.key === "Enter" || e.key === "Tab") {
-                  e.preventDefault();
-                  selectSlashItem(filtered[slashIndex]);
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setSlashQuery(null);
-                  return;
-                }
-              }
-              if (mentionQuery !== null && mentionResults.length > 0) {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1));
-                  return;
-                }
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  setMentionIndex((i) => Math.max(i - 1, 0));
-                  return;
-                }
-                if (e.key === "Enter" || e.key === "Tab") {
-                  e.preventDefault();
-                  selectMention(mentionResults[mentionIndex]);
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
+          <div className="relative w-full flex-1">
+            <textarea
+              ref={ref}
+              value={value}
+              onChange={(e) => {
+                const text = e.target.value;
+                const cursor = e.target.selectionStart ?? text.length;
+                onChange(text);
+                const isSlash = detectSlashCommand(text, cursor);
+                if (isSlash) {
                   setMentionQuery(null);
                   setMentionResults([]);
-                  return;
+                } else {
+                  detectMention(text, cursor);
                 }
-              }
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-            placeholder="Ask about leave, IT tickets, travel, bookings, policies..."
-            disabled={disabled}
-            className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
+              }}
+              onFocus={() => {
+                // Pre-warm heavy model tiers so a cold-reload starts before the
+                // user hits Send. Fire-and-forget — errors are silently ignored.
+                fetch("/api/warmup", { method: "POST" }).catch(() => {});
+              }}
+              onKeyDown={(e) => {
+                const filtered =
+                  slashQuery !== null
+                    ? slashItems.filter(
+                        (f) => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()),
+                      )
+                    : [];
+                if (slashQuery !== null && filtered.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSlashIndex((i) => Math.min(i + 1, filtered.length - 1));
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSlashIndex((i) => Math.max(i - 1, 0));
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    selectSlashItem(filtered[slashIndex]);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSlashQuery(null);
+                    return;
+                  }
+                }
+                if (mentionQuery !== null && mentionResults.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1));
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIndex((i) => Math.max(i - 1, 0));
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    selectMention(mentionResults[mentionIndex]);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMentionQuery(null);
+                    setMentionResults([]);
+                    return;
+                  }
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              disabled={disabled}
+              className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            {!value && (
+              <div className="absolute left-4 top-2 pointer-events-none select-none text-[15px] leading-relaxed text-muted-foreground/40 overflow-hidden h-[24px] flex items-center pr-8">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={currentPlaceholderIdx}
+                    initial={{ y: 16, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -16, opacity: 0 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    className="truncate"
+                  >
+                    {PLACEHOLDERS[currentPlaceholderIdx]}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center justify-between px-2 pb-1">
             <div className="flex items-center gap-1">

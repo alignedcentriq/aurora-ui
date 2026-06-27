@@ -165,6 +165,18 @@ class Focus(TypedDict, total=False):
     turn: int              # human-message count at the time it was set (for recency)
 
 
+_MODE_HINTS: dict[str, str] = {
+    "analytics": "\n\n[ACTIVE MODE: Analytics Builder] The user has activated Analytics Builder mode. Prioritise analytics tools, NL-to-data queries, ROI metrics, dashboards, and data exploration. Keep responses data-focused.",
+    "training": "\n\n[ACTIVE MODE: Learning Advisor] The user has activated Learning Advisor mode. Prioritise course recommendations (Udemy, TechElevate), skill gap analysis, and learning plans.",
+    "project": "\n\n[ACTIVE MODE: Project IQ] The user has activated Project IQ mode. Prioritise project insights, similar project discovery, lessons learned, SME identification, and reusable assets.",
+    "resource": "\n\n[ACTIVE MODE: Resource Finder] The user has activated Resource Finder mode. Prioritise skill-to-availability matching, bench status, and staffing recommendations.",
+}
+
+
+def _get_mode_hint(state: "AgentState") -> str:
+    return _MODE_HINTS.get((state.get("active_mode") or "").strip(), "")
+
+
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     domain: Optional[str]
@@ -181,6 +193,8 @@ class AgentState(TypedDict):
     user_role: Optional[str]           # "employee" | "hr" | "admin" | "manager" | "it" | "pmo"
     graph_token: Optional[str]         # user's delegated Microsoft Graph token (from frontend)
     user_location: Optional[str]       # detected from M365 profile (officeLocation / city)
+    portal_context: Optional[dict]     # {page, active_filters} — what portal the user is on
+    active_mode: Optional[str]         # "analytics" | "training" | "project" | "resource"
 
 
 # Pending IT email drafts are now persisted via PendingActionService (durable, survives
@@ -565,14 +579,14 @@ def update_hr_prompt(new_prompt: str):
 # ── New HR Tools ──────────────────────────────────────────────────────────────
 
 @tool
-def get_team_absence(from_date: str = "", to_date: str = ""):
+def get_team_absence(from_date: str = "", to_date: str = "",
+                     state: Annotated[dict, InjectedState] = None):
     """Check who in your team is on leave during a date range.
     Dates in YYYY-MM-DD format; leave blank for the current week.
     Use for: 'who is on leave this week', 'team absence next week', 'is anyone off on Monday'."""
     from app.hr_service import HRService
-    # user_email is injected by the agent via system prompt; the tool receives it from the LLM call
-    # We need a way to get the current user — use settings default here and override in agent call
-    return HRService.get_team_absence(settings.DEFAULT_USER_EMAIL, from_date, to_date)
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    return HRService.get_team_absence(email, from_date, to_date)
 
 
 @tool
@@ -1316,13 +1330,31 @@ _HR_TOOL_GROUPS: dict[str, list] = {
     "open_positions":     [get_open_positions, get_candidate_status],
     "announcements":      [get_announcements, create_announcement, deactivate_announcement],
     "hr_query":           [submit_hr_query, search_hr_policies],
+    # ── Structured-data lookups — DB only, no RAG ────────────────────────────
+    # These cover queries the LLM used to escalate to search_hr_policies because
+    # the profile tool wasn't in scope.  All answers come from SQL in <100ms.
+    "employee_contact":   [get_employee_profile, search_employee_directory],
+    "profile_lookup":     [get_employee_profile, search_employee_directory, get_org_chart],
+    "joining_date":       [get_employee_profile, search_employee_directory],
+    "seat_location":      [get_employee_profile, search_employee_directory],
+    "blood_group":        [get_employee_profile, search_employee_directory],
+    "org_chart":          [get_org_chart, get_team_roster, search_employee_directory],
+    "team_roster":        [get_team_roster, get_org_chart, get_team_absence],
+    "headcount":          [get_department_headcount, search_employee_directory],
+    "skill_lookup":       [search_alchemy_skill_experts, find_skills_expert,
+                           search_employee_directory, get_employee_profile],
+    "appreciation":       [get_announcements, search_employee_directory],
 }
 
 # Fallback for unknown/ambiguous sub_intents — the highest-traffic tools.
+# search_hr_policies is intentionally ABSENT here: it triggers a slow RAG search
+# and gets called by the LLM for structured queries (phone, joining date, seat, etc.)
+# that are already in the DB.  It only appears in tool groups where a policy lookup
+# is genuinely appropriate (policy_query, document_request, grievance, hr_query).
 _HR_CORE_TOOLS: list = [
-    search_hr_policies, get_leave_balance, get_employee_profile,
+    get_leave_balance, get_employee_profile,
     search_employee_directory, generate_hr_document, submit_hr_query,
-    find_apps, get_announcements,
+    find_apps, get_announcements, get_org_chart,
 ]
 
 
@@ -1498,6 +1530,76 @@ _KW_HR_RESOURCE_MATCH = re.compile(
     r'designers?|testers?|qa|analysts?|architects?|specialists?|consultants?|'
     r'scientists?|resources?|people|persons?)\b', re.I
 )
+
+# Contact / profile direct-lookup patterns — queries where the answer is a single DB row,
+# no LLM reasoning needed.  We short-circuit these BEFORE any agent LLM call.
+_KW_CONTACT_LOOKUP = re.compile(
+    r"(?:"
+    # explicit contact fields
+    r"\b(?:phone|mobile|contact|number|extension|ext\.?|seat|desk|cabin|floor|location|"
+    r"blood\s+group|blood\s+type|joining\s+date|join(?:ed|ing)\s+(?:on|date)|"
+    r"date\s+of\s+joining|doj|tenure|experience|grade|level|nationality)\b"
+    r"|"
+    # "who is X", "tell me about X", "profile of X"
+    r"\b(?:who\s+is|profile\s+of|details?\s+(?:of|for|about)|info(?:rmation)?\s+(?:of|about|for)|"
+    r"tell\s+me\s+about|show\s+me\s+(?:the\s+)?(?:profile|card|details?)\s+(?:of|for))\b"
+    r")",
+    re.I
+)
+
+# Common words that look like names but aren't — filter these from name extraction.
+_NOT_A_NAME = frozenset({
+    "what", "where", "when", "which", "who", "how", "is", "are", "was", "were",
+    "the", "a", "an", "of", "for", "about", "on", "in", "at", "to", "with",
+    "his", "her", "their", "its", "my", "our", "your", "me", "you", "i",
+    "phone", "mobile", "contact", "number", "extension", "seat", "desk",
+    "location", "blood", "group", "joining", "date", "tenure", "grade", "level",
+    "profile", "details", "information", "info", "card", "tell", "show",
+    "employee", "person", "colleague", "staff", "member", "tell", "give",
+})
+
+
+def _extract_person_name(query: str) -> str:
+    """Extract a person name from a contact/profile query. Returns '' if nothing found."""
+    # Pattern 1 — possessive: "Priya's phone number"
+    m = re.search(r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'s\b", query)
+    if m:
+        return m.group(1).strip()
+
+    # Pattern 2 — "of/for/about <Name>" or "who is <Name>"
+    m = re.search(
+        r"\b(?:of|for|about|who\s+is|profile\s+of|details?\s+of|about)\s+"
+        r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)",
+        query, re.I
+    )
+    if m:
+        candidate = m.group(1).strip()
+        if candidate.lower().split()[0] not in _NOT_A_NAME:
+            return candidate
+
+    # Pattern 3 — "<Name>'s" (any capitalisation)
+    m = re.search(r"(\b[A-Za-z][a-z]+\s+[A-Z][a-z]+)\b", query)
+    if m:
+        candidate = m.group(1).strip()
+        tokens = candidate.lower().split()
+        if not any(t in _NOT_A_NAME for t in tokens):
+            return candidate
+
+    # Pattern 4 — last resort: two-token capitalised run
+    tokens = query.split()
+    caps = []
+    for t in tokens:
+        cleaned = re.sub(r"[^A-Za-z]", "", t)
+        if cleaned and cleaned[0].isupper() and cleaned.lower() not in _NOT_A_NAME:
+            caps.append(cleaned)
+        else:
+            if len(caps) >= 2:
+                break
+            caps = []
+    if len(caps) >= 2:
+        return " ".join(caps[:2])
+
+    return ""
 
 _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
@@ -2069,6 +2171,16 @@ def _try_keyword_route(message: str) -> dict | None:
         return {"domain": "hr", "confidence": 0.9,
                 "reasoning": "Keyword: employee availability / allocation",
                 "sub_intent": "employee_search", "entities": {}}
+
+    # HR — direct contact / profile lookup (phone, seat, joining date, blood group, etc.)
+    # Must come BEFORE generic people search so "phone number of X" emits employee_contact,
+    # not employee_search, enabling the deterministic fast-path in hr_agent.
+    if _KW_CONTACT_LOOKUP.search(text):
+        _cname = _extract_person_name(text)
+        return {"domain": "hr", "confidence": 0.95,
+                "reasoning": "Keyword: contact/profile field lookup",
+                "sub_intent": "employee_contact",
+                "entities": {"person_name": _cname} if _cname else {}}
 
     # HR — people search
     if _KW_HR_PEOPLE.search(text) or _KW_HR_PEOPLE_ROLE.search(text):
@@ -2756,12 +2868,51 @@ def _announcement_pending_action_strategy(ctx: RouteContext) -> Optional[Decisio
                     reasoning="User cancelled a pending announcement draft.")
 
 
+# Each focus mode pins routing to a fixed (domain, sub_intent) until the user
+# leaves it. This is what makes a mode FOCUSED: we skip the keyword/semantic
+# classifier cascade entirely instead of re-deciding the domain every turn (which
+# is how "find a React dev" in Resource Finder used to land on the wrong node).
+# - analytics → the chart builder node.
+# - training / project → the PMO agent (Udemy/training tools + Project IQ tools);
+#   the sub_intents below are intentionally not special-cased by the PMO
+#   smart_dispatcher, so they fall through to the LLM with the full toolset, and
+#   _MODE_HINTS nudges which tools to prefer.
+# - resource → the HR agent's resource_match tool group (match_resources et al).
+_MODE_ROUTES: dict[str, tuple[str, str]] = {
+    "analytics": ("analytics", "builder"),
+    "training":  ("pmo", "training"),
+    "project":   ("pmo", "project_iq"),
+    "resource":  ("hr", "resource_match"),
+}
+
+
+def _active_mode_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """An explicit assistant mode makes routing sticky to that mode's domain.
+
+    While a focus mode is active the frontend tags every message with active_mode
+    and pins routing here, until the user leaves the mode — the frontend intercepts
+    /<mode> and /exit locally and only toggles active_mode, so the backend never
+    sees those commands and there's nothing to special-case. Confirmation and
+    clarify strategies above this point still win, so a pending yes/no isn't
+    swallowed. Within the pinned domain, _MODE_HINTS further nudges tool selection."""
+    mode = (ctx.state.get("active_mode") or "").strip()
+    route = _MODE_ROUTES.get(mode)
+    if route:
+        domain, sub_intent = route
+        return Decision(domain=domain, sub_intent=sub_intent,
+                        reasoning=f"{mode} mode active — routing pinned to {domain}.")
+    return None
+
+
 # Strategies on the RAW message, before any resolved_query rewrite, in precedence order.
 ROUTER_RESOLVER = Resolver()
 ROUTER_RESOLVER.register("clarify_reply", _clarify_reply_strategy)
 ROUTER_RESOLVER.register("pending_action", _pending_action_strategy)
 ROUTER_RESOLVER.register("ms365_pending_action", _ms365_pending_action_strategy)
 ROUTER_RESOLVER.register("announcement_pending_action", _announcement_pending_action_strategy)
+# Explicit mode stickiness sits after the pending-action/clarify confirmations (so a staged
+# yes/no still resolves) but before every keyword/semantic classifier below.
+ROUTER_RESOLVER.register("active_mode", _active_mode_strategy)
 # Only the STAGED-fill yes/no is high-precision enough to short-circuit here; the gathering-phase
 # continuation runs late in MAIN_RESOLVER so confident new intents can escape an in-progress fill.
 ROUTER_RESOLVER.register("form_fill_confirm", _form_fill_confirm_strategy)
@@ -3225,11 +3376,19 @@ def hr_agent(state: AgentState):
         role_instruction = _get_role_instruction(state)
         _loc = state.get("user_location")
         _loc_line = f" Office: {_loc}." if _loc else ""
+        _portal = state.get("portal_context") or {}
+        _portal_page = _portal.get("page") if _portal else None
+        _portal_line = (
+            f"\nUser is currently on the **{_portal_page}** portal page — "
+            f"prefer filtering/answering in that context when relevant.\n"
+            if _portal_page else ""
+        )
         base = PromptService.get_system_prompt(
             "hr",
             f"You are Centriq HR Assistant for Aligned Automation.\n"
             f"Employee email: {user_email}.{_loc_line} Never ask who the user is.\n"
-            f"ROLE: {role_instruction}\n\n"
+            f"ROLE: {role_instruction}\n"
+            f"{_portal_line}\n"
             f"Tool routing — act immediately:\n"
             f"- Leave balance → get_leave_balance() for the user's own; if they ask about a "
             f"specific OTHER person (e.g. 'Priya's leave balance'), pass that person's name/email "
@@ -3239,7 +3398,9 @@ def hr_agent(state: AgentState):
             f"- Cancel/withdraw leave → call get_my_leaves(email='{user_email}') to list leaves, "
             f"then call cancel_leave(email='{user_email}', leave_id=<id>)\n"
             f"- Policy question → search_hr_policies, answer from result\n"
-            f"- Who is X / single person's profile → get_employee_profile(name_or_email)\n"
+            f"- Who is X / contact/phone/extension/seat/joining date/blood group/tenure/grade "
+            f"for a person → get_employee_profile(name_or_email). All these fields are returned "
+            f"directly from the profile — do NOT call search_hr_policies for personal facts.\n"
             f"- Find people by SKILL/technology (python, react, aws...) → search_alchemy_skill_experts(skill)\n"
             f"- Employee search by function/department/multiple people → search_employee_directory\n"
             f"- Are they available for work? / is X free for a project → get_employee_availability(name_or_email) "
@@ -3269,7 +3430,7 @@ def hr_agent(state: AgentState):
         )
         guardrail = PromptService.get_guardrail("hr")
         feedback_ctx = (state.get("feedback_context") or "") + _hr_policy_context
-        messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + messages
+        messages = [SystemMessage(content=base + _get_mode_hint(state) + guardrail + feedback_ctx)] + messages
 
     user_question = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
 
@@ -3320,6 +3481,28 @@ def hr_agent(state: AgentState):
                 or result.startswith("No employees") or ("No employees found" in result)
             if not _missed:
                 return {"messages": [AIMessage(content=result.strip())]}
+    # ── Deterministic employee profile / contact lookup (SQL fast-path) ─────────
+    # For phone, seat, extension, joining date, blood group, tenure, etc.
+    # The LLM is bypassed entirely: we call EmployeeService directly.
+    # Result: < 1 second instead of ~60 seconds; LLM never sees employee data.
+    _PROFILE_INTENTS = {"employee_contact", "profile_lookup", "joining_date",
+                        "seat_location", "blood_group"}
+    if sub_intent in _PROFILE_INTENTS or _KW_CONTACT_LOOKUP.search(user_question or ""):
+        _entities = state.get("entities") or {}
+        _pname = (
+            _entities.get("person_name")
+            or _extract_person_name(user_question or "")
+        )
+        if _pname:
+            from app.services.employee_service import EmployeeService
+            try:
+                _profile_result = EmployeeService.get_profile(_pname)
+                if _profile_result and "No employee profile found" not in _profile_result:
+                    return {"messages": [AIMessage(content=_profile_result.strip())]}
+            except Exception as _exc:
+                log.warning("[profile_fast_path] failed for %r: %s", _pname, _exc)
+            # If not found or error, fall through to the LLM agent which can
+            # try search_employee_directory or ask a clarifying question.
     # ────────────────────────────────────────────────────────────────────────────
 
     # NOTE: the custom-context gate now runs once for every domain in the shared
@@ -3766,6 +3949,61 @@ async def form_builder_agent_node(state: AgentState):
     return {"messages": [AIMessage(content=content)]}
 
 
+CHART_START = "[CHART_START]"
+CHART_END = "[CHART_END]"
+
+
+async def analytics_agent_node(state: AgentState):
+    """Analytics Builder node — active only while the user is in analytics mode (routed here
+    by _active_mode_strategy). Hands the message to the conversational chart builder and emits
+    the ChartSpec inside [CHART_START]…[CHART_END] markers for _postprocess to turn into the
+    `chart` interactive widget. On a miss, returns the builder's explanation as plain text so
+    the user stays in the mode and can rephrase."""
+    import json as _json
+    from app.database import SessionLocal as _SL
+    from app.services import analytics_builder_service as _builder
+
+    last_human = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+    )
+    # Recent turns as builder history (role/content dicts), excluding the current message.
+    history: list[dict] = []
+    for m in state["messages"][-7:-1]:
+        if isinstance(m, HumanMessage):
+            history.append({"role": "user", "content": m.content})
+        elif isinstance(m, AIMessage) and isinstance(m.content, str):
+            history.append({"role": "assistant", "content": m.content})
+
+    role = (state.get("user_role") or "employee").lower()
+    user_email = state.get("user_email")
+
+    db = _SL()
+    try:
+        result = await asyncio.to_thread(
+            _builder.builder_chat, db, last_human, history, role, user_email
+        )
+    except Exception as exc:
+        log.exception("analytics_agent_node builder_chat failed: %s", exc)
+        return {"messages": [AIMessage(content=(
+            "I couldn't build that chart right now. Try describing it differently — "
+            "e.g. \"headcount by function as a bar chart\" — or type `/exit` to leave Analytics mode."
+        ))]}
+    finally:
+        db.close()
+
+    explanation = result.get("explanation") or "Here's your chart."
+    chart = result.get("chart")
+    if result.get("ok") and chart:
+        content = f"{explanation}\n{CHART_START}{_json.dumps(chart)}{CHART_END}"
+    else:
+        # Miss: surface the explanation and any suggestions as plain text; stay in mode.
+        suggestions = result.get("suggestions") or []
+        if suggestions:
+            explanation += "\n\nTry: " + " · ".join(suggestions[:4])
+        content = explanation
+    return {"messages": [AIMessage(content=content)]}
+
+
 async def referral_choice_agent_node(state: AgentState):
     """Zero-LLM quick-choice card for employee referral queries.
     Looks up the Zoho Recruit portal URL via a plain DB keyword search — no embeddings,
@@ -3972,7 +4210,7 @@ async def pmo_agent_node(state: AgentState):
     result = await pmo_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or ""),
+        "feedback_context": _location_prefix(state) + _get_mode_hint(state) + (state.get("feedback_context") or ""),
         "sub_intent": state.get("sub_intent") or "",
         "entities": state.get("entities") or {},
         "user_role": state.get("user_role") or "employee",
@@ -4480,7 +4718,7 @@ def general_agent(state: AgentState):
     )
     guardrail = PromptService.get_guardrail("general")
     feedback_ctx = state.get("feedback_context") or ""
-    messages = [SystemMessage(content=base + guardrail + feedback_ctx)] + state["messages"]
+    messages = [SystemMessage(content=base + _get_mode_hint(state) + guardrail + feedback_ctx)] + state["messages"]
     try:
         response = resilient_invoke("general", messages,
                                     build=lambda l: l.bind_tools(general_tools),
@@ -4785,6 +5023,7 @@ def route_to_agent(state: AgentState):
     if domain == "dynamic_form": return "dynamic_form_agent"
     if domain == "form_fill": return "form_fill_agent"
     if domain == "form_builder": return "form_builder_agent"
+    if domain == "analytics": return "analytics_agent"
     if domain == "referral_choice": return "referral_choice_agent"
     if domain == "domain_clarify": return "domain_clarify_agent"
     if domain.startswith("connector:"):
@@ -4849,6 +5088,7 @@ workflow.add_node("deeplink_agent", deeplink_agent_node)
 workflow.add_node("dynamic_form_agent", dynamic_form_agent_node)
 workflow.add_node("form_fill_agent", form_fill_agent_node)
 workflow.add_node("form_builder_agent", form_builder_agent_node)
+workflow.add_node("analytics_agent", analytics_agent_node)
 workflow.add_node("referral_choice_agent", referral_choice_agent_node)
 workflow.add_node("domain_clarify_agent", domain_clarify_agent_node)
 workflow.add_node("ms365_agent", ms365_agent_node)
@@ -4894,6 +5134,7 @@ workflow.add_edge("state_tracker", END)
 workflow.add_edge("dynamic_form_agent", END)
 workflow.add_edge("form_fill_agent", END)
 workflow.add_edge("form_builder_agent", END)
+workflow.add_edge("analytics_agent", END)
 workflow.add_edge("referral_choice_agent", END)
 workflow.add_edge("domain_clarify_agent", END)
 workflow.add_edge("dummy_test_agent", END)

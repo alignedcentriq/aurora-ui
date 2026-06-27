@@ -586,19 +586,7 @@ def init_db():
         except Exception as e:
             pass
 
-        # Background thread: polls the SharePoint document-template folder, converts each
-        # PDF/DOCX to HTML + LLM-tags fill-in fields for the Documents generator.
-        try:
-            from app.config import settings as _s
-            if _s.SHAREPOINT_SITE_URL and getattr(_s, "SHAREPOINT_TEMPLATES_FOLDER", ""):
-                from app.services.sharepoint_template_sync import template_sync_loop
-                threading.Thread(target=template_sync_loop, daemon=True).start()
-            else:
-                pass
-        except Exception as e:
-            pass
-
-        # Background thread: keep the Alchemy directory-enrichment cache (skills +
+# Background thread: keep the Alchemy directory-enrichment cache (skills +
         # projects per employee) warm so the directory serves them inline, no per-open
         # API call. No-ops when no service identity is connected.
         try:

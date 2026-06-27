@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { ChartSpec } from "@/components/analytics/ChartCanvas";
 
 export interface EmailDraftData {
   to: string;
@@ -133,7 +134,8 @@ export interface InteractivePayload {
     | "travel_expense_form"
     | "cancel_leave_form"
     | "leave_application_form"
-    | "document_generation_form";
+    | "document_generation_form"
+    | "chart";
   data?:
     | EmailDraftData
     | RoomBookingPrefill
@@ -144,7 +146,8 @@ export interface InteractivePayload {
     | AttendanceSchedulePrefill
     | DynamicFormData
     | QuickChoiceData
-    | FormBuilderDraft;
+    | FormBuilderDraft
+    | ChartSpec;
 }
 
 export interface Turn {

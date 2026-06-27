@@ -3,6 +3,9 @@ import { useAuth } from "@/lib/auth-store";
 import { toast } from "sonner";
 import { Save, Building2, Loader2, RefreshCw, Plus, Trash2, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 // Dept columns: key matches what the backend / CompanySettingsService reads
 const DEPTS = [
@@ -106,8 +109,29 @@ export function CabinDirectory() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="h-full overflow-y-auto p-6 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-64" />
+            </div>
+          </div>
+          <Skeleton className="h-9 w-24 rounded-xl" />
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-2xl border border-border bg-card/60 p-4 space-y-3">
+              <div className="flex gap-3">
+                <Skeleton className="h-9 flex-1" />
+                <Skeleton className="h-9 flex-1" />
+                <Skeleton className="h-9 flex-1" />
+                <Skeleton className="h-9 flex-1" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

@@ -46,17 +46,19 @@ import { AnnouncementWidget } from "./AnnouncementWidget";
 import { PromptConfigWidget } from "./PromptConfigWidget";
 import { AttendanceScheduleWidget } from "./AttendanceScheduleWidget";
 import { MyAttendanceWidget } from "./MyAttendanceWidget";
+import { ChartCanvas } from "@/components/analytics/ChartCanvas";
 import { VoiceOrb } from "./VoiceOrb";
 import { ThinkingBuddy } from "./ThinkingBuddy";
 import { SmartWidgets } from "./SmartWidgets";
 import { useVoiceStore } from "@/lib/voice-store";
-import { createRecognition, resetSpeech, enqueueFrom, cancelSpeech } from "@/lib/speech";
+import { createRecognition } from "@/lib/speech";
 import { subscribeFormTrigger } from "@/lib/form-trigger";
 import { parseFormCommand } from "@/lib/form-command-parser";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
+import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
 
 import type { Turn, DynamicFormField } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
@@ -269,6 +271,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     toast.success("Saved to your quick searches!");
   };
   const [activity, setActivity] = useState("");
+  const [activeMode, setActiveMode] = useState<ModeKey | null>(null);
   // Proactive load awareness: warn (but never block) when the shared LLM server
   // has no free slots. `serverBusy` is independent of the per-thread `busy` above.
   const { serverBusy, waiting } = useServerLoad();
@@ -343,9 +346,6 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalTranscriptRef = useRef("");
-  const lastSpokenIndexRef = useRef(-1);
-  const lastSpokenLenRef = useRef(0);
-
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // In-flight request control, keyed by thread id, so each chat can be stopped
@@ -557,6 +557,35 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
+      // ── Mode command detection ─────────────────────────────────────────────
+      const modeCmd = parseModeCommand(text);
+      if (modeCmd === "exit") {
+        if (activeMode) {
+          setActiveMode(null);
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: `**${CHAT_MODES[activeMode].label}** mode off. Back to general assistant.`,
+          });
+        } else {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, { role: "ai", text: "No active mode to exit." });
+        }
+        setInput("");
+        return;
+      }
+      if (modeCmd) {
+        const mode = CHAT_MODES[modeCmd];
+        setActiveMode(modeCmd);
+        addTurn(activeId, { role: "user", text });
+        addTurn(activeId, {
+          role: "ai",
+          text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.\n\nType \`/exit\` to return to general mode.`,
+        });
+        setInput("");
+        return;
+      }
+
       // ── Role-gate: block portal/admin access for unauthorised roles ────────
       const role = (user?.role || "employee").toLowerCase();
       const gateHit = ROLE_GATES.find((g) => g.re.test(text) && !g.allowed.includes(role));
@@ -567,6 +596,13 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
         return;
       }
 
+      // ── Local heuristic routing (doc-gen, forms, leave, travel, URL/form library…) ──
+      // Skipped entirely while a focus mode is active. A mode means the user has told us
+      // exactly what they're doing, so every message goes straight to the backend agent
+      // (tagged with active_mode, which pins the mode's domain). This is what keeps a mode
+      // focused and fast — and stops local intent guesses from hijacking it (e.g. "find a
+      // React dev" in Resource Finder opening the form editor).
+      if (!activeMode) {
       // ── Document generation navigation ─────────────────────────────────────
       const isDocGen =
         (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
@@ -1263,6 +1299,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           return;
         }
       }
+      } // end: local heuristic routing (bypassed while a focus mode is active)
 
       // Pin the originating thread so the streaming closure writes to the chat that
       // asked, even if the user switches to another chat mid-response.
@@ -1284,7 +1321,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       // so a slow-but-progressing answer (e.g. a long policy reply on a busy LLM server)
       // streams to completion instead of being killed at a fixed wall-clock deadline.
       let timeoutId = window.setTimeout(() => controller.abort(), 180000);
-      const activitySteps = getActivitySteps(text);
+      const activitySteps = getActivitySteps(text, activeMode);
       setActivity(activitySteps[0]);
       const activityTimers = activitySteps
         .slice(1)
@@ -1322,6 +1359,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           session_id: threadId,
           preferences: {},
           is_private: false,
+          active_mode: activeMode ?? undefined,
         }),
       })
         .then(async (res) => {
@@ -1488,7 +1526,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           stoppedRef.current.delete(threadId);
         });
     },
-    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role],
+    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role, activeMode],
   );
 
   // Stop the in-flight response for the active chat.
@@ -1575,23 +1613,12 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     else stopListening();
   }, [voiceMode, voiceState, startListening, stopListening]);
 
-  // Entering/leaving voice mode: reset speech cursor so history isn't replayed.
+  // Entering/leaving voice mode: stop listening and clear transcript.
   useEffect(() => {
     if (!voiceMode) {
-      cancelSpeech();
       stopListening();
       setLiveTranscript("");
-      return;
     }
-    const turns = (activeId ? threads[activeId]?.turns : []) || [];
-    let idx = -1;
-    for (let i = turns.length - 1; i >= 0; i--)
-      if (turns[i].role === "ai") {
-        idx = i;
-        break;
-      }
-    lastSpokenIndexRef.current = idx;
-    lastSpokenLenRef.current = idx >= 0 ? turns[idx].text.length : 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceMode]);
 
@@ -1600,46 +1627,19 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
     if (voiceMode && thinking) setVoiceState("thinking");
   }, [voiceMode, thinking, setVoiceState]);
 
-  // Speak AI turns aloud (sentence-by-sentence as they stream).
+  // Resume listening after AI reply completes (no TTS — go straight back to listening).
   useEffect(() => {
     if (!voiceMode) return;
-    const turns = activeThread.turns;
-    let idx = -1;
-    for (let i = turns.length - 1; i >= 0; i--)
-      if (turns[i].role === "ai") {
-        idx = i;
-        break;
-      }
-    if (idx === -1) return;
-    const turn = turns[idx];
-
-    if (idx !== lastSpokenIndexRef.current) {
-      lastSpokenIndexRef.current = idx;
-      lastSpokenLenRef.current = 0;
-      resetSpeech({
-        onStart: () => useVoiceStore.getState().setVoiceState("speaking"),
-        onAllDone: () => {
-          const s = useVoiceStore.getState();
-          if (s.voiceMode) s.setVoiceState("listening");
-        },
-      });
-    } else if (turn.text.length === lastSpokenLenRef.current) {
-      return; // no new text (e.g. an unrelated turn was appended)
+    const turn = [...activeThread.turns].reverse().find((t) => t.role === "ai");
+    if (turn && turn.streaming !== true) {
+      useVoiceStore.getState().setVoiceState("listening");
     }
-    lastSpokenLenRef.current = turn.text.length;
-    enqueueFrom(turn.text, turn.streaming !== true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceMode, activeThread.turns]);
 
-  // Reset when switching threads.
-  useEffect(() => {
-    cancelSpeech();
-    lastSpokenIndexRef.current = -1;
-    lastSpokenLenRef.current = 0;
-  }, [activeId]);
-
   const handleNewChat = () => {
     createThread();
+    setActiveMode(null);
     setIsSidebarOpen(false);
   };
 
@@ -1747,6 +1747,35 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
               </button>
             </motion.div>
           )}
+        </AnimatePresence>
+
+        {/* Active mode banner */}
+        <AnimatePresence>
+          {activeMode && (() => {
+            const mode = CHAT_MODES[activeMode];
+            const ModeIcon = mode.Icon;
+            return (
+              <motion.div
+                key="mode-banner"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className={`flex items-center gap-3 border-b px-4 py-2 text-sm overflow-hidden ${mode.color.banner}`}
+              >
+                <span className={`flex h-1.5 w-1.5 rounded-full shrink-0 animate-pulse ${mode.color.dot}`} />
+                <ModeIcon className="h-3.5 w-3.5 shrink-0" />
+                <span className="font-semibold">{mode.label}</span>
+                <span className="text-xs opacity-70 hidden sm:inline">{mode.description}</span>
+                <button
+                  onClick={() => setActiveMode(null)}
+                  className="ml-auto shrink-0 rounded-lg p-1 opacity-60 hover:opacity-100 transition-opacity"
+                  aria-label="Exit mode"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </motion.div>
+            );
+          })()}
         </AnimatePresence>
 
         {/* Messages Area */}
@@ -1871,7 +1900,26 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">
                         Try asking…
                       </p>
-                      {caps?.starters && caps.starters.length > 0 ? (
+                      {activeMode ? (
+                        /* Mode-specific starters */
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {CHAT_MODES[activeMode].starters.map((s) => {
+                            const ModeIcon = CHAT_MODES[activeMode].Icon;
+                            return (
+                              <button
+                                key={s}
+                                onClick={() => !busy && send(s)}
+                                className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              >
+                                <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                  <ModeIcon className="h-2.5 w-2.5 text-primary" />
+                                </span>
+                                {s}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : caps?.starters && caps.starters.length > 0 ? (
                         /* Role-aware capability starters (static, from /api/capabilities). */
                         <div className="flex flex-wrap justify-center gap-2">
                           {caps.starters.map((s) => (
@@ -2186,6 +2234,16 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
                                   onMessage={(text) => send(text)}
                                 />
                               )}
+                            {t.interactive?.type === "chart" && t.interactive.data && (
+                              <div className="mt-2 rounded-xl border border-border/70 bg-card/60 p-3">
+                                <ChartCanvas
+                                  spec={
+                                    t.interactive.data as import("@/components/analytics/ChartCanvas").ChartSpec
+                                  }
+                                  height={300}
+                                />
+                              </div>
+                            )}
                             {t.interactive?.type === "email_draft" && t.interactive.data && (
                               <InteractiveEmailDraft
                                 data={
@@ -2497,7 +2555,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   );
 }
 
-function getActivitySteps(text: string) {
+function getActivitySteps(text: string, activeMode?: ModeKey | null) {
+  if (activeMode === "analytics") {
+    return ["Reading your request...", "Querying the data...", "Building your chart..."];
+  }
   const lower = text.toLowerCase();
   if (
     lower.includes("install") ||

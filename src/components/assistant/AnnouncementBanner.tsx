@@ -5,9 +5,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAuth } from "@/lib/auth-store";
 import { motion, AnimatePresence } from "framer-motion";
 import { flyBanner, subscribeFlyBanner } from "@/lib/fly-banner";
-import { useSettings } from "@/lib/settings-store";
-import { getBuddyGender } from "@/components/assistant/GreetingBot";
-import { speakNotification } from "@/lib/speech";
 import { openFormById } from "@/lib/form-trigger";
 import { DynamicFormField } from "@/lib/chat-store";
 
@@ -72,7 +69,6 @@ const DOMAIN_MANAGER_ROLES = new Set(["HR", "IT", "PMO", "Admin"]);
 
 export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar" | "topbar" }) {
   const { user } = useAuth();
-  const { buddyGender } = useSettings();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<number[]>(getDismissed);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -115,30 +111,6 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
     const interval = setInterval(loadAnnouncements, 10000);
     return () => clearInterval(interval);
   }, [user?.role, user?.email]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeFlyBanner((item) => {
-      const text = item.message.toLowerCase();
-      const resolvedGender = getBuddyGender(user?.name, buddyGender);
-      if (
-        text.includes("approved") ||
-        text.includes("released") ||
-        text.includes("issued") ||
-        text.includes("settled")
-      ) {
-        speakNotification("Your request is approved", resolvedGender);
-      } else if (
-        text.includes("request") ||
-        text.includes("ticket") ||
-        text.includes("submitted") ||
-        text.includes("added") ||
-        text.includes("new")
-      ) {
-        speakNotification("You got a new request", resolvedGender);
-      }
-    });
-    return unsubscribe;
-  }, [user?.name, buddyGender]);
 
   const dismiss = (id: number) => {
     const updated = [...dismissed, id];
