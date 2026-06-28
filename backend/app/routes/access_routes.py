@@ -28,139 +28,139 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     # ── Portals (Control Hub tabs) ────────────────────────────────────────────
     "portal:dashboard": {
         "label": "Announcements & Status",
-        "description": "Company announcements, status updates, and the admin dashboard",
+        "description": "Allows access to company announcements, status updates, and the admin dashboard page.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:roi": {
         "label": "ROI Dashboard",
-        "description": "AI adoption ROI metrics across the organisation",
+        "description": "Allows viewing AI adoption ROI metrics and value-realisation reports.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:analytics_studio": {
         "label": "Analytics Studio",
-        "description": "HR and org analytics, leave trends, attendance splits",
+        "description": "Allows access to HR and org analytics — leave trends, attendance splits, and headcount.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:analytics_builder": {
         "label": "Chart Builder AI",
-        "description": "Natural-language chart creation over enterprise data",
+        "description": "Allows building custom charts using natural-language queries over enterprise data.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:observability": {
         "label": "AI Observability",
-        "description": "AI conversation logs, feedback triage, and system health",
+        "description": "Allows viewing AI conversation logs, feedback triage, and system health metrics.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:llm_controls": {
         "label": "LLM Model Controls",
-        "description": "LLM model tiers, kill switches, and prompt budgets",
+        "description": "Allows managing LLM model tiers, kill switches, and per-domain prompt budgets.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:automation_hub": {
         "label": "Email Automation Hub",
-        "description": "Automated email workflows and scheduling",
+        "description": "Allows building and managing automated email workflows and schedules.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:admin_services": {
         "label": "Admin Services",
-        "description": "Reimbursements, parking, desk keys, food complaints, and bookshelf",
+        "description": "Allows employees to open the Admin Services page and submit their own requests (food complaints, reimbursements, parking, desk keys, bookshelf). To view ALL requests and manage/resolve them, also enable the individual feature capabilities below.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:hr_portal": {
         "label": "HR Portal",
-        "description": "Leave approvals, document generation, grievances",
+        "description": "Allows access to HR operations — leave approvals, document generation, and grievance management.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:onboarding_tracker": {
         "label": "Onboarding Tracker",
-        "description": "New-hire onboarding progress and document status",
+        "description": "Allows tracking new-hire onboarding progress and document submission status.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:it_portal": {
         "label": "IT Portal",
-        "description": "IT support tickets and software request management",
+        "description": "Allows raising and managing IT support tickets and software requests.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:pmo_portal": {
         "label": "PMO Portal",
-        "description": "Project management, Udemy licences, skill supply",
+        "description": "Allows access to project management, Udemy licence requests, and skill supply tools.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:leadership_command": {
         "label": "Leadership Command",
-        "description": "Leadership capability, bench-upskill, and team-readiness digest",
+        "description": "Allows viewing leadership capability scores, bench-upskill plans, and team-readiness digest.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:project_iq": {
         "label": "Project IQ",
-        "description": "Project DNA extraction, similar-project search, lessons and experts",
+        "description": "Allows running project DNA extraction, finding similar past projects, lessons, and experts.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:te_lms": {
         "label": "TechElevate LMS",
-        "description": "In-house training catalogue, course enrolment, and completion tracking",
+        "description": "Allows browsing the in-house training catalogue, enrolling in courses, and tracking completion.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:udemy_business": {
         "label": "Udemy Business",
-        "description": "Udemy Business course catalogue and licence management",
+        "description": "Allows browsing the Udemy Business course catalogue and requesting licences.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:manager_portal": {
         "label": "Manager Attendance Portal",
-        "description": "Team attendance reports and exports for functional managers",
+        "description": "Allows functional managers to view team attendance reports and export data.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:people": {
         "label": "People Directory",
-        "description": "Employee directory with skill, project, and certification filters",
+        "description": "Allows searching the employee directory with skill, project, and certification filters.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:config": {
         "label": "AI Configuration",
-        "description": "Per-domain AI prompt templates and model configuration",
+        "description": "Allows editing per-domain AI prompt templates and model configuration settings.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:url_library": {
         "label": "URL Library",
-        "description": "Curated internal URL/app library with AI-assisted descriptions",
+        "description": "Allows managing the internal URL/app library and using AI to draft descriptions.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:form_library": {
         "label": "Form Library",
-        "description": "Dynamic form templates and submission management",
+        "description": "Allows opening the Form Library page (page visibility only — use the Form Library feature below to control create/edit permissions).",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:cabin_directory": {
         "label": "Cabin Directory",
-        "description": "Office seating and cabin assignment directory",
+        "description": "Allows viewing and navigating the office seating and cabin assignment directory.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
     "portal:connector_studio": {
         "label": "Connector Studio",
-        "description": "API connector configuration and the AI Xchange Marketplace",
+        "description": "Allows configuring API connectors and browsing the AI Xchange Marketplace.",
         "category": "portal",
         "actions": [{"id": "access", "label": "Access", "description": "Open this portal tab"}],
     },
@@ -168,25 +168,25 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     # ── Focus Modes (chat domain pins) ────────────────────────────────────────
     "mode:analytics": {
         "label": "Analytics Mode",
-        "description": "Pin the assistant conversation to the analytics domain",
+        "description": "Allows activating Analytics focus mode — pins the assistant to HR and data queries.",
         "category": "mode",
         "actions": [{"id": "use", "label": "Use", "description": "Activate analytics focus mode"}],
     },
     "mode:training": {
         "label": "Training Mode",
-        "description": "Pin the assistant conversation to the training/learning domain",
+        "description": "Allows activating Training focus mode — pins the assistant to learning and course queries.",
         "category": "mode",
         "actions": [{"id": "use", "label": "Use", "description": "Activate training focus mode"}],
     },
     "mode:project": {
         "label": "Project Mode",
-        "description": "Pin the assistant conversation to the project management domain",
+        "description": "Allows activating Project focus mode — pins the assistant to project management queries.",
         "category": "mode",
         "actions": [{"id": "use", "label": "Use", "description": "Activate project focus mode"}],
     },
     "mode:resource": {
         "label": "Resource Mode",
-        "description": "Pin the assistant conversation to the resource / staffing domain",
+        "description": "Allows activating Resource focus mode — pins the assistant to staffing and allocation queries.",
         "category": "mode",
         "actions": [{"id": "use", "label": "Use", "description": "Activate resource focus mode"}],
     },
@@ -194,25 +194,25 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     # ── Features (feature-level scopes with per-action granularity) ───────────
     "food_complaints": {
         "label": "Food & Facility Complaints",
-        "description": "Food vendor feedback and facility complaints",
+        "description": "Admin-level access: allows viewing ALL complaints from all users and managing/closing tickets. Employees submitting their own complaints only need the Admin Services portal — they do not need this feature.",
         "category": "feature",
         "actions": [
-            {"id": "read",   "label": "View",   "description": "View all complaints and their status"},
+            {"id": "read",   "label": "View All",   "description": "View all complaints from all users"},
             {"id": "manage", "label": "Manage", "description": "Update status, close and resolve tickets"},
         ],
     },
     "reimbursements": {
         "label": "Reimbursements",
-        "description": "Expense, travel, and certification reimbursements",
+        "description": "Admin-level access: allows viewing ALL reimbursement requests and approving or rejecting them. Employees submitting their own claims only need the Admin Services portal.",
         "category": "feature",
         "actions": [
-            {"id": "read",    "label": "View",    "description": "View all reimbursement requests"},
+            {"id": "read",    "label": "View All",    "description": "View all reimbursement requests from all users"},
             {"id": "approve", "label": "Approve", "description": "Approve or reject reimbursement claims"},
         ],
     },
     "travel_management": {
         "label": "Travel Management",
-        "description": "Business travel requests, trip approvals, and expense claims",
+        "description": "Allows viewing, approving, and configuring business travel requests and expense claims.",
         "category": "feature",
         "actions": [
             {"id": "read",     "label": "View",     "description": "View all travel requests and expense claims"},
@@ -222,7 +222,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "parking": {
         "label": "Parking Management",
-        "description": "Parking stickers, dues, and payment reminders",
+        "description": "Allows managing parking sticker applications, dues collection, and payment reminders.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View sticker applications and dues"},
@@ -231,7 +231,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "desk_keys": {
         "label": "Desk & Access Keys",
-        "description": "Desk key requests and office access management",
+        "description": "Allows viewing and processing desk key and office access key requests.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View desk key requests"},
@@ -240,7 +240,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "bookshelf": {
         "label": "Bookshelf Buddy",
-        "description": "Company book library, borrow requests, and extensions",
+        "description": "Allows managing the company book library — borrow requests, returns, and adding new books.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View books, requests, and assignments"},
@@ -249,7 +249,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "announcements": {
         "label": "Announcements",
-        "description": "Company-wide announcements and status updates",
+        "description": "Allows creating and posting company-wide announcements (View only or full Write access).",
         "category": "feature",
         "actions": [
             {"id": "read",  "label": "View",  "description": "View posted announcements"},
@@ -257,8 +257,8 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
         ],
     },
     "form_library": {
-        "label": "Form Library",
-        "description": "Dynamic admin form templates and submissions",
+        "label": "Form Library (Actions)",
+        "description": "Allows viewing form submissions (View), or also creating and editing form templates (Write). Pair with the Form Library portal above to grant page access.",
         "category": "feature",
         "actions": [
             {"id": "read",  "label": "View",  "description": "View forms and submissions"},
@@ -267,7 +267,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "manage_access": {
         "label": "Manage Admin Access",
-        "description": "Grant or revoke Admin roles for other users",
+        "description": "Allows granting or revoking Admin roles for other users (delegated Super Admin action).",
         "category": "feature",
         "actions": [
             {"id": "manage", "label": "Manage", "description": "Assign and revoke roles (delegated from Super Admin)"},
@@ -275,7 +275,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "leave_management": {
         "label": "Leave Management",
-        "description": "Employee leave requests and approvals",
+        "description": "Allows viewing leave requests and balances, and approving or rejecting leave applications.",
         "category": "feature",
         "actions": [
             {"id": "read",    "label": "View",    "description": "View leave requests and balances"},
@@ -284,7 +284,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "document_generation": {
         "label": "Document Generation",
-        "description": "NOC, experience letters, and other HR documents",
+        "description": "Allows generating official HR documents such as NOC letters and experience certificates.",
         "category": "feature",
         "actions": [
             {"id": "read",     "label": "View",     "description": "View generated documents"},
@@ -293,7 +293,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "skills_management": {
         "label": "Skills & Certifications",
-        "description": "Employee skills, certifications, and profiles",
+        "description": "Allows viewing and editing employee skill profiles and certification records.",
         "category": "feature",
         "actions": [
             {"id": "read", "label": "View", "description": "View employee skills and certifications"},
@@ -302,7 +302,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "it_support": {
         "label": "IT Support Portal",
-        "description": "IT tickets, software requests, and support workflows",
+        "description": "Allows viewing IT tickets and support requests, and assigning or resolving them.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View tickets and support requests"},
@@ -311,7 +311,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "observability": {
         "label": "AI Observability",
-        "description": "AI conversation logs and system observability",
+        "description": "Allows viewing AI conversation logs, usage metrics, and system observability data.",
         "category": "feature",
         "actions": [
             {"id": "read", "label": "View", "description": "View AI logs, metrics, and observability data"},
@@ -319,7 +319,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "llm_controls": {
         "label": "LLM Model Controls",
-        "description": "LLM model settings, tiers, and kill switches",
+        "description": "Allows viewing and changing LLM model configurations, tiers, and kill switches.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View model configurations"},
@@ -328,7 +328,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "pmo_portal": {
         "label": "PMO Workflows",
-        "description": "Udemy licences and PMO workflows",
+        "description": "Allows viewing Udemy licence requests and approving or configuring PMO workflow settings.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View licence requests"},
@@ -337,7 +337,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "attendance_reports": {
         "label": "Attendance Reports",
-        "description": "Team attendance reports and exports",
+        "description": "Allows viewing team attendance data and exporting or scheduling attendance reports.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View team attendance data"},
@@ -346,7 +346,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "people_directory": {
         "label": "People Directory",
-        "description": "Employee directory search and profiles",
+        "description": "Allows searching and viewing employee profiles, skills, and project assignments.",
         "category": "feature",
         "actions": [
             {"id": "read", "label": "View", "description": "Search and view employee profiles"},
@@ -354,7 +354,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "email_automation": {
         "label": "Email Automation Hub",
-        "description": "Automated email workflows and scheduling",
+        "description": "Allows viewing automation rules and history, and creating or triggering email automations.",
         "category": "feature",
         "actions": [
             {"id": "read",   "label": "View",   "description": "View automation rules and history"},
@@ -363,7 +363,7 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
     },
     "prompt_config": {
         "label": "AI Prompt Config",
-        "description": "AI prompt templates for each domain",
+        "description": "Allows viewing and editing the AI prompt templates used for each domain.",
         "category": "feature",
         "actions": [
             {"id": "read",  "label": "View", "description": "View prompt configurations"},
@@ -422,7 +422,15 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "mode:analytics", "mode:resource",
         "attendance_reports", "people_directory", "email_automation",
     ],
-    "employee": [],  # employees access only the public-facing chat/onboarding/directory
+    "employee": [
+        # Portals employees can open for self-service
+        "portal:admin_services",   # submit food complaints, reimbursements, parking, desk keys, bookshelf requests
+        "portal:url_library",      # browse internal app/link library
+        "portal:form_library",     # view and fill in company forms
+        "portal:cabin_directory",  # look up seating and cabin assignments
+        "portal:people",           # search the employee directory
+        "portal:onboarding_tracker",  # track own onboarding progress
+    ],
 }
 
 # System roles seed data
@@ -522,6 +530,27 @@ def get_my_access(user: CurrentUser = Depends(get_current_user), db: Session = D
         "extra_capabilities": [],
         "role_capabilities": role_caps,
     }
+
+
+@router.post("/roles/reseed-defaults")
+def reseed_role_defaults(
+    user: CurrentUser = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """Re-apply DEFAULT_ROLE_CAPABILITIES for all system roles (additive only).
+    Call this after upgrading defaults to push new capabilities into existing roles."""
+    added = []
+    for role_slug, cap_keys in DEFAULT_ROLE_CAPABILITIES.items():
+        for key in cap_keys:
+            exists = db.query(RoleCapabilityMap).filter(
+                RoleCapabilityMap.role_slug == role_slug,
+                RoleCapabilityMap.capability_key == key,
+            ).first()
+            if not exists:
+                db.add(RoleCapabilityMap(role_slug=role_slug, capability_key=key))
+                added.append(f"{role_slug}:{key}")
+    db.commit()
+    return {"added": len(added), "entries": added}
 
 
 # ── Capability catalogue ────────────────────────────────────────────────────────

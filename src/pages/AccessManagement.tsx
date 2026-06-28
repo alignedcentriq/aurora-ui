@@ -20,6 +20,7 @@ import {
   X,
   Check,
   Menu,
+  RefreshCw,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -112,7 +114,7 @@ function initials(name: string | null, email: string) {
   return email[0]?.toUpperCase() ?? "?";
 }
 
-// ── Category icons ─────────────────────────────────────────────────────────────
+// ── Kept for UserAccessEditor section headers ────────────────────────────────
 const CAT_ICON: Record<string, React.FC<{ className?: string }>> = {
   portal: Globe,
   mode: Zap,
@@ -123,6 +125,27 @@ const CAT_LABEL: Record<string, string> = {
   mode: "Focus Modes",
   feature: "Features",
 };
+
+// ── Unified capability merge map ─────────────────────────────────────────────
+// Feature key → paired portal key. In RoleCapabilityEditor these are shown as
+// ONE row — enabling the row enables both keys so the user never sees duplicates.
+const FEATURE_PORTAL_PAIRS: Record<string, string> = {
+  form_library:       "portal:form_library",
+  people_directory:   "portal:people",
+  observability:      "portal:observability",
+  llm_controls:       "portal:llm_controls",
+  email_automation:   "portal:automation_hub",
+  prompt_config:      "portal:config",
+  it_support:         "portal:it_portal",
+  leave_management:   "portal:hr_portal",
+  pmo_portal:         "portal:pmo_portal",
+  attendance_reports: "portal:manager_portal",
+  announcements:      "portal:dashboard",
+};
+// Reverse map: portal key → feature key (for suppressing the portal-only duplicate)
+const PORTAL_FEATURE_PAIRS: Record<string, string> = Object.fromEntries(
+  Object.entries(FEATURE_PORTAL_PAIRS).map(([f, p]) => [p, f]),
+);
 
 // ── Colour palette for new roles ───────────────────────────────────────────────
 const PALETTE = [
@@ -466,6 +489,19 @@ export function AccessManagement() {
             <button onClick={() => setShowCreateRole(true)} className="mt-4 mx-1 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-primary/50 hover:bg-primary/5 transition-colors">
               <Plus className="h-3.5 w-3.5" /> New Role
             </button>
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/access/roles/reseed-defaults", { method: "POST", headers });
+                  const data = await res.json();
+                  showToast(`Reseeded — ${data.added} capabilities added.`, res.ok);
+                  if (res.ok) { await loadRoles(); }
+                } catch { showToast("Reseed failed", false); }
+              }}
+              className="mt-1 mx-1 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:border-amber-400/50 hover:bg-amber-500/5 transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Reset to Defaults
+            </button>
           </div>
         )}
         {panel === "users" && (
@@ -545,7 +581,7 @@ export function AccessManagement() {
         </aside>
 
         {/* ── Main content area ─────────────────────────────────────────────── */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <main className="flex-1 min-w-0 overflow-y-auto">
           {panel === "roles" && !selectedRole && (
             <div className="flex flex-col items-center justify-center h-full text-center px-8">
               <Lock className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -737,7 +773,6 @@ function RoleCapabilityEditor({
   capsByCategory,
   dirty,
   saving,
-  onToggleCap,
   onSetCaps,
   onSave,
   onDiscard,
@@ -753,10 +788,53 @@ function RoleCapabilityEditor({
   onDiscard: () => void;
 }) {
   const color = roleColor(role);
-  const categories: Array<"portal" | "mode" | "feature"> = ["portal", "mode", "feature"];
+  const disabled = role.slug === "super admin";
+
+  // Unified rows: each item has one or two keys that toggle together
+  type URow = { key: string; pairedKey?: string; label: string; description: string; actions: Capability["actions"] };
+
+  const rows: URow[] = [];
+
+  // 1. Feature rows (merged with their portal pair if one exists)
+  for (const feat of (capsByCategory.feature ?? [])) {
+    const pairedPortalKey = FEATURE_PORTAL_PAIRS[feat.key];
+    rows.push({
+      key: feat.key,
+      pairedKey: pairedPortalKey,
+      label: feat.label.replace(" (Actions)", ""),
+      description: feat.description,
+      actions: feat.actions,
+    });
+  }
+
+  // 2. Portal-only rows (no feature counterpart)
+  for (const portal of (capsByCategory.portal ?? [])) {
+    if (PORTAL_FEATURE_PAIRS[portal.key]) continue; // already covered by a feature row
+    rows.push({ key: portal.key, label: portal.label, description: portal.description, actions: [] });
+  }
+
+  // Sort alphabetically
+  rows.sort((a, b) => a.label.localeCompare(b.label));
+
+  const modes = capsByCategory.mode ?? [];
+  const enabledCount = rows.filter((r) => capsDraft.has(r.key) || (r.pairedKey && capsDraft.has(r.pairedKey))).length
+    + modes.filter((m) => capsDraft.has(m.key)).length;
+
+  function toggleRow(row: URow) {
+    const next = new Set(capsDraft);
+    const on = next.has(row.key) || (!!row.pairedKey && next.has(row.pairedKey));
+    if (on) {
+      next.delete(row.key);
+      if (row.pairedKey) next.delete(row.pairedKey);
+    } else {
+      next.add(row.key);
+      if (row.pairedKey) next.add(row.pairedKey);
+    }
+    onSetCaps(next);
+  }
 
   return (
-    <Card className="flex flex-col flex-1 min-h-0 border-0 rounded-none shadow-none bg-transparent">
+    <Card className="border-0 rounded-none shadow-none bg-transparent">
       {/* Role header */}
       <div className="flex-none px-6 py-4 border-b border-border flex items-center gap-3">
         <div className="h-8 w-8 rounded-full flex-shrink-0" style={{ backgroundColor: color + "33" }}>
@@ -767,180 +845,171 @@ function RoleCapabilityEditor({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-semibold text-foreground">{role.name}</h2>
-            {role.is_system && (
-              <Badge variant="secondary" className="text-[10px] h-4 px-1.5">System</Badge>
-            )}
+            {role.is_system && <Badge variant="secondary" className="text-[10px] h-4 px-1.5">System</Badge>}
           </div>
-          {role.description && (
-            <p className="text-xs text-muted-foreground truncate">{role.description}</p>
-          )}
+          {role.description && <p className="text-xs text-muted-foreground truncate">{role.description}</p>}
         </div>
         <div className="flex items-center gap-2">
-          {dirty && (
+          {dirty ? (
             <>
-              <Button size="sm" variant="ghost" onClick={onDiscard} disabled={saving} className="h-7 text-xs">
-                Discard
-              </Button>
+              <Button size="sm" variant="ghost" onClick={onDiscard} disabled={saving} className="h-7 text-xs">Discard</Button>
               <Button size="sm" onClick={onSave} disabled={saving} className="h-7 text-xs">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
                 Save
               </Button>
             </>
-          )}
-          {!dirty && (
+          ) : (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Check className="h-3.5 w-3.5 text-green-500" />
-              {capsDraft.size} capabilities
+              {enabledCount} enabled
             </div>
           )}
         </div>
       </div>
 
-      {/* flex-1 h-0: forces flex-basis to 0 so overflow-y-auto gets a bounded height */}
-      <div className="flex-1 h-0 overflow-y-auto">
-        <div className="px-6 py-4 space-y-6">
-          {role.slug === "super admin" && (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-4 py-3">
-              <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                <span className="font-semibold">Super Admin</span> has unrestricted access to all portals, modes, and features — capability assignments don't apply.
-              </p>
+      <div className="px-6 py-4 space-y-6">
+        {disabled && (
+          <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 px-4 py-3">
+            <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              <span className="font-semibold">Super Admin</span> has unrestricted access — capability assignments don't apply.
+            </p>
+          </div>
+        )}
+
+        {/* Focus Modes */}
+        {modes.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="h-4 w-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">Focus Modes</h3>
+              <span className="text-xs text-muted-foreground ml-auto">{modes.filter((m) => capsDraft.has(m.key)).length} / {modes.length}</span>
+              <button type="button" disabled={disabled} className="text-[10px] ml-2 font-medium text-primary hover:underline"
+                onClick={() => {
+                  const next = new Set(capsDraft);
+                  const allOn = modes.every((m) => next.has(m.key));
+                  modes.forEach((m) => allOn ? next.delete(m.key) : next.add(m.key));
+                  onSetCaps(next);
+                }}>
+                {modes.every((m) => capsDraft.has(m.key)) ? "Deselect All" : "Select All"}
+              </button>
             </div>
-          )}
-
-          {categories.map((cat) => {
-            const caps = capsByCategory[cat] ?? [];
-            if (!caps.length) return null;
-            const Icon = CAT_ICON[cat];
-            const selectedCount = caps.filter((c) => capsDraft.has(c.key)).length;
-
-            return (
-              <div key={cat}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-semibold text-foreground">{CAT_LABEL[cat]}</h3>
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    {selectedCount} / {caps.length} enabled
-                  </span>
-                  <button
-                    type="button"
-                    className="text-[10px] ml-2 font-medium text-primary hover:underline"
-                    disabled={role.slug === "super admin"}
-                    onClick={() => {
-                      const next = new Set(capsDraft);
-                      const allSelected = selectedCount === caps.length;
-                      for (const c of caps) {
-                        if (allSelected) next.delete(c.key);
-                        else next.add(c.key);
-                      }
-                      onSetCaps(next);
-                    }}
-                  >
-                    {selectedCount === caps.length ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-
-                {cat === "feature" ? (
-                  <div className="space-y-2">
-                    {caps.map((cap) => (
-                      <FeatureCapabilityRow
-                        key={cap.key}
-                        cap={cap}
-                        enabled={capsDraft.has(cap.key)}
-                        disabled={role.slug === "super admin"}
-                        onToggle={() => onToggleCap(cap.key)}
-                      />
-                    ))}
+            <p className="text-[11px] text-muted-foreground/70 mb-2 ml-6">Which AI focus modes this role can activate in the assistant.</p>
+            <div className="grid grid-cols-2 gap-2">
+              {modes.map((m) => (
+                <button key={m.key} disabled={disabled}
+                  onClick={() => { const n = new Set(capsDraft); n.has(m.key) ? n.delete(m.key) : n.add(m.key); onSetCaps(n); }}
+                  className={cn("flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-all",
+                    capsDraft.has(m.key) ? "border-primary/40 bg-primary/5 text-foreground" : "border-border text-muted-foreground hover:border-primary/20 hover:bg-muted/40",
+                    disabled && "opacity-40 cursor-not-allowed")}>
+                  <div className={cn("h-3.5 w-3.5 rounded flex-shrink-0 flex items-center justify-center border",
+                    capsDraft.has(m.key) ? "bg-primary border-primary text-primary-foreground" : "border-border")}>
+                    {capsDraft.has(m.key) && <Check className="h-2 w-2" />}
                   </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
-                    {caps.map((cap) => (
-                      <button
-                        key={cap.key}
-                        onClick={() => role.slug !== "super admin" && onToggleCap(cap.key)}
-                        disabled={role.slug === "super admin"}
-                        className={cn(
-                          "flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all",
-                          capsDraft.has(cap.key)
-                            ? "border-primary/40 bg-primary/5 text-foreground"
-                            : "border-border text-muted-foreground hover:border-primary/20 hover:bg-muted/40",
-                          role.slug === "super admin" && "opacity-40 cursor-not-allowed",
-                        )}
+                  <span className="font-medium">{m.label.replace(" Mode", "")}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Unified Capabilities */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <Layers className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">Capabilities</h3>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {rows.filter((r) => capsDraft.has(r.key) || (r.pairedKey && capsDraft.has(r.pairedKey))).length} / {rows.length}
+            </span>
+            <button type="button" disabled={disabled} className="text-[10px] ml-2 font-medium text-primary hover:underline"
+              onClick={() => {
+                const next = new Set(capsDraft);
+                const allOn = rows.every((r) => next.has(r.key));
+                rows.forEach((r) => { allOn ? (next.delete(r.key), r.pairedKey && next.delete(r.pairedKey)) : (next.add(r.key), r.pairedKey && next.add(r.pairedKey)); });
+                onSetCaps(next);
+              }}>
+              {rows.every((r) => capsDraft.has(r.key)) ? "Deselect All" : "Select All"}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground/70 mb-3 ml-6">
+            Each item controls page access and permissions together. No duplicates.
+          </p>
+          <TooltipProvider delayDuration={200}>
+          <div className="space-y-1.5">
+            {rows.map((row) => {
+              const on = capsDraft.has(row.key) || (!!row.pairedKey && capsDraft.has(row.pairedKey));
+              return (
+                <div key={row.key} className={cn("rounded-lg border transition-colors", on ? "border-primary/30 bg-primary/5" : "border-border", disabled && "opacity-40")}>
+                  <div className="flex items-start gap-3 px-3 py-2.5">
+                    <Checkbox checked={on} disabled={disabled} onCheckedChange={() => toggleRow(row)} className="mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-foreground leading-tight">{row.label}</p>
+                      <p className="text-[11px] text-muted-foreground leading-snug mt-0.5 line-clamp-2">{row.description}</p>
+                    </div>
+                    {/* Info tooltip — hover to see full breakdown */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="button" className="flex-shrink-0 mt-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors">
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="left"
+                        className="max-w-xs bg-popover text-popover-foreground border border-border shadow-lg p-0 rounded-xl overflow-hidden"
                       >
-                        <div className={cn(
-                          "h-4 w-4 rounded flex-shrink-0 mt-0.5 flex items-center justify-center border",
-                          capsDraft.has(cap.key)
-                            ? "bg-primary border-primary text-primary-foreground"
-                            : "border-border",
-                        )}>
-                          {capsDraft.has(cap.key) && <Check className="h-2.5 w-2.5" />}
+                        <div className="px-3 pt-2.5 pb-2 border-b border-border">
+                          <p className="text-xs font-semibold text-foreground">{row.label}</p>
                         </div>
-                        <div className="min-w-0">
-                          <div className="text-xs font-medium leading-tight">{cap.label}</div>
-                          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">
-                            {cap.description}
-                          </div>
+                        <div className="px-3 py-2 space-y-1.5">
+                          {/* Page access line */}
+                          {row.pairedKey ? (
+                            <div className="flex items-start gap-1.5">
+                              <Globe className="h-3 w-3 text-blue-500 mt-0.5 flex-shrink-0" />
+                              <p className="text-[11px] text-foreground leading-snug">Opens the <span className="font-medium">{row.label}</span> page in the sidebar</p>
+                            </div>
+                          ) : row.key.startsWith("portal:") ? (
+                            <div className="flex items-start gap-1.5">
+                              <Globe className="h-3 w-3 text-blue-500 mt-0.5 flex-shrink-0" />
+                              <p className="text-[11px] text-foreground leading-snug">Opens this page in the sidebar</p>
+                            </div>
+                          ) : null}
+                          {/* Action lines */}
+                          {row.actions.map((a) => (
+                            <div key={a.id} className="flex items-start gap-1.5">
+                              <Check className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+                              <p className="text-[11px] text-foreground leading-snug">
+                                <span className="font-medium">{a.label}:</span> {a.description}
+                              </p>
+                            </div>
+                          ))}
+                          {/* If no specific actions, show the description */}
+                          {row.actions.length === 0 && (
+                            <p className="text-[11px] text-muted-foreground leading-snug">{row.description}</p>
+                          )}
                         </div>
-                      </button>
-                    ))}
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
-                )}
-              </div>
-            );
-          })}
+                  {/* Action chips — always visible so you can see what you're enabling before checking */}
+                  {row.actions.length > 1 && (
+                    <div className="border-t border-border/50 px-3 py-1.5 flex flex-wrap gap-1.5 bg-muted/20">
+                      {row.actions.map((a) => (
+                        <span key={a.id}
+                          className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+                            on ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
+                          {a.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          </TooltipProvider>
         </div>
       </div>
     </Card>
-  );
-}
-
-function FeatureCapabilityRow({
-  cap,
-  enabled,
-  disabled,
-  onToggle,
-}: {
-  cap: Capability;
-  enabled: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border transition-colors",
-        enabled ? "border-primary/30 bg-primary/5" : "border-border",
-        disabled && "opacity-40",
-      )}
-    >
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-3 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-foreground">{cap.label}</p>
-          <p className="text-[10px] text-muted-foreground">{cap.description}</p>
-        </div>
-        <label className="flex items-center gap-1.5 ml-3 shrink-0 cursor-pointer">
-          <Checkbox
-            checked={enabled}
-            onCheckedChange={onToggle}
-            disabled={disabled}
-          />
-          <span className="text-xs text-muted-foreground">Enable</span>
-        </label>
-      </div>
-      {cap.actions.length > 1 && enabled && (
-        <div className="border-t border-border/60 px-3 py-1.5 flex flex-wrap gap-2 bg-muted/10">
-          {cap.actions.map((a) => (
-            <span
-              key={a.id}
-              title={a.description}
-              className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium"
-            >
-              {a.label}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1007,7 +1076,7 @@ function UserAccessEditor({
   }
 
   return (
-    <Card className="flex flex-col flex-1 min-h-0 border-0 rounded-none shadow-none bg-transparent">
+    <Card className="border-0 rounded-none shadow-none bg-transparent">
       {/* User header */}
       <div className="flex-none px-6 py-4 border-b border-border flex items-center gap-3">
         <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary flex-shrink-0">
@@ -1023,8 +1092,7 @@ function UserAccessEditor({
         </button>
       </div>
 
-      <div className="flex-1 h-0 overflow-y-auto">
-        <div className="px-6 py-4 space-y-6">
+      <div className="px-6 py-4 space-y-6">
           {/* Role assignment */}
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground">Assigned Role</label>
@@ -1185,7 +1253,6 @@ function UserAccessEditor({
             </p>
           )}
         </div>
-      </div>
 
       {/* Footer actions */}
       <div className="flex-none px-6 py-3 border-t border-border flex items-center gap-2">
