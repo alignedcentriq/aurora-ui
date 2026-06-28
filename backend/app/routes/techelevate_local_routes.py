@@ -12,12 +12,15 @@ inert until a Microsoft token is available) so the two never collide.
 Prefix: /api/portal/te-local
 """
 
+import os
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models import Employee
 from app.services import techelevate_local_service as te
@@ -26,6 +29,11 @@ router = APIRouter(prefix="/api/portal/te-local", tags=["TechElevate (Local)"])
 
 # Roles allowed to author trainings, assign, and move assignment status.
 _ADMIN_ROLES = {"hr", "pmo", "admin", "super admin", "functional manager"}
+
+# Uploaded course documents live here and are served back via the /uploads static mount.
+_TE_UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads", "te_local")
+_MAX_DOC_BYTES = 50 * 1024 * 1024  # 50 MB
+_ALLOWED_DOC_EXTS = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "md", "csv"}
 
 
 def _guard_enabled():
@@ -45,6 +53,7 @@ async def status(user: CurrentUser = Depends(get_current_user)):
     return {
         "local_enabled": te.local_enabled(),
         "can_manage": (user.role or "").lower() in _ADMIN_ROLES,
+        "portal_url": settings.TECHELEVATE_PORTAL_URL,
     }
 
 
@@ -127,6 +136,119 @@ async def delete_question(question_id: int, db: Session = Depends(get_db),
     _guard_admin(user)
     if not te.delete_question(db, question_id):
         raise HTTPException(status_code=404, detail="Question not found.")
+    return {"deleted": True}
+
+
+@router.post("/trainings/{training_id}/questions/generate")
+async def generate_questions(training_id: int, payload: dict = Body(...), db: Session = Depends(get_db),
+                             user: CurrentUser = Depends(get_current_user)):
+    """AI-draft MCQs grounded in the course's materials (uploaded docs, Udemy videos, links).
+
+    Returns DRAFTS only — nothing is persisted. The admin reviews/edits them and saves via the
+    bulk endpoint. (The actual exam is sat on the real TechElevate portal; this only authors it.)
+    """
+    _guard_enabled()
+    _guard_admin(user)
+    out = te.generate_questions(
+        db, training_id,
+        level_id=payload.get("level_id"),
+        count=payload.get("count") or 5,
+        difficulty=(payload.get("difficulty") or "mixed"),
+    )
+    err = out.get("error")
+    if err == "training_not_found":
+        raise HTTPException(status_code=404, detail="Training not found.")
+    if err:
+        raise HTTPException(status_code=502, detail="Couldn't draft questions from those materials — try again or add more course content.")
+    return out
+
+
+@router.post("/trainings/{training_id}/questions/bulk")
+async def bulk_add_questions(training_id: int, payload: dict = Body(...), db: Session = Depends(get_db),
+                             user: CurrentUser = Depends(get_current_user)):
+    """Persist a reviewed batch of MCQs (typically AI-drafted then edited by the admin)."""
+    _guard_enabled()
+    _guard_admin(user)
+    items = payload.get("questions") or []
+    if not items:
+        raise HTTPException(status_code=422, detail="questions[] is required.")
+    saved = te.bulk_add_questions(db, training_id, items, level_id=payload.get("level_id"))
+    return {"saved": saved, "count": len(saved)}
+
+
+# ── Learning content (course materials) ────────────────────────────────────────
+
+@router.get("/trainings/{training_id}/content")
+async def list_content(training_id: int, db: Session = Depends(get_db),
+                       user: CurrentUser = Depends(get_current_user)):
+    _guard_enabled()
+    return {"results": te.list_content(db, training_id)}
+
+
+@router.post("/trainings/{training_id}/content")
+async def add_content(training_id: int, payload: dict = Body(...), db: Session = Depends(get_db),
+                      user: CurrentUser = Depends(get_current_user)):
+    """Attach a link / Udemy course / video material (by URL) to a course or one of its levels."""
+    _guard_enabled()
+    _guard_admin(user)
+    if not (payload.get("title") or payload.get("url")):
+        raise HTTPException(status_code=422, detail="A title or url is required.")
+    out = te.add_content(db, training_id, payload)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Training not found.")
+    return out
+
+
+@router.post("/trainings/{training_id}/content/upload")
+async def upload_content_document(
+    training_id: int,
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    description: str = Form(""),
+    level_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Upload a course document (PDF/DOCX/PPTX/…). Saves the file, serves it via /uploads, and
+    attaches it as a 'document' material. Its text is later extracted to ground AI question drafts."""
+    _guard_enabled()
+    _guard_admin(user)
+    if not te.get_training(db, training_id):
+        raise HTTPException(status_code=404, detail="Training not found.")
+
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ""
+    if ext not in _ALLOWED_DOC_EXTS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type. Allowed: {', '.join(sorted(_ALLOWED_DOC_EXTS))}.")
+
+    data = await file.read()
+    if len(data) > _MAX_DOC_BYTES:
+        raise HTTPException(status_code=413, detail="File must be under 50 MB.")
+
+    os.makedirs(_TE_UPLOAD_DIR, exist_ok=True)
+    stored = f"{uuid.uuid4().hex}.{ext}"
+    with open(os.path.join(_TE_UPLOAD_DIR, stored), "wb") as fh:
+        fh.write(data)
+
+    out = te.add_content(db, training_id, {
+        "kind": "document",
+        "title": (title or "").strip() or (file.filename or "Document"),
+        "url": f"/uploads/te_local/{stored}",
+        "description": (description or "").strip(),
+        "file_name": file.filename,
+        "level_id": level_id,
+    })
+    if out is None:
+        raise HTTPException(status_code=404, detail="Training not found.")
+    return out
+
+
+@router.delete("/content/{content_id}")
+async def delete_content(content_id: int, db: Session = Depends(get_db),
+                         user: CurrentUser = Depends(get_current_user)):
+    _guard_enabled()
+    _guard_admin(user)
+    if not te.delete_content(db, content_id):
+        raise HTTPException(status_code=404, detail="Content not found.")
     return {"deleted": True}
 
 
@@ -253,8 +375,15 @@ async def evaluate(assignment_id: int, payload: dict = Body(...), db: Session = 
     verified skills back to the employee."""
     _guard_enabled()
     result = te.submit_evaluation(db, assignment_id, payload.get("answers") or {})
-    if result.get("error"):
-        raise HTTPException(status_code=400, detail=result["error"])
+    err = result.get("error")
+    if err == "no_questions":
+        raise HTTPException(
+            status_code=400,
+            detail="This course has no assessment questions yet. "
+                   "The instructor needs to add MCQ questions before learners can be evaluated.",
+        )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
     return result
 
 

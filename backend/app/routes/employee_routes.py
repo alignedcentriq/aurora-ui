@@ -771,13 +771,18 @@ def _attach_enrichment(employees: list[dict]) -> None:
         from app.services import alchemy_service
         codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
         cache = alchemy_service.get_cached_enrichment_map(codes)
-        if not cache:
-            return
+        attached = 0
         for e in employees:
             hit = cache.get(e.get("employee_code"))
             if hit is not None:
                 e["skills"] = hit["skills"]
                 e["projects"] = hit["projects"]
+                attached += 1
+        # Full-coverage convergence: if any roster row has no cached enrichment yet,
+        # kick a deduped background fill so subsequent loads bundle skills for everyone.
+        # Non-blocking — this request still returns immediately with whatever is cached.
+        if codes and attached < len(codes):
+            alchemy_service.kick_enrichment_fill_async()
     except Exception:
         pass
 

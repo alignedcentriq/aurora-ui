@@ -26,6 +26,7 @@ from app.models import (
     Employee,
     EmployeeSkill,
     TeAssignment,
+    TeContentItem,
     TeGroup,
     TeMcqQuestion,
     TeTraining,
@@ -33,6 +34,8 @@ from app.models import (
 )
 
 log = logging.getLogger("aurora-logger")
+
+CONTENT_KINDS = {"document", "link", "udemy", "video"}
 
 
 def local_enabled() -> bool:
@@ -177,7 +180,23 @@ _SEED_TRAININGS = [
 
 # ── Serialisation ─────────────────────────────────────────────────────────────
 
-def _training_dict(t: TeTraining, *, with_questions: bool = False) -> dict:
+def _content_dict(c: TeContentItem) -> dict:
+    return {
+        "id": c.id,
+        "training_id": c.training_id,
+        "level_id": c.level_id,
+        "kind": c.kind,
+        "title": c.title,
+        "url": c.url,
+        "description": c.description,
+        "file_name": c.file_name,
+        "sort_order": c.sort_order,
+    }
+
+
+def _training_dict(t: TeTraining, *, with_questions: bool = False,
+                   with_content: bool = False) -> dict:
+    content = sorted(t.content_items, key=lambda c: (c.level_id or 0, c.sort_order, c.id))
     out = {
         "id": t.id,
         "title": t.title,
@@ -190,15 +209,20 @@ def _training_dict(t: TeTraining, *, with_questions: bool = False) -> dict:
         "video_link": t.video_link,
         "skill_tags": t.skill_tags or [],
         "photo_url": t.photo_url,
+        "content_count": len(content),
         "levels": [
             {"id": lv.id, "name": lv.name, "sort_order": lv.sort_order,
              "duration_minutes": lv.duration_minutes, "pass_percentage": lv.pass_percentage,
-             "description": lv.description}
+             "description": lv.description,
+             "content": [_content_dict(c) for c in content if c.level_id == lv.id]}
             for lv in t.levels
         ],
         "created_by": t.created_by,
         "created_at": t.created_at.isoformat() if t.created_at else None,
     }
+    if with_content:
+        # Course-level materials (single-level courses, or materials not tied to a level).
+        out["content"] = [_content_dict(c) for c in content if c.level_id is None]
     if with_questions:
         out["questions"] = [_question_dict(q, reveal=False) for q in t.questions]
     return out
@@ -232,6 +256,8 @@ def _assignment_dict(a: TeAssignment) -> dict:
         "due_date": a.due_date.isoformat() if a.due_date else None,
         "completed_at": a.completed_at.isoformat() if a.completed_at else None,
         "skill_tags": (a.training.skill_tags or []) if a.training else [],
+        # Tells the learner UI whether there's an assessment ready to take.
+        "has_questions": len(a.training.questions) > 0 if a.training else False,
     }
 
 
@@ -247,7 +273,7 @@ def list_trainings(db: Session, *, search: Optional[str] = None) -> list[dict]:
 
 def get_training(db: Session, training_id: int, *, with_questions: bool = False) -> Optional[dict]:
     t = db.get(TeTraining, training_id)
-    return _training_dict(t, with_questions=with_questions) if t else None
+    return _training_dict(t, with_questions=with_questions, with_content=True) if t else None
 
 
 def training_stats(db: Session) -> dict:
@@ -281,22 +307,60 @@ def create_training(db: Session, data: dict, *, created_by: Optional[str] = None
     )
     db.add(t)
     db.flush()
+    # Map a level's position in the incoming list → its new DB id, so content/questions
+    # that reference a level by index (the client doesn't know ids yet) can be linked.
+    level_ids: list[int] = []
     for i, lv in enumerate(levels):
-        db.add(TeTrainingLevel(
+        row = TeTrainingLevel(
             training_id=t.id, name=lv.get("name") or f"Level {i + 1}", sort_order=i,
             duration_minutes=int(lv.get("duration_minutes") or 0),
             pass_percentage=float(lv.get("pass_percentage") or 60),
             description=lv.get("description"),
-        ))
+        )
+        db.add(row)
+        db.flush()
+        level_ids.append(row.id)
+        # A level may carry its own materials inline.
+        for j, c in enumerate(lv.get("content") or []):
+            _add_content_row(db, training_id=t.id, level_id=row.id, data=c, sort_order=j)
+    # Course-level content (single-level courses, or materials with an explicit level_index).
+    for j, c in enumerate(data.get("content") or []):
+        li = c.get("level_index")
+        level_id = level_ids[li] if isinstance(li, int) and 0 <= li < len(level_ids) else None
+        _add_content_row(db, training_id=t.id, level_id=level_id, data=c, sort_order=j)
     for q in questions:
+        li = q.get("level_index")
+        level_id = level_ids[li] if isinstance(li, int) and 0 <= li < len(level_ids) else q.get("level_id")
         db.add(TeMcqQuestion(
-            training_id=t.id, question=q["question"], options=q.get("options") or {},
-            correct_answer=q.get("correct_answer"), marks=int(q.get("marks") or 1),
-            explanation=q.get("explanation"),
+            training_id=t.id, level_id=level_id,
+            question=q["question"], options=q.get("options") or {},
+            correct_answer=(q.get("correct_answer") or "").strip().upper() or None,
+            marks=int(q.get("marks") or 1), explanation=q.get("explanation"),
         ))
     db.commit()
     db.refresh(t)
-    return _training_dict(t, with_questions=True)
+    return _training_dict(t, with_questions=True, with_content=True)
+
+
+def _add_content_row(db: Session, *, training_id: int, level_id: Optional[int],
+                     data: dict, sort_order: int = 0) -> Optional[TeContentItem]:
+    """Insert one content item. Skips empties; coerces unknown kinds to 'link'."""
+    title = (data.get("title") or "").strip()
+    url = (data.get("url") or "").strip() or None
+    if not title and not url:
+        return None
+    kind = (data.get("kind") or "link").strip().lower()
+    if kind not in CONTENT_KINDS:
+        kind = "link"
+    row = TeContentItem(
+        training_id=training_id, level_id=level_id, kind=kind,
+        title=title or url or "Untitled", url=url,
+        description=(data.get("description") or "").strip() or None,
+        file_name=(data.get("file_name") or "").strip() or None,
+        sort_order=int(data.get("sort_order") if data.get("sort_order") is not None else sort_order),
+    )
+    db.add(row)
+    return row
 
 
 def delete_training(db: Session, training_id: int) -> bool:
@@ -571,6 +635,206 @@ def delete_question(db: Session, question_id: int) -> bool:
     return True
 
 
+def bulk_add_questions(db: Session, training_id: int, items: list[dict],
+                       *, level_id: Optional[int] = None) -> list[dict]:
+    """Persist a reviewed batch of MCQs (e.g. AI-drafted then edited). Returns the saved rows."""
+    t = db.get(TeTraining, training_id)
+    if not t:
+        return []
+    saved: list[dict] = []
+    for it in items or []:
+        question = (it.get("question") or "").strip()
+        options = it.get("options") or {}
+        if not question or not isinstance(options, dict) or len(options) < 2:
+            continue
+        correct = (it.get("correct_answer") or "").strip().upper() or None
+        if correct and correct not in options:
+            correct = None
+        q = TeMcqQuestion(
+            training_id=training_id, level_id=it.get("level_id", level_id),
+            question=question, options=options, correct_answer=correct,
+            marks=int(it.get("marks") or 1), explanation=(it.get("explanation") or "").strip() or None,
+        )
+        db.add(q)
+        db.flush()
+        saved.append(_question_dict(q, reveal=True))
+    db.commit()
+    return saved
+
+
+# ── Learning content (materials) CRUD ─────────────────────────────────────────
+
+def list_content(db: Session, training_id: int) -> list[dict]:
+    rows = (db.query(TeContentItem)
+            .filter(TeContentItem.training_id == training_id)
+            .order_by(TeContentItem.level_id, TeContentItem.sort_order, TeContentItem.id)
+            .all())
+    return [_content_dict(c) for c in rows]
+
+
+def add_content(db: Session, training_id: int, data: dict) -> Optional[dict]:
+    t = db.get(TeTraining, training_id)
+    if not t:
+        return None
+    row = _add_content_row(db, training_id=training_id, level_id=data.get("level_id"),
+                           data=data, sort_order=int(data.get("sort_order") or 0))
+    if row is None:
+        return None
+    db.commit()
+    db.refresh(row)
+    return _content_dict(row)
+
+
+def delete_content(db: Session, content_id: int) -> bool:
+    c = db.get(TeContentItem, content_id)
+    if not c:
+        return False
+    db.delete(c)
+    db.commit()
+    return True
+
+
+# ── AI MCQ drafting (grounded in the course's materials) ──────────────────────
+
+def extract_document_text(path: str, *, max_chars: int = 6000) -> str:
+    """Best-effort plain-text extraction from an uploaded document (PDF / DOCX / TXT) so the
+    AI can ground questions in its actual content. Returns '' on any failure — never raises."""
+    import os
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    try:
+        if ext == "pdf":
+            import pdfplumber
+            parts: list[str] = []
+            with pdfplumber.open(path) as pdf:
+                for page in pdf.pages:
+                    parts.append(page.extract_text() or "")
+                    if sum(len(p) for p in parts) >= max_chars:
+                        break
+            return "\n".join(parts)[:max_chars]
+        if ext in ("docx", "doc"):
+            import docx
+            doc = docx.Document(path)
+            return "\n".join(p.text for p in doc.paragraphs)[:max_chars]
+        if ext in ("txt", "md", "csv"):
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                return fh.read(max_chars)
+    except Exception as e:
+        log.debug("[techelevate-local] doc extract failed for %s: %s", path, e)
+    return ""
+
+
+def _content_grounding(db: Session, training_id: int, level_id: Optional[int]) -> str:
+    """Assemble a compact study-context string from a course's materials (titles, descriptions,
+    Udemy/video references, and extracted document text) to ground the MCQ generator."""
+    import os
+    rows = db.query(TeContentItem).filter(TeContentItem.training_id == training_id)
+    if level_id is not None:
+        rows = rows.filter(TeContentItem.level_id == level_id)
+    parts: list[str] = []
+    uploads_root = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
+    for c in rows.order_by(TeContentItem.sort_order, TeContentItem.id).all():
+        label = {"udemy": "Udemy course/video", "video": "Video",
+                 "document": "Document", "link": "Resource"}.get(c.kind, "Resource")
+        line = f"- [{label}] {c.title}"
+        if c.description:
+            line += f": {c.description}"
+        parts.append(line)
+        # Pull text out of uploaded documents living under /uploads.
+        if c.kind == "document" and c.url and c.url.startswith("/uploads/"):
+            fpath = os.path.join(uploads_root, c.url[len("/uploads/"):])
+            text = extract_document_text(fpath)
+            if text.strip():
+                parts.append(f"  Content excerpt:\n{text.strip()[:3000]}")
+    return "\n".join(parts)[:8000]
+
+
+def generate_questions(db: Session, training_id: int, *, level_id: Optional[int] = None,
+                       count: int = 5, difficulty: str = "mixed") -> dict:
+    """AI-draft MCQs grounded in the course's materials. Returns DRAFTS only (not persisted);
+    an admin reviews/edits them and saves via bulk_add_questions. The actual exam is sat on the
+    real TechElevate portal — this is purely the authoring aid."""
+    from app.services import llm_controls_service as llm_controls
+    from app.services.llm_json import invoke_json
+
+    t = db.get(TeTraining, training_id)
+    if not t:
+        return {"error": "training_not_found"}
+
+    count = max(1, min(int(count or 5), 15))
+    level_name = ""
+    if level_id is not None:
+        lv = db.get(TeTrainingLevel, level_id)
+        level_name = lv.name if lv else ""
+
+    grounding = _content_grounding(db, training_id, level_id)
+    skills = ", ".join(t.skill_tags or []) or "the course topic"
+    scope = f'"{t.title}"' + (f" — {level_name} level" if level_name else "")
+
+    materials_block = (
+        f"Base the questions on these course materials:\n{grounding}\n\n"
+        if grounding.strip()
+        else "No materials were provided, so base the questions on the course title and skills below.\n\n"
+    )
+
+    prompt = (
+        "You are an assessment author for a corporate technical-training portal. Write "
+        f"{count} multiple-choice questions to test mastery of {scope}.\n\n"
+        f"Target skills: {skills}.\n"
+        f"Difficulty: {difficulty}.\n\n"
+        f"{materials_block}"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+        '{"questions": [{"question": "…", "options": {"A": "…", "B": "…", "C": "…", "D": "…"}, '
+        '"correct_answer": "A", "marks": 1, "explanation": "one sentence why it is correct"}]}\n\n'
+        "Rules:\n"
+        "- Exactly 4 options (A, B, C, D) per question; exactly one is correct.\n"
+        "- Questions must be answerable from the materials/topic above — no trick or trivia questions.\n"
+        "- Vary the correct letter across questions. Keep options plausible and roughly equal length.\n"
+        f"- Produce exactly {count} questions."
+    )
+
+    model = llm_controls.get_llm("general", default_timeout=90)
+    draft = invoke_json(model, prompt, attempts=2)
+    if not draft or not isinstance(draft.get("questions"), list):
+        return {"error": "generation_failed"}
+
+    cleaned = _sanitize_generated_questions(draft["questions"], level_id=level_id)
+    if not cleaned:
+        return {"error": "generation_failed"}
+    return {"questions": cleaned, "grounded": bool(grounding.strip()),
+            "training_id": training_id, "level_id": level_id}
+
+
+def _sanitize_generated_questions(raw: list, *, level_id: Optional[int] = None) -> list[dict]:
+    """Coerce LLM-drafted questions into the strict MCQ shape, dropping anything unusable."""
+    out: list[dict] = []
+    for q in raw:
+        if not isinstance(q, dict):
+            continue
+        question = str(q.get("question") or "").strip()
+        opts_raw = q.get("options") or {}
+        if not question or not isinstance(opts_raw, dict):
+            continue
+        options: dict[str, str] = {}
+        for key in ("A", "B", "C", "D"):
+            val = str(opts_raw.get(key) or opts_raw.get(key.lower()) or "").strip()
+            if val:
+                options[key] = val
+        if len(options) < 2:
+            continue
+        correct = str(q.get("correct_answer") or "").strip().upper()[:1]
+        if correct not in options:
+            correct = next(iter(options))
+        out.append({
+            "question": question,
+            "options": options,
+            "correct_answer": correct,
+            "marks": int(q.get("marks") or 1) if str(q.get("marks") or "1").isdigit() else 1,
+            "explanation": str(q.get("explanation") or "").strip() or None,
+            "level_id": level_id,
+        })
+    return out
+
+
 # ── Employee search (for group / assignment pickers) ──────────────────────────
 
 def search_employees(db: Session, search: Optional[str] = None, *, limit: int = 25) -> list[dict]:
@@ -691,6 +955,16 @@ def _seed_trainings(db: Session) -> None:
     for spec in _SEED_TRAININGS:
         if db.query(TeTraining).filter(TeTraining.title == spec["title"]).first():
             continue
+        # Promote the spec's intro video into a real course material so seeded courses
+        # ship with curriculum (not just an empty catalog card).
+        spec = dict(spec)
+        if spec.get("video_link") and not spec.get("content"):
+            item = {"kind": "video", "title": f"{spec['title']} — intro video",
+                    "url": spec["video_link"]}
+            # Multi-level courses surface materials per level, so pin the intro to level 1.
+            if spec.get("levels"):
+                item["level_index"] = 0
+            spec["content"] = [item]
         create_training(db, spec, created_by="system")
 
 

@@ -6,6 +6,7 @@ import { Logo } from "@/components/Logo";
 import { useChatStore } from "@/lib/chat-store";
 import { cn } from "@/lib/utils";
 import { useLocation } from "@tanstack/react-router";
+import { getPortalCopilot } from "@/lib/portal-copilot";
 
 interface Particle {
   id: number;
@@ -29,16 +30,84 @@ export function CopilotSidebar({ isOpen, setIsOpen }: CopilotSidebarProps) {
   const [particles, setParticles] = useState<Particle[]>([]);
   const [spinActive, setSpinActive] = useState(false);
 
-  const { createThread } = useChatStore();
+  const { createThread, setActiveId, threads, activeId } = useChatStore();
   const location = useLocation();
 
-  // Close copilot sidebar if the user navigates back to Chat (/) or Settings
+  // Remembers which chat thread belongs to which portal, for this sidebar session, so each
+  // portal keeps its OWN conversation. Reset when the sidebar unmounts (i.e. on Chat/Settings/
+  // Documents, where the copilot isn't offered).
+  const portalThreadsRef = useRef<Record<string, string>>({});
+
+  // The full-screen Chat thread that was active before the sidebar took over a portal.
+  // `undefined` = the sidebar never took over (don't touch activeId on unmount). Captured once
+  // so returning to the main Chat screen never shows a portal sidebar conversation.
+  const mainThreadRef = useRef<string | null | undefined>(undefined);
+
+  // Portal the sidebar is currently opened on — drives the themed header label/accent.
+  // For Control Hub, also factor in the active tab (from ?tab=xxx search param) so each
+  // tab gets its own theme, starters, and placeholder copy.
+  const portal = getPortalCopilot(location.pathname, location.search);
+  const PortalIcon = portal.Icon;
+
+  // Enriched context string passed to AssistantView and used for per-tab thread isolation.
+  // "/control-hub" + "?tab=roi" → "/control-hub/roi"; other routes stay as-is.
+  const enrichedPortalContext = (() => {
+    if (location.pathname === "/control-hub") {
+      const tab = new URLSearchParams(location.search).get("tab");
+      if (tab && tab !== "overview") return `/control-hub/${tab}`;
+    }
+    return location.pathname;
+  })();
+
+  // Close copilot sidebar if the user navigates to a page where it isn't offered
+  // (Chat, Settings, Documents).
   useEffect(() => {
-    if (location.pathname === "/" || location.pathname === "/settings") {
+    if (
+      location.pathname === "/" ||
+      location.pathname === "/settings" ||
+      location.pathname.startsWith("/documents")
+    ) {
       setIsOpen(false);
       setShuttersOpen(false);
     }
   }, [location.pathname]);
+
+  // Keep each portal's copilot on its OWN conversation. When the sidebar is opened — or the
+  // user moves to a different portal while it's open — switch to that portal's remembered
+  // thread, creating a fresh one only the first time. This way a Directory chat never bleeds
+  // into My Requests, yet closing and reopening the SAME portal preserves its conversation.
+  useEffect(() => {
+    if (!isOpen) return;
+    // Capture the full-screen Chat thread once, before the sidebar swaps in a portal thread.
+    if (mainThreadRef.current === undefined) {
+      mainThreadRef.current = activeId;
+    }
+    // Each Control Hub tab gets its own conversation; other portals group by path segment.
+    const key = enrichedPortalContext.replace(/^\//, "").replace(/\//g, "-") || "home";
+    const remembered = portalThreadsRef.current[key];
+    if (remembered && threads[remembered]) {
+      // Same portal as before → restore its thread (don't start over).
+      if (remembered !== activeId) setActiveId(remembered);
+    } else {
+      // First visit to this portal this session (or its thread was deleted) → fresh chat.
+      portalThreadsRef.current[key] = createThread();
+    }
+    // Keyed only on open-state + route: threads/activeId are read as a snapshot (not deps) so
+    // the store updates from setActiveId/createThread don't re-run — and loop — this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, location.pathname, location.search]);
+
+  // On unmount (leaving to the full Chat / Settings / Documents screens), hand the shared
+  // activeId back to the main Chat thread so a portal sidebar conversation never opens in full
+  // chat mode. If that thread is gone, drop to null → the Chat screen auto-starts a fresh chat.
+  useEffect(() => {
+    return () => {
+      if (mainThreadRef.current === undefined) return; // sidebar never took over → leave as-is
+      const store = useChatStore.getState();
+      const main = mainThreadRef.current;
+      store.setActiveId(main && store.threads[main] ? main : null);
+    };
+  }, []);
 
   // Reset shutters and animation states whenever isOpen changes to true
   useEffect(() => {
@@ -311,20 +380,29 @@ export function CopilotSidebar({ isOpen, setIsOpen }: CopilotSidebarProps) {
             <div className="h-14 sm:h-16 flex items-center justify-between px-4 border-b border-border/40 bg-background/60 backdrop-blur-xl shrink-0 z-30 select-none">
               <div className="flex items-center gap-2.5">
                 <div className="relative shrink-0 flex items-center justify-center">
-                  <Logo size="sm" />
+                  <div
+                    className="flex h-8 w-8 items-center justify-center rounded-xl border"
+                    style={{
+                      background: `color-mix(in oklab, ${portal.accent} 14%, var(--background))`,
+                      borderColor: `color-mix(in oklab, ${portal.accent} 30%, transparent)`,
+                    }}
+                  >
+                    <PortalIcon className="h-4 w-4" style={{ color: portal.accent }} />
+                  </div>
                   <motion.div
-                    className="absolute -inset-1 rounded-xl opacity-35 blur-sm pointer-events-none bg-gradient-to-r from-primary to-[#00c4bb]"
+                    className="absolute -inset-1 rounded-xl opacity-35 blur-sm pointer-events-none"
+                    style={{ background: portal.accent }}
                     animate={{ opacity: [0.2, 0.5, 0.2] }}
                     transition={{ duration: 2.5, repeat: Infinity }}
                   />
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground/90">
-                    <span>Centriq Copilot</span>
-                    <Sparkles className="h-3 w-3 text-primary animate-pulse" />
+                    <span>{portal.label} Copilot</span>
+                    <Sparkles className="h-3 w-3 animate-pulse" style={{ color: portal.accent }} />
                   </h3>
                   <p className="text-[9px] text-muted-foreground font-semibold">
-                    Active workspace context enabled
+                    Scoped to this workspace
                   </p>
                 </div>
               </div>
@@ -349,7 +427,7 @@ export function CopilotSidebar({ isOpen, setIsOpen }: CopilotSidebarProps) {
 
             {/* Content Panel (renders the actual chat view inside the sidebar) */}
             <div className="flex-1 w-full min-h-0 relative z-20 bg-background">
-              {shuttersOpen && <AssistantView isCopilot={true} />}
+              {shuttersOpen && <AssistantView isCopilot={true} portalContext={enrichedPortalContext} />}
             </div>
           </motion.div>
         )}

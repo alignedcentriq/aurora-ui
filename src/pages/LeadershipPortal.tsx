@@ -329,7 +329,7 @@ export function LeadershipPortal() {
                 <div className="space-y-2.5 max-h-56 overflow-auto pr-1">
                   {(pr?.rows ?? []).map((r) => (
                     <div key={r.function}>
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-1">
                         <span
                           className="text-xs font-medium text-foreground/90 truncate max-w-[160px]"
                           title={r.function}
@@ -403,7 +403,7 @@ export function LeadershipPortal() {
                   {(bc?.opportunities ?? []).map((o) => (
                     <div
                       key={o.training}
-                      className="flex items-center justify-between gap-2 text-xs bg-slate-50/60 dark:bg-zinc-950/20 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-zinc-800/40 hover:border-amber-400/40 transition-colors"
+                      className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-2 text-xs bg-slate-50/60 dark:bg-zinc-950/20 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-zinc-800/40 hover:border-amber-400/40 transition-colors"
                     >
                       <span className="flex items-center gap-1.5 font-medium text-foreground truncate">
                         <GraduationCap className="h-3.5 w-3.5 text-amber-500 shrink-0" />

@@ -117,10 +117,10 @@ async def upload_document(
 
 # ── Induction video ─────────────────────────────────────────────────────────────
 
-@router.get("/induction-video")
-def induction_video(_: CurrentUser = Depends(get_current_user)):
-    """Induction video URL + chapter seek points for the in-app player."""
-    return svc.induction_video()
+@router.get("/induction-videos")
+def induction_videos(_: CurrentUser = Depends(get_current_user)):
+    """List of all induction videos with titles, descriptions, and chapter seek points."""
+    return svc.induction_videos()
 
 
 # ── HR tracker ────────────────────────────────────────────────────────────────────

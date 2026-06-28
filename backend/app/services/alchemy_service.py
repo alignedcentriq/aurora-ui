@@ -583,6 +583,48 @@ def alchemy_enrichment_sync_loop() -> None:
         time.sleep(_ENRICH_SYNC_INTERVAL_SEC)
 
 
+# Guards an on-demand enrichment fill so concurrent directory loads don't each
+# spawn their own full sync — only one runs at a time.
+import threading as _threading  # noqa: E402
+
+_enrich_fill_lock = _threading.Lock()
+_enrich_fill_running = False
+
+
+def kick_enrichment_fill_async() -> bool:
+    """Fire-and-forget a full directory enrichment sync in the background, deduped.
+
+    Called when a directory load finds rows with no cached skills/projects, so coverage
+    converges to the full roster on actual usage instead of waiting for the 6-hour timer.
+    Returns True if a fill was started, False if one was already running or Alchemy is off.
+    Never blocks the caller and never raises."""
+    global _enrich_fill_running
+    if not getattr(settings, "ALCHEMY_SKILL_SEARCH_ENABLED", False):
+        return False
+    with _enrich_fill_lock:
+        if _enrich_fill_running:
+            return False
+        _enrich_fill_running = True
+
+    def _run() -> None:
+        global _enrich_fill_running
+        try:
+            sync_directory_enrichment()
+        except Exception as e:  # noqa: BLE001
+            log.warning("[alchemy] on-demand enrichment fill failed: %s", e)
+        finally:
+            with _enrich_fill_lock:
+                _enrich_fill_running = False
+
+    try:
+        _threading.Thread(target=_run, daemon=True).start()
+        return True
+    except Exception:  # noqa: BLE001
+        with _enrich_fill_lock:
+            _enrich_fill_running = False
+        return False
+
+
 def get_skills_stats_summary(token: str) -> dict:
     """GET /skills/stats-summary — org-wide skills stats summary."""
     with httpx.Client(timeout=15) as client:

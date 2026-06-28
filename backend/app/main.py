@@ -207,6 +207,14 @@ _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(_uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
+# Chat-attachment upload limits. Only text-extractable formats are allowed —
+# images/binaries are rejected (the chat model is text-only). MAX_UPLOAD_CHARS
+# mirrors the slice the composer sends to the model, so anything bigger is
+# blocked up front instead of being silently truncated.
+_ALLOWED_UPLOAD_EXTS = {".pdf", ".txt", ".csv", ".json", ".md", ".xml", ".log"}
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_UPLOAD_CHARS = 6000
+
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
@@ -283,6 +291,12 @@ class SendEmailDraftRequest(BaseModel):
     body: str
     requester_email: Optional[str] = ""
 
+# Handles for the long-lived background loops spawned in startup_event, so the
+# shutdown hook can cancel them cleanly (otherwise the event loop garbage-collects
+# them mid-await at shutdown → "Task was destroyed but it is pending!").
+_app_background_tasks: list = []
+
+
 @app.on_event("startup")
 async def startup_event():
     # ARB #32 — warn early if running with >1 worker so operators know the
@@ -319,6 +333,24 @@ async def startup_event():
     except Exception as e:
         pass
 
+    try:
+        from app.services.udemy_business_service import configured as udemy_configured, _ensure_index
+        if udemy_configured():
+            _ensure_index()
+    except Exception as e:
+        logging.warning("Udemy index warm-up failed (non-fatal): %s", e)
+
+    try:
+        from app.routes.access_routes import seed_system_roles
+        from app.database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            await asyncio.to_thread(seed_system_roles, _db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.warning("Access role seed failed (non-fatal): %s", e)
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -334,7 +366,7 @@ async def startup_event():
             except Exception as e:
                 pass
 
-    asyncio.create_task(periodic_renew())
+    _app_background_tasks.append(asyncio.create_task(periodic_renew()))
 
     # Run any due attendance-report automations every minute (schedules persist in DB).
     async def attendance_scheduler():
@@ -356,7 +388,7 @@ async def startup_event():
             except Exception as e:
                 pass
 
-    asyncio.create_task(attendance_scheduler())
+    _app_background_tasks.append(asyncio.create_task(attendance_scheduler()))
 
     # ── Model keep-alive heartbeat ─────────────────────────────────────────
     # Fires a 0-token ping at every heavy model tier every 10 minutes.
@@ -368,7 +400,33 @@ async def startup_event():
             await _warmup_task()
             await asyncio.sleep(600)  # 10 minutes
 
-    asyncio.create_task(model_warmup_scheduler())
+    _app_background_tasks.append(asyncio.create_task(model_warmup_scheduler()))
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Cancel the connector registry's poll + pubsub loops cleanly so they don't
+    # trigger "Task was destroyed but it is pending!" / async-generator aclose
+    # warnings when the event loop tears down.
+    try:
+        from app.connectors.registry import stop_background_refresh
+        await stop_background_refresh()
+    except Exception as e:
+        logging.warning("Connector registry shutdown failed (non-fatal): %s", e)
+
+    # Cancel the long-lived schedulers (subscription renew, attendance/automation
+    # runner, model warm-up). They only ever act mid-loop while the app is alive,
+    # so cancelling at shutdown has no feature impact — it just avoids the
+    # "Task was destroyed but it is pending!" warning.
+    for task in _app_background_tasks:
+        if not task.done():
+            task.cancel()
+    for task in _app_background_tasks:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _app_background_tasks.clear()
 
     # ── Chat retention: 30-day purge ───────────────────────────────────────
     # Deletes ConversationSummary rows (the AI's medium-term memory) that
@@ -534,12 +592,28 @@ async def track_data(log: CustomLog):
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Accept a PDF or text file and return its extracted text content."""
+    """Accept a PDF or text file and return its extracted text content.
+
+    Images and other binary formats are rejected — the chat model is text-only,
+    so only the whitelisted text-extractable formats are accepted. Files whose
+    extracted text exceeds the model's window are blocked rather than truncated.
+    """
     filename = file.filename or "upload"
+
+    # Block images and any non-whitelisted format up front.
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Supported formats: PDF, TXT, CSV, JSON, MD, XML, LOG.",
+        )
+
     content_bytes = await file.read()
+    if len(content_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File must be under 10 MB.")
 
     extracted = ""
-    if filename.lower().endswith(".pdf"):
+    if ext == ".pdf":
         def _extract_pdf(data: bytes) -> str:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -557,7 +631,18 @@ async def upload_file(file: UploadFile = File(...)):
     if not extracted:
         raise HTTPException(status_code=422, detail="Could not extract text from file")
 
-    return {"text": extracted, "filename": filename, "char_count": len(extracted)}
+    char_count = len(extracted)
+    if char_count > _MAX_UPLOAD_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File is too large to analyze: {char_count:,} characters "
+                f"(limit {_MAX_UPLOAD_CHARS:,}). Upload a shorter file or paste "
+                "the relevant section."
+            ),
+        )
+
+    return {"text": extracted, "filename": filename, "char_count": char_count}
 
 
 @app.get("/api/documents/download/{file_id}")

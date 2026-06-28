@@ -11,6 +11,8 @@ import {
   Sparkles,
   GraduationCap,
   Briefcase,
+  Clock,
+  FolderKanban,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -712,10 +714,30 @@ export function EmployeeDirectory() {
   const [query, setQuery] = useState("");
   const [dept, setDept] = useState("");
   const [desig, setDesig] = useState("");
+  // Skill / certification / experience / recency / project filters — driven by the copilot
+  // sidebar (centriq:directory-filter) and clearable from the header. All match against the
+  // Alchemy enrichment bundled in the directory payload (skills[] + projects[]).
+  const [skillFilter, setSkillFilter] = useState("");
+  const [minYears, setMinYears] = useState<number | null>(null);
+  const [certifiedOnly, setCertifiedOnly] = useState(false);
+  const [projectFilter, setProjectFilter] = useState("");
+  const [usedWithinMonths, setUsedWithinMonths] = useState<number | null>(null);
   const [selected, setSelected] = useState<DirEmployee | null>(null);
   const [orgChartFor, setOrgChartFor] = useState<DirEmployee | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const activeFilterCount = useMemo(() => (dept ? 1 : 0) + (desig ? 1 : 0), [dept, desig]);
+  const enrichFilterActive =
+    !!skillFilter || minYears !== null || certifiedOnly || !!projectFilter || usedWithinMonths !== null;
+  const activeFilterCount = useMemo(
+    () =>
+      (dept ? 1 : 0) +
+      (desig ? 1 : 0) +
+      (skillFilter ? 1 : 0) +
+      (minYears !== null ? 1 : 0) +
+      (certifiedOnly ? 1 : 0) +
+      (projectFilter ? 1 : 0) +
+      (usedWithinMonths !== null ? 1 : 0),
+    [dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths],
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const authHeaders = {
@@ -764,17 +786,80 @@ export function EmployeeDirectory() {
   const filtered = useMemo(() => {
     if (!all) return [];
     const q = query.trim().toLowerCase();
+    const skillQ = skillFilter.trim().toLowerCase();
+    const projectQ = projectFilter.trim().toLowerCase();
+    // Cutoff date for the "used within N months" recency filter (null when not set).
+    const usedCutoff =
+      usedWithinMonths !== null
+        ? (() => {
+            const d = new Date();
+            d.setMonth(d.getMonth() - usedWithinMonths);
+            return d;
+          })()
+        : null;
     return all.filter((e) => {
       if (dept && e.department !== dept) return false;
       if (desig && e.designation !== desig) return false;
+      // Skill / certification / experience / recency filters operate on the bundled Alchemy
+      // enrichment. A row with no skills array (not yet synced) can't satisfy them, so it's
+      // excluded. All skill-level conditions must hold on the SAME skill entry.
+      if (skillQ || minYears !== null || certifiedOnly || usedCutoff) {
+        const skills = e.skills ?? [];
+        const ok = skills.some((s) => {
+          if (skillQ && !s.skill.toLowerCase().includes(skillQ)) return false;
+          if (minYears !== null && (parseFloat(s.years_experience || "0") || 0) < minYears) return false;
+          if (certifiedOnly && !s.certified) return false;
+          if (usedCutoff) {
+            const lu = s.last_used ? new Date(s.last_used) : null;
+            if (!lu || isNaN(lu.getTime()) || lu < usedCutoff) return false;
+          }
+          return true;
+        });
+        if (!ok) return false;
+      }
+      // Project filter matches a project name or its skills-used string.
+      if (projectQ) {
+        const projects = e.projects ?? [];
+        const ok = projects.some(
+          (p) =>
+            p.name.toLowerCase().includes(projectQ) ||
+            (p.skills_used || "").toLowerCase().includes(projectQ),
+        );
+        if (!ok) return false;
+      }
       if (!q) return true;
       return e.name.toLowerCase().includes(q) || handle(e.email).toLowerCase().includes(q);
     });
-  }, [all, query, dept, desig]);
+  }, [all, query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [query, dept, desig]);
+  }, [query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths]);
+
+  // Sidebar copilot → directory filter. Applies the parsed skill / certification / experience /
+  // recency / project filters to the grid when the assistant handles a "filter resources…" query.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail =
+        (
+          e as CustomEvent<{
+            skill?: string;
+            minYears?: number;
+            certified?: boolean;
+            project?: string;
+            usedWithinMonths?: number;
+          }>
+        ).detail || {};
+      setSkillFilter(detail.skill ?? "");
+      setMinYears(detail.minYears ?? null);
+      setCertifiedOnly(!!detail.certified);
+      setProjectFilter(detail.project ?? "");
+      setUsedWithinMonths(detail.usedWithinMonths ?? null);
+      // Manual dept/designation/name search is left as-is so the two compose.
+    };
+    window.addEventListener("centriq:directory-filter", handler as EventListener);
+    return () => window.removeEventListener("centriq:directory-filter", handler as EventListener);
+  }, []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#f3f6fa] dark:bg-background">
@@ -782,7 +867,7 @@ export function EmployeeDirectory() {
       <div className="shrink-0 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card px-4 sm:px-6 py-3.5 shadow-sm">
         <div className="flex flex-col gap-3">
           {/* Header Row */}
-          <div className="flex items-center justify-between sm:justify-start gap-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 sm:justify-start gap-4">
             <h1 className="text-[18px] sm:text-[20px] font-black text-[#0f2a4a] dark:text-white tracking-tight shrink-0">
               Employee Directory
             </h1>
@@ -868,6 +953,11 @@ export function EmployeeDirectory() {
                   onClick={() => {
                     setDept("");
                     setDesig("");
+                    setSkillFilter("");
+                    setMinYears(null);
+                    setCertifiedOnly(false);
+                    setProjectFilter("");
+                    setUsedWithinMonths(null);
                   }}
                   className="flex items-center justify-center rounded-xl border border-rose-200 dark:border-rose-950 bg-rose-50/50 dark:bg-rose-950/20 px-3 h-[38px] text-[13px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-100/50 transition-all cursor-pointer shadow-sm shrink-0"
                 >
@@ -876,6 +966,92 @@ export function EmployeeDirectory() {
               )}
             </div>
           </div>
+
+          {/* Active enrichment filter chips (driven by the copilot sidebar) */}
+          {enrichFilterActive && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/70">
+                Assistant filter
+              </span>
+              {skillFilter && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#1f86e0]/30 bg-[#1f86e0]/10 dark:bg-primary/15 px-2.5 py-1 text-[12px] font-bold text-[#1f86e0] dark:text-primary">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {skillFilter}
+                  <button
+                    onClick={() => setSkillFilter("")}
+                    className="ml-0.5 rounded-full hover:bg-[#1f86e0]/20 p-0.5 transition-colors"
+                    title="Remove skill filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {certifiedOnly && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[12px] font-bold text-sky-600 dark:text-sky-400">
+                  <BadgeCheck className="h-3.5 w-3.5" />
+                  Certified
+                  <button
+                    onClick={() => setCertifiedOnly(false)}
+                    className="ml-0.5 rounded-full hover:bg-sky-500/20 p-0.5 transition-colors"
+                    title="Remove certification filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {minYears !== null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
+                  <Briefcase className="h-3.5 w-3.5" />
+                  {minYears}+ yrs
+                  <button
+                    onClick={() => setMinYears(null)}
+                    className="ml-0.5 rounded-full hover:bg-emerald-500/20 p-0.5 transition-colors"
+                    title="Remove experience filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {usedWithinMonths !== null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[12px] font-bold text-violet-600 dark:text-violet-400">
+                  <Clock className="h-3.5 w-3.5" />
+                  Used ≤ {usedWithinMonths}mo
+                  <button
+                    onClick={() => setUsedWithinMonths(null)}
+                    className="ml-0.5 rounded-full hover:bg-violet-500/20 p-0.5 transition-colors"
+                    title="Remove recency filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {projectFilter && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[12px] font-bold text-amber-600 dark:text-amber-400">
+                  <FolderKanban className="h-3.5 w-3.5" />
+                  {projectFilter}
+                  <button
+                    onClick={() => setProjectFilter("")}
+                    className="ml-0.5 rounded-full hover:bg-amber-500/20 p-0.5 transition-colors"
+                    title="Remove project filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setSkillFilter("");
+                  setMinYears(null);
+                  setCertifiedOnly(false);
+                  setProjectFilter("");
+                  setUsedWithinMonths(null);
+                }}
+                className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          )}
 
           {/* Collapsible Mobile Filters Drawer */}
           {showMobileFilters && (
@@ -935,7 +1111,9 @@ export function EmployeeDirectory() {
               <p className="text-[13px] text-[#64748b] dark:text-muted-foreground mt-1">
                 {all && all.length === 0
                   ? "The directory hasn't been synced yet."
-                  : "Try a different name, department, or designation."}
+                  : enrichFilterActive
+                    ? "No one matches that skill / certification / experience / project filter. Skills & projects are only available for synced profiles — try clearing the assistant filter."
+                    : "Try a different name, department, or designation."}
               </p>
             </div>
           </div>
@@ -946,7 +1124,7 @@ export function EmployeeDirectory() {
                 {filtered.length}
               </span>{" "}
               {filtered.length === 1 ? "person" : "people"}
-              {(dept || desig) && " (filtered)"}
+              {(dept || desig || enrichFilterActive) && " (filtered)"}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {filtered.map((emp) => (

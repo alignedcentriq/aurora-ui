@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sunrise, CalendarDays, X, ChevronRight, Sparkles, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import { useAuth } from "@/lib/auth-store";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 /**
  * Morning Briefing (ARB #39).
@@ -97,15 +98,9 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
   if (dismissed || !briefing || !briefing.has_anything) return null;
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -12 }}
-        transition={{ duration: 0.5, ease: [0.19, 1, 0.22, 1] }}
-        className="w-full max-w-4xl mb-6 text-left"
-      >
-        <div className="relative rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-background/80 to-primary/[0.02] p-5 md:p-6 shadow-xl backdrop-blur-xl overflow-hidden group">
+    <Dialog open={!dismissed} onOpenChange={(open) => { if (!open) dismiss(); }}>
+      <DialogContent className="sm:max-w-2xl p-0 border-none bg-transparent shadow-none [&>button]:hidden">
+        <div className="relative w-full rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/[0.1] via-background/95 to-primary/[0.02] p-5 md:p-6 shadow-2xl backdrop-blur-xl overflow-hidden group">
           {/* Subtle background glow */}
           <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-primary/10 blur-3xl pointer-events-none group-hover:bg-primary/15 transition-all duration-500" />
           
@@ -195,7 +190,7 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
             ))}
           </div>
         </div>
-      </motion.div>
-    </AnimatePresence>
+      </DialogContent>
+    </Dialog>
   );
 }

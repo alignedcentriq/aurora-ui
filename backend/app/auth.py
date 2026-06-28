@@ -52,7 +52,8 @@ def get_current_user(
         pass
 
     role = (x_user_role or "employee").strip().lower()
-    if role not in VALID_ROLES:
+    # Super Admin can NEVER be claimed via header — only a DB override grants it.
+    if role not in VALID_ROLES or role == "super admin":
         role = "employee"
     return CurrentUser(email=email, role=role)
 

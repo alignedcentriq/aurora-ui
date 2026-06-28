@@ -247,6 +247,11 @@ export function MyRequests() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  // Date-range filter (YYYY-MM-DD inclusive) — driven by the copilot sidebar
+  // (centriq:requests-filter) and clearable from the header chip.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [rangeLabel, setRangeLabel] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
 
@@ -263,10 +268,32 @@ export function MyRequests() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  // Listen for deep-link filter events dispatched by the chat intercept
+  // Listen for filter events dispatched by the chat intercept. A status-only payload
+  // (legacy deep-link from other pages) just sets the status; a richer payload from the
+  // My Requests sidebar applies type + status + date range as one fresh filter.
   useEffect(() => {
-    const handler = (e: CustomEvent<{ status: StatusFilter }>) => {
-      if (e.detail?.status) setStatusFilter(e.detail.status);
+    const handler = (e: Event) => {
+      const detail =
+        (
+          e as CustomEvent<{
+            status?: StatusFilter;
+            type?: string;
+            dateFrom?: string;
+            dateTo?: string;
+            rangeLabel?: string;
+          }>
+        ).detail || {};
+      // Legacy: status-only payload (no `type` key) — set status alone, leave the rest.
+      if (detail.type === undefined && detail.dateFrom === undefined) {
+        if (detail.status) setStatusFilter(detail.status);
+        return;
+      }
+      // Full filter: apply every dimension wholesale so each command is a clean slate.
+      setTypeFilter(detail.type ?? "all");
+      setStatusFilter(detail.status ?? "all");
+      setDateFrom(detail.dateFrom ?? "");
+      setDateTo(detail.dateTo ?? "");
+      setRangeLabel(detail.rangeLabel ?? "");
     };
     window.addEventListener("centriq:requests-filter", handler as EventListener);
     return () => window.removeEventListener("centriq:requests-filter", handler as EventListener);
@@ -478,6 +505,12 @@ export function MyRequests() {
         }
       }
       if (!matchesStatusFilter(i.status, statusFilter)) return false;
+      if (dateFrom || dateTo) {
+        const d = (i.created_at || "").slice(0, 10);
+        if (!d) return false;
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const subjectMatch = i.subject.toLowerCase().includes(q);
@@ -487,7 +520,7 @@ export function MyRequests() {
       }
       return true;
     });
-  }, [items, typeFilter, statusFilter, searchQuery]);
+  }, [items, typeFilter, statusFilter, searchQuery, dateFrom, dateTo]);
 
   // Type counts
   const counts = {
@@ -733,6 +766,30 @@ export function MyRequests() {
         </div>
       </div>
 
+      {/* Active date-range chip (driven by the copilot sidebar) */}
+      {(dateFrom || dateTo) && (
+        <div className="flex items-center gap-2 px-4 sm:px-8 py-2.5 shrink-0 border-b border-border/30 bg-muted/5">
+          <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/70">
+            Date
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[12px] font-bold text-primary">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {rangeLabel || `${dateFrom || "…"} → ${dateTo || "…"}`}
+            <button
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+                setRangeLabel("");
+              }}
+              className="ml-0.5 rounded-full hover:bg-primary/20 p-0.5 transition-colors"
+              title="Clear date filter"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Redesigned Cards Grid List */}
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-4 sm:py-6 no-scrollbar">
         {loading ? (
@@ -833,7 +890,7 @@ export function MyRequests() {
                     </div>
 
                     {/* Right: Status, Date & Chevron */}
-                    <div className="flex items-center justify-between md:justify-end gap-5 shrink-0 border-t md:border-t-0 border-border/30 pt-3.5 md:pt-0">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:justify-end gap-5 shrink-0 border-t md:border-t-0 border-border/30 pt-3.5 md:pt-0">
                       <div className="text-left md:text-right space-y-0.5">
                         <StatusBadge
                           status={item.status}

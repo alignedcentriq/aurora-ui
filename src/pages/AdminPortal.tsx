@@ -1478,7 +1478,7 @@ function BookshelfTab({
                 ) : (
                   <div className="space-y-2">
                     {dashboard.popular_books.map((b, i) => (
-                      <div key={i} className="flex items-center justify-between">
+                      <div key={i} className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div>
                           <p className="text-[13px] font-medium text-foreground">{b.title}</p>
                           <p className="text-[11px] text-muted-foreground">{b.author}</p>
@@ -1981,7 +1981,7 @@ function BookshelfTab({
                               key={c.id}
                               className="rounded-lg border border-[var(--border)] bg-card px-3 py-2 text-[12px] min-w-[160px]"
                             >
-                              <div className="flex items-center justify-between mb-1">
+                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-1">
                                 <span className="font-semibold text-foreground">
                                   Copy #{c.copy_number}
                                 </span>
@@ -2491,7 +2491,7 @@ function ParkingDuesTab({
                 key={h.employee_email}
                 className="rounded-xl border border-[var(--border)] bg-card overflow-hidden"
               >
-                <div className="flex items-center justify-between px-4 py-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-4 py-3">
                   <button
                     onClick={() => setExpanded(open ? null : h.employee_email)}
                     className="flex items-center gap-3 text-left"

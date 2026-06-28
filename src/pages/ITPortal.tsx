@@ -81,7 +81,7 @@ export function ITPortal() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">IT Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
@@ -1184,7 +1184,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                 )}
 
                 <div>
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3">
                     <div
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-300",
@@ -1366,7 +1366,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                   key={tier}
                   className="flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-secondary/20 p-3 text-[13px]"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <span className="font-bold text-foreground">
                       {TIER_META[tier]?.label ?? tier}
                     </span>
@@ -1541,7 +1541,7 @@ function SliderField({
   const percentage = ((value - min) / (max - min)) * 100;
   return (
     <div className="flex flex-col gap-1.5 w-full">
-      <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
         <span>{label}</span>
         <span className="font-mono text-[11px] font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
           {value.toFixed(1)}

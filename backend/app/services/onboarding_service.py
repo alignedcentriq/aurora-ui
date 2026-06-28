@@ -38,9 +38,8 @@ _UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
 _DOCS_DIR = os.path.join(_UPLOADS_DIR, "onboarding_docs")
 _TEMPLATES_DIR = os.path.join(_UPLOADS_DIR, "onboarding_templates")
 
-# Chapters for the induction video — seek points the in-app player exposes. Static for now
-# (the video itself is config-driven, INDUCTION_VIDEO_URL); easy to make admin-editable later.
-INDUCTION_CHAPTERS: tuple[dict, ...] = (
+# Default chapters used for the primary induction video.
+_DEFAULT_CHAPTERS: tuple[dict, ...] = (
     {"title": "Welcome", "start": 0},
     {"title": "Who we are", "start": 45},
     {"title": "How we work", "start": 120},
@@ -412,13 +411,41 @@ def get_journey_for(email: str):
     return db, emp, journey
 
 
-def induction_video() -> dict:
-    """Config-driven induction video + static chapters for the in-app player."""
-    return {
-        "title": settings.INDUCTION_VIDEO_TITLE,
-        "url": settings.INDUCTION_VIDEO_URL,
-        "chapters": [dict(c) for c in INDUCTION_CHAPTERS],
-    }
+def induction_videos() -> list[dict]:
+    """Return all induction videos available for new hires.
+
+    The primary video comes from INDUCTION_VIDEO_URL / INDUCTION_VIDEO_TITLE settings.
+    Additional videos can be supplied via INDUCTION_EXTRA_VIDEOS_JSON — a JSON array where
+    each object has: title (str), url (str), description? (str), chapters? (list).
+    """
+    videos: list[dict] = []
+
+    if settings.INDUCTION_VIDEO_URL:
+        videos.append({
+            "id": "primary",
+            "title": settings.INDUCTION_VIDEO_TITLE or "Welcome to the team",
+            "description": "Company-wide welcome and orientation for all new joiners.",
+            "url": settings.INDUCTION_VIDEO_URL,
+            "chapters": [dict(c) for c in _DEFAULT_CHAPTERS],
+        })
+
+    extras_raw = getattr(settings, "INDUCTION_EXTRA_VIDEOS_JSON", "") or ""
+    if extras_raw:
+        import json as _json
+        try:
+            for v in _json.loads(extras_raw):
+                if v.get("url") and v.get("title"):
+                    videos.append({
+                        "id": v.get("id", v["title"].lower().replace(" ", "_")),
+                        "title": v["title"],
+                        "description": v.get("description", ""),
+                        "url": v["url"],
+                        "chapters": v.get("chapters", []),
+                    })
+        except Exception:
+            pass
+
+    return videos
 
 
 # ── HR roll-up ───────────────────────────────────────────────────────────────────

@@ -130,7 +130,7 @@ export function FeedbackTriageTab() {
       <div className="space-y-3 p-1">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="rounded-xl border border-border bg-card p-4 space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <Skeleton className="h-4 w-64" />
               <Skeleton className="h-5 w-16 rounded-full" />
             </div>
@@ -148,7 +148,7 @@ export function FeedbackTriageTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">
             Failure clusters awaiting triage

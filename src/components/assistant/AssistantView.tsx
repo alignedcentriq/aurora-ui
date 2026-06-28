@@ -61,6 +61,7 @@ import { SparklesCore } from "@/components/ui/sparkles";
 import { CitationsCard } from "@/components/assistant/CitationsCard";
 import { MorningBriefing } from "@/components/assistant/MorningBriefing";
 import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
+import { getPortalCopilot } from "@/lib/portal-copilot";
 
 import type { Turn, DynamicFormField } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
@@ -160,6 +161,262 @@ function detectBookIntent(text: string): { path: string; label: string; reply: s
   return null;
 }
 
+// ── Directory filter parsing ─────────────────────────────────────────────────
+// When the copilot sidebar is open on the Employee Directory, a filter-style query
+// ("resources with 5+ years in React") drives the visible grid instead of going to
+// the backend. Deterministic, zero-LLM, strictly scoped to /directory by the caller.
+export interface DirectoryFilter {
+  skill?: string;
+  minYears?: number;
+  certified?: boolean;
+  project?: string;
+  usedWithinMonths?: number;
+}
+
+const _DIR_STOPWORDS =
+  /^(the|a|an|of|in|with|on|and|or|more|than|over|at|least|min|years?|yrs?|experience|expertise|skills?|project|certified|certification|certificate|last|past|within|months?|weeks?|days?|recently|developers?|engineers?|experts?)$/i;
+
+function parseDirectoryFilter(text: string): DirectoryFilter | null {
+  const t = text.trim();
+  const lower = t.toLowerCase();
+
+  // Must read as a search/filter intent, so plain questions ("who is the CTO?",
+  // "what does the directory show?") still fall through to the backend agent.
+  const isFilterIntent =
+    /\b(filter|show|find|list|search|who|which|people|resources?|employees?|colleagues?|developers?|engineers?|experts?|certified|certification|worked?|used?|using|with|having|have)\b/i.test(
+      lower,
+    );
+  if (!isFilterIntent) return null;
+
+  // Certification: "certified in React", "who has a React certificate".
+  const certified = /\bcertif(?:ied|ication|icate)\b/i.test(lower) || undefined;
+
+  // Recency on last-used: "used X in the last 2 months", "past 6 weeks", "within 1 year".
+  let usedWithinMonths: number | undefined;
+  const recM = lower.match(
+    /\b(?:last|past|within|in\s+the\s+last|over\s+the\s+last)\s+(\d+)\s*(year|years|month|months|week|weeks|day|days)\b/,
+  );
+  if (recM) {
+    const n = parseInt(recM[1], 10);
+    const unit = recM[2];
+    usedWithinMonths = unit.startsWith("year")
+      ? n * 12
+      : unit.startsWith("week")
+        ? Math.max(1, Math.round(n / 4.345))
+        : unit.startsWith("day")
+          ? Math.max(1, Math.round(n / 30))
+          : n;
+  }
+
+  // Project: "worked on <X>", "on the <X> project", "project <X>". A placeholder like
+  // "a particular project" yields no concrete name and is ignored (falls through to backend).
+  let project: string | undefined;
+  const projM =
+    t.match(
+      /\b(?:worked|work(?:ing)?)\s+on\s+(?:the\s+)?(?:project\s+)?["“']?([A-Za-z0-9][\w .&/-]{1,40}?)["”']?(?:\s+project)?\s*[?.!]*$/i,
+    ) ||
+    t.match(/\bproject\s+(?:called\s+|named\s+|titled\s+)?["“']?([A-Za-z0-9][\w .&/-]{1,40}?)["”']?\s*[?.!]*$/i);
+  if (projM) {
+    const cand = projM[1].trim().replace(/\s+project$/i, "").trim();
+    if (
+      cand.length >= 2 &&
+      !/^(a|an|the|any|some|this|that|particular|certain|specific|which|what|various)$/i.test(cand)
+    ) {
+      project = cand;
+    }
+  }
+
+  // Minimum years of experience: "more than 5 years", "5+ years", "at least 3 yrs".
+  // Guarded so a recency phrase ("last 2 years") is not misread as a minimum.
+  let minYears: number | undefined;
+  const yearsM = lower.match(
+    /(?:more than|over|at least|minimum|min|greater than|>=?|above)?\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
+  );
+  if (yearsM && !/\b(?:last|past|within)\s+\d+\s*(?:years?|yrs?)/.test(lower)) {
+    minYears = parseFloat(yearsM[1]);
+  }
+
+  // Skill / technology: "experience in React", "certified in AWS", "used Python",
+  // "knows SAP", "React developers", "with Node".
+  let skill: string | undefined;
+  const skillM =
+    t.match(
+      /\b(?:experience|expertise|skill(?:s|ed)?|proficien\w*|knowledge|hands?[- ]on|certified|certification)\s+(?:in|with|on|of)\s+([A-Za-z][A-Za-z0-9+.#/]*(?:\s[A-Za-z][A-Za-z0-9+.#/]*)?)/i,
+    ) ||
+    t.match(/\b(?:used|using|use|worked\s+with)\s+([A-Za-z][A-Za-z0-9+.#]{1,24})\b/i) ||
+    t.match(/\b([A-Za-z][A-Za-z0-9+.#]{1,24})\s+(?:developers?|engineers?|experts?|specialists?)\b/i) ||
+    t.match(/\b(?:know|knows|knowing|in|with|on)\s+([A-Za-z][A-Za-z0-9+.#]{1,24})\b\s*[?.!]*\s*$/i);
+  if (skillM) {
+    skill = skillM[1]
+      .trim()
+      .replace(/\s+(?:years?|yrs?|experience|skills?|expertise|developers?|engineers?|project)$/i, "")
+      .trim();
+    if (_DIR_STOPWORDS.test(skill)) skill = undefined;
+  }
+
+  // Don't double-capture a project name's trailing word as a skill.
+  if (project && skill && project.toLowerCase().includes(skill.toLowerCase())) skill = undefined;
+
+  // Only act when we actually parsed a filterable dimension.
+  if (!skill && minYears === undefined && !certified && !project && usedWithinMonths === undefined)
+    return null;
+  return { skill, minYears, certified, project, usedWithinMonths };
+}
+
+// ── My Requests filter parsing ───────────────────────────────────────────────
+// When the copilot sidebar is open on the My Requests page, a query like "find all my
+// leave records from June" drives the requests list (type + status + date range) instead
+// of going to the backend. Deterministic, zero-LLM, strictly scoped to /my-requests.
+export interface RequestsFilter {
+  type: string; // RequestType key (e.g. "leave") or "all"
+  status: "all" | "open" | "closed" | "in-progress";
+  dateFrom?: string; // YYYY-MM-DD inclusive
+  dateTo?: string; // YYYY-MM-DD inclusive
+  rangeLabel?: string; // human label for the date chip, e.g. "June 2026"
+}
+
+const _MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+const _MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Request-type synonyms, ordered so the more specific phrase wins (travel expense before
+// travel request before expense; leave before the rest).
+const _REQUEST_TYPE_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(leaves?|time[- ]?off|vacations?|pto|days?\s?off|holidays?)\b/i, "leave"],
+  [/\btravel\s+(?:expenses?|claims?|reimbursements?)\b/i, "travel_expense"],
+  [/\b(?:travel\s+requests?|business\s+travel|trips?|travel)\b/i, "travel_request"],
+  [/\b(?:reimbursements?|expense\s+claims?|expenses?|claims?)\b/i, "expense"],
+  [/\b(?:udemy|courses?|licen[sc]es?|trainings?)\b/i, "udemy"],
+  [/\b(?:facilit(?:y|ies)|maintenance|repairs?|complaints?)\b/i, "facility"],
+  [/\bparking\b/i, "parking"],
+  [/\b(?:hr\s+quer(?:y|ies)|quer(?:y|ies)|questions?)\b/i, "query"],
+  [/\bescalations?\b/i, "escalation"],
+  [/\bgrievances?\b/i, "grievance"],
+  [/\b(?:documents?|letters?|certificates?|noc|relieving|payslips?)\b/i, "document"],
+  [/\b(?:forms?|submissions?)\b/i, "form"],
+];
+
+function parseRequestsFilter(text: string): RequestsFilter | null {
+  const t = text.trim();
+
+  // Pure action intents (apply / submit / cancel a NEW request) belong to the backend,
+  // not the list filter — unless clearly a view/lookup phrasing.
+  const isViewIntent =
+    /\b(find|show|see|view|list|filter|display|pull\s+up|get|how\s+many|count|all|my|track|history|records?|status)\b/i.test(
+      t,
+    );
+  const isActionIntent = /\b(apply|submit|file|raise|create|new|cancel|withdraw|book|reserve)\b/i.test(t);
+  if (isActionIntent && !/\b(show|find|list|view|filter|see|display|records?|history|status|all\s+my)\b/i.test(t))
+    return null;
+
+  // Request type
+  let type = "all";
+  for (const [re, key] of _REQUEST_TYPE_PATTERNS) {
+    if (re.test(t)) {
+      type = key;
+      break;
+    }
+  }
+
+  // Status
+  let status: RequestsFilter["status"] = "all";
+  if (/\b(pending|open|waiting|submitted|awaiting|unresolved|not\s+yet)\b/i.test(t)) status = "open";
+  else if (/\b(approved|done|completed|resolved|closed|finished|processed|cancelled|rejected)\b/i.test(t))
+    status = "closed";
+  else if (/\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(t))
+    status = "in-progress";
+
+  // Date range — "this month", "last month", "June", "June 2026", "in 2025".
+  let dateFrom: string | undefined;
+  let dateTo: string | undefined;
+  let rangeLabel: string | undefined;
+  const monthRange = (year: number, monthIdx: number) => {
+    const mm = String(monthIdx + 1).padStart(2, "0");
+    const lastDay = new Date(year, monthIdx + 1, 0).getDate();
+    dateFrom = `${year}-${mm}-01`;
+    dateTo = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
+    rangeLabel = `${_MONTH_NAMES[monthIdx]} ${year}`;
+  };
+  const now = new Date();
+  if (/\bthis\s+month\b/i.test(t)) {
+    monthRange(now.getFullYear(), now.getMonth());
+  } else if (/\blast\s+month\b/i.test(t)) {
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    monthRange(d.getFullYear(), d.getMonth());
+  } else {
+    const monthM = t.match(
+      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i,
+    );
+    const yearM = t.match(/\b(20\d{2})\b/);
+    if (monthM) {
+      const monthIdx = _MONTHS[monthM[1].toLowerCase().slice(0, 3)];
+      // Infer year: explicit if given, else current year — or last year if the month is still
+      // ahead of us this year (records are historical, so a future month means last year).
+      const year = yearM
+        ? parseInt(yearM[1], 10)
+        : monthIdx > now.getMonth()
+          ? now.getFullYear() - 1
+          : now.getFullYear();
+      monthRange(year, monthIdx);
+    } else if (yearM) {
+      const y = parseInt(yearM[1], 10);
+      dateFrom = `${y}-01-01`;
+      dateTo = `${y}-12-31`;
+      rangeLabel = `${y}`;
+    }
+  }
+
+  // Require at least one concrete dimension, and a view-style phrasing.
+  if (type === "all" && status === "all" && !dateFrom && !isViewIntent) return null;
+  if (type === "all" && status === "all" && !dateFrom) return null;
+
+  return { type, status, dateFrom, dateTo, rangeLabel };
+}
+
+// ── Access Management filter parsing ─────────────────────────────────────────
+// When the copilot sidebar is open on the Access Management tab, a role-filter query
+// ("who has super admin access") drives the users list instead of going to the backend.
+// Deterministic, zero-LLM, strictly scoped to /control-hub/role-control by the caller.
+export interface AccessFilter {
+  panel: "users" | "roles";
+  role?: string; // normalised role slug to filter users by, e.g. "super admin"
+}
+
+// Fallback used only before the live roles list loads.
+const _FALLBACK_ROLES = ["super admin", "admin", "hr", "it", "pmo", "functional manager", "employee"];
+
+function parseAccessFilter(text: string, roles: string[]): AccessFilter | null {
+  const lower = text.trim().toLowerCase();
+
+  // Match against the live roles list (slugs and names, longest first to avoid
+  // "admin" matching before "super admin").
+  const sorted = [...roles].sort((a, b) => b.length - a.length);
+  const matchedRole = sorted.find((r) => lower.includes(r.toLowerCase()));
+  if (!matchedRole) return null;
+
+  // Capability/portal questions → navigate to Roles tab and select the role.
+  // The role's capability matrix is already shown there; no need to hit the LLM.
+  const isCapabilityQuestion =
+    /\b(what|which)\b.{0,60}\b(portal|capabilit|feature|permission|can|do|have|access)\b/i.test(lower) ||
+    /\b(portal|capabilit|feature|permission)\b.{0,40}\b(hr|it|pmo|admin|employee|manager|role)\b/i.test(lower) ||
+    /\b(can|does|do)\b.{0,20}\b(role|access|see|use|do)\b/i.test(lower);
+  if (isCapabilityQuestion) return { panel: "roles", role: matchedRole };
+
+  // Explicit people-listing queries → filter Users tab.
+  const isUserLookup =
+    /\bwho\s+(has|have|is|are)\b/i.test(lower) ||
+    /\b(list|show|find|filter)\b.{0,30}\b(users?|people|members?|employees?)\b/i.test(lower) ||
+    /\b(users?|people|members?|employees?)\b.{0,20}\b(with|having|assigned)\b/i.test(lower);
+  if (isUserLookup) return { panel: "users", role: matchedRole };
+
+  return null;
+}
+
 // ── Role-gate definitions ────────────────────────────────────────────────────
 // Checked before any intercept fires. If the user's role isn't in `allowed`,
 // the assistant returns a friendly denial instead of routing to the LLM.
@@ -205,9 +462,9 @@ const DOC_GEN_RE =
 
 // ── My-requests navigation ────────────────────────────────────────────────────
 const MY_REQUESTS_VIEW_RE =
-  /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leaves?|leave\s+(?:requests?|status|history)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
+  /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leave\s+(?:requests?|history|applications?)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
 
-export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
+export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?: boolean; portalContext?: string }) {
   const {
     threads,
     activeId,
@@ -258,6 +515,10 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
   const [promptToSave, setPromptToSave] = useState("");
   const [promptLabel, setPromptLabel] = useState("");
   const [promptCategory, setPromptCategory] = useState<"it" | "admin" | "hr">("it");
+
+  // Live role slugs for the Access Management intercept — fetched once when the
+  // user opens the access management portal context so custom roles are included.
+  const [accessRoles, setAccessRoles] = useState<string[]>(_FALLBACK_ROLES);
 
   const handleOpenSavePrompt = (text: string) => {
     setPromptToSave(text);
@@ -312,6 +573,26 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
       })
       .catch(() => {});
   }, [user?.email, user?.role]);
+
+  // Fetch live roles when the copilot opens on the Access Management page so
+  // custom roles created through the UI are recognised by parseAccessFilter.
+  useEffect(() => {
+    if (portalContext !== "/control-hub/role-control" || !user?.email) return;
+    fetch("/api/access/roles", {
+      headers: { "x-user-email": user.email, "x-user-role": user.role ?? "super admin" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: Array<{ slug: string; name: string }> | null) => {
+        if (Array.isArray(data) && data.length > 0) {
+          // Include both slug ("super admin") and name ("Super Admin") so either matches.
+          const roleStrings = data.flatMap((r) =>
+            r.slug === r.name.toLowerCase() ? [r.slug] : [r.slug, r.name.toLowerCase()],
+          );
+          setAccessRoles(roleStrings);
+        }
+      })
+      .catch(() => {});
+  }, [portalContext, user?.email, user?.role]);
 
   // Open a form from the announcement banner image click.
   useEffect(() => {
@@ -598,13 +879,107 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
         return;
       }
 
+      // ── Portal-scoped intercept: Employee Directory filter ────────────────────
+      // When the copilot sidebar is open on /directory, a filter-style query drives the
+      // visible grid via a CustomEvent (same pattern as My Requests) — deterministic and
+      // instant, no backend round-trip. Strictly scoped to /directory so it can't hijack
+      // other portals. Non-filter queries fall through to the backend agent below.
+      if (!activeMode && portalContext === "/directory") {
+        const dirFilter = parseDirectoryFilter(text);
+        if (dirFilter) {
+          addTurn(activeId, { role: "user", text });
+          const parts = [
+            dirFilter.certified && dirFilter.skill
+              ? `**${dirFilter.skill}**-certified`
+              : dirFilter.skill
+                ? `**${dirFilter.skill}**`
+                : dirFilter.certified
+                  ? "certified"
+                  : null,
+            dirFilter.minYears !== undefined ? `${dirFilter.minYears}+ years' experience` : null,
+            dirFilter.usedWithinMonths !== undefined
+              ? `used in the last ${dirFilter.usedWithinMonths} month${dirFilter.usedWithinMonths === 1 ? "" : "s"}`
+              : null,
+            dirFilter.project ? `project **${dirFilter.project}**` : null,
+          ].filter(Boolean);
+          addTurn(activeId, {
+            role: "ai",
+            text: `Filtering the directory${parts.length ? ` by ${parts.join(" · ")}` : ""}. Tweak or clear the filters from the directory header anytime.`,
+          });
+          setInput("");
+          window.dispatchEvent(
+            new CustomEvent("centriq:directory-filter", { detail: dirFilter }),
+          );
+          return;
+        }
+      }
+
+      // ── Portal-scoped intercept: My Requests filter ───────────────────────────
+      // When the copilot sidebar is open on /my-requests, a filter/lookup query drives the
+      // requests list (type · status · date range) via a CustomEvent — deterministic, instant.
+      // Non-filter queries fall through to the backend agent below.
+      if (!activeMode && portalContext === "/my-requests") {
+        const reqFilter = parseRequestsFilter(text);
+        if (reqFilter) {
+          addTurn(activeId, { role: "user", text });
+          const typeLabel: Record<string, string> = {
+            all: "all requests",
+            leave: "leave requests",
+            travel_request: "travel requests",
+            travel_expense: "travel expenses",
+            expense: "expense claims",
+            udemy: "Udemy licenses",
+            facility: "facility issues",
+            parking: "parking permits",
+            query: "HR queries",
+            escalation: "escalations",
+            grievance: "grievances",
+            document: "documents",
+            form: "form submissions",
+          };
+          const parts = [
+            typeLabel[reqFilter.type] ?? reqFilter.type,
+            reqFilter.status !== "all" ? reqFilter.status.replace("-", " ") : null,
+            reqFilter.rangeLabel ? `in ${reqFilter.rangeLabel}` : null,
+          ].filter(Boolean);
+          addTurn(activeId, {
+            role: "ai",
+            text: `Filtering your ${parts.join(" · ")}. Adjust or clear the filters from the page header anytime.`,
+          });
+          setInput("");
+          window.dispatchEvent(
+            new CustomEvent("centriq:requests-filter", { detail: reqFilter }),
+          );
+          return;
+        }
+      }
+
+      // ── Portal-scoped intercept: Access Management navigation ────────────────────
+      // Capability questions → select the role in the Roles tab (matrix already shown there).
+      // User-listing questions → filter the Users tab by role.
+      // No backend round-trip needed for either.
+      if (!activeMode && portalContext === "/control-hub/role-control") {
+        const accessFilter = parseAccessFilter(text, accessRoles);
+        if (accessFilter) {
+          addTurn(activeId, { role: "user", text });
+          const aiText = accessFilter.panel === "roles"
+            ? `Opening the **${accessFilter.role}** role in the Roles tab — its portals, modes, and features are shown there.`
+            : `Filtering the Users list to show users with the **${accessFilter.role ?? "selected"}** role. Click the filter chip to clear it.`;
+          addTurn(activeId, { role: "ai", text: aiText });
+          setInput("");
+          window.dispatchEvent(
+            new CustomEvent("centriq:access-filter", { detail: accessFilter }),
+          );
+          return;
+        }
+      }
+
       // ── Local heuristic routing (doc-gen, forms, leave, travel, URL/form library…) ──
-      // Skipped entirely while a focus mode is active. A mode means the user has told us
-      // exactly what they're doing, so every message goes straight to the backend agent
-      // (tagged with active_mode, which pins the mode's domain). This is what keeps a mode
-      // focused and fast — and stops local intent guesses from hijacking it (e.g. "find a
-      // React dev" in Resource Finder opening the form editor).
-      if (!activeMode) {
+      // Skipped entirely while a focus mode is active, OR when the copilot sidebar is open
+      // inside a specific portal (portalContext set). In both cases the user is working within
+      // a scoped context, so every message goes straight to the backend — generic interceptors
+      // like "years of experience" or "skills" must not hijack portal-specific queries.
+      if (!activeMode && !portalContext) {
       // ── Document generation navigation ─────────────────────────────────────
       const isDocGen =
         (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
@@ -1362,6 +1737,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           preferences: {},
           is_private: false,
           active_mode: activeMode ?? undefined,
+          portal_context: portalContext
+            ? { page: portalContext.replace(/^\//, "").replace(/-/g, "_") || "home", active_filters: {} }
+            : undefined,
         }),
       })
         .then(async (res) => {
@@ -1532,7 +1910,7 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           stoppedRef.current.delete(threadId);
         });
     },
-    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role, activeMode],
+    [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role, activeMode, portalContext],
   );
 
   // Stop the in-flight response for the active chat.
@@ -1801,33 +2179,74 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
           >
             {activeThread.turns.length === 0 ? (
               isCopilot ? (
-                /* ──── Simplified Copilot Empty State ──── */
-                <motion.section
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.5 }}
-                  className="flex w-full flex-col items-center justify-center text-center max-w-md mx-auto relative py-12 px-4 select-none"
-                >
-                  <motion.div
-                    className="relative shrink-0 flex items-center justify-center mb-6"
-                    animate={{ y: [0, -6, 0] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                  >
-                    <Logo size="lg" />
-                    <motion.div
-                      className="absolute -inset-2 rounded-2xl opacity-40 blur-md pointer-events-none bg-gradient-to-r from-primary to-[#00c4bb]"
-                      animate={{ opacity: [0.3, 0.6, 0.3] }}
-                      transition={{ duration: 2, repeat: Infinity }}
-                    />
-                  </motion.div>
-                  <h2 className="text-base font-bold tracking-tight mb-2 text-foreground">
-                    How can I help you today?
-                  </h2>
-                  <p className="text-xs text-muted-foreground max-w-xs leading-relaxed">
-                    Ask me questions about this page, operational data, or request workspace
-                    actions.
-                  </p>
-                </motion.section>
+                /* ──── Portal-themed Copilot Empty State ──── */
+                (() => {
+                  const portal = getPortalCopilot(portalContext);
+                  const PortalIcon = portal.Icon;
+                  // Starters: portal-specific in a focus mode use the mode's; else the portal's.
+                  const chips = activeMode ? CHAT_MODES[activeMode].starters : portal.starters;
+                  return (
+                    <motion.section
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.5 }}
+                      className="flex w-full flex-col items-center justify-center text-center max-w-md mx-auto relative py-10 px-4 select-none"
+                    >
+                      <motion.div
+                        className="relative shrink-0 flex items-center justify-center mb-5"
+                        animate={{ y: [0, -6, 0] }}
+                        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                      >
+                        <div
+                          className="flex h-14 w-14 items-center justify-center rounded-2xl border"
+                          style={{
+                            background: `color-mix(in oklab, ${portal.accent} 12%, var(--background))`,
+                            borderColor: `color-mix(in oklab, ${portal.accent} 30%, transparent)`,
+                          }}
+                        >
+                          <PortalIcon className="h-7 w-7" style={{ color: portal.accent }} />
+                        </div>
+                        <motion.div
+                          className="absolute -inset-2 rounded-2xl opacity-40 blur-md pointer-events-none"
+                          style={{ background: portal.accent }}
+                          animate={{ opacity: [0.18, 0.4, 0.18] }}
+                          transition={{ duration: 2, repeat: Infinity }}
+                        />
+                      </motion.div>
+                      <h2 className="text-base font-bold tracking-tight mb-2 text-foreground">
+                        {activeMode ? CHAT_MODES[activeMode].label : portal.heading}
+                      </h2>
+                      <p className="text-xs text-muted-foreground max-w-xs leading-relaxed mb-5">
+                        {activeMode ? CHAT_MODES[activeMode].description : portal.tagline}
+                      </p>
+
+                      {chips.length > 0 && (
+                        <div className="flex flex-col gap-2 w-full max-w-xs">
+                          {chips.map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => !busy && send(s)}
+                              className="group flex items-center gap-2.5 rounded-xl border bg-card/70 backdrop-blur-sm px-3.5 py-2.5 text-left text-[12.5px] font-medium text-muted-foreground shadow-sm transition-all hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              style={{
+                                borderColor: `color-mix(in oklab, ${portal.accent} 22%, var(--border))`,
+                              }}
+                            >
+                              <span
+                                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                                style={{
+                                  background: `color-mix(in oklab, ${portal.accent} 14%, transparent)`,
+                                }}
+                              >
+                                <Sparkles className="h-2.5 w-2.5" style={{ color: portal.accent }} />
+                              </span>
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </motion.section>
+                  );
+                })()
               ) : (
                 /* ──── Empty State ──── */
                 <motion.section
@@ -2472,6 +2891,9 @@ export function AssistantView({ isCopilot = false }: { isCopilot?: boolean }) {
               onGenerateDoc={activeThread.turns.length > 0 ? openDocModal : undefined}
               suggestions={suggestions}
               onSuggestionSelect={(t) => !busy && send(t)}
+              placeholders={portalContext ? getPortalCopilot(portalContext).placeholders : undefined}
+              hideAttach={isCopilot}
+              hideSlash={isCopilot}
             />
           </div>
         </motion.footer>

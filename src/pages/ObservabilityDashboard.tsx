@@ -220,7 +220,7 @@ export function ObservabilityDashboard() {
     <div className="flex h-full flex-col overflow-y-auto bg-background">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10">
               <Activity className="h-5 w-5 text-indigo-400" />
@@ -769,7 +769,7 @@ function ChartsTab() {
   return (
     <div className="space-y-6">
       {/* Period selector */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
           {["24h", "7d", "30d"].map((p) => (
             <button

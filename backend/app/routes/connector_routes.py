@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from app.auth import CurrentUser, require_admin, require_super_admin, get_current_user
 from app.database import SessionLocal
 from app.models import (
-    Connector, ConnectorAuth, ConnectorOperation, ConnectorCallLog,
+    Connector, ConnectorAuth, ConnectorOperation, ConnectorCallLog, ConnectorScope,
 )
 from app.connectors.registry import ConnectorRegistry, invalidate
 from app.connectors.executor import execute_operation
@@ -62,6 +62,14 @@ class OperationUpdate(BaseModel):
 
 class TestOpPayload(BaseModel):
     args: dict = {}
+
+
+class ScopePayload(BaseModel):
+    """Connector-level access rules. Empty across all fields = Global (everyone)."""
+    roles: list[str] = []         # e.g. ["hr", "manager"] — matched case-insensitively
+    departments: list[str] = []   # e.g. ["Engineering"]
+    persona_ids: list[int] = []   # persona / group ids
+    user_emails: list[str] = []   # grant to specific people, e.g. ["jane@corp.com"]
 
 
 class InvokePayload(BaseModel):
@@ -251,6 +259,94 @@ async def set_auth(
         db.commit()
     invalidate_auth_cache(connector_id)
     return {"ok": True}
+
+
+# ── Access scopes (who can use the connector) ─────────────────────────────────
+
+@router.get("/{connector_id}/scopes")
+async def get_scopes(connector_id: int, user: CurrentUser = Depends(require_admin)):
+    """Return the connector-level access rules. mode='global' means everyone."""
+    with SessionLocal() as db:
+        rows = db.query(ConnectorScope).filter(
+            ConnectorScope.connector_id == connector_id,
+            ConnectorScope.operation_id.is_(None),
+        ).all()
+    roles = sorted({r.role for r in rows if r.role})
+    departments = sorted({r.department for r in rows if r.department})
+    persona_ids = sorted({r.persona_id for r in rows if r.persona_id})
+    user_emails = sorted({r.user_email for r in rows if r.user_email})
+    return {
+        "mode": "restricted" if rows else "global",
+        "roles": roles,
+        "departments": departments,
+        "persona_ids": persona_ids,
+        "user_emails": user_emails,
+    }
+
+
+@router.put("/{connector_id}/scopes")
+async def set_scopes(
+    connector_id: int,
+    payload: ScopePayload,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    """Replace the connector-level access rules.
+
+    Passing no roles/departments/persona_ids makes the connector Global (visible to
+    everyone) — we simply clear all connector-level scope rows. Otherwise a user must
+    match at least one rule (role OR department OR persona) to see the connector's ops.
+    """
+    with SessionLocal() as db:
+        conn = db.query(Connector).filter(Connector.id == connector_id).first()
+        if not conn:
+            raise HTTPException(404, "Connector not found")
+        # Wipe existing connector-level scopes (operation_id IS NULL), then re-add.
+        db.query(ConnectorScope).filter(
+            ConnectorScope.connector_id == connector_id,
+            ConnectorScope.operation_id.is_(None),
+        ).delete(synchronize_session=False)
+        for r in payload.roles:
+            r = (r or "").strip().lower()
+            if r:
+                db.add(ConnectorScope(connector_id=connector_id, role=r))
+        for d in payload.departments:
+            d = (d or "").strip()
+            if d:
+                db.add(ConnectorScope(connector_id=connector_id, department=d))
+        for pid in payload.persona_ids:
+            if pid:
+                db.add(ConnectorScope(connector_id=connector_id, persona_id=pid))
+        for em in payload.user_emails:
+            em = (em or "").strip().lower()
+            if em:
+                db.add(ConnectorScope(connector_id=connector_id, user_email=em))
+        db.commit()
+    await invalidate()
+    restricted = bool(payload.roles or payload.departments or payload.persona_ids or payload.user_emails)
+    return {"ok": True, "mode": "restricted" if restricted else "global"}
+
+
+@router.get("/users/search")
+async def search_users(q: str = "", user: CurrentUser = Depends(require_admin)):
+    """Search employees by name or email for the Access "specific user" picker."""
+    from sqlalchemy import or_
+    from app.models import Employee
+
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    with SessionLocal() as db:
+        rows = (
+            db.query(Employee.name, Employee.email)
+            .filter(
+                Employee.email.isnot(None),
+                or_(Employee.name.ilike(f"%{q}%"), Employee.email.ilike(f"%{q}%")),
+            )
+            .order_by(Employee.name)
+            .limit(15)
+            .all()
+        )
+    return [{"name": r.name or r.email, "email": r.email} for r in rows if r.email]
 
 
 # ── Operation management ──────────────────────────────────────────────────────

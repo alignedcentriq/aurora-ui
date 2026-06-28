@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GraduationCap,
   BookOpen,
@@ -28,11 +28,40 @@ import {
   Search,
   Info,
   ListChecks,
+  ExternalLink,
+  FileText,
+  Link2,
+  Video,
+  Upload,
+  Wand2,
+  ArrowRight,
+  ArrowLeft,
+  PlayCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
 type Tab = "trainings" | "assignments" | "groups" | "mine";
+
+interface ContentItem {
+  id: number;
+  training_id: number;
+  level_id: number | null;
+  kind: "document" | "link" | "udemy" | "video";
+  title: string;
+  url?: string | null;
+  description?: string | null;
+  file_name?: string | null;
+}
+
+interface TrainingLevel {
+  id: number;
+  name: string;
+  duration_minutes?: number;
+  pass_percentage?: number;
+  description?: string;
+  content?: ContentItem[];
+}
 
 interface Training {
   id: number;
@@ -43,7 +72,17 @@ interface Training {
   duration_minutes: number;
   pass_percentage: number;
   skill_tags: string[];
-  levels: { id: number; name: string }[];
+  content_count?: number;
+  levels: TrainingLevel[];
+}
+
+interface DraftQuestion {
+  question: string;
+  options: Record<string, string>;
+  correct_answer: string;
+  marks: number;
+  explanation?: string | null;
+  level_id?: number | null;
 }
 
 interface Assignment {
@@ -58,6 +97,7 @@ interface Assignment {
   score?: number | null;
   due_date?: string | null;
   skill_tags: string[];
+  has_questions?: boolean;
 }
 
 interface Question {
@@ -85,6 +125,7 @@ export function TechElevateLocalPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("trainings");
   const [canManage, setCanManage] = useState(false);
+  const [portalUrl, setPortalUrl] = useState<string>("");
 
   const authHeaders = useMemo(
     () => ({
@@ -98,7 +139,10 @@ export function TechElevateLocalPortal() {
   useEffect(() => {
     fetch("/api/portal/te-local/status", { headers: authHeaders })
       .then((r) => r.json())
-      .then((s) => setCanManage(!!s.can_manage))
+      .then((s) => {
+        setCanManage(!!s.can_manage);
+        setPortalUrl(s.portal_url || "");
+      })
       .catch(() => setCanManage(false));
   }, [authHeaders]);
 
@@ -145,13 +189,27 @@ export function TechElevateLocalPortal() {
           </div>
         </div>
 
-        {/* User Role Indicator inside Portal */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xs text-xs font-semibold text-slate-700 dark:text-zinc-300 shadow-xs">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
-          Role:{" "}
-          <span className="text-indigo-600 dark:text-indigo-400 font-bold capitalize">
-            {user?.role || "Employee"}
-          </span>
+        <div className="flex items-center gap-2">
+          {portalUrl && (
+            <a
+              href={portalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Take exams on the real TechElevate portal"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/25 transition-all duration-200 hover:scale-[1.02] active:scale-95"
+            >
+              <ExternalLink className="w-3.5 h-3.5" /> Open TechElevate
+            </a>
+          )}
+
+          {/* User Role Indicator inside Portal */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-xs text-xs font-semibold text-slate-700 dark:text-zinc-300 shadow-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+            Role:{" "}
+            <span className="text-indigo-600 dark:text-indigo-400 font-bold capitalize">
+              {user?.role || "Employee"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -206,7 +264,7 @@ export function TechElevateLocalPortal() {
             )}
             {tab === "assignments" && canManage && <AssignmentsTab authHeaders={authHeaders} />}
             {tab === "groups" && canManage && <GroupsTab authHeaders={authHeaders} />}
-            {tab === "mine" && <MyLearningTab authHeaders={authHeaders} />}
+            {tab === "mine" && <MyLearningTab authHeaders={authHeaders} portalUrl={portalUrl} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -368,7 +426,7 @@ function TrainingsTab({
                 </div>
               )}
 
-              <div className="flex items-center justify-between border-t border-slate-100 dark:border-zinc-800/60 pt-3 mt-auto text-[10px] font-bold text-slate-400 dark:text-zinc-500">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-slate-100 dark:border-zinc-800/60 pt-3 mt-auto text-[10px] font-bold text-slate-400 dark:text-zinc-500">
                 <span
                   className={cn(
                     "px-2 py-0.5 rounded-full uppercase tracking-wider text-[9px]",
@@ -435,8 +493,9 @@ function TrainingDetailModal({
   const [questions, setQuestions] = useState<any[]>([]);
   const [enrollments, setEnrollments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"about" | "questions" | "enrolled">("about");
-  const [adding, setAdding] = useState(false);
+  const [view, setView] = useState<"about" | "materials" | "questions" | "enrolled">("about");
+  // Which section the admin editors target: -1 = course-level (single), else index into detail.levels.
+  const [manageLevel, setManageLevel] = useState(-1);
 
   const load = useCallback(() => {
     Promise.all([
@@ -460,30 +519,80 @@ function TrainingDetailModal({
     load();
   }, [load]);
 
-  const removeQuestion = async (qid: number) => {
-    await fetch(`/api/portal/te-local/questions/${qid}`, { method: "DELETE", headers: authHeaders });
-    load();
-  };
+  const isMulti = detail?.type === "levels" && (detail?.levels?.length || 0) > 0;
+  // The section the admin editors currently operate on.
+  const targetLevelId = !isMulti ? null : detail?.levels?.[Math.max(0, manageLevel)]?.id ?? null;
 
   const tabs = [
     { id: "about" as const, label: "Overview", icon: Info },
+    { id: "materials" as const, label: `Materials (${detail?.content_count ?? 0})`, icon: BookOpen },
     { id: "questions" as const, label: `Assessment (${questions.length})`, icon: ListChecks },
     ...(canManage ? [{ id: "enrolled" as const, label: `Enrolled (${enrollments.length})`, icon: Users }] : []),
   ];
 
+  // Read-only material rows for learners.
+  const ContentList = ({ items }: { items: ContentItem[] }) =>
+    items.length === 0 ? (
+      <p className="text-[11px] text-slate-400 dark:text-zinc-500">No materials.</p>
+    ) : (
+      <div className="flex flex-col gap-1.5">
+        {items.map((c) => {
+          const meta = CONTENT_META[c.kind] || CONTENT_META.link;
+          return (
+            <a
+              key={c.id}
+              href={c.url || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2.5 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-white/60 dark:bg-zinc-900/40 px-3 py-2 hover:border-indigo-400/50 transition-colors group"
+            >
+              <span className={cn("p-1.5 rounded-lg shrink-0", meta.color)}>
+                <meta.icon className="w-3.5 h-3.5" />
+              </span>
+              <span className="text-xs font-bold text-slate-700 dark:text-zinc-300 truncate flex-1 group-hover:text-indigo-600">
+                {c.title}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-500 shrink-0" />
+            </a>
+          );
+        })}
+      </div>
+    );
+
+  // Level selector reused by the Materials & Assessment admin editors.
+  const LevelTabs = () =>
+    isMulti ? (
+      <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100/80 dark:bg-zinc-900/60 border border-slate-200/60 dark:border-zinc-800/80 overflow-x-auto no-scrollbar">
+        {detail.levels.map((lv: any, i: number) => (
+          <button
+            key={lv.id}
+            onClick={() => setManageLevel(i)}
+            className={cn(
+              "px-3 py-1.5 text-[11px] font-bold rounded-lg whitespace-nowrap transition-colors",
+              Math.max(0, manageLevel) === i
+                ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                : "text-slate-500 dark:text-zinc-400 hover:text-slate-700",
+            )}
+          >
+            {lv.name}
+          </button>
+        ))}
+      </div>
+    ) : null;
+
   return (
-    <Modal title={detail?.title || "Training"} onClose={onClose}>
+    <Modal title={detail?.title || "Training"} onClose={onClose} wide>
       {loading ? (
         <Spinner label="Loading course…" />
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100/80 dark:bg-zinc-900/60 border border-slate-200/60 dark:border-zinc-800/80">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100/80 dark:bg-zinc-900/60 border border-slate-200/60 dark:border-zinc-800/80 overflow-x-auto no-scrollbar">
             {tabs.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setView(t.id)}
                 className={cn(
-                  "flex-1 px-3 py-1.5 text-[11px] font-bold rounded-lg inline-flex items-center justify-center gap-1.5 transition-colors",
+                  "flex-1 px-3 py-1.5 text-[11px] font-bold rounded-lg inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap",
                   view === t.id
                     ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
                     : "text-slate-500 dark:text-zinc-400 hover:text-slate-700",
@@ -502,7 +611,7 @@ function TrainingDetailModal({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <MiniStat label="Category" value={detail.category || "—"} />
                 <MiniStat label="Duration" value={fmtDuration(detail.duration_minutes)} />
-                <MiniStat label="Pass mark" value={`${detail.pass_percentage}%`} />
+                <MiniStat label="Pass score" value={`${detail.pass_percentage}% correct`} />
                 <MiniStat label="Type" value={detail.type === "levels" ? `${detail.levels.length} levels` : "Single"} />
               </div>
               {detail.skill_tags?.length > 0 && (
@@ -523,10 +632,10 @@ function TrainingDetailModal({
                 <div className="flex flex-col gap-1.5">
                   <p className="text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Levels</p>
                   {detail.levels.map((lv: any) => (
-                    <div key={lv.id} className="flex items-center justify-between rounded-lg border border-slate-200/60 dark:border-zinc-800/80 px-3 py-2 text-xs">
+                    <div key={lv.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-lg border border-slate-200/60 dark:border-zinc-800/80 px-3 py-2 text-xs">
                       <span className="font-bold text-slate-700 dark:text-zinc-300">{lv.name}</span>
                       <span className="text-slate-400 dark:text-zinc-500">
-                        {fmtDuration(lv.duration_minutes)} · pass {lv.pass_percentage}%
+                        {fmtDuration(lv.duration_minutes)} · pass {lv.pass_percentage}% · {(lv.content?.length || 0)} materials
                       </span>
                     </div>
                   ))}
@@ -535,46 +644,50 @@ function TrainingDetailModal({
             </div>
           )}
 
+          {view === "materials" && (
+            <div className="flex flex-col gap-3">
+              {canManage ? (
+                <>
+                  <LevelTabs />
+                  <MaterialsEditor authHeaders={authHeaders} trainingId={trainingId} levelId={targetLevelId} />
+                </>
+              ) : isMulti ? (
+                detail.levels.map((lv: any) => (
+                  <div key={lv.id} className="flex flex-col gap-1.5">
+                    <p className="text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">{lv.name}</p>
+                    <ContentList items={lv.content || []} />
+                  </div>
+                ))
+              ) : (
+                <ContentList items={detail.content || []} />
+              )}
+            </div>
+          )}
+
           {view === "questions" && (
             <div className="flex flex-col gap-3">
-              {canManage && (
-                <button
-                  onClick={() => setAdding(true)}
-                  className="self-end px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Question
-                </button>
-              )}
-              {questions.length === 0 ? (
+              {canManage ? (
+                <>
+                  <LevelTabs />
+                  <AssessmentEditor authHeaders={authHeaders} trainingId={trainingId} levelId={targetLevelId} />
+                </>
+              ) : questions.length === 0 ? (
                 <p className="text-center py-8 text-xs font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">
                   No questions yet.
                 </p>
               ) : (
                 questions.map((q, i) => (
                   <div key={q.id} className="rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-slate-50/50 dark:bg-zinc-900/30 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-bold text-slate-800 dark:text-zinc-200">
-                        <span className="text-indigo-500">Q{i + 1}.</span> {q.question}
-                      </p>
-                      {canManage && (
-                        <button onClick={() => removeQuestion(q.id)} className="text-slate-400 hover:text-red-500 shrink-0">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    <p className="text-sm font-bold text-slate-800 dark:text-zinc-200">
+                      <span className="text-indigo-500">Q{i + 1}.</span> {q.question}
+                    </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-2 pl-5">
                       {Object.entries(q.options || {}).map(([k, v]) => (
                         <span
                           key={k}
-                          className={cn(
-                            "text-[11px] px-2 py-1 rounded-lg border",
-                            q.correct_answer === k
-                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold"
-                              : "border-slate-200/60 dark:border-zinc-800/80 text-slate-500 dark:text-zinc-400",
-                          )}
+                          className="text-[11px] px-2 py-1 rounded-lg border border-slate-200/60 dark:border-zinc-800/80 text-slate-500 dark:text-zinc-400"
                         >
                           <span className="font-extrabold uppercase">{k}.</span> {String(v)}
-                          {q.correct_answer === k && <Check className="w-3 h-3 inline ml-1" />}
                         </span>
                       ))}
                     </div>
@@ -592,7 +705,7 @@ function TrainingDetailModal({
                 </p>
               ) : (
                 enrollments.map((a) => (
-                  <div key={a.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200/60 dark:border-zinc-800/80 px-3 py-2">
+                  <div key={a.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-2 rounded-lg border border-slate-200/60 dark:border-zinc-800/80 px-3 py-2">
                     <div className="min-w-0">
                       <p className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate">{a.employee_name || a.employee_email}</p>
                       <p className="text-[10px] text-slate-400 dark:text-zinc-500 truncate">{a.department || a.employee_email}</p>
@@ -610,119 +723,6 @@ function TrainingDetailModal({
           )}
         </div>
       )}
-
-      {adding && (
-        <AddQuestionModal
-          authHeaders={authHeaders}
-          trainingId={trainingId}
-          onClose={() => setAdding(false)}
-          onSaved={() => {
-            setAdding(false);
-            load();
-            onChanged();
-          }}
-        />
-      )}
-    </Modal>
-  );
-}
-
-function AddQuestionModal({
-  authHeaders,
-  trainingId,
-  onClose,
-  onSaved,
-}: {
-  authHeaders: Record<string, string>;
-  trainingId: number;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [q, setQ] = useState({ question: "", A: "", B: "", C: "", D: "", correct: "A", marks: 1, explanation: "" });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  const submit = async () => {
-    if (!q.question.trim() || !q.A.trim() || !q.B.trim()) {
-      setErr("Question and at least options A & B are required.");
-      return;
-    }
-    setSaving(true);
-    setErr("");
-    try {
-      const options: Record<string, string> = { A: q.A, B: q.B };
-      if (q.C.trim()) options.C = q.C;
-      if (q.D.trim()) options.D = q.D;
-      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/questions`, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({
-          question: q.question,
-          options,
-          correct_answer: q.correct,
-          marks: Number(q.marks),
-          explanation: q.explanation,
-        }),
-      });
-      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Failed.");
-      onSaved();
-    } catch (e: any) {
-      setErr(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal title="Add MCQ Question" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <Field label="Question *">
-          <textarea className={inputCls} rows={2} value={q.question} onChange={(e) => setQ({ ...q, question: e.target.value })} />
-        </Field>
-        {(["A", "B", "C", "D"] as const).map((opt) => (
-          <div key={opt} className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setQ({ ...q, correct: opt })}
-              className={cn(
-                "w-7 h-7 shrink-0 rounded-lg text-xs font-black border transition-colors",
-                q.correct === opt
-                  ? "bg-emerald-500 text-white border-emerald-500"
-                  : "border-slate-200 dark:border-zinc-800 text-slate-400 hover:border-emerald-400",
-              )}
-              title="Mark as correct answer"
-            >
-              {opt}
-            </button>
-            <input
-              className={inputCls}
-              placeholder={`Option ${opt}${opt === "C" || opt === "D" ? " (optional)" : ""}`}
-              value={q[opt]}
-              onChange={(e) => setQ({ ...q, [opt]: e.target.value })}
-            />
-          </div>
-        ))}
-        <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium">
-          Tap a letter to mark the <span className="font-bold text-emerald-500">correct answer</span> (currently {q.correct}).
-        </p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Marks">
-            <input type="number" className={inputCls} value={q.marks} onChange={(e) => setQ({ ...q, marks: +e.target.value })} />
-          </Field>
-        </div>
-        <Field label="Explanation (optional)">
-          <input className={inputCls} value={q.explanation} onChange={(e) => setQ({ ...q, explanation: e.target.value })} />
-        </Field>
-        {err && <p className="text-xs font-bold text-red-500">{err}</p>}
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-900">
-          <button onClick={onClose} className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 cursor-pointer">
-            Cancel
-          </button>
-          <button onClick={submit} disabled={saving} className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer">
-            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Add Question
-          </button>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -736,6 +736,15 @@ function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+// ── Create wizard: Basics → Curriculum → Assessment → Done ───────────────────
+
+interface WizardLevel {
+  name: string;
+  duration_minutes: number;
+  pass_percentage: number;
+  description: string;
+}
+
 function CreateTrainingModal({
   authHeaders,
   onClose,
@@ -745,6 +754,10 @@ function CreateTrainingModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [step, setStep] = useState(1); // 1 basics · 2 curriculum · 3 assessment · 4 done
+  const [trainingId, setTrainingId] = useState<number | null>(null);
+  const [createdLevels, setCreatedLevels] = useState<TrainingLevel[]>([]);
+
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -754,15 +767,24 @@ function CreateTrainingModal({
     skills: "",
   });
   const [multiLevel, setMultiLevel] = useState(false);
-  const [levels, setLevels] = useState([
+  const [levels, setLevels] = useState<WizardLevel[]>([
     { name: "Basic", duration_minutes: 60, pass_percentage: 60, description: "" },
     { name: "Intermediate", duration_minutes: 60, pass_percentage: 65, description: "" },
     { name: "Advanced", duration_minutes: 60, pass_percentage: 70, description: "" },
   ]);
+  // Per-section the active level tab (index into createdLevels); null = course-level (single).
+  const [activeLevel, setActiveLevel] = useState(0);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  const submit = async () => {
+  const STEPS = ["Basics", "Curriculum", "Assessment", "Done"];
+
+  const createBasics = async () => {
+    // Already created (admin navigated back to step 1) — just continue, don't duplicate.
+    if (trainingId != null) {
+      setStep(2);
+      return;
+    }
     if (!form.title.trim()) {
       setErr("Title is required.");
       return;
@@ -779,13 +801,10 @@ function CreateTrainingModal({
           category: form.category,
           duration_minutes: Number(form.duration_minutes),
           pass_percentage: Number(form.pass_percentage),
-          skill_tags: form.skills
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
+          skill_tags: form.skills.split(",").map((s) => s.trim()).filter(Boolean),
           levels: multiLevel
             ? levels.map((l) => ({
-                name: l.name,
+                name: l.name.trim() || "Level",
                 duration_minutes: Number(l.duration_minutes),
                 pass_percentage: Number(l.pass_percentage),
                 description: l.description,
@@ -793,9 +812,12 @@ function CreateTrainingModal({
             : [],
         }),
       });
-      if (!resp.ok)
-        throw new Error((await resp.json().catch(() => ({}))).detail || "Failed to create.");
-      onSaved();
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || "Failed to create.");
+      setTrainingId(data.id);
+      setCreatedLevels(data.levels || []);
+      setActiveLevel(0);
+      setStep(2);
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -803,130 +825,1088 @@ function CreateTrainingModal({
     }
   };
 
+  const updateLevel = (i: number, patch: Partial<WizardLevel>) =>
+    setLevels((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const addLevel = () =>
+    setLevels((prev) => [
+      ...prev,
+      { name: `Level ${prev.length + 1}`, duration_minutes: 60, pass_percentage: 65, description: "" },
+    ]);
+  const removeLevel = (i: number) => setLevels((prev) => prev.filter((_, idx) => idx !== i));
+
+  // The level the curriculum/assessment editors currently target.
+  const targetLevelId =
+    multiLevel && createdLevels.length ? (createdLevels[activeLevel]?.id ?? null) : null;
+
   return (
-    <Modal title="New Training" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <Field label="Title *">
-          <input
-            className={inputCls}
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
-        </Field>
-        <Field label="Description">
-          <textarea
-            className={inputCls}
-            rows={2}
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Category">
-            <select
-              className={inputCls}
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-            >
-              <option>Technical</option>
-              <option>Governance & Compliance</option>
-              <option>Business</option>
-            </select>
-          </Field>
-          <Field label="Duration (min)">
-            <input
-              type="number"
-              className={inputCls}
-              value={form.duration_minutes}
-              onChange={(e) => setForm({ ...form, duration_minutes: +e.target.value })}
-            />
-          </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Pass %">
-            <input
-              type="number"
-              className={inputCls}
-              value={form.pass_percentage}
-              onChange={(e) => setForm({ ...form, pass_percentage: +e.target.value })}
-            />
-          </Field>
-          <Field label="Skill tags (comma-sep)">
-            <input
-              className={inputCls}
-              placeholder="Python, ML"
-              value={form.skills}
-              onChange={(e) => setForm({ ...form, skills: e.target.value })}
-            />
-          </Field>
-        </div>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={multiLevel}
-            onChange={(e) => setMultiLevel(e.target.checked)}
-            className="accent-violet-600 w-4 h-4"
-          />
-          <span className="text-[11px] font-bold text-slate-600 dark:text-zinc-300 inline-flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-indigo-500" /> Multi-level course (Basic · Intermediate · Advanced)
-          </span>
-        </label>
-        {multiLevel && (
-          <div className="flex flex-col gap-2 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 p-3 bg-slate-50/40 dark:bg-zinc-900/30">
-            {levels.map((lv, i) => (
-              <div key={lv.name} className="flex items-center gap-2">
-                <span className="text-[10px] font-extrabold w-20 shrink-0 text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
-                  {lv.name}
-                </span>
-                <input
-                  type="number"
-                  className={inputCls}
-                  placeholder="min"
-                  value={lv.duration_minutes}
-                  onChange={(e) => {
-                    const next = [...levels];
-                    next[i] = { ...lv, duration_minutes: +e.target.value };
-                    setLevels(next);
-                  }}
-                />
-                <input
-                  type="number"
-                  className={inputCls}
-                  placeholder="pass %"
-                  value={lv.pass_percentage}
-                  onChange={(e) => {
-                    const next = [...levels];
-                    next[i] = { ...lv, pass_percentage: +e.target.value };
-                    setLevels(next);
-                  }}
-                />
+    <Modal title="Create Course" onClose={onClose} wide>
+      {/* Stepper */}
+      <div className="flex items-center gap-1.5 mb-5">
+        {STEPS.map((s, i) => {
+          const n = i + 1;
+          const done = step > n;
+          const active = step === n;
+          return (
+            <div key={s} className="flex items-center gap-1.5 flex-1">
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors w-full justify-center",
+                  active
+                    ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-xs"
+                    : done
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "bg-slate-100 dark:bg-zinc-900/60 text-slate-400 dark:text-zinc-500",
+                )}
+              >
+                {done ? <Check className="w-3.5 h-3.5" /> : <span className="opacity-70">{n}</span>}
+                <span className="hidden sm:inline">{s}</span>
               </div>
-            ))}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Level tabs (curriculum + assessment steps, multi-level only) */}
+      {(step === 2 || step === 3) && multiLevel && createdLevels.length > 0 && (
+        <div className="flex items-center gap-1 p-1 mb-4 rounded-xl bg-slate-100/80 dark:bg-zinc-900/60 border border-slate-200/60 dark:border-zinc-800/80 overflow-x-auto no-scrollbar">
+          {createdLevels.map((lv, i) => (
+            <button
+              key={lv.id}
+              onClick={() => setActiveLevel(i)}
+              className={cn(
+                "px-3 py-1.5 text-[11px] font-bold rounded-lg whitespace-nowrap transition-colors",
+                activeLevel === i
+                  ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                  : "text-slate-500 dark:text-zinc-400 hover:text-slate-700",
+              )}
+            >
+              {lv.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Step 1 — Basics */}
+      {step === 1 && (
+        <div className="flex flex-col gap-3">
+          <Field label="Title *">
+            <input className={inputCls} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </Field>
+          <Field label="Description">
+            <textarea className={inputCls} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Category">
+              <select className={inputCls} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option>Technical</option>
+                <option>Governance & Compliance</option>
+                <option>Business</option>
+              </select>
+            </Field>
+            <Field label="Total duration (min)">
+              <input type="number" className={inputCls} value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: +e.target.value })} />
+            </Field>
           </div>
-        )}
-        <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium">
-          Skill tags are written back as{" "}
-          <span className="font-bold text-slate-500 dark:text-zinc-400">verified skills</span> when
-          a learner passes this training. Add assessment questions from the course detail view after creating.
-        </p>
-        {err && <p className="text-xs font-bold text-red-500 dark:text-red-400">{err}</p>}
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-900">
-          <button
-            onClick={onClose}
-            className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 transition-all duration-200 cursor-pointer"
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Minimum passing score (%)">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                className={inputCls}
+                value={form.pass_percentage}
+                onChange={(e) => setForm({ ...form, pass_percentage: +e.target.value })}
+              />
+            </Field>
+            <Field label="Skill tags (comma-sep)">
+              <input className={inputCls} placeholder="Python, ML" value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} />
+            </Field>
+          </div>
+
+          {/* Explain pass score */}
+          <div className="flex items-start gap-2 rounded-xl border border-blue-500/20 bg-blue-500/5 dark:bg-blue-500/[0.07] px-3 py-2.5">
+            <HelpCircle className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-slate-600 dark:text-zinc-300 leading-relaxed">
+              <span className="font-bold text-slate-700 dark:text-zinc-200">Minimum passing score</span> — a learner must correctly answer at least this % of MCQ questions in the assessment to
+              pass and earn the course's verified skills. e.g. 60% means 6 out of 10 questions correct.
+            </p>
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer select-none mt-1">
+            <input type="checkbox" checked={multiLevel} onChange={(e) => setMultiLevel(e.target.checked)} className="accent-violet-600 w-4 h-4" />
+            <span className="text-[11px] font-bold text-slate-600 dark:text-zinc-300 inline-flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-indigo-500" /> Multi-level track (e.g. Beginner · Intermediate · Advanced)
+            </span>
+          </label>
+
+          {multiLevel && (
+            <div className="flex flex-col gap-2 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 p-3 bg-slate-50/40 dark:bg-zinc-900/30">
+              {/* Column headers */}
+              <div className="flex items-center gap-2 px-1">
+                <span className="flex-[2] text-[9px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Level name</span>
+                <span className="flex-1 text-[9px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Duration (min)</span>
+                <span className="flex-1 text-[9px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Min. pass score %</span>
+                <span className="w-5 shrink-0" />
+              </div>
+              {levels.map((lv, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className={cn(inputCls, "flex-[2]")}
+                    placeholder="e.g. Beginner"
+                    value={lv.name}
+                    onChange={(e) => updateLevel(i, { name: e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    className={cn(inputCls, "flex-1")}
+                    placeholder="60"
+                    title="Estimated study time for this level in minutes"
+                    value={lv.duration_minutes}
+                    onChange={(e) => updateLevel(i, { duration_minutes: +e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className={cn(inputCls, "flex-1")}
+                    placeholder="60"
+                    title="Learner must score at least this % on the MCQ assessment to pass this level"
+                    value={lv.pass_percentage}
+                    onChange={(e) => updateLevel(i, { pass_percentage: +e.target.value })}
+                  />
+                  <button
+                    onClick={() => removeLevel(i)}
+                    disabled={levels.length <= 1}
+                    className="text-slate-400 hover:text-red-500 disabled:opacity-30 shrink-0"
+                    title="Remove level"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button onClick={addLevel} className="self-start text-[11px] font-bold text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-1 hover:underline">
+                <Plus className="w-3 h-3" /> Add level
+              </button>
+            </div>
+          )}
+
+          <p className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium">
+            Skill tags become <span className="font-bold text-slate-500 dark:text-zinc-400">verified skills</span> on the learner's profile when they pass.
+            Next you'll add learning materials (docs, Udemy courses, videos) and AI-draft the MCQ assessment.
+          </p>
+        </div>
+      )}
+
+      {/* Step 2 — Curriculum / materials */}
+      {step === 2 && trainingId != null && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-slate-500 dark:text-zinc-400">
+            Add the learning materials {multiLevel ? "for this level" : "for this course"} — upload documents, or link
+            Udemy courses, videos, and web resources. The AI uses these to draft the assessment.
+          </p>
+          <MaterialsEditor authHeaders={authHeaders} trainingId={trainingId} levelId={targetLevelId} />
+        </div>
+      )}
+
+      {/* Step 3 — Assessment */}
+      {step === 3 && trainingId != null && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-slate-500 dark:text-zinc-400">
+            Generate MCQs with AI from the materials you added {multiLevel ? "to this level" : ""}, review/edit them, then
+            save. Employees sit the actual exam on the TechElevate portal.
+          </p>
+          <AssessmentEditor authHeaders={authHeaders} trainingId={trainingId} levelId={targetLevelId} />
+        </div>
+      )}
+
+      {/* Step 4 — Done */}
+      {step === 4 && (
+        <div className="flex flex-col items-center text-center gap-4 py-6">
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 15 }}
+            className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/10"
           >
-            Cancel
+            <Check className="w-7 h-7" />
+          </motion.div>
+          <div>
+            <h4 className="text-lg font-black text-slate-800 dark:text-zinc-100">Course published</h4>
+            <p className="text-xs text-slate-400 dark:text-zinc-500 mt-1">
+              "{form.title}" is now in the catalog with its materials and assessment. You can keep editing it from the course card.
+            </p>
+          </div>
+          <button onClick={onSaved} className="mt-2 w-full py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer">
+            Back to Catalog
+          </button>
+        </div>
+      )}
+
+      {err && <p className="text-xs font-bold text-red-500 dark:text-red-400 mt-3">{err}</p>}
+
+      {/* Footer nav */}
+      {step < 4 && (
+        <div className="flex justify-between gap-2 pt-4 mt-4 border-t border-slate-100 dark:border-zinc-900">
+          <button
+            onClick={step === 1 ? onClose : () => setStep((s) => s - 1)}
+            disabled={saving || (step > 1 && step <= 3 && false)}
+            className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 transition-all cursor-pointer inline-flex items-center gap-1.5"
+          >
+            {step === 1 ? "Cancel" : (<><ArrowLeft className="w-3.5 h-3.5" /> Back</>)}
+          </button>
+
+          {step === 1 && (
+            <button
+              onClick={createBasics}
+              disabled={saving}
+              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {trainingId != null ? "Continue" : "Create & add content"} <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {(step === 2 || step === 3) && (
+            <button
+              onClick={() => setStep((s) => s + 1)}
+              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+            >
+              {step === 3 ? "Finish" : "Next"} <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Reusable: learning materials editor (used by wizard + course detail) ──────
+
+// ── Udemy course card with expandable detail + org enrollment stats ───────────
+
+// Level → accent colour used in placeholder thumbnail and level badge.
+const LEVEL_COLORS: Record<string, { bg: string; text: string; border: string; gradient: string }> = {
+  Beginner:     { bg: "bg-emerald-500/15", text: "text-emerald-600 dark:text-emerald-400", border: "border-emerald-500/30", gradient: "from-emerald-600 to-teal-500" },
+  Intermediate: { bg: "bg-amber-500/15",   text: "text-amber-600 dark:text-amber-400",   border: "border-amber-500/30",   gradient: "from-amber-500 to-orange-500" },
+  Expert:       { bg: "bg-rose-500/15",    text: "text-rose-600 dark:text-rose-400",    border: "border-rose-500/30",    gradient: "from-rose-600 to-pink-500" },
+  "All Levels": { bg: "bg-violet-500/15",  text: "text-violet-600 dark:text-violet-400",  border: "border-violet-500/30",  gradient: "from-violet-600 to-indigo-500" },
+};
+const DEFAULT_LEVEL_COLOR = { bg: "bg-slate-500/10", text: "text-slate-500 dark:text-zinc-400", border: "border-slate-400/20", gradient: "from-slate-600 to-slate-500" };
+
+function UdemyCourseCard({
+  course,
+  authHeaders,
+  onAdd,
+  busy,
+}: {
+  course: any;
+  authHeaders: Record<string, string>;
+  onAdd: (c: any) => void;
+  busy: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const expand = async () => {
+    if (expanded) { setExpanded(false); return; }
+    setExpanded(true);
+    if (detail || !course.id) return;
+    setLoading(true);
+    try {
+      const resp = await fetch(`/api/portal/udemy/courses/${course.id}`, { headers: authHeaders });
+      if (resp.ok) setDetail(await resp.json());
+    } catch { /* non-fatal */ }
+    finally { setLoading(false); }
+  };
+
+  const d = detail || course;
+  const instructors: string[] = d.instructors || [];
+  const level: string = d.level || "";
+  const lc = LEVEL_COLORS[level] || DEFAULT_LEVEL_COLOR;
+  const contentInfo: string = d.content_info || "";
+  const numLectures: number | null = d.num_lectures ?? null;
+  const orgEnrolled: number = d.org_enrolled ?? 0;
+  const orgCompleted: number = d.org_completed ?? 0;
+  const avgCompletion: number = d.org_avg_completion_pct ?? 0;
+  const lastUpdate: string = d.last_update_date ? d.last_update_date.slice(0, 7) : "";
+  const category: string = d.category || d.subcategory || "";
+  const completionRate = orgEnrolled > 0 ? Math.round((orgCompleted / orgEnrolled) * 100) : 0;
+
+  return (
+    <motion.div
+      layout
+      className={cn(
+        "rounded-2xl border overflow-hidden transition-all duration-200",
+        expanded
+          ? "border-indigo-500/40 dark:border-indigo-500/30 shadow-md shadow-indigo-500/5"
+          : "border-slate-200/60 dark:border-zinc-800/80",
+      )}
+    >
+      {/* ── Card header ── */}
+      <button
+        onClick={expand}
+        className="w-full flex items-stretch gap-0 text-left group"
+      >
+        {/* Left accent: image or gradient placeholder */}
+        <div className="shrink-0 w-20 sm:w-24 relative overflow-hidden">
+          {d.image ? (
+            <img src={d.image} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className={cn("w-full h-full min-h-[64px] flex flex-col items-center justify-center gap-1 bg-gradient-to-br text-white", lc.gradient)}>
+              <PlayCircle className="w-5 h-5 opacity-80" />
+              {level && <span className="text-[8px] font-black uppercase tracking-widest opacity-70 px-1 text-center">{level}</span>}
+            </div>
+          )}
+        </div>
+
+        {/* Main content */}
+        <div className="flex-1 min-w-0 px-3 py-2.5 bg-white/60 dark:bg-zinc-900/40 group-hover:bg-slate-50/70 dark:group-hover:bg-zinc-800/30 transition-colors">
+          <p className="text-xs font-bold text-slate-800 dark:text-zinc-200 line-clamp-2 leading-snug">{d.title}</p>
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+            {level && (
+              <span className={cn("text-[9px] font-extrabold px-2 py-0.5 rounded-full border", lc.bg, lc.text, lc.border)}>
+                {level}
+              </span>
+            )}
+            {category && (
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400 border border-slate-200/60 dark:border-zinc-700/60">
+                {category}
+              </span>
+            )}
+            {contentInfo && (
+              <span className="text-[9px] text-slate-400 dark:text-zinc-500 inline-flex items-center gap-0.5">
+                <Clock className="w-2.5 h-2.5" /> {contentInfo}
+              </span>
+            )}
+            {numLectures != null && (
+              <span className="text-[9px] text-slate-400 dark:text-zinc-500">{numLectures} lectures</span>
+            )}
+          </div>
+          {/* Instructor line — visible once detail loaded */}
+          {instructors.length > 0 && (
+            <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-1 truncate">
+              {instructors.slice(0, 2).join(" · ")}
+            </p>
+          )}
+        </div>
+
+        {/* Right actions */}
+        <div className="shrink-0 flex flex-col items-center justify-center gap-2 px-2.5 bg-white/60 dark:bg-zinc-900/40 group-hover:bg-slate-50/70 dark:group-hover:bg-zinc-800/30 transition-colors border-l border-slate-200/40 dark:border-zinc-800/60">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAdd(course); }}
+            disabled={busy}
+            className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer"
+            title="Add to course materials"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          <ChevronRight className={cn("w-4 h-4 text-slate-400 transition-transform duration-200", expanded && "rotate-90")} />
+        </div>
+      </button>
+
+      {/* ── Expanded detail panel ── */}
+      {expanded && (
+        <div className="border-t border-slate-200/60 dark:border-zinc-800/80 bg-slate-50/60 dark:bg-zinc-900/50">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-slate-400">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-500" /> Loading course details…
+            </div>
+          ) : (
+            <div className="p-4 flex flex-col gap-4">
+              {/* Headline */}
+              {d.headline && (
+                <p className="text-xs text-slate-600 dark:text-zinc-300 leading-relaxed border-l-2 border-indigo-400 pl-3 italic">
+                  {d.headline}
+                </p>
+              )}
+
+              {/* Instructors */}
+              {instructors.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[9px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">
+                    {instructors.length > 1 ? "Instructors" : "Instructor"}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {instructors.map((name: string) => (
+                      <span
+                        key={name}
+                        className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/20"
+                      >
+                        <UserCircle className="w-3 h-3" /> {name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Meta chips row */}
+              <div className="flex flex-wrap gap-2">
+                {[
+                  level && { label: "Level", value: level },
+                  contentInfo && { label: "Duration", value: contentInfo },
+                  numLectures != null && { label: "Lectures", value: `${numLectures}` },
+                  lastUpdate && { label: "Updated", value: lastUpdate },
+                  category && { label: "Category", value: category },
+                ].filter(Boolean).map((item: any) => (
+                  <div key={item.label} className="flex flex-col rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 px-3 py-2 min-w-[72px]">
+                    <span className="text-[8px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">{item.label}</span>
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-zinc-300 mt-0.5">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Org stats */}
+              <div className="rounded-xl border border-indigo-500/25 bg-gradient-to-br from-indigo-500/5 to-violet-500/5 dark:from-indigo-500/8 dark:to-violet-500/8 p-3">
+                <p className="text-[10px] font-extrabold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-3 inline-flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5" /> Your org on this course
+                </p>
+
+                {detail ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-3 mb-3">
+                      <div className="rounded-xl bg-white/70 dark:bg-zinc-900/50 border border-slate-200/60 dark:border-zinc-800/60 p-2.5 text-center">
+                        <p className="text-xl font-black text-slate-800 dark:text-zinc-100">{orgEnrolled}</p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Enrolled</p>
+                      </div>
+                      <div className="rounded-xl bg-white/70 dark:bg-zinc-900/50 border border-slate-200/60 dark:border-zinc-800/60 p-2.5 text-center">
+                        <p className={cn("text-xl font-black", orgCompleted > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-800 dark:text-zinc-100")}>
+                          {orgCompleted}
+                        </p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Completed</p>
+                      </div>
+                      <div className="rounded-xl bg-white/70 dark:bg-zinc-900/50 border border-slate-200/60 dark:border-zinc-800/60 p-2.5 text-center">
+                        <p className="text-xl font-black text-slate-800 dark:text-zinc-100">{avgCompletion}%</p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Avg progress</p>
+                      </div>
+                    </div>
+
+                    {orgEnrolled > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                          <span>Completion rate</span>
+                          <span className="text-emerald-600 dark:text-emerald-400">{completionRate}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 dark:bg-zinc-800 rounded-full h-2">
+                          <div
+                            className="bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${completionRate}%` }}
+                          />
+                        </div>
+                        <p className="text-[9px] text-slate-400 dark:text-zinc-500">
+                          {orgCompleted} of {orgEnrolled} people finished · {orgEnrolled - orgCompleted} still in progress
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 dark:text-zinc-500 text-center py-1">
+                        No one in your org has taken this course yet — be the first!
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-slate-400 dark:text-zinc-500">Loading org data…</p>
+                )}
+              </div>
+
+              {/* Footer actions */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-200/60 dark:border-zinc-800/80">
+                {d.url && (
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-1.5 hover:underline"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> View on Udemy
+                  </a>
+                )}
+                <button
+                  onClick={() => onAdd(course)}
+                  disabled={busy}
+                  className="ml-auto px-4 py-2 text-xs font-bold rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-md shadow-indigo-500/20 inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer transition-all active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add to course materials
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+const CONTENT_META: Record<
+  ContentItem["kind"],
+  { label: string; icon: React.ComponentType<{ className?: string }>; color: string }
+> = {
+  document: { label: "Document", icon: FileText, color: "text-rose-500 bg-rose-500/10" },
+  udemy: { label: "Udemy", icon: PlayCircle, color: "text-violet-500 bg-violet-500/10" },
+  video: { label: "Video", icon: Video, color: "text-amber-500 bg-amber-500/10" },
+  link: { label: "Link", icon: Link2, color: "text-blue-500 bg-blue-500/10" },
+};
+
+function MaterialsEditor({
+  authHeaders,
+  trainingId,
+  levelId,
+}: {
+  authHeaders: Record<string, string>;
+  trainingId: number;
+  levelId: number | null;
+}) {
+  const [items, setItems] = useState<ContentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"link" | "udemy" | "video" | "document">("link");
+  const [draft, setDraft] = useState({ title: "", url: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Udemy search state
+  const [udemyQuery, setUdemyQuery] = useState("");
+  const [udemyResults, setUdemyResults] = useState<any[]>([]);
+  const [udemySearching, setUdemySearching] = useState(false);
+  const [udemyErr, setUdemyErr] = useState("");
+  const [udemyIndexing, setUdemyIndexing] = useState(false);
+
+  // Warm the Udemy index as soon as the Udemy tab is opened.
+  useEffect(() => {
+    if (activeTab !== "udemy") return;
+    fetch("/api/portal/udemy/status", { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) => setUdemyIndexing(!!d.index?.loading))
+      .catch(() => {});
+  }, [activeTab, authHeaders]);
+
+  // FormData uploads must NOT carry the JSON Content-Type header.
+  const uploadHeaders = useMemo(() => {
+    const h: Record<string, string> = { ...authHeaders };
+    delete h["Content-Type"];
+    return h;
+  }, [authHeaders]);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetch(`/api/portal/te-local/trainings/${trainingId}/content`, { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) =>
+        setItems((d.results || []).filter((c: ContentItem) => (c.level_id ?? null) === levelId)),
+      )
+      .finally(() => setLoading(false));
+  }, [authHeaders, trainingId, levelId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const saveContent = async (kind: string, title: string, url: string) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/content`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ kind, title, url, level_id: levelId }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Failed.");
+      setDraft({ title: "", url: "" });
+      load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addManual = () => {
+    if (!draft.url.trim() && !draft.title.trim()) { setErr("Add a title or URL."); return; }
+    saveContent(activeTab, draft.title || draft.url, draft.url);
+  };
+
+  const addUdemyCourse = (course: any) => {
+    const title = course.title || "Udemy course";
+    const url = course.url || "";  // backend _full_url() already returns the absolute URL
+    saveContent("udemy", title, url);
+  };
+
+  const searchUdemy = async () => {
+    if (!udemyQuery.trim()) return;
+    setUdemySearching(true);
+    setUdemyErr("");
+    setUdemyResults([]);
+    try {
+      const resp = await fetch(
+        `/api/portal/udemy/courses?q=${encodeURIComponent(udemyQuery)}&page_size=10`,
+        { headers: authHeaders },
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || "Udemy search failed. Check Udemy credentials in backend/.env.");
+      // Index may still be building on first use — tell the user to retry.
+      if (data.indexing) {
+        setUdemyErr("Udemy catalog is still indexing (first load). Please wait a few seconds and search again.");
+        return;
+      }
+      const results = (data.results || []).slice(0, 10);
+      setUdemyResults(results);
+      if (results.length === 0) setUdemyErr("No Udemy courses found for that keyword. Try something broader.");
+    } catch (e: any) {
+      setUdemyErr(e.message);
+    } finally {
+      setUdemySearching(false);
+    }
+  };
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("title", file.name);
+      if (levelId != null) fd.append("level_id", String(levelId));
+      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/content/upload`, {
+        method: "POST",
+        headers: uploadHeaders,
+        body: fd,
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Upload failed.");
+      load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const remove = async (id: number) => {
+    await fetch(`/api/portal/te-local/content/${id}`, { method: "DELETE", headers: authHeaders });
+    load();
+  };
+
+  const KIND_TABS: { id: "link" | "udemy" | "video" | "document"; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: "link", label: "Web link", icon: Link2 },
+    { id: "udemy", label: "Udemy course", icon: PlayCircle },
+    { id: "video", label: "Video", icon: Video },
+    { id: "document", label: "Upload doc", icon: Upload },
+  ];
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Existing materials */}
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-slate-400 py-3">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading materials…
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-[11px] text-slate-400 dark:text-zinc-500 text-center py-3 border border-dashed border-slate-200 dark:border-zinc-800 rounded-xl">
+          No materials yet — add below.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {items.map((c) => {
+            const meta = CONTENT_META[c.kind] || CONTENT_META.link;
+            return (
+              <div key={c.id} className="flex items-center gap-2.5 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-white/60 dark:bg-zinc-900/40 px-3 py-2">
+                <span className={cn("p-1.5 rounded-lg shrink-0", meta.color)}>
+                  <meta.icon className="w-3.5 h-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-slate-700 dark:text-zinc-300 truncate">{c.title}</p>
+                  {c.url && (
+                    <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-500 hover:underline truncate block">
+                      {c.kind === "document" ? c.file_name || "Open document" : c.url}
+                    </a>
+                  )}
+                </div>
+                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 shrink-0">{meta.label}</span>
+                <button onClick={() => remove(c.id)} className="text-slate-400 hover:text-red-500 shrink-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Add material — tabbed by kind */}
+      <div className="rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-slate-50/40 dark:bg-zinc-900/30 overflow-hidden">
+        {/* Kind selector tabs */}
+        <div className="flex border-b border-slate-200/60 dark:border-zinc-800/80">
+          {KIND_TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => { setActiveTab(t.id); setErr(""); setUdemyErr(""); }}
+              className={cn(
+                "flex-1 inline-flex items-center justify-center gap-1.5 py-2 text-[10px] font-bold transition-colors border-b-2",
+                activeTab === t.id
+                  ? "border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-white/60 dark:bg-zinc-900/40"
+                  : "border-transparent text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300",
+              )}
+            >
+              <t.icon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="p-3 flex flex-col gap-2">
+          {/* Web link / Video — manual URL entry */}
+          {(activeTab === "link" || activeTab === "video") && (
+            <>
+              <input
+                className={inputCls}
+                placeholder="Title (optional)"
+                value={draft.title}
+                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              />
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder={activeTab === "video" ? "https://youtube.com/… or any video URL" : "https://…"}
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+                />
+                <button
+                  onClick={addManual}
+                  disabled={busy}
+                  className="px-3 py-2 shrink-0 text-[11px] font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Udemy — search from Udemy catalog */}
+          {activeTab === "udemy" && (
+            <div className="flex flex-col gap-2">
+              {udemyIndexing && (
+                <p className="text-[11px] text-slate-400 dark:text-zinc-500 inline-flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-500" />
+                  Building Udemy catalog index for the first time — search will be ready in ~10 seconds.
+                </p>
+              )}
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder="Search Udemy courses… e.g. Python, Machine Learning"
+                  value={udemyQuery}
+                  onChange={(e) => setUdemyQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && searchUdemy()}
+                />
+                <button
+                  onClick={searchUdemy}
+                  disabled={udemySearching || !udemyQuery.trim()}
+                  className="px-3 py-2 shrink-0 text-[11px] font-bold rounded-xl bg-violet-600 hover:bg-violet-500 text-white inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {udemySearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />} Search
+                </button>
+              </div>
+              {udemyErr && <p className="text-[11px] text-amber-600 dark:text-amber-400">{udemyErr}</p>}
+              {udemyResults.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">
+                    {udemyResults.length} course{udemyResults.length !== 1 ? "s" : ""} found — click a card for details + org stats
+                  </p>
+                  <div className="flex flex-col gap-2 pr-0.5">
+                    {udemyResults.map((c: any, i: number) => (
+                      <UdemyCourseCard
+                        key={c.id ?? i}
+                        course={c}
+                        authHeaders={authHeaders}
+                        onAdd={addUdemyCourse}
+                        busy={busy}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500">
+                Or paste a Udemy URL directly:
+              </p>
+              <div className="flex gap-2">
+                <input
+                  className={inputCls}
+                  placeholder="https://www.udemy.com/course/…"
+                  value={draft.url}
+                  onChange={(e) => setDraft({ ...draft, url: e.target.value, title: draft.title })}
+                />
+                <input
+                  className={cn(inputCls, "w-32 shrink-0")}
+                  placeholder="Title"
+                  value={draft.title}
+                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                />
+                <button
+                  onClick={addManual}
+                  disabled={busy || !draft.url.trim()}
+                  className="px-3 py-2 shrink-0 text-[11px] font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Document upload */}
+          {activeTab === "document" && (
+            <div className="flex flex-col gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+                className="w-full py-6 text-[11px] font-bold rounded-xl border-2 border-dashed border-slate-300 dark:border-zinc-700 text-slate-500 dark:text-zinc-400 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-400 inline-flex flex-col items-center justify-center gap-2 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {busy ? <Loader2 className="w-6 h-6 animate-spin" /> : <Upload className="w-6 h-6" />}
+                {busy ? "Uploading…" : "Click to upload a document"}
+              </button>
+              <p className="text-[10px] text-slate-400 dark:text-zinc-500 text-center">
+                PDF, DOCX, PPTX, XLSX, TXT · max 50 MB · text will be extracted to ground AI question generation
+              </p>
+            </div>
+          )}
+
+          {err && <p className="text-[11px] font-bold text-red-500">{err}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reusable: assessment (AI-draft + manual MCQ authoring) ───────────────────
+
+function AssessmentEditor({
+  authHeaders,
+  trainingId,
+  levelId,
+}: {
+  authHeaders: Record<string, string>;
+  trainingId: number;
+  levelId: number | null;
+}) {
+  const [saved, setSaved] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<DraftQuestion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [count, setCount] = useState(5);
+  const [difficulty, setDifficulty] = useState("mixed");
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetch(`/api/portal/te-local/trainings/${trainingId}/questions?manage=true`, { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) =>
+        setSaved((d.results || []).filter((q: any) => (q.level_id ?? null) === levelId)),
+      )
+      .finally(() => setLoading(false));
+  }, [authHeaders, trainingId, levelId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const generate = async () => {
+    setGenerating(true);
+    setErr("");
+    try {
+      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/questions/generate`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ level_id: levelId, count, difficulty }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || "Generation failed.");
+      setDrafts((prev) => [...prev, ...(data.questions || [])]);
+      if (data.grounded === false)
+        setErr("Heads up: no materials found, so questions are based only on the title/skills. Add materials for grounded questions.");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const addBlank = () =>
+    setDrafts((prev) => [
+      ...prev,
+      { question: "", options: { A: "", B: "", C: "", D: "" }, correct_answer: "A", marks: 1, explanation: "", level_id: levelId },
+    ]);
+
+  const updateDraft = (i: number, patch: Partial<DraftQuestion>) =>
+    setDrafts((prev) => prev.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
+  const updateOption = (i: number, key: string, val: string) =>
+    setDrafts((prev) => prev.map((d, idx) => (idx === i ? { ...d, options: { ...d.options, [key]: val } } : d)));
+  const removeDraft = (i: number) => setDrafts((prev) => prev.filter((_, idx) => idx !== i));
+
+  const saveDrafts = async () => {
+    const valid = drafts.filter(
+      (d) => d.question.trim() && Object.values(d.options).filter((v) => v.trim()).length >= 2,
+    );
+    if (!valid.length) {
+      setErr("Add at least one complete question (text + 2 options).");
+      return;
+    }
+    setSaving(true);
+    setErr("");
+    try {
+      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/questions/bulk`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ level_id: levelId, questions: valid }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Save failed.");
+      setDrafts([]);
+      load();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeSaved = async (qid: number) => {
+    await fetch(`/api/portal/te-local/questions/${qid}`, { method: "DELETE", headers: authHeaders });
+    load();
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Saved questions */}
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading questions…
+        </div>
+      ) : saved.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">
+            Saved questions ({saved.length})
+          </p>
+          {saved.map((q, i) => (
+            <div key={q.id} className="flex items-start justify-between gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+              <p className="text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                <span className="text-emerald-600 font-bold">Q{i + 1}.</span> {q.question}
+                <span className="ml-1.5 text-[10px] text-emerald-600/80">(ans {q.correct_answer})</span>
+              </p>
+              <button onClick={() => removeSaved(q.id)} className="text-slate-400 hover:text-red-500 shrink-0">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* AI generation controls */}
+      <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.04] dark:bg-violet-500/[0.06] p-3 flex flex-col gap-2.5">
+        <div className="flex items-center gap-2 text-xs font-bold text-violet-700 dark:text-violet-300">
+          <Wand2 className="w-4 h-4" /> Generate with AI from course materials
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Count</span>
+            <input type="number" min={1} max={15} className={cn(inputCls, "w-20")} value={count} onChange={(e) => setCount(Math.max(1, Math.min(15, +e.target.value)))} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Difficulty</span>
+            <select className={cn(inputCls, "w-36")} value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+              <option value="easy">Easy</option>
+              <option value="mixed">Mixed</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <button
+            onClick={generate}
+            disabled={generating}
+            className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {generating ? "Drafting…" : "Generate"}
           </button>
           <button
-            onClick={submit}
-            disabled={saving}
-            className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 dark:shadow-indigo-500/10 hover:shadow-lg transition-all duration-200 cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1.5"
+            onClick={addBlank}
+            className="px-3 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-white dark:hover:bg-zinc-800/60 inline-flex items-center gap-1.5 cursor-pointer"
           >
-            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Create Training
+            <Plus className="w-3.5 h-3.5" /> Add manually
           </button>
         </div>
       </div>
-    </Modal>
+
+      {/* Draft review */}
+      {drafts.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <p className="text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">
+              Review drafts ({drafts.length}) — edit before saving
+            </p>
+            <button
+              onClick={saveDrafts}
+              disabled={saving}
+              className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white inline-flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save to course
+            </button>
+          </div>
+          {drafts.map((d, i) => (
+            <div key={i} className="rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-slate-50/50 dark:bg-zinc-900/30 p-3 flex flex-col gap-2">
+              <div className="flex items-start gap-2">
+                <span className="text-[11px] font-black text-indigo-500 mt-2 shrink-0">Q{i + 1}</span>
+                <textarea
+                  className={inputCls}
+                  rows={2}
+                  placeholder="Question"
+                  value={d.question}
+                  onChange={(e) => updateDraft(i, { question: e.target.value })}
+                />
+                <button onClick={() => removeDraft(i)} className="text-slate-400 hover:text-red-500 mt-2 shrink-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pl-6">
+                {(["A", "B", "C", "D"] as const).map((k) => (
+                  <div key={k} className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => updateDraft(i, { correct_answer: k })}
+                      className={cn(
+                        "w-6 h-6 shrink-0 rounded-md text-[10px] font-black border transition-colors",
+                        d.correct_answer === k
+                          ? "bg-emerald-500 text-white border-emerald-500"
+                          : "border-slate-200 dark:border-zinc-800 text-slate-400 hover:border-emerald-400",
+                      )}
+                      title="Mark correct"
+                    >
+                      {k}
+                    </button>
+                    <input
+                      className={cn(inputCls, "py-1.5")}
+                      placeholder={`Option ${k}`}
+                      value={d.options[k] || ""}
+                      onChange={(e) => updateOption(i, k, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+              <input
+                className={cn(inputCls, "py-1.5 ml-6 w-[calc(100%-1.5rem)]")}
+                placeholder="Explanation (optional)"
+                value={d.explanation || ""}
+                onChange={(e) => updateDraft(i, { explanation: e.target.value })}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {err && <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400">{err}</p>}
+    </div>
   );
 }
 
@@ -1211,7 +2191,13 @@ function AssignModal({
 
 // ── My Learning + assessment (the flywheel moment) ───────────────────────────
 
-function MyLearningTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function MyLearningTab({
+  authHeaders,
+  portalUrl,
+}: {
+  authHeaders: Record<string, string>;
+  portalUrl?: string;
+}) {
   const [rows, setRows] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<Assignment | null>(null);
@@ -1242,6 +2228,21 @@ function MyLearningTab({ authHeaders }: { authHeaders: Record<string, string> })
 
   return (
     <div className="flex flex-col gap-3.5">
+      {portalUrl && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] dark:bg-violet-500/[0.07] px-4 py-3">
+          <p className="text-xs font-semibold text-slate-600 dark:text-zinc-300">
+            Practise here, then sit the official, proctored exam on the TechElevate portal.
+          </p>
+          <a
+            href={portalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[11px] font-bold shadow-xs transition-all"
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Open TechElevate
+          </a>
+        </div>
+      )}
       {rows.map((a) => (
         <motion.div
           key={a.id}
@@ -1279,13 +2280,18 @@ function MyLearningTab({ authHeaders }: { authHeaders: Record<string, string> })
               ))}
             </div>
           </div>
-          {a.status !== "Completed" && (
+          {a.status !== "Completed" && a.has_questions && (
             <button
               onClick={() => setActive(a)}
               className="w-full sm:w-auto text-center shrink-0 px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-xs transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
             >
-              Take Quiz
+              Take Assessment
             </button>
+          )}
+          {a.status !== "Completed" && !a.has_questions && (
+            <span className="text-[11px] font-semibold text-slate-400 dark:text-zinc-500 shrink-0 text-center sm:text-right">
+              Assessment not ready yet
+            </span>
           )}
           {a.status === "Completed" && (
             <div className="self-end sm:self-auto flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-xs shrink-0 select-none">
@@ -1903,10 +2909,12 @@ function Modal({
   title,
   children,
   onClose,
+  wide = false,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
+  wide?: boolean;
 }) {
   return (
     <div
@@ -1917,10 +2925,13 @@ function Modal({
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.2, ease: "easeOut" }}
-        className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-3xl border border-slate-200/60 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6 shadow-2xl"
+        className={cn(
+          "w-full max-h-[90vh] flex flex-col rounded-3xl border border-slate-200/60 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl",
+          wide ? "max-w-3xl" : "max-w-lg",
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 p-5 border-b border-slate-100 dark:border-zinc-800/50">
           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
             {title}
           </h3>
@@ -1931,7 +2942,9 @@ function Modal({
             <X className="w-4 h-4" />
           </button>
         </div>
-        {children}
+        <div className="p-5 flex-1 overflow-y-auto">
+          {children}
+        </div>
       </motion.div>
     </div>
   );

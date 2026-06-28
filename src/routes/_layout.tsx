@@ -7,19 +7,13 @@ import {
   Settings,
   ChevronDown,
   Users,
-  Check,
   LogOut,
   Shield,
-  Briefcase,
-  Wrench,
-  ClipboardList,
-  UserCog,
   Plus,
   Trash2,
   X,
   Sparkles,
   FileText,
-  Crown,
   Globe,
   Search,
   ClipboardCheck,
@@ -36,7 +30,7 @@ import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
-import { useAuth, Role } from "@/lib/auth-store";
+import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
 import { cn } from "@/lib/utils";
 import {
@@ -56,25 +50,6 @@ export const Route = createFileRoute("/_layout")({
 
 let isInitialAppLoad = true;
 
-const ROLE_META: Record<Role, { icon: any; color: string; label: string; cKey: string }> = {
-  Employee: { icon: Briefcase, color: "text-[#3B8FE8]", label: "Employee", cKey: "Clarity" },
-  HR: { icon: Users, color: "text-[#22C55E]", label: "Human Resources", cKey: "Collaboration" },
-  IT: { icon: Wrench, color: "text-[#14B8A6]", label: "IT Support", cKey: "Connectivity" },
-  PMO: {
-    icon: ClipboardList,
-    color: "text-[#4F6FEF]",
-    label: "Project Management",
-    cKey: "Capacity",
-  },
-  Admin: { icon: Shield, color: "text-[#3B8FE8]", label: "Administrator", cKey: "Clarity" },
-  "Functional Manager": {
-    icon: UserCog,
-    color: "text-[#22C55E]",
-    label: "Functional Manager",
-    cKey: "Collaboration",
-  },
-  "Super Admin": { icon: Crown, color: "text-[#F59E0B]", label: "Super Admin", cKey: "Capacity" },
-};
 
 const NAV_COLORS: Record<string, string> = {
   "/": "var(--clarity)",
@@ -296,7 +271,7 @@ function LayoutComponent() {
 
   const { threads, activeId, setActiveId, createThread, deleteThread } = useChatStore();
   const activeThread = activeId ? threads[activeId] : null;
-  const { user, logout, setRole } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"] } = useSettings();
   const openIntro = useIntroStore((s) => s.open);
 
@@ -306,7 +281,11 @@ function LayoutComponent() {
   const [copilotOpen, setCopilotOpen] = useState(false);
 
   useEffect(() => {
-    if (location.pathname === "/" || location.pathname === "/settings") {
+    if (
+      location.pathname === "/" ||
+      location.pathname === "/settings" ||
+      location.pathname.startsWith("/documents")
+    ) {
       setCopilotOpen(false);
     }
   }, [location.pathname]);
@@ -397,17 +376,6 @@ function LayoutComponent() {
     return false;
   };
 
-  // Check roles demo switcher
-  const roles: Role[] = [
-    "Employee",
-    "HR",
-    "IT",
-    "PMO",
-    "Admin",
-    "Functional Manager",
-    "Super Admin",
-  ];
-
   // Static checks for Hub items
   const hasControlHubAccess = [
     "HR",
@@ -455,7 +423,10 @@ function LayoutComponent() {
       </div>
     );
 
-  const showCopilot = location.pathname !== "/" && location.pathname !== "/settings";
+  const showCopilot =
+    location.pathname !== "/" &&
+    location.pathname !== "/settings" &&
+    !location.pathname.startsWith("/documents");
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
@@ -530,7 +501,12 @@ function LayoutComponent() {
                     <motion.div
                       whileHover={{ scale: 1.15, rotate: [0, -5, 5, 0] }}
                       animate={active ? { scale: 1.05 } : { scale: 1 }}
-                      transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 10,
+                        rotate: { type: "tween", duration: 0.3 },
+                      }}
                       className="shrink-0 flex items-center justify-center"
                     >
                       <Icon
@@ -678,40 +654,6 @@ function LayoutComponent() {
                         <span className="flex-1 truncate">Watch intro tour</span>
                       </button>
                     </div>
-                  </div>
-
-                  <div className="px-3 py-1 flex items-center gap-1.5 mb-1">
-                    <Sparkles className="h-3 w-3 text-primary" />
-                    <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
-                      Switch Role (Demo)
-                    </span>
-                  </div>
-
-                  <div className="space-y-0.5 max-h-56 overflow-y-auto no-scrollbar">
-                    {roles.map((r) => {
-                      const meta = ROLE_META[r];
-                      const RIcon = meta.icon;
-                      const isSelected = user.role === r;
-                      return (
-                        <button
-                          key={r}
-                          onClick={() => {
-                            setRole(r);
-                            setProfileDropdownOpen(false);
-                          }}
-                          className={cn(
-                            "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs transition-all text-left",
-                            isSelected
-                              ? "bg-primary/10 text-primary font-semibold"
-                              : "text-foreground/75 hover:bg-muted/65 hover:text-foreground",
-                          )}
-                        >
-                          <RIcon className={cn("h-3.5 w-3.5", meta.color)} />
-                          <span className="flex-1 truncate">{r}</span>
-                          {isSelected && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                        </button>
-                      );
-                    })}
                   </div>
 
                   <div className="border-t border-border/40 mt-1.5 pt-1.5">

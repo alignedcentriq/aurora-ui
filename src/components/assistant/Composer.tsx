@@ -38,12 +38,23 @@ type Props = {
   onSuggestionSelect?: (text: string) => void;
   /** Navigate to an in-app route (used by /slash route shortcuts like /library). */
   onNavigate?: (path: string) => void;
+  /** Portal-specific rotating placeholders. Falls back to the global set when omitted. */
+  placeholders?: string[];
+  /** Hide the attach-file (image upload) button — used in the portal copilot sidebar. */
+  hideAttach?: boolean;
+  /** Hide the /slash command picker — used in the portal copilot sidebar where navigation shortcuts are irrelevant. */
+  hideSlash?: boolean;
 };
 
 interface AttachedFile {
   filename: string;
   text: string;
 }
+
+// Max characters of extracted file text the model can actually receive. Files
+// above this are blocked at upload rather than silently truncated. Keep in sync
+// with backend `_MAX_UPLOAD_CHARS` in main.py.
+const MAX_ATTACH_CHARS = 6000;
 
 interface MentionUser {
   id: number;
@@ -107,7 +118,12 @@ export function Composer({
   suggestions,
   onSuggestionSelect,
   onNavigate,
+  placeholders,
+  hideAttach,
+  hideSlash,
 }: Props) {
+  // Portal-specific placeholders when provided, else the global rotating set.
+  const activePlaceholders = placeholders && placeholders.length > 0 ? placeholders : PLACEHOLDERS;
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -120,11 +136,12 @@ export function Composer({
   const [currentPlaceholderIdx, setCurrentPlaceholderIdx] = useState(0);
 
   useEffect(() => {
+    setCurrentPlaceholderIdx(0);
     const interval = setInterval(() => {
-      setCurrentPlaceholderIdx((prev) => (prev + 1) % PLACEHOLDERS.length);
+      setCurrentPlaceholderIdx((prev) => (prev + 1) % activePlaceholders.length);
     }, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activePlaceholders]);
 
   // @mention state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -342,6 +359,12 @@ export function Composer({
         throw new Error(err.detail);
       }
       const data: { text: string; filename: string; char_count: number } = await res.json();
+      if (data.char_count > MAX_ATTACH_CHARS) {
+        toast.error(
+          `File too large to analyze: ${data.char_count.toLocaleString()} chars (limit ${MAX_ATTACH_CHARS.toLocaleString()}). Upload a shorter file or paste the relevant section.`,
+        );
+        return;
+      }
       setAttached({ filename: data.filename, text: data.text });
       toast.success(`Attached: ${data.filename} (${data.char_count.toLocaleString()} chars)`);
     } catch (err: unknown) {
@@ -354,8 +377,26 @@ export function Composer({
 
   const handleSubmit = () => {
     if (!value.trim() && !attached) return;
+    // A file on its own gives the model no task — require a question alongside it.
+    if (attached && !value.trim()) {
+      toast.error("Add a question about the file — e.g. “Summarize this” or “What are the key risks?”");
+      ref.current?.focus();
+      return;
+    }
     if (attached) {
-      const contextPrefix = `[Attached file: ${attached.filename}]\n\`\`\`\n${attached.text.slice(0, 6000)}${attached.text.length > 6000 ? "\n… (truncated)" : ""}\n\`\`\`\n\n`;
+      // Frame the file as input to an enterprise workflow, not a generic
+      // "read this back to me" — Centriq acts on it within HR/IT/PMO/Admin,
+      // and declines out-of-scope asks instead of behaving like a chatbot.
+      const enterpriseContext =
+        "You are Centriq AI, the enterprise assistant for HR, IT Support, Admin & Facilities, " +
+        "PMO/Projects, Manager, and Microsoft 365 — not a general-purpose chatbot. The user " +
+        "attached a file. Work with it inside these enterprise workflows: check it against company " +
+        "policy, extract the details needed to raise a request/ticket or fill a form, classify and " +
+        "route it to the right team, or draft the workflow output (ticket body, approval note, status " +
+        "update). Plain reading, summarizing or translating is a fallback only — when you do it, offer " +
+        "the relevant enterprise next step. If the request falls outside these workflows, say so " +
+        "briefly instead of answering as a generic assistant.";
+      const contextPrefix = `${enterpriseContext}\n\n[Attached file: ${attached.filename}]\n\`\`\`\n${attached.text}\n\`\`\`\n\n`;
       const full = contextPrefix + value;
       setAttached(null);
       onChange("");
@@ -422,8 +463,9 @@ export function Composer({
             }
           }}
         >
-          {/* /slash picker — forms + URLs */}
-          {slashQuery !== null &&
+          {/* /slash picker — forms + URLs (main chat only) */}
+          {!hideSlash &&
+            slashQuery !== null &&
             slashItems.length > 0 &&
             (() => {
               const filtered = slashItems.filter(
@@ -578,7 +620,7 @@ export function Composer({
                 const text = e.target.value;
                 const cursor = e.target.selectionStart ?? text.length;
                 onChange(text);
-                const isSlash = detectSlashCommand(text, cursor);
+                const isSlash = !hideSlash && detectSlashCommand(text, cursor);
                 if (isSlash) {
                   setMentionQuery(null);
                   setMentionResults([]);
@@ -662,7 +704,7 @@ export function Composer({
                     transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     className="truncate"
                   >
-                    {PLACEHOLDERS[currentPlaceholderIdx]}
+                    {activePlaceholders[currentPlaceholderIdx] ?? activePlaceholders[0]}
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -671,20 +713,22 @@ export function Composer({
 
           <div className="flex items-center justify-between px-2 pb-1">
             <div className="flex items-center gap-1">
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground disabled:opacity-50"
-                title="Attach file"
-              >
-                {uploading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Plus className="h-5 w-5" strokeWidth={1.5} />
-                )}
-              </motion.button>
+              {!hideAttach && (
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  title="Attach file"
+                >
+                  {uploading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Plus className="h-5 w-5" strokeWidth={1.5} />
+                  )}
+                </motion.button>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -707,29 +751,31 @@ export function Composer({
                 />
               </motion.button>
 
-              {/* Forms & Apps Picker Toggle */}
-              <motion.button
-                whileTap={{ scale: 0.85 }}
-                type="button"
-                onClick={() => {
-                  if (slashQuery !== null) {
-                    setSlashQuery(null);
-                  } else {
-                    setSlashQuery("");
-                    setSlashStart(0);
-                    fetchSlashItems();
-                  }
-                }}
-                className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-full transition-all",
-                  slashQuery !== null
-                    ? "bg-primary/15 text-primary ring-2 ring-primary/30"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                )}
-                title="Forms & Apps Menu"
-              >
-                <LayoutGrid className="h-4 w-4" strokeWidth={1.5} />
-              </motion.button>
+              {/* Forms & Apps Picker Toggle — main chat only */}
+              {!hideSlash && (
+                <motion.button
+                  whileTap={{ scale: 0.85 }}
+                  type="button"
+                  onClick={() => {
+                    if (slashQuery !== null) {
+                      setSlashQuery(null);
+                    } else {
+                      setSlashQuery("");
+                      setSlashStart(0);
+                      fetchSlashItems();
+                    }
+                  }}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-full transition-all",
+                    slashQuery !== null
+                      ? "bg-primary/15 text-primary ring-2 ring-primary/30"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  )}
+                  title="Forms & Apps Menu"
+                >
+                  <LayoutGrid className="h-4 w-4" strokeWidth={1.5} />
+                </motion.button>
+              )}
 
               {/* Stop button while a response is generating, else Send button */}
               <AnimatePresence mode="wait" initial={false}>

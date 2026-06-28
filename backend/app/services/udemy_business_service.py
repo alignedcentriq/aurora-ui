@@ -22,7 +22,9 @@ is unrelated to the live catalog API here.
 """
 
 import datetime
+import json
 import logging
+import os
 import threading
 import time
 
@@ -152,11 +154,43 @@ _INDEX_FIELDS = (
 _INDEX_TTL = 24 * 3600          # rebuild at most once a day
 _INDEX_MAX_PAGES = 400          # safety cap (~40k courses) — logged if hit
 
+# Persist the index to disk so searches are instant after a server restart.
+_INDEX_CACHE_PATH = os.path.join(os.path.dirname(__file__), "../data/udemy_index_cache.json")
+
 _index: list[dict] = []
 _index_ready = False
 _index_loading = False
 _index_loaded_at = 0.0
 _index_lock = threading.Lock()
+
+
+def _save_index_cache(items: list[dict], built_at: float) -> None:
+    try:
+        os.makedirs(os.path.dirname(_INDEX_CACHE_PATH), exist_ok=True)
+        with open(_INDEX_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"built_at": built_at, "items": items}, f)
+        log.info("[udemy] index cache saved: %d courses → %s", len(items), _INDEX_CACHE_PATH)
+    except Exception as e:
+        log.warning("[udemy] failed to save index cache: %s", e)
+
+
+def _load_index_cache() -> tuple[list[dict], float] | None:
+    """Load the on-disk cache if it exists and is not stale. Returns (items, built_at) or None."""
+    try:
+        if not os.path.exists(_INDEX_CACHE_PATH):
+            return None
+        with open(_INDEX_CACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        built_at = float(data.get("built_at", 0))
+        if (time.time() - built_at) > _INDEX_TTL:
+            return None  # stale — will be rebuilt in the background
+        items = data.get("items") or []
+        log.info("[udemy] index cache loaded: %d courses (age %.0fh)",
+                 len(items), (time.time() - built_at) / 3600)
+        return items, built_at
+    except Exception as e:
+        log.warning("[udemy] failed to load index cache: %s", e)
+        return None
 
 
 def _build_index() -> None:
@@ -176,10 +210,12 @@ def _build_index() -> None:
                 if not data.get("next"):
                     break
                 page += 1
+        now = time.time()
         with _index_lock:
             _index = items
             _index_ready = True
-            _index_loaded_at = time.time()
+            _index_loaded_at = now
+        _save_index_cache(items, now)
         if page > _INDEX_MAX_PAGES:
             log.warning("[udemy] search index hit %d-page cap — catalog truncated at %d courses",
                         _INDEX_MAX_PAGES, len(items))
@@ -193,14 +229,20 @@ def _build_index() -> None:
 
 
 def _ensure_index() -> None:
-    """Kick a background index (re)build if missing or stale. Non-blocking."""
-    global _index_loading
+    """Load from disk cache if available (instant), then kick a background rebuild if stale."""
+    global _index, _index_ready, _index_loading, _index_loaded_at
     if not configured():
         return
     with _index_lock:
         fresh = _index_ready and (time.time() - _index_loaded_at) < _INDEX_TTL
         if fresh or _index_loading:
             return
+        # Try loading from disk before starting a network rebuild.
+        cached = _load_index_cache()
+        if cached:
+            _index, _index_loaded_at = cached
+            _index_ready = True
+            return  # fresh enough — no rebuild needed
         _index_loading = True
     threading.Thread(target=_build_index, name="udemy-index", daemon=True).start()
 
@@ -296,6 +338,97 @@ def get_user_progress(*, from_date: str | None = None, page: int = 1, page_size:
 # (subcategory → category); falls back to a sanitised course title slice.
 
 _sync_state: dict = {"at": None, "added": 0, "skipped": 0, "errors": 0}
+
+# ── Per-course org stats (cached aggregate of user-course-activity) ───────────
+# Aggregated once and cached for _ORG_STATS_TTL seconds so detail panels are fast.
+_org_stats_cache: dict = {}        # {course_id: {enrolled, completed, avg_completion_pct}}
+_org_stats_lock = threading.Lock()
+_org_stats_built_at: float = 0.0
+_ORG_STATS_TTL = 3600  # 1 hour
+
+
+def _build_org_stats() -> None:
+    """Paginate all user-course-activity and aggregate per-course org stats.
+    Runs in the calling thread (called lazily, max once per TTL)."""
+    global _org_stats_cache, _org_stats_built_at
+    if not configured():
+        return
+    agg: dict[int, dict] = {}  # course_id → {enrolled, completions, total_pct}
+    page = 1
+    try:
+        while True:
+            try:
+                data = get_user_course_activity(page=page, page_size=100)
+            except Exception as exc:
+                log.warning("[udemy-stats] page %d failed: %s", page, exc)
+                break
+            results = data.get("results") or []
+            if not results:
+                break
+            for row in results:
+                cid = row.get("course_id") or (row.get("course") or {}).get("id")
+                if not cid:
+                    continue
+                cid = int(cid)
+                pct = float(
+                    row.get("completion_percentage")
+                    or row.get("percent_completed")
+                    or row.get("progress_percent")
+                    or 0
+                )
+                completed = pct >= 100 or bool(
+                    row.get("completion_time") or row.get("completion_date") or row.get("completed_at")
+                )
+                if cid not in agg:
+                    agg[cid] = {"enrolled": 0, "completed": 0, "total_pct": 0.0}
+                agg[cid]["enrolled"] += 1
+                agg[cid]["total_pct"] += pct
+                if completed:
+                    agg[cid]["completed"] += 1
+            if not data.get("next"):
+                break
+            page += 1
+    except Exception as exc:
+        log.warning("[udemy-stats] build failed: %s", exc)
+
+    result = {}
+    for cid, v in agg.items():
+        n = v["enrolled"]
+        result[cid] = {
+            "enrolled": n,
+            "completed": v["completed"],
+            "avg_completion_pct": round(v["total_pct"] / n, 1) if n else 0.0,
+        }
+    with _org_stats_lock:
+        _org_stats_cache = result
+        _org_stats_built_at = time.time()
+    log.info("[udemy-stats] org stats built: %d courses", len(result))
+
+
+def get_org_stats(course_id: int | None = None) -> dict:
+    """Return cached org stats. Rebuilds synchronously if stale (< 1hr).
+    With course_id: returns that course's stats dict (or empty).
+    Without: returns the full {course_id: stats} mapping."""
+    with _org_stats_lock:
+        stale = (time.time() - _org_stats_built_at) > _ORG_STATS_TTL
+        cache = _org_stats_cache
+    if stale:
+        _build_org_stats()
+        with _org_stats_lock:
+            cache = _org_stats_cache
+    if course_id is not None:
+        return cache.get(int(course_id), {})
+    return cache
+
+
+def get_course_with_org_stats(course_id: int) -> dict:
+    """Fetch full course detail (live API) and annotate with org enrollment stats."""
+    course = get_course(course_id)
+    stats = get_org_stats(course_id)
+    course["org_enrolled"] = stats.get("enrolled", 0)
+    course["org_completed"] = stats.get("completed", 0)
+    course["org_avg_completion_pct"] = stats.get("avg_completion_pct", 0.0)
+    return course
 
 
 def _derive_skill_from_index(course_id: int | None) -> str | None:

@@ -1379,6 +1379,30 @@ class TeTraining(Base):
                           cascade="all, delete-orphan", order_by="TeTrainingLevel.sort_order")
     questions = relationship("TeMcqQuestion", back_populates="training", cascade="all, delete-orphan")
     assignments = relationship("TeAssignment", back_populates="training", cascade="all, delete-orphan")
+    content_items = relationship("TeContentItem", back_populates="training",
+                                 cascade="all, delete-orphan", order_by="TeContentItem.sort_order")
+
+
+class TeContentItem(Base):
+    """A learning material attached to a training (single-level → level_id NULL) or to a
+    specific level of a multi-level track. Kinds: document (uploaded file), link (web URL),
+    udemy (Udemy course/video URL), video (YouTube/other video URL). These are both the
+    curriculum a learner studies AND the grounding the AI uses to draft MCQs."""
+    __tablename__ = "te_content_items"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    level_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_training_levels.id", ondelete="CASCADE"), nullable=True, index=True)
+    kind = Column(String, default="link")              # document | link | udemy | video
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=True)                # external URL, or /uploads/te_local/<file> for documents
+    description = Column(Text, nullable=True)
+    file_name = Column(String, nullable=True)          # original filename for uploaded documents
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="content_items")
 
 
 class TeTrainingLevel(Base):
@@ -1527,10 +1551,38 @@ class UserRoleOverride(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     role = Column(String, nullable=False)            # e.g. "admin", "hr", "it", "pmo", "functional manager"
-    scopes = Column(JSON, nullable=True)             # Optional feature-level scopes; None/[] = full role access
+    scopes = Column(JSON, nullable=True)             # Restrictive: if set, user only gets these scopes (subset of role)
+    extra_capabilities = Column(JSON, nullable=True) # Additive: caps granted beyond the role (portals, modes, features)
     granted_by = Column(String, nullable=True)       # Super Admin's email
     granted_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class AppRole(Base):
+    """Platform roles — system built-ins (is_system=True) + Super Admin custom roles."""
+    __tablename__ = "app_roles"
+    __table_args__ = {"schema": SCHEMA}
+
+    slug = Column(String, primary_key=True)          # e.g. "hr", "devops_lead"
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    color = Column(String, nullable=True)            # hex color for UI badge, e.g. "#22C55E"
+    is_system = Column(Boolean, default=False, nullable=False)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class RoleCapabilityMap(Base):
+    """Tracks which capability keys a role includes. Replaces hardcoded ROLE_SCOPES."""
+    __tablename__ = "role_capability_maps"
+    __table_args__ = (
+        UniqueConstraint("role_slug", "capability_key", name="uq_role_capability"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_slug = Column(String, nullable=False, index=True)
+    capability_key = Column(String, nullable=False, index=True)
 
 
 # ── Automation Hub ─────────────────────────────────────────────────────────────
@@ -1798,6 +1850,7 @@ class ConnectorScope(Base):
     persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"), nullable=True)
     role = Column(String, nullable=True)
     department = Column(String, nullable=True)
+    user_email = Column(String, nullable=True, index=True)  # grant access to one specific user
 
     connector = relationship("Connector", back_populates="scopes")
     operation = relationship("ConnectorOperation", back_populates="scopes")

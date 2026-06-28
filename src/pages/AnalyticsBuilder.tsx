@@ -403,7 +403,7 @@ export function AnalyticsBuilder() {
         {activeChart ? (
           <>
             {/* Chart toolbar */}
-            <div className="flex items-center justify-between gap-3 px-6 py-3.5 border-b border-[var(--border)] shrink-0 bg-card/30">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 px-6 py-3.5 border-b border-[var(--border)] shrink-0 bg-card/30">
               <div className="min-w-0">
                 <h2 className="text-[15px] font-semibold text-foreground truncate">{activeChart.title}</h2>
                 {activeChart.subtitle && (
@@ -584,7 +584,7 @@ export function AnalyticsBuilder() {
       {/* Mobile: chart below chat (shown only on small screens) */}
       {activeChart && (
         <div className="lg:hidden fixed inset-0 z-40 bg-background flex flex-col">
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 px-4 py-3 border-b border-[var(--border)]">
             <h2 className="text-[14px] font-semibold text-foreground truncate flex-1">{activeChart.title}</h2>
             <div className="flex items-center gap-2">
               <button onClick={() => exportChartCsv(activeChart)} className="p-2 text-muted-foreground hover:text-foreground">

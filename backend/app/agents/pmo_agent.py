@@ -278,9 +278,9 @@ def search_udemy_courses(topic: str):
                 "I can raise a Udemy license request to the PMO team instead if you'd like.")
     courses = result.get("results", [])
     if not courses and result.get("indexing"):
-        return ("I'm building the Udemy Business course index for the first time "
-                "(a one-time, few-minute job). Try asking again shortly — or I can raise "
-                "a Udemy license request to the PMO team now if you tell me the course.")
+        return ("The Udemy course catalog is being indexed for the first time — this takes "
+                "a few minutes. Try again shortly, or I can raise a Udemy license request "
+                "to the PMO team now if you tell me the course you need.")
     return udemy.format_courses_markdown(topic, courses)
 
 

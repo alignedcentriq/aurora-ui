@@ -73,9 +73,20 @@ function useAuthHeaders() {
   );
 }
 
+const CURRENCIES: { code: string; symbol: string; locale: string }[] = [
+  { code: "INR", symbol: "₹", locale: "en-IN" },
+  { code: "USD", symbol: "$", locale: "en-US" },
+  { code: "EUR", symbol: "€", locale: "de-DE" },
+  { code: "GBP", symbol: "£", locale: "en-GB" },
+  { code: "AED", symbol: "د.إ", locale: "ar-AE" },
+  { code: "SGD", symbol: "S$", locale: "en-SG" },
+  { code: "AUD", symbol: "A$", locale: "en-AU" },
+  { code: "JPY", symbol: "¥", locale: "ja-JP" },
+];
+
 function money(v: number, currency: string) {
-  const sym = currency === "INR" ? "₹" : "$";
-  return `${sym}${Math.round(v).toLocaleString("en-IN")}`;
+  const c = CURRENCIES.find((x) => x.code === currency) ?? CURRENCIES[0];
+  return `${c.symbol}${Math.round(v).toLocaleString(c.locale)}`;
 }
 
 function KpiCard({
@@ -229,26 +240,26 @@ export function RoiDashboard() {
     <div className="flex h-full flex-col overflow-y-auto bg-background">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-6 py-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
+            <div className="flex shrink-0 h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
               <TrendingUp className="h-5 w-5 text-emerald-400" />
             </div>
             <div>
-              <h1 className="text-[20px] font-bold text-foreground">ROI Dashboard</h1>
-              <p className="text-[12px] text-muted-foreground">
-                What the assistant is worth — time saved, deflection & cost
+              <h1 className="text-[20px] font-bold text-foreground">Value Delivered</h1>
+              <p className="text-[12px] text-muted-foreground line-clamp-1 sm:line-clamp-none">
+                Time saved, deflection & estimated value — powered by free AI
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="flex w-full sm:w-auto rounded-xl border border-[var(--border)] overflow-hidden">
               {(["7d", "30d", "90d"] as const).map((p) => (
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}
                   className={cn(
-                    "px-3.5 py-2 text-[13px] font-medium transition-colors",
+                    "flex-1 sm:flex-none px-3.5 py-2 text-[13px] font-medium transition-colors text-center",
                     period === p
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:text-foreground",
@@ -260,25 +271,25 @@ export function RoiDashboard() {
             </div>
             <button
               onClick={() => setShowSchedule(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Mail className="h-3.5 w-3.5" />
-              Schedule email
+              <Mail className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Schedule email</span>
             </button>
             <button
               onClick={exportPdf}
-              className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Download className="h-3.5 w-3.5" />
-              Export PDF
+              <Download className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Export PDF</span>
             </button>
             {isAdmin && (
               <button
                 onClick={() => setShowAssumptions(true)}
-                className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                className="flex flex-1 sm:flex-none justify-center items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
               >
-                <Settings2 className="h-3.5 w-3.5" />
-                Assumptions
+                <Settings2 className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">Assumptions</span>
               </button>
             )}
           </div>
@@ -287,7 +298,7 @@ export function RoiDashboard() {
 
       <div className="p-6 space-y-6">
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <KpiCard
             title="Hours Saved"
             value={summary ? summary.hours_saved.toLocaleString() : "—"}
@@ -361,7 +372,7 @@ export function RoiDashboard() {
               <MetricChart chartType="line" series={satisfaction} unit="pct" />
             )}
           </ChartCard>
-          <ChartCard title="Active ROI Email Schedules">
+          <ChartCard title="Scheduled Value Reports">
             <DigestList digests={digests} onToggle={toggleDigest} onDelete={deleteDigest} />
           </ChartCard>
         </div>
@@ -416,7 +427,7 @@ function DigestList({
       {digests.map((d) => (
         <div
           key={d.id}
-          className="flex items-center justify-between rounded-xl border border-[var(--border)] px-4 py-3"
+          className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-xl border border-[var(--border)] px-4 py-3"
         >
           <div>
             <p className="text-[13px] font-medium text-foreground capitalize">
@@ -467,7 +478,7 @@ function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-card p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <h3 className="text-[16px] font-semibold text-foreground">{title}</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
@@ -517,7 +528,7 @@ function ScheduleDialog({
   };
 
   return (
-    <Modal title="Schedule ROI Email" onClose={onClose}>
+    <Modal title="Schedule Value Report Email" onClose={onClose}>
       <p className="text-[12px] text-muted-foreground mb-4">
         Creates a recurring ROI digest (PDF attached). It stays <b>disabled</b> until you turn it on
         from the dashboard.
@@ -563,15 +574,44 @@ function AssumptionsDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [currency, setCurrency] = useState(current?.currency ?? "INR");
   const [hourly, setHourly] = useState(current?.hourly_cost ?? 600);
   const [infra, setInfra] = useState(current?.monthly_infra_cost ?? 0);
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const handleCurrencyChange = async (newCurrency: string) => {
+    if (newCurrency === currency) return;
+    setConverting(true);
+    setConvertError(null);
+    try {
+      const res = await fetch(
+        `https://api.frankfurter.app/latest?from=${currency}&to=${newCurrency}`,
+      );
+      if (!res.ok) throw new Error("Rate fetch failed");
+      const data = await res.json();
+      const rate: number = data.rates?.[newCurrency];
+      if (!rate) throw new Error(`No rate for ${newCurrency}`);
+      setHourly(Math.round(hourly * rate));
+      setInfra(Math.round(infra * rate));
+      setCurrency(newCurrency);
+    } catch {
+      setConvertError(`Could not fetch exchange rate — enter the ${newCurrency} value manually.`);
+      setHourly(0);
+      setInfra(0);
+      setCurrency(newCurrency);
+    } finally {
+      setConverting(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
     try {
       const payload = {
         ...current,
+        currency,
         hourly_cost: Number(hourly),
         monthly_infra_cost: Number(infra),
       };
@@ -600,10 +640,36 @@ function AssumptionsDialog({
   );
 
   return (
-    <Modal title="ROI Assumptions" onClose={onClose}>
+    <Modal title="Value Assumptions" onClose={onClose}>
       <p className="text-[12px] text-muted-foreground mb-4">
-        Tune the cost model. Changes apply org-wide and recompute every ROI figure.
+        Tune the cost model. Changes apply org-wide and recompute every figure.
       </p>
+      <div className="mb-4">
+        <label className="block text-[12px] font-medium text-foreground mb-1">Currency</label>
+        <div className="relative">
+          <select
+            value={currency}
+            onChange={(e) => handleCurrencyChange(e.target.value)}
+            disabled={converting}
+            className="w-full rounded-xl border border-[var(--border)] bg-background px-3 py-2 text-[13px] disabled:opacity-50"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.symbol} {c.code}
+              </option>
+            ))}
+          </select>
+          {converting && (
+            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          )}
+        </div>
+        {converting && (
+          <p className="text-[11px] text-muted-foreground mt-1">Converting at live exchange rate…</p>
+        )}
+        {convertError && (
+          <p className="text-[11px] text-rose-400 mt-1">{convertError}</p>
+        )}
+      </div>
       {field("Hourly loaded cost", hourly, setHourly)}
       {field("Monthly infrastructure cost", infra, setInfra)}
       <p className="text-[11px] text-muted-foreground/70 -mt-2 mb-4">
@@ -611,10 +677,10 @@ function AssumptionsDialog({
       </p>
       <button
         onClick={save}
-        disabled={saving}
+        disabled={saving || converting}
         className="w-full rounded-xl bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground disabled:opacity-50"
       >
-        {saving ? "Saving…" : "Save assumptions"}
+        {saving ? "Saving…" : converting ? "Converting…" : "Save assumptions"}
       </button>
     </Modal>
   );

@@ -47,6 +47,8 @@ from app.models import (
     EmployeeSkill,
     FormTemplate,
     UserRoleOverride,
+    AppRole,
+    RoleCapabilityMap,
     WelcomeResource,
     WelcomeLog,
     OnboardingRequest,
@@ -251,6 +253,12 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".form_templates ADD COLUMN IF NOT EXISTS trigger_keywords TEXT',
                 # Appreciations index
                 f'CREATE INDEX IF NOT EXISTS idx_appreciations_employee_email ON "{SCHEMA}".appreciations(employee_email)',
+                # Dynamic access management: additive per-user capability grants beyond assigned role
+                f'ALTER TABLE "{SCHEMA}".user_role_overrides ADD COLUMN IF NOT EXISTS extra_capabilities JSONB',
+                # Dynamic access management: role + capability map tables (create_all handles new tables;
+                # these indexes are additive and idempotent)
+                f'CREATE INDEX IF NOT EXISTS idx_role_capability_maps_role_slug ON "{SCHEMA}".role_capability_maps(role_slug)',
+                f'CREATE INDEX IF NOT EXISTS idx_role_capability_maps_cap_key ON "{SCHEMA}".role_capability_maps(capability_key)',
                 # Observability content-reveal audit trail (safety net — create_all handles it but this is idempotent)
                 f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".content_reveal_audits ('
                 f'  id SERIAL PRIMARY KEY,'
@@ -358,6 +366,9 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".connector_scopes ADD CONSTRAINT fk_connector_scopes_persona '
                 f'FOREIGN KEY (persona_id) REFERENCES "{SCHEMA}".personas(id) ON DELETE CASCADE; '
                 f'END IF; END $$',
+                # Connector access: grant to one specific user (alongside role/dept/persona)
+                f'ALTER TABLE "{SCHEMA}".connector_scopes ADD COLUMN IF NOT EXISTS user_email VARCHAR',
+                f'CREATE INDEX IF NOT EXISTS idx_connector_scopes_user_email ON "{SCHEMA}".connector_scopes(user_email)',
                 # M3: Flow engine
                 f'CREATE TABLE IF NOT EXISTS "{SCHEMA}".flows ('
                 f'  id SERIAL PRIMARY KEY, name VARCHAR NOT NULL, description TEXT,'

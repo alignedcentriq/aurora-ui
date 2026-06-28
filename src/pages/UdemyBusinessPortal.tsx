@@ -412,7 +412,7 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 flex-wrap gap-3">
         <div className="flex items-center gap-2.5">
           <div className="h-8 w-8 rounded-xl bg-violet-500/10 flex items-center justify-center">
             <Activity className="w-4 h-4 text-violet-500" />
@@ -594,7 +594,7 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-2.5">
           <div className="h-8 w-8 rounded-xl bg-violet-500/10 flex items-center justify-center">
             <TrendingUp className="w-4 h-4 text-violet-500" />

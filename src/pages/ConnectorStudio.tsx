@@ -1,5 +1,6 @@
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   Plus,
   Loader2,
@@ -13,6 +14,8 @@ import {
   Pencil,
   Trash2,
   Key,
+  Users,
+  HelpCircle,
   Zap,
   BarChart2,
   AlertCircle,
@@ -109,6 +112,74 @@ const RESPONSE_MODE_LABELS: Record<string, string> = {
   agent: "Agent",
 };
 
+// Turn a raw object key (snake_case / camelCase) into a human label for the
+// readable result view — e.g. "first_name" → "First Name", "userId" → "User Id".
+const prettifyKey = (k: string) =>
+  k
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Recursively render any JSON value as a readable key/value tree. Used by the
+// Test dialog's "Readable" view as an alternative to the raw JSON string.
+function JsonView({ value, depth = 0 }: { value: any; depth?: number }) {
+  if (value === null || value === undefined)
+    return <span className="text-gray-400 italic">—</span>;
+  if (typeof value === "boolean")
+    return <span className="text-purple-600 dark:text-purple-400">{value ? "Yes" : "No"}</span>;
+  if (typeof value === "number")
+    return <span className="text-blue-600 dark:text-blue-400">{value}</span>;
+  if (typeof value === "string")
+    return value ? (
+      <span className="text-gray-800 dark:text-gray-200 break-words">{value}</span>
+    ) : (
+      <span className="text-gray-400 italic">—</span>
+    );
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-gray-400 italic">empty list</span>;
+    return (
+      <div className="space-y-1.5">
+        {value.map((item, i) => (
+          <div key={i} className="flex gap-2">
+            <span className="text-[11px] font-mono text-gray-400 mt-0.5 flex-shrink-0">
+              {i + 1}.
+            </span>
+            <div className="flex-1 min-w-0">
+              <JsonView value={item} depth={depth + 1} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return <span className="text-gray-400 italic">empty</span>;
+    return (
+      <div
+        className={cn(
+          "space-y-1",
+          depth > 0 && "border-l border-gray-200 dark:border-gray-700 pl-3",
+        )}
+      >
+        {entries.map(([k, v]) => (
+          <div key={k} className="flex flex-col sm:flex-row sm:gap-3">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 sm:min-w-[140px] sm:flex-shrink-0 break-words">
+              {prettifyKey(k)}
+            </span>
+            <div className="flex-1 min-w-0 text-sm">
+              <JsonView value={v} depth={depth + 1} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <span>{String(value)}</span>;
+}
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 // Identity headers for the role-gated /api/admin/connectors endpoints.
@@ -153,6 +224,8 @@ export default function ConnectorStudio() {
   // Dialogs
   const [showCreate, setShowCreate] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  const [showScopes, setShowScopes] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showTest, setShowTest] = useState<Operation | null>(null);
   const [showEditOp, setShowEditOp] = useState<Operation | null>(null);
@@ -254,9 +327,18 @@ export default function ConnectorStudio() {
     <div className="flex h-full min-h-[calc(100vh-64px)] bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
       <aside className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 border-b border-gray-200 dark:border-gray-800">
           <span className="font-semibold text-sm">Connectors</span>
           <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowHelp(true)}
+              title="How to use Connector Studio"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -289,7 +371,7 @@ export default function ConnectorStudio() {
                 selected?.id === c.id && "bg-blue-50 dark:bg-blue-950/40",
               )}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <span className="text-sm font-medium truncate">{c.name}</span>
                 {statusBadge(c.status)}
               </div>
@@ -308,9 +390,14 @@ export default function ConnectorStudio() {
             <p className="text-sm text-gray-400 mt-1">
               Import an OpenAPI spec, configure auth, and publish
             </p>
-            <Button className="mt-6" onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4 mr-2" /> New Connector
-            </Button>
+            <div className="mt-6 flex items-center gap-2">
+              <Button onClick={() => setShowCreate(true)}>
+                <Plus className="h-4 w-4 mr-2" /> New Connector
+              </Button>
+              <Button variant="outline" onClick={() => setShowHelp(true)}>
+                <HelpCircle className="h-4 w-4 mr-2" /> How it works
+              </Button>
+            </div>
           </div>
         ) : (
           <div>
@@ -332,6 +419,9 @@ export default function ConnectorStudio() {
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setShowAuth(true)}>
                   <Key className="h-3.5 w-3.5 mr-1.5" /> Auth
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowScopes(true)}>
+                  <Users className="h-3.5 w-3.5 mr-1.5" /> Access
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
                   <Upload className="h-3.5 w-3.5 mr-1.5" /> Import Spec
@@ -493,7 +583,7 @@ export default function ConnectorStudio() {
                 {usageLoading ? (
                   <div className="space-y-2 py-2">
                     {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="flex items-center justify-between">
+                      <div key={i} className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <Skeleton className="h-4 w-48" />
                         <Skeleton className="h-4 w-16" />
                         <Skeleton className="h-4 w-16" />
@@ -567,6 +657,8 @@ export default function ConnectorStudio() {
       </main>
 
       {/* ── Dialogs ─────────────────────────────────────────────────── */}
+      <HelpDialog open={showHelp} onClose={() => setShowHelp(false)} />
+
       <CreateConnectorDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
@@ -583,6 +675,12 @@ export default function ConnectorStudio() {
             connectorId={selected.id}
             open={showAuth}
             onClose={() => setShowAuth(false)}
+          />
+          <AccessDialog
+            connectorId={selected.id}
+            connectorName={selected.name}
+            open={showScopes}
+            onClose={() => setShowScopes(false)}
           />
           <ImportSpecDialog
             connectorId={selected.id}
@@ -841,6 +939,405 @@ function AuthDialog({
   );
 }
 
+// In-app user guide. Kept in sync with docs/connector-studio-guide.md.
+const GUIDE_MD = `
+Connect any app or service (Zoho, a vendor tool, an internal portal) to the AI assistant
+— **without any coding**. Once connected, the assistant can use it to answer questions and
+take actions for your team.
+
+> You're a Super Admin, so you can set this up here. Once a connector is **published**,
+> everyone (or the people you choose under **Access**) can use it just by chatting — they
+> don't need this screen.
+
+## What you'll need
+
+1. **An "API description" file** for the service — an *OpenAPI spec*, a \`.json\` or
+   \`.yaml\` file. It's the menu of things the service can do.
+2. **The website address** of the service (e.g. \`https://people.zoho.com\`).
+3. **A login credential** (API key, token, or username/password) — unless it's public.
+
+### How to get the API description file
+
+You almost never write this yourself:
+
+- **Ask the service directly** — many publish it at \`https://theservice.com/openapi.json\`
+  or \`/swagger.json\`. Open it in a browser and save the file.
+- **Check the service's docs/developer page** — search for "OpenAPI" or "Swagger".
+- **Export from Postman** — *Export → OpenAPI 3.0*.
+- **Ask the vendor or your IT team** if you can't find it.
+
+## Step by step
+
+1. **Create the connector** (＋ in the sidebar): Name, Slug, Base URL, Description.
+2. **Import Spec** — upload the \`.json\`/\`.yaml\`. It auto-lists every action.
+3. **Auth** — choose the credential type and paste the key/token. Secrets are encrypted
+   and hidden after saving.
+4. **Tidy actions** (pencil icon) — improve descriptions, turn on *Requires confirmation*
+   for anything that changes data, set *Minutes saved*, disable actions you don't want.
+5. **Test** (play icon) — run an action with sample values before exposing it.
+6. **Access** — pick **Everyone** (default) or **Restricted** by role, department, or specific people.
+7. **Publish** — within ~30 seconds the assistant can use these actions.
+8. **Usage & ROI tab** — track calls, latency, success rate, and time saved.
+
+## Who can use a connector (Access)
+
+| Choice | What it means |
+|---|---|
+| **Everyone** | Any user in the company can use it (default). |
+| **Restricted → Roles** | Only the roles you pick (e.g. HR, Manager, IT). |
+| **Restricted → Departments** | Only the departments you list (e.g. Engineering). |
+| **Restricted → Specific users** | Only the named people you add (search by name/email). |
+
+A person gets access if they match **any** one of your selections. This only controls who
+can *use* it in chat — editing here stays Super-Admin only.
+
+## If something isn't working
+
+- **Import found 0 actions** — the file may not be a valid OpenAPI/Swagger file.
+- **Test shows 401/403** — the login isn't set or is wrong; re-open **Auth**.
+- **Assistant never uses it** — make sure it's *published*, the action is *enabled*, and
+  the description clearly says what it does.
+- **Changes don't show up** — click **Re-publish** to apply immediately.
+- **Right people can't use it** — check **Access** matches their role/department.
+`;
+
+function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>How to use Connector Studio</DialogTitle>
+          <DialogDescription>
+            Connect a service to the assistant — no coding required.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[65vh] overflow-y-auto pr-2 prose prose-sm dark:prose-invert max-w-none">
+          <ReactMarkdown>{GUIDE_MD}</ReactMarkdown>
+        </div>
+        <DialogFooter>
+          <Button onClick={onClose}>Got it</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Roles recognized by the backend (app/auth.py VALID_ROLES), minus super_admin
+// (super admins see everything anyway). Stored lowercase to match scope matching.
+const SCOPE_ROLES: { value: string; label: string }[] = [
+  { value: "employee", label: "Employee" },
+  { value: "manager", label: "Manager" },
+  { value: "functional manager", label: "Functional Manager" },
+  { value: "hr", label: "HR" },
+  { value: "it", label: "IT" },
+  { value: "pmo", label: "PMO" },
+  { value: "admin", label: "Admin" },
+];
+
+function AccessDialog({
+  connectorId,
+  connectorName,
+  open,
+  onClose,
+}: {
+  connectorId: number;
+  connectorName: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<"global" | "restricted">("global");
+  const [roles, setRoles] = useState<Set<string>>(new Set());
+  const [deptInput, setDeptInput] = useState("");
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [userEmails, setUserEmails] = useState<string[]>([]);
+  const [userQuery, setUserQuery] = useState("");
+  const [userResults, setUserResults] = useState<{ name: string; email: string }[]>([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Load current access rules whenever the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    setUserQuery("");
+    setUserResults([]);
+    apiFetch(`/api/admin/connectors/${connectorId}/scopes`)
+      .then((d) => {
+        setMode(d.mode === "restricted" ? "restricted" : "global");
+        setRoles(new Set((d.roles ?? []).map((r: string) => r.toLowerCase())));
+        setDepartments(d.departments ?? []);
+        setUserEmails((d.user_emails ?? []).map((e: string) => e.toLowerCase()));
+      })
+      .catch((e: any) => toast.error(e.message))
+      .finally(() => setLoading(false));
+  }, [open, connectorId]);
+
+  // Debounced employee search for the "specific user" picker.
+  useEffect(() => {
+    const q = userQuery.trim();
+    if (q.length < 2) {
+      setUserResults([]);
+      return;
+    }
+    setSearchingUsers(true);
+    const t = setTimeout(() => {
+      apiFetch(`/api/admin/connectors/users/search?q=${encodeURIComponent(q)}`)
+        .then((r) => setUserResults(r ?? []))
+        .catch(() => setUserResults([]))
+        .finally(() => setSearchingUsers(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [userQuery]);
+
+  const addUser = (email: string) => {
+    const e = email.trim().toLowerCase();
+    if (e && !userEmails.includes(e)) setUserEmails((arr) => [...arr, e]);
+    setUserQuery("");
+    setUserResults([]);
+  };
+
+  const toggleRole = (value: string) =>
+    setRoles((prev) => {
+      const s = new Set(prev);
+      s.has(value) ? s.delete(value) : s.add(value);
+      return s;
+    });
+
+  const addDept = () => {
+    const v = deptInput.trim();
+    if (v && !departments.includes(v)) setDepartments((d) => [...d, v]);
+    setDeptInput("");
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body =
+        mode === "global"
+          ? { roles: [], departments: [], persona_ids: [], user_emails: [] }
+          : {
+              roles: Array.from(roles),
+              departments,
+              persona_ids: [],
+              user_emails: userEmails,
+            };
+      if (
+        mode === "restricted" &&
+        body.roles.length === 0 &&
+        body.departments.length === 0 &&
+        body.user_emails.length === 0
+      ) {
+        toast.error("Pick at least one role, department, or user — or choose Everyone.");
+        setSaving(false);
+        return;
+      }
+      const r = await apiFetch(`/api/admin/connectors/${connectorId}/scopes`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      toast.success(r.mode === "global" ? "Now visible to everyone" : "Access restricted");
+      onClose();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Who can use {connectorName}?</DialogTitle>
+          <DialogDescription>
+            Choose who sees this connector's tools in the assistant. This does not affect who
+            can edit it here (that stays Super Admin only).
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="py-8 flex justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={mode === "global"}
+                  onChange={() => setMode("global")}
+                />
+                <span>
+                  <span className="text-sm font-medium">Everyone</span>
+                  <span className="block text-xs text-gray-500">
+                    All users can use this connector (default).
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={mode === "restricted"}
+                  onChange={() => setMode("restricted")}
+                />
+                <span>
+                  <span className="text-sm font-medium">Restricted</span>
+                  <span className="block text-xs text-gray-500">
+                    Only matching roles, departments, or specific users.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {mode === "restricted" && (
+              <div className="space-y-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+                <div>
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Roles
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {SCOPE_ROLES.map((r) => (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => toggleRole(r.value)}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                          roles.has(r.value)
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300",
+                        )}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Departments
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      className="text-sm"
+                      placeholder="e.g. Engineering"
+                      value={deptInput}
+                      onChange={(e) => setDeptInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addDept();
+                        }
+                      }}
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={addDept}>
+                      Add
+                    </Button>
+                  </div>
+                  {departments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {departments.map((d) => (
+                        <span
+                          key={d}
+                          className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full flex items-center gap-1"
+                        >
+                          {d}
+                          <button
+                            type="button"
+                            onClick={() => setDepartments((arr) => arr.filter((x) => x !== d))}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Specific users
+                  </p>
+                  <div className="relative">
+                    <Input
+                      className="text-sm"
+                      placeholder="Search by name or email…"
+                      value={userQuery}
+                      onChange={(e) => setUserQuery(e.target.value)}
+                    />
+                    {userQuery.trim().length >= 2 && (
+                      <div className="absolute z-10 mt-1 w-full max-h-44 overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg">
+                        {searchingUsers ? (
+                          <div className="px-3 py-2 text-xs text-gray-400 flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Searching…
+                          </div>
+                        ) : userResults.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-gray-400">No matches</div>
+                        ) : (
+                          userResults.map((u) => (
+                            <button
+                              key={u.email}
+                              type="button"
+                              onClick={() => addUser(u.email)}
+                              disabled={userEmails.includes(u.email.toLowerCase())}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <span className="font-medium">{u.name}</span>
+                              <span className="block text-xs text-gray-400 font-mono">{u.email}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {userEmails.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {userEmails.map((em) => (
+                        <span
+                          key={em}
+                          className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full flex items-center gap-1 font-mono"
+                        >
+                          {em}
+                          <button
+                            type="button"
+                            onClick={() => setUserEmails((arr) => arr.filter((x) => x !== em))}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">
+                  A user gets access if they match <strong>any</strong> selected role, department, or
+                  are listed as a specific user.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving || loading}>
+            {saving && <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />}
+            Save Access
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ImportSpecDialog({
   connectorId,
   open,
@@ -973,6 +1470,28 @@ function TestOpDialog({
   const [args, setArgs] = useState("{}");
   const [result, setResult] = useState<any>(null);
   const [running, setRunning] = useState(false);
+  const [view, setView] = useState<"readable" | "json">("readable");
+
+  // The parsed response body for the readable/pretty views. Prefer the structured
+  // `data` the executor returns; fall back to parsing the (possibly trimmed) text.
+  const parsedData = (() => {
+    if (!result?.ok) return null;
+    if (result.data !== undefined && result.data !== null) return result.data;
+    try {
+      return JSON.parse(result.text);
+    } catch {
+      return result.text;
+    }
+  })();
+  const prettyJson = (() => {
+    if (parsedData === null) return result?.text ?? "";
+    if (typeof parsedData === "string") return parsedData;
+    try {
+      return JSON.stringify(parsedData, null, 2);
+    } catch {
+      return result?.text ?? "";
+    }
+  })();
 
   const run = async () => {
     let parsed: any = {};
@@ -1049,24 +1568,55 @@ function TestOpDialog({
                   : "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700",
               )}
             >
-              <div className="flex items-center gap-2 mb-2 text-sm font-medium">
-                {result.ok ? (
-                  <>
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="text-green-700 dark:text-green-400">
-                      Success ({result.latency_ms}ms)
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="h-4 w-4 text-red-600" />
-                    <span className="text-red-700 dark:text-red-400">Error</span>
-                  </>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-2 mb-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {result.ok ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      <span className="text-green-700 dark:text-green-400">
+                        Success ({result.latency_ms}ms)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-4 w-4 text-red-600" />
+                      <span className="text-red-700 dark:text-red-400">Error</span>
+                    </>
+                  )}
+                </div>
+                {result.ok && (
+                  <div className="flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden text-xs">
+                    {(["readable", "json"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setView(m)}
+                        className={cn(
+                          "px-2.5 py-1 transition-colors",
+                          view === m
+                            ? "bg-green-600 text-white"
+                            : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800",
+                        )}
+                      >
+                        {m === "readable" ? "Readable" : "Raw JSON"}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-              <pre className="text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
-                {result.ok ? result.text : result.error}
-              </pre>
+              {!result.ok ? (
+                <pre className="text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+                  {result.error}
+                </pre>
+              ) : view === "json" ? (
+                <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
+                  {prettyJson}
+                </pre>
+              ) : (
+                <div className="max-h-64 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
+                  <JsonView value={parsedData} />
+                </div>
+              )}
             </div>
           )}
         </div>

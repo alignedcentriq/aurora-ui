@@ -266,7 +266,7 @@ function CoOwnerModal({
         exit={{ scale: 0.95, y: 8 }}
         className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-md w-full mx-4"
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
             <UserCheck className="h-4 w-4 text-primary" />
             <h3 className="font-semibold text-foreground text-sm">Manage Co-owners</h3>
@@ -325,7 +325,7 @@ function CoOwnerModal({
             {(rule.co_owners_json ?? []).map((email) => (
               <li
                 key={email}
-                className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2"
+                className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-lg border border-border bg-muted/20 px-3 py-2"
               >
                 <div className="flex items-center gap-2">
                   <UserCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
@@ -1202,7 +1202,7 @@ export function AutomationHub() {
     <div className="flex flex-col h-full overflow-hidden bg-[#f5f7fa] dark:bg-background">
       {/* Header */}
       <div className="flex-shrink-0 bg-background border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
               <Zap className="h-5 w-5 text-amber-600" />
@@ -1238,7 +1238,7 @@ export function AutomationHub() {
               transition={{ duration: 0.15 }}
               className="mb-6 rounded-2xl border border-border bg-card shadow-sm p-5"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
                 <h2 className="font-semibold text-sm text-foreground">
                   {editingRule ? "Edit Automation" : "New Automation"}
                 </h2>

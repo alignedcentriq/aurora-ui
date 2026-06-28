@@ -73,7 +73,6 @@ interface AuthContextType {
   accessDenied: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
-  setRole: (role: Role) => void;
 }
 
 const ROLE_MAP: Record<string, Role> = {
@@ -114,33 +113,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         params.get("mock-email") ||
         localStorage.getItem("mock-email") ||
         (isDev ? "shivam.sharma@alignedautomation.com" : null);
-      const mockRole =
-        params.get("mock-role") || localStorage.getItem("mock-role") || (isDev ? "Employee" : null);
 
       if (mockEmail) {
         if (params.get("mock-email")) localStorage.setItem("mock-email", mockEmail);
-        if (params.get("mock-role") && mockRole) localStorage.setItem("mock-role", mockRole);
 
-        const resolvedRole = mockRole || "Employee";
-        let effectiveRole: Role = ROLE_MAP[resolvedRole.toLowerCase()] ?? (resolvedRole as Role);
+        // Role is always determined by the backend — DB override takes precedence over any local claim.
+        let effectiveRole: Role = "Employee";
         let scopes: string[] = [];
         try {
           const accessRes = await fetchWithTimeout(
             "/api/access/me",
             {
-              headers: { "x-user-email": mockEmail, "x-user-role": resolvedRole.toLowerCase() },
+              headers: { "x-user-email": mockEmail, "x-user-role": "employee" },
             },
-            2000,
+            5000,
           );
           if (accessRes.ok) {
             const accessData = await accessRes.json();
-            if (accessData.has_override && accessData.role) {
+            // Always use the backend-resolved role — /api/access/me returns the true
+            // effective role whether it came from a DB override or the default.
+            if (accessData.role) {
               effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
               scopes = accessData.scopes || [];
             }
           }
         } catch {
-          // ignore
+          // ignore — effectiveRole stays Employee; user will see reduced access until next reload
         }
 
         // Properly capitalize each word of the display name derived from the email
@@ -217,7 +215,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Network error — allow through; backend will enforce on actual calls.
           }
 
-          // Fetch DB role override + scopes from Access Management
+          // Fetch effective role + scopes from backend (DB override wins over MSAL claim).
           let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
           let scopes: string[] = [];
           try {
@@ -226,11 +224,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               {
                 headers: { "x-user-email": email, "x-user-role": msalRole.toLowerCase() },
               },
-              2000,
+              5000,
             );
             if (accessRes.ok) {
               const accessData = await accessRes.json();
-              if (accessData.has_override && accessData.role) {
+              if (accessData.role) {
                 effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
                 scopes = accessData.scopes || [];
               }
@@ -410,7 +408,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     localStorage.removeItem("mock-email");
-    localStorage.removeItem("mock-role");
     if (isInteracting) return;
     try {
       if (user?.email) {
@@ -425,13 +422,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const setRole = (role: Role) => {
-    setUser((prev) => (prev ? { ...prev, role } : null));
-  };
-
   return (
     <AuthContext.Provider
-      value={{ user, isLoading, isInteracting, accessDenied, login, logout, setRole }}
+      value={{ user, isLoading, isInteracting, accessDenied, login, logout }}
     >
       {children}
     </AuthContext.Provider>

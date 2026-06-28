@@ -377,6 +377,7 @@ def run_due() -> int:
                 if upsert(db, spec) == "created":
                     created += 1
         except Exception as exc:
+            db.rollback()
             log.warning("[nudge] stale-approval detector failed: %s", exc)
 
         # Bench/rolloff capacity alerts for managers: one bulk pass over allocations.
@@ -385,6 +386,7 @@ def run_due() -> int:
                 if upsert(db, spec) == "created":
                     created += 1
         except Exception as exc:
+            db.rollback()
             log.warning("[nudge] bench-reports detector failed: %s", exc)
 
         # Expiring leaves: per active employee.
@@ -395,6 +397,7 @@ def run_due() -> int:
                     if upsert(db, spec) == "created":
                         created += 1
             except Exception as exc:
+                db.rollback()
                 log.warning("[nudge] expiring-leaves detector failed for %s: %s",
                             getattr(emp, "email", "?"), exc)
             try:
@@ -402,6 +405,7 @@ def run_due() -> int:
                     if upsert(db, spec) == "created":
                         created += 1
             except Exception as exc:
+                db.rollback()
                 log.warning("[nudge] onboarding detector failed for %s: %s",
                             getattr(emp, "email", "?"), exc)
 

@@ -774,7 +774,7 @@ export function PeoplePage() {
               const hasPrev = page > 0;
               const hasNext = (page + 1) * PAGE_SIZE < total;
               const Pager = () => (
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3">
                   <p className="text-[13px] text-[#64748b] dark:text-muted-foreground">
                     Showing{" "}
                     <span className="font-semibold text-[#0f172a] dark:text-white">

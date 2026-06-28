@@ -649,7 +649,7 @@ function Scene6() {
 /*  Scene 7 — Typography reveal                                        */
 /* ================================================================== */
 function Scene7() {
-  const lines = ["One Assistant.", "Every System.", "Every Employee."];
+  const lines = ["One App.", "Every System.", "Every Employee."];
   return (
     <motion.div
       {...sceneFade}

@@ -80,25 +80,15 @@ class OnboardingDoc:
 # never depends on tuple position.
 STEPS: tuple[OnboardingStep, ...] = (
     OnboardingStep(
-        key="profile_confirm",
-        title="Confirm your profile",
-        description="Check that your name, department, designation, and contact details are correct.",
-        category="Get set up",
-        order=1,
-        kind="manual",
-        cta_label="Review my details",
-        action_payload={"prompt": "Show my profile details so I can confirm they're correct."},
-    ),
-    OnboardingStep(
         key="it_setup",
-        title="Set up your laptop & accounts",
-        description="Raise an IT ticket to get your device, email, and system access ready. "
+        title="Set up your accounts & system access",
+        description="Raise an IT ticket to get your email, system access, and essential tools configured. "
                     "This step completes automatically once IT resolves your ticket.",
         category="Get set up",
-        order=2,
+        order=1,
         kind="deeplink",
-        cta_label="Raise IT setup ticket",
-        action_payload={"prompt": "I'm a new joiner — please set up my laptop, email, and system access."},
+        cta_label="Raise access setup ticket",
+        action_payload={"prompt": "I'm a new joiner — please set up my email and system access."},
         auto_signal="it_ticket_resolved",
     ),
     OnboardingStep(
@@ -107,10 +97,20 @@ STEPS: tuple[OnboardingStep, ...] = (
         description="Download each form, fill it in, and upload it back. We'll send the completed "
                     "documents to HR for you. This step completes once all required forms are uploaded.",
         category="Paperwork",
-        order=3,
+        order=2,
         kind="documents",
         cta_label="View documents",
         auto_signal="docs_submitted",
+    ),
+    OnboardingStep(
+        key="profile_confirm",
+        title="Confirm your profile",
+        description="Once your documents are in, check that your name, department, designation, and contact details are correct.",
+        category="Get set up",
+        order=3,
+        kind="manual",
+        cta_label="Review my details",
+        action_payload={"prompt": "Show my profile details so I can confirm they're correct."},
     ),
     OnboardingStep(
         key="induction_video",
@@ -150,17 +150,17 @@ STEPS: tuple[OnboardingStep, ...] = (
         order=7,
         kind="deeplink",
         cta_label="Browse training",
-        action_payload={"prompt": "Show me training courses I should start as a new joiner."},
+        action_payload={"route": "/control-hub", "tab": "te-lms"},
     ),
     OnboardingStep(
         key="explore_assistant",
         title="Explore what the assistant can do",
-        description="A quick tour of everything Centriq can help you with day to day.",
+        description="A quick tour of everything Centriq can help you with as a new joiner.",
         category="Grow",
         order=8,
         kind="manual",
         cta_label="Show me around",
-        action_payload={"prompt": "What can you help me with?"},
+        action_payload={"prompt": "Give me a full tour of everything Centriq can help me with as a new joiner — cover all areas: leave and attendance, HR policies and queries, raising IT tickets or complaints, submitting forms, finding documents, accessing company apps and portals, training, and anything else I should know about."},
     ),
 )
 

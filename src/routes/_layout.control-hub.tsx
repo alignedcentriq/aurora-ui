@@ -161,7 +161,7 @@ const TABS: TabItem[] = [
   },
   {
     id: "roi",
-    label: "ROI Dashboard",
+    label: "Value Delivered",
     category: "System & Ops",
     icon: TrendingUp,
     color: "#10B981",

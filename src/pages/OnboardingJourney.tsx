@@ -79,7 +79,9 @@ interface JourneyView {
   documents: DocView[];
 }
 interface VideoView {
+  id?: string;
   title: string;
+  description?: string;
   url: string;
   chapters: { title: string; start: number }[];
 }
@@ -110,9 +112,10 @@ export function OnboardingJourney() {
   const [view, setView] = useState<JourneyView | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyStep, setBusyStep] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"steps" | "documents" | "video">("steps");
+  const [panel, setPanel] = useState<"steps" | "documents" | "video-library" | "video">("steps");
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
-  const [video, setVideo] = useState<VideoView | null>(null);
+  const [videos, setVideos] = useState<VideoView[]>([]);
+  const [activeVideo, setActiveVideo] = useState<VideoView | null>(null);
 
   const authHeaders = useMemo(
     () => ({
@@ -181,17 +184,20 @@ export function OnboardingJourney() {
         return;
       }
       if (step.kind === "video") {
-        setPanel("video");
-        if (!video) {
-          fetch("/api/onboarding/induction-video", { headers: authHeaders })
+        setPanel("video-library");
+        if (videos.length === 0) {
+          fetch("/api/onboarding/induction-videos", { headers: authHeaders })
             .then((r) => r.json())
-            .then(setVideo)
+            .then((list: VideoView[]) => setVideos(Array.isArray(list) ? list : []))
             .catch(() => {});
         }
         return;
       }
       if (step.action_payload?.route) {
-        navigate({ to: step.action_payload.route as string });
+        navigate({
+          to: step.action_payload.route as string,
+          ...(step.action_payload.tab ? { search: { tab: step.action_payload.tab as string } } : {}),
+        });
         return;
       }
       if (step.action_payload?.prompt) {
@@ -199,7 +205,7 @@ export function OnboardingJourney() {
         return;
       }
     },
-    [askInChat, navigate, authHeaders, video],
+    [askInChat, navigate, authHeaders, videos],
   );
 
   if (loading) {
@@ -236,13 +242,21 @@ export function OnboardingJourney() {
           </h1>
         </div>
 
-        {/* Back switcher (only if documents or video panel is open) */}
+        {/* Back switcher */}
         {panel !== "steps" && (
           <button
-            onClick={() => setPanel("steps")}
+            onClick={() => {
+              if (panel === "video") {
+                setActiveVideo(null);
+                setPanel("video-library");
+              } else {
+                setPanel("steps");
+              }
+            }}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/60 px-4 py-2 text-[12px] font-bold text-muted-foreground hover:text-foreground transition-all cursor-pointer shadow-sm hover:scale-[1.02]"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to checklist
+            <ArrowLeft className="h-4 w-4" />
+            {panel === "video" ? "Back to inductions" : "Back to checklist"}
           </button>
         )}
       </div>
@@ -405,7 +419,7 @@ export function OnboardingJourney() {
 
               {/* Mobile Stepper: Horizontal scrolling nodes */}
               <div className="block lg:hidden rounded-3xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-xl p-4 shadow-xl">
-                <div className="flex items-center justify-between mb-3 px-1">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3 px-1">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
                     Journey Roadmap
                   </span>
@@ -579,7 +593,7 @@ export function OnboardingJourney() {
 
                       {activeStep.key === "it_setup" && (
                         <div className="space-y-4">
-                          <div className="flex items-center justify-between">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               IT Provisioning Ticket Status
                             </span>
@@ -590,7 +604,7 @@ export function OnboardingJourney() {
                           </div>
 
                           <div className="rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-4 space-y-4">
-                            <div className="flex items-center justify-between border-b border-slate-200/50 dark:border-white/[0.04] pb-2.5">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/50 dark:border-white/[0.04] pb-2.5">
                               <div>
                                 <span className="text-[10px] text-muted-foreground">Ticket ID</span>
                                 <p className="text-[13px] font-black text-foreground">
@@ -644,7 +658,7 @@ export function OnboardingJourney() {
                             {view.documents.map((d) => (
                               <div
                                 key={d.doc_key}
-                                className="flex items-center justify-between text-[12.5px] rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-2.5"
+                                className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-[12.5px] rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-2.5"
                               >
                                 <div className="flex items-center gap-2 min-w-0">
                                   <FileText className="h-4 w-4 text-slate-400 shrink-0" />
@@ -669,28 +683,9 @@ export function OnboardingJourney() {
                       )}
 
                       {activeStep.key === "induction_video" && (
-                        <div className="space-y-4">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                            Induction Video Chapters
-                          </span>
-                          <div className="rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 overflow-hidden divide-y divide-slate-200/50 dark:divide-white/[0.04]">
-                            {INDUCTION_CHAPTERS.map((ch, i) => (
-                              <div
-                                key={i}
-                                className="flex items-center justify-between px-4 py-2.5 text-[12.5px]"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span className="text-violet-500 font-bold tabular-nums">
-                                    #{i + 1}
-                                  </span>
-                                  <span className="font-semibold text-foreground">{ch.title}</span>
-                                </div>
-                                <span className="text-[11px] text-muted-foreground tabular-nums">
-                                  {fmtTime(ch.start)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                        <div className="rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 px-4 py-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
+                          <PlayCircle className="h-4 w-4 text-violet-500 shrink-0" />
+                          Click <span className="font-semibold text-foreground mx-1">Watch induction</span> to browse all available induction videos.
                         </div>
                       )}
 
@@ -707,7 +702,7 @@ export function OnboardingJourney() {
                             ].map((policy, i) => (
                               <div
                                 key={i}
-                                className="flex items-center justify-between text-[12.5px] rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-2.5"
+                                className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-[12.5px] rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-2.5"
                               >
                                 <span className="font-semibold text-foreground">{policy.name}</span>
                                 <span
@@ -773,7 +768,7 @@ export function OnboardingJourney() {
                                 Centriq Platform Security & Compliance Induction
                               </h4>
                             </div>
-                            <div className="flex items-center justify-between text-[11.5px] text-muted-foreground border-t border-slate-200/50 dark:border-white/[0.04] pt-2.5">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-[11.5px] text-muted-foreground border-t border-slate-200/50 dark:border-white/[0.04] pt-2.5">
                               <span>Estimated time: 2.5 hours</span>
                               <span>Target date: End of week</span>
                             </div>
@@ -875,6 +870,21 @@ export function OnboardingJourney() {
                   </motion.div>
                 )}
 
+                {panel === "video-library" && (
+                  <motion.div
+                    key="video-library"
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -15 }}
+                    transition={{ duration: 0.25 }}
+                  >
+                    <VideoLibraryPanel
+                      videos={videos}
+                      onSelect={(v) => { setActiveVideo(v); setPanel("video"); }}
+                    />
+                  </motion.div>
+                )}
+
                 {panel === "video" && (
                   <motion.div
                     key="video"
@@ -884,9 +894,9 @@ export function OnboardingJourney() {
                     transition={{ duration: 0.25 }}
                   >
                     <VideoPanel
-                      video={video}
+                      video={activeVideo}
                       onComplete={() => completeStep("induction_video")}
-                      onBack={() => setPanel("steps")}
+                      onBack={() => { setActiveVideo(null); setPanel("video-library"); }}
                     />
                   </motion.div>
                 )}
@@ -1113,6 +1123,58 @@ function DocumentsPanel({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Video library picker ───────────────────────────────────────────────────────
+function VideoLibraryPanel({
+  videos,
+  onSelect,
+}: {
+  videos: VideoView[];
+  onSelect: (v: VideoView) => void;
+}) {
+  if (videos.length === 0) {
+    return (
+      <div className="rounded-3xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-xl p-8 shadow-xl flex items-center gap-3 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin text-violet-500 shrink-0" />
+        Loading induction videos…
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-3xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-xl p-6 shadow-xl space-y-5">
+      <div className="flex items-center gap-2">
+        <PlayCircle className="h-5 w-5 text-violet-500" />
+        <h2 className="text-[17px] font-black text-foreground">Induction Videos</h2>
+        <span className="ml-auto text-[12px] text-muted-foreground font-medium">{videos.length} video{videos.length !== 1 ? "s" : ""}</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {videos.map((v) => (
+          <button
+            key={v.id ?? v.title}
+            onClick={() => onSelect(v)}
+            className="group text-left rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-zinc-900/50 p-5 hover:border-violet-400/60 hover:bg-violet-50/40 dark:hover:bg-violet-950/20 transition-all shadow-sm hover:shadow-md cursor-pointer space-y-2"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 h-9 w-9 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                <PlayCircle className="h-4.5 w-4.5 text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[14px] font-bold text-foreground leading-snug truncate">{v.title}</p>
+                {v.description && (
+                  <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">{v.description}</p>
+                )}
+              </div>
+            </div>
+            {v.chapters.length > 0 && (
+              <p className="text-[11px] text-muted-foreground pl-12">{v.chapters.length} chapters</p>
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );

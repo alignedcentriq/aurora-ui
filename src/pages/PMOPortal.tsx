@@ -341,7 +341,7 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                 )}
               />
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                   {c.label}
                 </span>
@@ -367,7 +367,7 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
       </div>
 
       {/* Main Table Title / Actions */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
           Skill Availability Gaps Analysis
@@ -726,7 +726,7 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
               key={c.label}
               className="relative overflow-hidden rounded-2xl border p-5 bg-white/60 dark:bg-zinc-900/35 border-slate-200/60 dark:border-white/[0.04] shadow-sm"
             >
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
                   {c.label}
                 </span>
@@ -744,7 +744,7 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
         })}
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
           Bench-to-Upskill Suggestions
@@ -1038,7 +1038,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 )}
               />
 
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <span className="text-[11px] font-bold uppercase tracking-wider">{c.label}</span>
                 <div
                   className={cn(
@@ -1065,7 +1065,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
 
       {/* Sync bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
           Active Requests ({items.length})
@@ -1232,7 +1232,7 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                     </div>
                   ) : (
                     <div className="mt-5 pt-4 border-t border-slate-200/50 dark:border-zinc-800/60 text-xs">
-                      <div className="flex items-center justify-between text-muted-foreground/60 text-[9px] font-bold uppercase tracking-wider mb-1.5 select-none">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-muted-foreground/60 text-[9px] font-bold uppercase tracking-wider mb-1.5 select-none">
                         <span>Decision Registry</span>
                         <span
                           className={cn(

@@ -1828,7 +1828,7 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
                 key={s.key}
                 className="rounded-2xl border border-border bg-muted/20 p-4"
               >
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
                   <span className={cn("text-xs font-bold flex items-center gap-1.5", s.tone)}>
                     <Icon className="h-3.5 w-3.5" />
                     {s.label}
@@ -1901,7 +1901,7 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
               {(result.rows ?? []).map((r) => (
                 <div
                   key={r.name}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                  className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 rounded-xl border border-border bg-background px-3 py-2 text-xs"
                 >
                   <div className="min-w-0">
                     <span className="font-semibold text-foreground">{r.name}</span>
@@ -2129,7 +2129,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
       {/* Add Form */}
       {showForm && (
         <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-5 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <p className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Trophy className="h-4 w-4 text-amber-500" /> New Appreciation
             </p>

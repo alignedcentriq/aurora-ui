@@ -73,9 +73,23 @@ async def udemy_courses(
 
 @router.get("/courses/{course_id}")
 async def udemy_course_detail(course_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Full course detail with org enrollment + completion stats annotated."""
     _guard_configured()
     try:
-        return udemy.get_course(course_id)
+        return udemy.get_course_with_org_stats(course_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+
+@router.get("/analytics/org-course-stats")
+async def org_course_stats(user: CurrentUser = Depends(get_current_user)):
+    """Aggregated org stats for every course: enrolled, completed, avg_completion_pct.
+    Cached for 1 hour. Used to annotate search results without per-course API calls."""
+    _guard_configured()
+    try:
+        return {"results": udemy.get_org_stats()}
     except HTTPException:
         raise
     except Exception as e:

@@ -991,7 +991,7 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
         ))}
       </div>
 
-      <div className="flex items-center justify-between px-8 pb-3 shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 pb-3 shrink-0">
         <p className="text-[12px] text-muted-foreground">
           HR receives an email when a new employee is detected. Click Yes in that email to send them
           the welcome package.
@@ -1230,7 +1230,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
     <div className="flex flex-col h-full overflow-hidden">
       {/* Welcome message editor */}
       <div className="mx-8 mt-4 mb-2 rounded-xl border border-[var(--border)] bg-card/40 shrink-0">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)]/50">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-5 py-3.5 border-b border-[var(--border)]/50">
           <div>
             <p className="text-[13px] font-medium text-foreground">Welcome Message</p>
             <p className="text-[12px] text-muted-foreground mt-0.5">
@@ -1259,7 +1259,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Welcome to the team, {name}!…"
               />
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <button
                   onClick={() => {
                     setMessage(DEFAULT_WELCOME_MESSAGE);
@@ -1297,7 +1297,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-8 py-3 shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-3 shrink-0">
         <p className="text-[13px] text-muted-foreground">
           Resources below appear in the email. Supports links, videos, and slide decks.
         </p>

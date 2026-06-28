@@ -657,7 +657,7 @@ export function ConfigPage() {
     <div className="flex h-full flex-col overflow-hidden bg-[#f5f7fa] dark:bg-background">
       {/* Header */}
       <div className="shrink-0 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card px-8 py-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
               Assets & Config
@@ -1534,7 +1534,7 @@ export function ConfigPage() {
                         </div>
 
                         {/* Footer — matches old card bottom row */}
-                        <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-[var(--border)] px-5 py-4">
                           <div className="flex items-center gap-3">
                             {row && (
                               <p className="text-[10px] text-muted-foreground/60">
@@ -1720,7 +1720,7 @@ export function ConfigPage() {
                     className="w-full min-h-[260px] resize-y rounded-xl border border-[var(--border)] bg-background px-4 py-3 text-[13px] font-mono leading-relaxed text-foreground outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/5 placeholder:text-muted-foreground/30"
                   />
                 )}
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <p className="text-[11px] text-muted-foreground/60">
                     {companyContextEdit.length > 0
                       ? `${companyContextEdit.length} characters`

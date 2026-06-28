@@ -658,7 +658,7 @@ export function ProjectIQPortal() {
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between border-t border-border/40 pt-2.5 mt-2.5 text-[10px] font-medium text-muted-foreground font-mono">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-border/40 pt-2.5 mt-2.5 text-[10px] font-medium text-muted-foreground font-mono">
                     <span className="flex items-center gap-1">
                       <FileText className="w-3.5 h-3.5 text-sky-500" />
                       {p.source_doc_count} source doc(s)
@@ -842,7 +842,7 @@ export function ProjectIQPortal() {
                       items={selected.capabilities}
                       render={(c: Capability) => (
                         <div className="flex flex-col gap-1 w-full">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3">
                             <span className="font-bold text-xs sm:text-sm text-foreground">
                               {c.capability_name}
                               {c.category ? ` — ${c.category}` : ""}
@@ -869,7 +869,7 @@ export function ProjectIQPortal() {
                       items={selected.integrations}
                       render={(i: Integration) => (
                         <div className="flex flex-col gap-1 w-full">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3">
                             <span className="font-bold text-xs sm:text-sm text-foreground">
                               {i.system_name}
                               {i.integration_type ? ` (${i.integration_type})` : ""}
@@ -896,7 +896,7 @@ export function ProjectIQPortal() {
                       items={selected.lessons}
                       render={(l: Lesson) => (
                         <div className="flex flex-col gap-1 w-full">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3">
                             <span className="font-bold text-xs sm:text-sm text-foreground">
                               {l.lesson}
                             </span>
@@ -997,7 +997,7 @@ export function ProjectIQPortal() {
                       title="Expertise Mapped"
                       items={selected.expertise}
                       render={(e: Expert) => (
-                        <div className="flex items-center justify-between gap-3 w-full">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 w-full">
                           <div>
                             <span className="font-bold text-xs sm:text-sm text-foreground block">
                               {e.person_name}

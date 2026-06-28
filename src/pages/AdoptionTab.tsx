@@ -162,7 +162,7 @@ export function AdoptionTab() {
               c.accent && "border-rose-500/30 bg-rose-500/5",
             )}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 {c.label}
               </span>
