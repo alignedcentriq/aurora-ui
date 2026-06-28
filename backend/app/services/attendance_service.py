@@ -1,23 +1,43 @@
 """
 Attendance Service
 ------------------
-Aggregates the internal daily `attendance` table (app.models.Attendance) into the monthly
-summary shape the attendance tools/UI expect: present / absent / wfh / late counts.
+Aggregates attendance data into the monthly summary / calendar shapes the UI expects.
 
-"Late" is derived from the check-in time (after LATE_THRESHOLD) on Present days, since the
-table has no explicit late flag. Works for the logged-in user OR any employee (by name/email).
+Data sources (in priority order):
+  1. eSSL biometric DB — when ATTENDANCE_DBURL is configured, live punch records from
+     the eSSL SQL Server view (dbo.vbUserTimeEntryLog) are used. Employee matching is
+     by name (case-insensitive). WFH status is not available from eSSL (physical punches
+     only); absent days are derived from weekdays with no punch record.
+  2. Internal attendance table — fallback when eSSL is not configured (contains
+     demo/seeded data).
 
-This is internal DB data, so it powers the demo regardless of Zoho API availability.
+Status derivation from eSSL:
+  TIMEINHOURS >= 4      → Present
+  TIMEINHOURS >= 1      → Half-day
+  no record on weekday  → Absent
+  Late                  → check-in after LATE_THRESHOLD, on Present days
+                          (cutoff from settings.ATTENDANCE_LATE_CUTOFF, default 13:00)
 """
 
 import datetime
 
 from sqlalchemy import func
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models import Attendance, Employee
 
-LATE_THRESHOLD = datetime.time(9, 30)
+
+def _parse_cutoff(raw: str) -> datetime.time:
+    """Parse 'HH:MM' (24h) into a time; fall back to 13:00 on malformed input."""
+    try:
+        hh, mm = (raw or "").strip().split(":", 1)
+        return datetime.time(int(hh), int(mm))
+    except Exception:
+        return datetime.time(13, 0)
+
+
+LATE_THRESHOLD = _parse_cutoff(settings.ATTENDANCE_LATE_CUTOFF)
 
 
 def _month_bounds(year: int, month: int) -> tuple[datetime.date, datetime.date]:
@@ -40,47 +60,94 @@ def resolve_employee(db, query: str):
     return db.query(Employee).filter(Employee.name.ilike(f"%{q}%")).first()
 
 
+def _essl_records(emp_name: str, start: datetime.date, end: datetime.date):
+    """Return eSSL records list or None if eSSL is not configured."""
+    try:
+        from app.services.attendance_db_service import is_configured, fetch_employee_records
+        if not is_configured():
+            return None
+        return fetch_employee_records(emp_name, start, end)
+    except Exception:
+        return None
+
+
+def _essl_team_records(emp_names: list[str], start: datetime.date, end: datetime.date):
+    """Batch eSSL fetch for a team; returns {} if not configured or on error."""
+    try:
+        from app.services.attendance_db_service import is_configured, fetch_team_records
+        if not is_configured():
+            return {}
+        return fetch_team_records(emp_names, start, end)
+    except Exception:
+        return {}
+
+
+def _summarise_essl(rows: list[dict], start: datetime.date, end: datetime.date) -> dict:
+    """Aggregate a list of eSSL records into present/absent/wfh/late/half_day counts."""
+    punched_dates = {r["date"] for r in rows if r.get("date")}
+    present = absent = wfh = late = half_day = 0
+
+    for r in rows:
+        status = r.get("status", "Present")
+        if status == "Present":
+            present += 1
+            check_in = r.get("check_in")
+            if check_in and check_in.time() > LATE_THRESHOLD:
+                late += 1
+        elif status == "Half-day":
+            half_day += 1
+
+    d = start
+    while d <= end:
+        if d.weekday() < 5 and d not in punched_dates:
+            absent += 1
+        d += datetime.timedelta(days=1)
+
+    return {"present": present, "absent": absent, "wfh": wfh, "late": late, "half_day": half_day}
+
+
 def _summary_for_employee(db, emp: Employee, month: str = "", year: str = "") -> dict:
     today = datetime.date.today()
     m = int(month) if month else today.month
     y = int(year) if year else today.year
     start, end = _month_bounds(y, m)
-    end = min(end, today)  # don't count days in the future
+    end = min(end, today)
 
-    rows = (
-        db.query(Attendance)
-        .filter(
-            Attendance.employee_id == emp.id,
-            Attendance.date >= start,
-            Attendance.date <= end,
+    essl_rows = _essl_records(emp.name, start, end)
+
+    if essl_rows is not None:
+        counts = _summarise_essl(essl_rows, start, end)
+    else:
+        rows = (
+            db.query(Attendance)
+            .filter(
+                Attendance.employee_id == emp.id,
+                Attendance.date >= start,
+                Attendance.date <= end,
+            )
+            .all()
         )
-        .all()
-    )
-
-    present = absent = wfh = late = half_day = 0
-    for r in rows:
-        status = (r.status or "").strip()
-        if status == "Present":
-            present += 1
-            if r.check_in and r.check_in.time() > LATE_THRESHOLD:
-                late += 1
-        elif status == "Absent":
-            absent += 1
-        elif status == "WFH":
-            wfh += 1
-        elif status == "Half-day":
-            half_day += 1
+        present = absent = wfh = late = half_day = 0
+        for r in rows:
+            status = (r.status or "").strip()
+            if status == "Present":
+                present += 1
+                if r.check_in and r.check_in.time() > LATE_THRESHOLD:
+                    late += 1
+            elif status == "Absent":
+                absent += 1
+            elif status == "WFH":
+                wfh += 1
+            elif status == "Half-day":
+                half_day += 1
+        counts = {"present": present, "absent": absent, "wfh": wfh, "late": late, "half_day": half_day}
 
     return {
         "success": True,
         "employee": emp.name,
         "email": emp.email,
         "month": datetime.date(y, m, 1).strftime("%B %Y"),
-        "present": present,
-        "absent": absent,
-        "wfh": wfh,
-        "late": late,
-        "half_day": half_day,
+        **counts,
     }
 
 
@@ -166,31 +233,64 @@ def calendar_records(query: str, month: str = "", year: str = "") -> dict:
         y = int(year) if year else today.year
         start, end = _month_bounds(y, m)
 
-        rows = (
-            db.query(Attendance)
-            .filter(
-                Attendance.employee_id == emp.id,
-                Attendance.date >= start,
-                Attendance.date <= end,
-            )
-            .order_by(Attendance.date)
-            .all()
-        )
+        essl_rows = _essl_records(emp.name, start, end)
 
         days = []
-        for r in rows:
-            is_late = (
-                r.status == "Present"
-                and r.check_in is not None
-                and r.check_in.time() > LATE_THRESHOLD
+        if essl_rows is not None:
+            by_date = {r["date"]: r for r in essl_rows if r.get("date")}
+            d = start
+            while d <= min(end, today):
+                if d.weekday() < 5:
+                    r = by_date.get(d)
+                    if r:
+                        check_in = r.get("check_in")
+                        check_out = r.get("check_out")
+                        status = r.get("status", "Present")
+                        is_late = (
+                            status == "Present"
+                            and check_in is not None
+                            and check_in.time() > LATE_THRESHOLD
+                        )
+                        days.append({
+                            "date": d.isoformat(),
+                            "status": status,
+                            "check_in": check_in.strftime("%H:%M") if check_in else None,
+                            "check_out": check_out.strftime("%H:%M") if check_out else None,
+                            "late": is_late,
+                        })
+                    else:
+                        days.append({
+                            "date": d.isoformat(),
+                            "status": "Absent",
+                            "check_in": None,
+                            "check_out": None,
+                            "late": False,
+                        })
+                d += datetime.timedelta(days=1)
+        else:
+            rows = (
+                db.query(Attendance)
+                .filter(
+                    Attendance.employee_id == emp.id,
+                    Attendance.date >= start,
+                    Attendance.date <= end,
+                )
+                .order_by(Attendance.date)
+                .all()
             )
-            days.append({
-                "date": r.date.isoformat(),
-                "status": r.status or "",
-                "check_in": r.check_in.strftime("%H:%M") if r.check_in else None,
-                "check_out": r.check_out.strftime("%H:%M") if r.check_out else None,
-                "late": is_late,
-            })
+            for r in rows:
+                is_late = (
+                    r.status == "Present"
+                    and r.check_in is not None
+                    and r.check_in.time() > LATE_THRESHOLD
+                )
+                days.append({
+                    "date": r.date.isoformat(),
+                    "status": r.status or "",
+                    "check_in": r.check_in.strftime("%H:%M") if r.check_in else None,
+                    "check_out": r.check_out.strftime("%H:%M") if r.check_out else None,
+                    "late": is_late,
+                })
 
         return {
             "success": True,
@@ -216,6 +316,9 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
     attendance reporting is allowed for functional managers. Do NOT narrow this back to
     direct reports without checking that decision.
 
+    When eSSL is configured, all team members' records are fetched in a single SQL
+    round-trip (fetch_team_records) rather than one query per employee.
+
     Returns:
       {"success": True, "manager": ..., "manager_email": ..., "period": "June 2026",
        "month": 6, "year": 2026, "headcount": N,
@@ -239,18 +342,36 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
                 "message": "No employees report up to you — nothing to report.",
             }
 
-        # Resolve manager names for the "reports_to" column without N extra round-trips.
         name_by_id = {e.id: e.name for e in team}
         name_by_id[manager.id] = manager.name
 
         today = datetime.date.today()
         m = int(month) if month else today.month
         y = int(year) if year else today.year
+        start, end = _month_bounds(y, m)
+        end_clipped = min(end, today)
+
+        # Batch-fetch eSSL records for all team members in one round-trip
+        team_essl = _essl_team_records([e.name for e in team], start, end_clipped)
+        use_essl = bool(team_essl)
 
         members = []
         totals = {"present": 0, "absent": 0, "wfh": 0, "late": 0, "half_day": 0}
+
         for emp in team:
-            s = _summary_for_employee(db, emp, str(m), str(y))
+            if use_essl:
+                emp_rows = team_essl.get(emp.name.strip().lower(), [])
+                counts = _summarise_essl(emp_rows, start, end_clipped)
+                s = {
+                    "success": True,
+                    "employee": emp.name,
+                    "email": emp.email,
+                    "month": datetime.date(y, m, 1).strftime("%B %Y"),
+                    **counts,
+                }
+            else:
+                s = _summary_for_employee(db, emp, str(m), str(y))
+
             s["department"] = emp.department or ""
             s["designation"] = emp.designation or ""
             s["reports_to"] = name_by_id.get(emp.manager_id, "")

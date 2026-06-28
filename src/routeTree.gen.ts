@@ -13,10 +13,11 @@ import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout.index'
 import { Route as LayoutTeamRouteImport } from './routes/_layout.team'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout.settings'
-import { Route as LayoutProjectUpdateRouteImport } from './routes/_layout.project-update'
+import { Route as LayoutOnboardingRouteImport } from './routes/_layout.onboarding'
 import { Route as LayoutMyRequestsRouteImport } from './routes/_layout.my-requests'
 import { Route as LayoutMyLibraryRouteImport } from './routes/_layout.my-library'
 import { Route as LayoutDocumentsRouteImport } from './routes/_layout.documents'
+import { Route as LayoutDirectoryRouteImport } from './routes/_layout.directory'
 import { Route as LayoutControlHubRouteImport } from './routes/_layout.control-hub'
 import { Route as LayoutBooksRouteImport } from './routes/_layout.books'
 
@@ -39,9 +40,9 @@ const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => LayoutRoute,
 } as any)
-const LayoutProjectUpdateRoute = LayoutProjectUpdateRouteImport.update({
-  id: '/project-update',
-  path: '/project-update',
+const LayoutOnboardingRoute = LayoutOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => LayoutRoute,
 } as any)
 const LayoutMyRequestsRoute = LayoutMyRequestsRouteImport.update({
@@ -59,6 +60,11 @@ const LayoutDocumentsRoute = LayoutDocumentsRouteImport.update({
   path: '/documents',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutDirectoryRoute = LayoutDirectoryRouteImport.update({
+  id: '/directory',
+  path: '/directory',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutControlHubRoute = LayoutControlHubRouteImport.update({
   id: '/control-hub',
   path: '/control-hub',
@@ -74,20 +80,22 @@ export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
   '/books': typeof LayoutBooksRoute
   '/control-hub': typeof LayoutControlHubRoute
+  '/directory': typeof LayoutDirectoryRoute
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
   '/my-requests': typeof LayoutMyRequestsRoute
-  '/project-update': typeof LayoutProjectUpdateRoute
+  '/onboarding': typeof LayoutOnboardingRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
 }
 export interface FileRoutesByTo {
   '/books': typeof LayoutBooksRoute
   '/control-hub': typeof LayoutControlHubRoute
+  '/directory': typeof LayoutDirectoryRoute
   '/documents': typeof LayoutDocumentsRoute
   '/my-library': typeof LayoutMyLibraryRoute
   '/my-requests': typeof LayoutMyRequestsRoute
-  '/project-update': typeof LayoutProjectUpdateRoute
+  '/onboarding': typeof LayoutOnboardingRoute
   '/settings': typeof LayoutSettingsRoute
   '/team': typeof LayoutTeamRoute
   '/': typeof LayoutIndexRoute
@@ -97,10 +105,11 @@ export interface FileRoutesById {
   '/_layout': typeof LayoutRouteWithChildren
   '/_layout/books': typeof LayoutBooksRoute
   '/_layout/control-hub': typeof LayoutControlHubRoute
+  '/_layout/directory': typeof LayoutDirectoryRoute
   '/_layout/documents': typeof LayoutDocumentsRoute
   '/_layout/my-library': typeof LayoutMyLibraryRoute
   '/_layout/my-requests': typeof LayoutMyRequestsRoute
-  '/_layout/project-update': typeof LayoutProjectUpdateRoute
+  '/_layout/onboarding': typeof LayoutOnboardingRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/team': typeof LayoutTeamRoute
   '/_layout/': typeof LayoutIndexRoute
@@ -111,20 +120,22 @@ export interface FileRouteTypes {
     | '/'
     | '/books'
     | '/control-hub'
+    | '/directory'
     | '/documents'
     | '/my-library'
     | '/my-requests'
-    | '/project-update'
+    | '/onboarding'
     | '/settings'
     | '/team'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/books'
     | '/control-hub'
+    | '/directory'
     | '/documents'
     | '/my-library'
     | '/my-requests'
-    | '/project-update'
+    | '/onboarding'
     | '/settings'
     | '/team'
     | '/'
@@ -133,10 +144,11 @@ export interface FileRouteTypes {
     | '/_layout'
     | '/_layout/books'
     | '/_layout/control-hub'
+    | '/_layout/directory'
     | '/_layout/documents'
     | '/_layout/my-library'
     | '/_layout/my-requests'
-    | '/_layout/project-update'
+    | '/_layout/onboarding'
     | '/_layout/settings'
     | '/_layout/team'
     | '/_layout/'
@@ -176,11 +188,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutSettingsRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/_layout/project-update': {
-      id: '/_layout/project-update'
-      path: '/project-update'
-      fullPath: '/project-update'
-      preLoaderRoute: typeof LayoutProjectUpdateRouteImport
+    '/_layout/onboarding': {
+      id: '/_layout/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof LayoutOnboardingRouteImport
       parentRoute: typeof LayoutRoute
     }
     '/_layout/my-requests': {
@@ -204,6 +216,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutDocumentsRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/directory': {
+      id: '/_layout/directory'
+      path: '/directory'
+      fullPath: '/directory'
+      preLoaderRoute: typeof LayoutDirectoryRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/control-hub': {
       id: '/_layout/control-hub'
       path: '/control-hub'
@@ -224,10 +243,11 @@ declare module '@tanstack/react-router' {
 interface LayoutRouteChildren {
   LayoutBooksRoute: typeof LayoutBooksRoute
   LayoutControlHubRoute: typeof LayoutControlHubRoute
+  LayoutDirectoryRoute: typeof LayoutDirectoryRoute
   LayoutDocumentsRoute: typeof LayoutDocumentsRoute
   LayoutMyLibraryRoute: typeof LayoutMyLibraryRoute
   LayoutMyRequestsRoute: typeof LayoutMyRequestsRoute
-  LayoutProjectUpdateRoute: typeof LayoutProjectUpdateRoute
+  LayoutOnboardingRoute: typeof LayoutOnboardingRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutTeamRoute: typeof LayoutTeamRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
@@ -236,10 +256,11 @@ interface LayoutRouteChildren {
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutBooksRoute: LayoutBooksRoute,
   LayoutControlHubRoute: LayoutControlHubRoute,
+  LayoutDirectoryRoute: LayoutDirectoryRoute,
   LayoutDocumentsRoute: LayoutDocumentsRoute,
   LayoutMyLibraryRoute: LayoutMyLibraryRoute,
   LayoutMyRequestsRoute: LayoutMyRequestsRoute,
-  LayoutProjectUpdateRoute: LayoutProjectUpdateRoute,
+  LayoutOnboardingRoute: LayoutOnboardingRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutTeamRoute: LayoutTeamRoute,
   LayoutIndexRoute: LayoutIndexRoute,

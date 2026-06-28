@@ -15,13 +15,18 @@ export interface ParsedFormCommand {
 }
 
 const VALID_TYPES = new Set([
-  "text", "textarea", "email", "number", "date",
-  "checkbox", "select", "user", "image",
+  "text",
+  "textarea",
+  "email",
+  "number",
+  "date",
+  "checkbox",
+  "select",
+  "user",
+  "image",
 ]);
 
-const REQUIRED_SYNONYMS = new Set([
-  "required", "mandatory", "compulsory", "must", "necessary",
-]);
+const REQUIRED_SYNONYMS = new Set(["required", "mandatory", "compulsory", "must", "necessary"]);
 
 // Matches: "create [a] form [called|named] <name> [with fields: ...]"
 const COMMAND_RE =
@@ -34,15 +39,15 @@ function parseField(raw: string, usedNames: Set<string>): ParsedField | null {
   // Split into label part and parens part: "employee name (text, mandatory)"
   const parenIdx = trimmed.lastIndexOf("(");
   const label = (parenIdx === -1 ? trimmed : trimmed.slice(0, parenIdx)).trim();
-  const inside =
-    parenIdx !== -1 && trimmed.endsWith(")")
-      ? trimmed.slice(parenIdx + 1, -1)
-      : "";
+  const inside = parenIdx !== -1 && trimmed.endsWith(")") ? trimmed.slice(parenIdx + 1, -1) : "";
 
   if (!label) return null;
 
   // Derive a unique snake_case name
-  let base = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  let base = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
   let fieldName = base;
   let suffix = 2;
   while (usedNames.has(fieldName)) {
@@ -115,10 +120,18 @@ export function parseFormCommand(text: string): ParsedFormCommand | null {
     let depth = 0;
     let current = "";
     for (const ch of fieldsRaw) {
-      if (ch === "(") { depth++; current += ch; }
-      else if (ch === ")") { depth--; current += ch; }
-      else if (ch === "," && depth === 0) { tokens.push(current); current = ""; }
-      else { current += ch; }
+      if (ch === "(") {
+        depth++;
+        current += ch;
+      } else if (ch === ")") {
+        depth--;
+        current += ch;
+      } else if (ch === "," && depth === 0) {
+        tokens.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
     }
     if (current.trim()) tokens.push(current);
 

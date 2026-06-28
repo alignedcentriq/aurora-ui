@@ -123,6 +123,13 @@ class GraphClient:
         response.raise_for_status()
         return response
 
+    def download_file_by_path(self, drive_id: str, file_path: str):
+        """Download a file by its path within the drive (e.g. 'IQ/HR/Leave Policy.pdf')."""
+        url = f"{self.base_url}/drives/{drive_id}/root:/{file_path}:/content"
+        response = requests.get(url, headers=self._headers(), stream=True)
+        response.raise_for_status()
+        return response
+
     def list_files_recursive(self, drive_id: str, folder_path: str) -> list[dict]:
         """Recursively list all files under folder_path, returning items with an
         extra 'relative_path' key so callers can preserve folder structure."""

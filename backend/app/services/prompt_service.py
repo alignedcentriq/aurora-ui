@@ -151,6 +151,12 @@ def _get_context_llm():
             temperature=0,
             max_tokens=200,
             timeout=120,
+            # This is an internal classifier that runs INSIDE an agent node. Under
+            # astream_events the runtime would otherwise stream its raw output (the
+            # "NO_CONTEXT" sentinel) straight to the user, since the node isn't in the
+            # main.py skip-list. Disable streaming so it only ever emits start/end
+            # events and never leaks tokens to the UI.
+            disable_streaming=True,
         )
     return _context_llm_instance
 
@@ -318,7 +324,9 @@ class PromptService:
         # through to the agent's tools. Chat-tuned models (e.g. gpt-oss) tend to emit meta
         # replies like "I'm ready to answer, go ahead and ask" instead of NO_CONTEXT, which
         # must NOT be returned as a real answer.
-        if not content or re.match(r'^\s*NO_CONTEXT', content, re.IGNORECASE) \
+        # Match NO_CONTEXT even when the model wraps it (markdown, quotes, trailing
+        # punctuation) so the sentinel can never leak through as a real answer.
+        if not content or re.search(r'\bNO_CONTEXT\b', content, re.IGNORECASE) \
                 or _NON_ANSWER_RE.search(content):
             result = None
         else:

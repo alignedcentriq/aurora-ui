@@ -40,7 +40,7 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
           className={cn(
             "rounded-full border border-border bg-card/60 backdrop-blur-sm px-3 py-1.5",
             "text-[12px] font-medium text-foreground hover:bg-secondary hover:border-primary/20",
-            "transition-colors max-w-[220px] truncate shrink-0 shadow-sm"
+            "transition-colors max-w-[220px] truncate shrink-0 shadow-sm",
           )}
           title={s}
         >
@@ -58,7 +58,7 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
             className={cn(
               "flex items-center gap-1.5 rounded-full border border-border",
               "bg-card/60 backdrop-blur-sm px-3 py-1.5 text-[12px] font-medium text-muted-foreground",
-              "hover:bg-secondary hover:text-foreground hover:border-primary/20 transition-colors shrink-0 shadow-sm"
+              "hover:bg-secondary hover:text-foreground hover:border-primary/20 transition-colors shrink-0 shadow-sm",
             )}
             title="View prompts"
           >

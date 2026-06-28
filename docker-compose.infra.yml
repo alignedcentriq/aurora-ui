@@ -40,7 +40,6 @@ services:
       - NEXTAUTH_URL=http://localhost:3003
       - TELEMETRY_ENABLED=false
     networks:
-
       - centriq-network
 
 volumes:

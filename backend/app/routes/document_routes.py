@@ -27,7 +27,7 @@ import re
 import time
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
@@ -35,7 +35,7 @@ from app.auth import CurrentUser, get_current_user, require_hr
 from app.database import SessionLocal
 from app.document_generation import template_engine as engine
 from app.models import AiRequestLog, GeneratedDocument
-from app.services import document_service
+from app.services import document_service, zoho_doc_service
 from app.services.company_settings_service import CompanySettingsService
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -205,19 +205,12 @@ def admin_update_template(
 
 @router.post("/admin/templates/sync")
 def admin_sync_templates(
-    background_tasks: BackgroundTasks,
     user: CurrentUser = Depends(require_hr),
 ):
-    from app.config import settings
-    if not (settings.SHAREPOINT_SITE_URL and settings.SHAREPOINT_TEMPLATES_FOLDER):
-        raise HTTPException(
-            status_code=400,
-            detail="SHAREPOINT_SITE_URL / SHAREPOINT_TEMPLATES_FOLDER not configured.",
-        )
-    from app.services.sharepoint_template_sync import sync_templates
-    background_tasks.add_task(sync_templates)
-    return {"message": "Template sync started in background.",
-            "folder": settings.SHAREPOINT_TEMPLATES_FOLDER}
+    raise HTTPException(
+        status_code=400,
+        detail="SharePoint template sync is disabled. Upload templates manually.",
+    )
 
 
 @router.get("/settings")
@@ -283,11 +276,6 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
         tpl = document_service.get_template(db, req.doc_type)
         if tpl is None:
             raise HTTPException(status_code=400, detail="Unknown or disabled document type.")
-        if not tpl.template_blob:
-            raise HTTPException(
-                status_code=400,
-                detail="This template has no Word source. Upload a .docx template to SharePoint and re-sync.",
-            )
 
         is_hr = _is_hr(user)
 
@@ -325,12 +313,60 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
         title = f"{tpl.label or req.doc_type} — {employee['name']}".strip(" —")
         token = uuid.uuid4().hex
 
-        # Fill the Word template (docxtpl) and build the on-screen preview from the result.
-        try:
-            rendered = engine.render_docx(tpl.template_blob, _docx_context(values, token, released))
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=f"Failed to fill the template: {e}")
-        preview_html = engine.docx_to_html(rendered)
+        # ── Path A: HR-uploaded Word (.docx) template ──────────────────────────
+        # Used when an admin has synced a proper .docx template blob.
+        if tpl.template_blob:
+            try:
+                rendered_blob = engine.render_docx(
+                    tpl.template_blob, _docx_context(values, token, released)
+                )
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=f"Failed to fill the template: {e}")
+            preview_html = engine.docx_to_html(rendered_blob)
+            route_method = "document_docx_merge"
+
+        # ── Path B: Zoho-style generation (demo PDF or live Zoho API) ──────────
+        # Used for seed / Zoho-sourced templates that have no .docx blob.
+        else:
+            from app.config import settings as _s
+
+            # In live mode, try to get the user's Zoho token + Zoho record ID.
+            zoho_token = None
+            zoho_record_id = None
+            if not _s.ZOHO_DEMO_MODE:
+                try:
+                    from app.services.oauth_service import get_valid_token
+                    from app.models import EmployeeZohoProfile
+                    zoho_token = get_valid_token(user.email, "zoho")
+                    prof = (
+                        db.query(EmployeeZohoProfile)
+                        .filter(EmployeeZohoProfile.official_email == target_email)
+                        .first()
+                    )
+                    zoho_record_id = prof.zoho_link_id if prof else None
+                except Exception:  # noqa: BLE001
+                    zoho_token = None  # fall back to demo silently
+
+            try:
+                rendered_blob = zoho_doc_service.generate_letter(
+                    doc_type=req.doc_type,
+                    employee_data=values,
+                    extra_fields=supplied,
+                    token=zoho_token,
+                    zoho_record_id=zoho_record_id,
+                )
+            except ValueError as exc:
+                detail = (
+                    "Document type not available."
+                    if str(exc) == "unknown_template"
+                    else f"Generation failed: {exc}"
+                )
+                raise HTTPException(status_code=400, detail=detail)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=f"Generation failed: {exc}")
+
+            preview_html = zoho_doc_service.get_preview_html(req.doc_type, values, supplied)
+            route_method = "zoho_doc_demo" if (_s.ZOHO_DEMO_MODE or not zoho_token) else "zoho_doc_live"
 
         doc = GeneratedDocument(
             doc_type=req.doc_type,
@@ -343,7 +379,7 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
             verify_token=token,
             field_values=values,
             content=preview_html,
-            rendered_docx=rendered,
+            rendered_docx=rendered_blob,
             verified_by_email=("system" if not requires_approval else None),
             verified_at=(datetime.datetime.utcnow() if not requires_approval else None),
         )
@@ -351,7 +387,6 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
         db.flush()
         document_id = doc.id
 
-        # Audit row (zero LLM calls — this is a deterministic merge).
         try:
             start = time.time()
             db.add(AiRequestLog(
@@ -360,7 +395,7 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
                 user_message=f"[document:{req.doc_type}] subject={employee['email']}",
                 domain="document",
                 sub_intent=req.doc_type,
-                route_method="document_docx_merge",
+                route_method=route_method,
                 response_text=None,
                 response_length=len(preview_html or ""),
                 total_latency_ms=0,
@@ -369,7 +404,7 @@ def generate(req: GenerateRequest, user: CurrentUser = Depends(get_current_user)
                 total_tokens=0,
                 model_name=None,
             ))
-        except Exception as log_err:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
 
         db.commit()
@@ -402,10 +437,12 @@ def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found.")
 
-        # Re-render the .docx with released=True so the signature block is added and the
-        # stored artifact becomes the final, immutable issued document.
+        # Re-render the .docx with released=True for Word-template docs only.
+        # Zoho-path docs (PDF bytes already in rendered_docx, magic = %PDF) are
+        # left as-is — the PDF is the final document from the moment it's generated.
         tpl = document_service.get_template_any(db, doc.doc_type)
-        if tpl is not None and tpl.template_blob:
+        is_pdf = (doc.rendered_docx or b"")[:4] == b"%PDF"
+        if not is_pdf and tpl is not None and tpl.template_blob:
             try:
                 rendered = engine.render_docx(
                     tpl.template_blob,
@@ -413,9 +450,8 @@ def approve(document_id: int, user: CurrentUser = Depends(get_current_user)):
                 )
                 doc.rendered_docx = rendered
                 doc.content = engine.docx_to_html(rendered)
-            except Exception as e:  # noqa: BLE001
-                pass
-                # Don't block release on a render hiccup — keep the draft render.
+            except Exception:  # noqa: BLE001
+                pass  # Don't block release on a render hiccup — keep the draft render.
 
         doc.status = "verified"
         doc.is_official = True
@@ -514,13 +550,18 @@ def download(document_id: int, user: CurrentUser = Depends(get_current_user)):
         if not doc.rendered_docx:
             raise HTTPException(
                 status_code=409,
-                detail="This document has no rendered Word file. Re-generate it to download.",
+                detail="This document has no rendered file. Re-generate it to download.",
             )
-        # Convert the filled .docx to PDF via Word, preserving HR's exact layout.
-        try:
-            pdf_bytes = engine.docx_to_pdf(doc.rendered_docx)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=f"Failed to render document to PDF: {e}")
+
+        # Detect whether the stored blob is already a PDF (Zoho-path) or a .docx
+        # (Word-template path) which needs Word COM conversion.
+        if doc.rendered_docx[:4] == b"%PDF":
+            pdf_bytes = doc.rendered_docx
+        else:
+            try:
+                pdf_bytes = engine.docx_to_pdf(doc.rendered_docx)
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=f"Failed to render document to PDF: {e}")
 
         base = doc.doc_type or (doc.title or "document")
         safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_")[:80] or "document"

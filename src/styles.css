@@ -65,12 +65,8 @@
     0 10px 40px -10px color-mix(in oklab, var(--collaboration) 35%, transparent);
   --shadow-elevated:
     0 20px 60px -20px rgba(0, 0, 0, 0.1), 0 1px 0 0 color-mix(in oklab, white 6%, transparent) inset;
-  --shadow-card:
-    0 1px 3px rgba(0, 0, 0, 0.04),
-    0 4px 12px rgba(0, 0, 0, 0.06);
-  --shadow-card-hover:
-    0 8px 30px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 8px 30px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
 
   /* Animations */
   --animate-fade-in: fade-in 0.4s ease-out both;
@@ -88,11 +84,15 @@
 
 @keyframes aurora {
   from {
-    background-position: 50% 50%, 50% 50%;
+    background-position:
+      50% 50%,
+      50% 50%;
   }
 
   to {
-    background-position: 350% 50%, 350% 50%;
+    background-position:
+      350% 50%,
+      350% 50%;
   }
 }
 
@@ -147,7 +147,6 @@
 }
 
 @keyframes pulse-glow {
-
   0%,
   100% {
     box-shadow: 0 0 20px 0 rgba(27, 111, 200, 0.2);
@@ -159,7 +158,6 @@
 }
 
 @keyframes gradient-shift {
-
   0%,
   100% {
     background-position: 0% 50%;
@@ -171,7 +169,6 @@
 }
 
 @keyframes float {
-
   0%,
   100% {
     transform: translateY(0px);
@@ -183,7 +180,6 @@
 }
 
 @keyframes breathe {
-
   0%,
   100% {
     transform: scale(1);
@@ -217,7 +213,6 @@
 }
 
 @keyframes banner-wave {
-
   0%,
   100% {
     transform: skewY(-1.5deg) translateY(0);
@@ -283,7 +278,6 @@
 
 /* Unique: Sidebar hex glow pulse */
 @keyframes hex-pulse {
-
   0%,
   100% {
     opacity: 0.15;
@@ -322,7 +316,6 @@
 
 /* Loading dots wave */
 @keyframes dot-wave {
-
   0%,
   80%,
   100% {
@@ -338,7 +331,6 @@
 
 /* Typewriter cursor blink */
 @keyframes cursor-blink {
-
   0%,
   100% {
     opacity: 1;
@@ -547,7 +539,6 @@
 /* ─── Utility Layer ─────────────────────────────────────────────── */
 
 @layer utilities {
-
   /* Glassmorphism variants */
   .glass {
     background: color-mix(in oklab, var(--surface) 40%, transparent);
@@ -624,10 +615,12 @@
 
   /* Shimmer skeleton */
   .shimmer {
-    background: linear-gradient(90deg,
-        var(--muted) 0%,
-        color-mix(in oklab, var(--muted) 70%, var(--clarity)) 50%,
-        var(--muted) 100%);
+    background: linear-gradient(
+      90deg,
+      var(--muted) 0%,
+      color-mix(in oklab, var(--muted) 70%, var(--clarity)) 50%,
+      var(--muted) 100%
+    );
     background-size: 200% 100%;
     animation: shimmer 1.5s ease-in-out infinite;
   }
@@ -704,7 +697,7 @@
     padding-bottom: 1.5rem;
   }
 
-  .compact-mode .space-y-8> :not([hidden])~ :not([hidden]) {
+  .compact-mode .space-y-8 > :not([hidden]) ~ :not([hidden]) {
     --tw-space-y-reverse: 0;
     margin-top: calc(1rem * calc(1 - var(--tw-space-y-reverse)));
     margin-bottom: calc(1rem * var(--tw-space-y-reverse));
@@ -777,10 +770,12 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(105deg,
-        transparent 40%,
-        rgba(27, 111, 200, 0.06) 50%,
-        transparent 60%);
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(27, 111, 200, 0.06) 50%,
+      transparent 60%
+    );
     animation: scan-line 4s ease-in-out infinite;
     pointer-events: none;
   }
@@ -809,10 +804,12 @@
     content: "";
     position: absolute;
     inset: -8px -16px;
-    background: radial-gradient(ellipse at center,
-        color-mix(in oklab, var(--clarity) 12%, transparent) 0%,
-        color-mix(in oklab, var(--connectivity) 6%, transparent) 40%,
-        transparent 70%);
+    background: radial-gradient(
+      ellipse at center,
+      color-mix(in oklab, var(--clarity) 12%, transparent) 0%,
+      color-mix(in oklab, var(--connectivity) 6%, transparent) 40%,
+      transparent 70%
+    );
     filter: blur(20px);
     z-index: -1;
     border-radius: 50%;
@@ -820,10 +817,12 @@
   }
 
   .dark .text-glow::after {
-    background: radial-gradient(ellipse at center,
-        color-mix(in oklab, var(--clarity) 18%, transparent) 0%,
-        color-mix(in oklab, var(--connectivity) 10%, transparent) 40%,
-        transparent 70%);
+    background: radial-gradient(
+      ellipse at center,
+      color-mix(in oklab, var(--clarity) 18%, transparent) 0%,
+      color-mix(in oklab, var(--connectivity) 10%, transparent) 40%,
+      transparent 70%
+    );
   }
 
   /* ── Enhancement: Ambient glow ring behind composer ── */
@@ -846,7 +845,6 @@
   }
 
   @keyframes ambient-pulse {
-
     0%,
     100% {
       opacity: 0.06;
@@ -862,7 +860,6 @@
   }
 
   @keyframes ambient-pulse-dark {
-
     0%,
     100% {
       opacity: 0.08;
@@ -892,7 +889,6 @@
   }
 
   @keyframes live-blink {
-
     0%,
     100% {
       opacity: 1;

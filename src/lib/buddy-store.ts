@@ -26,7 +26,7 @@ export const useBuddyStore = create<BuddyState>()(
 
         // If first visit or inactive for > 1 day, trigger greeting
         const isFirstVisit = !hasVisited;
-        const isInactiveOverDay = lastActive > 0 && (now - lastActive > oneDayMs);
+        const isInactiveOverDay = lastActive > 0 && now - lastActive > oneDayMs;
 
         if (isFirstVisit || isInactiveOverDay) {
           set({ botState: "greeting", hasVisited: true, lastActive: now });
@@ -47,6 +47,6 @@ export const useBuddyStore = create<BuddyState>()(
         hasVisited: state.hasVisited,
         lastActive: state.lastActive,
       }),
-    }
-  )
+    },
+  ),
 );

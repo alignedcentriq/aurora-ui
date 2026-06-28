@@ -39,6 +39,14 @@ class _Cache:
 
 _cache = _Cache()
 
+# Handles for the two background loops so they can be cancelled on shutdown.
+# Without this, they are fire-and-forget tasks that the event loop garbage-collects
+# while still pending at shutdown ("Task was destroyed but it is pending!") and the
+# pubsub listen() generator raises "aclose(): asynchronous generator is already
+# running" when torn down mid-await. Tracking + cancelling them avoids both.
+_poll_task: Optional["asyncio.Task"] = None
+_pubsub_task: Optional["asyncio.Task"] = None
+
 
 def _row_to_dict(obj) -> dict:
     return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
@@ -81,15 +89,19 @@ async def start_background_refresh() -> None:
             await asyncio.sleep(POLL_INTERVAL)
             try:
                 await _build_cache()
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 log.warning("connector registry refresh failed: %s", exc)
 
     async def _pubsub_loop():
+        # app.redis_config only provides a sync client — use an async client here
+        # so pubsub.listen() doesn't block the event loop.
+        import redis.asyncio as aioredis
+        from app.config import settings as _settings
+        redis = None
+        pubsub = None
         try:
-            # app.redis_config only provides a sync client — use an async client here
-            # so pubsub.listen() doesn't block the event loop.
-            import redis.asyncio as aioredis
-            from app.config import settings as _settings
             redis = aioredis.from_url(_settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
             pubsub = redis.pubsub()
             await pubsub.subscribe(REDIS_CHANNEL)
@@ -100,11 +112,42 @@ async def start_background_refresh() -> None:
                         await _build_cache()
                     except Exception as exc:
                         log.warning("connector cache rebuild after invalidate failed: %s", exc)
+        except asyncio.CancelledError:
+            # Normal shutdown path — let it propagate after closing the pubsub below.
+            raise
         except Exception as exc:
             log.warning("connector pubsub loop exited: %s", exc)
+        finally:
+            # Close in finally so a cancellation unwinds the listen() generator
+            # cleanly instead of leaving it for GC to aclose() mid-await.
+            if pubsub is not None:
+                try:
+                    await pubsub.aclose()
+                except Exception:
+                    pass
+            if redis is not None:
+                try:
+                    await redis.aclose()
+                except Exception:
+                    pass
 
-    asyncio.create_task(_poll_loop())
-    asyncio.create_task(_pubsub_loop())
+    global _poll_task, _pubsub_task
+    _poll_task = asyncio.create_task(_poll_loop())
+    _pubsub_task = asyncio.create_task(_pubsub_loop())
+
+
+async def stop_background_refresh() -> None:
+    """Cancel the poll + pubsub loops cleanly. Call from the app's shutdown hook."""
+    global _poll_task, _pubsub_task
+    for task in (_poll_task, _pubsub_task):
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+    _poll_task = None
+    _pubsub_task = None
 
 
 async def invalidate(redis=None) -> None:
@@ -148,19 +191,32 @@ class ConnectorRegistry:
         - No scopes at all → visible to everyone
         - Scope with matching role OR department OR persona_id → granted
         - Explicit user-level persona override → use that persona_id
+
+        Scopes can be attached at two levels:
+        - operation-level (scope.operation_id set) → restricts that one operation
+        - connector-level (scope.operation_id is NULL) → restricts every operation
+          of that connector (set from the Connector Studio "Access" picker)
+        An operation's effective scopes are the union of both; if that union is
+        empty the operation is global.
         """
         await ConnectorRegistry._ensure_fresh()
 
-        # Build per-operation scope index
+        # Build per-operation and per-connector scope indexes. A connector-level
+        # scope (operation_id is NULL) applies to all of that connector's ops.
         op_scopes: dict[int, list[dict]] = {}
+        conn_scopes: dict[int, list[dict]] = {}
         for s in _cache.scopes:
             oid = s.get("operation_id")
             if oid:
                 op_scopes.setdefault(oid, []).append(s)
+            else:
+                cid = s.get("connector_id")
+                if cid:
+                    conn_scopes.setdefault(cid, []).append(s)
 
         result = []
         for op in _cache.operations.values():
-            scopes = op_scopes.get(op["id"], [])
+            scopes = op_scopes.get(op["id"], []) + conn_scopes.get(op.get("connector_id"), [])
             if not scopes:
                 result.append(op)
                 continue
@@ -169,6 +225,7 @@ class ConnectorRegistry:
                     (s.get("role") and s["role"].lower() == role.lower())
                     or (s.get("department") and s["department"].lower() == (department or "").lower())
                     or (persona_id and s.get("persona_id") == persona_id)
+                    or (s.get("user_email") and s["user_email"].lower() == (user_email or "").lower())
                 ):
                     result.append(op)
                     break

@@ -13,14 +13,58 @@ DocumentTemplate field shape: [{name,label,type,required,options?,placeholder?}]
 """
 
 import datetime
+import logging
 
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Employee, FormSubmission, FormTemplate
 from app.services.policy_service import PolicyService
 
+_logger = logging.getLogger(__name__)
+
 # Field input types the dynamic renderer + validator understand.
 _FIELD_TYPES = {"text", "textarea", "date", "select", "number", "email", "checkbox", "user", "image"}
+
+# Identity attributes an admin can bind a field to via its optional `autofill` source, so the
+# field pre-fills from the logged-in user's profile at chat time and they only confirm (see
+# FormLibraryService.build_prefill). Empty/absent means the field is filled by hand as before.
+# These map onto Employee columns; "manager" is special-cased via the self-referential FK.
+_AUTOFILL_SOURCES = {"name", "email", "employee_id", "department", "designation", "location", "manager"}
+
+# Single generic words that admins sometimes use as "shortcuts" but that match almost every user
+# message (e.g. saving "requests" as a keyword causes ManageEngine to appear for "submit my
+# reimbursement requests"). Multi-word phrases are always allowed.
+_GENERIC_KW_DENYLIST = frozenset({
+    "request", "requests", "report", "reports", "form", "forms",
+    "ticket", "tickets", "apply", "status", "help", "issue", "issues",
+    "new", "portal", "app", "submit", "open", "view", "my",
+})
+
+
+def validate_trigger_keywords(raw: str) -> tuple[bool, str]:
+    """Validate a comma-separated trigger keyword string.
+
+    Returns (True, sanitized_string) on success or (False, error_message) on failure.
+    Single-word entries that are too generic (like 'requests', 'form', 'status') are rejected
+    because they fire for nearly every user message, drowning the intended target.
+    Multi-word phrases are always allowed.
+    """
+    if not raw or not raw.strip():
+        return True, ""
+    bad: list[str] = []
+    for kw in raw.split(","):
+        kw = kw.strip()
+        if not kw:
+            continue
+        if " " not in kw and kw.lower() in _GENERIC_KW_DENYLIST:
+            bad.append(kw)
+    if bad:
+        quoted = ", ".join(f'"{b}"' for b in bad)
+        return False, (
+            f"These single-word trigger keywords are too generic and would match almost every "
+            f"message — please use more specific phrases instead: {quoted}"
+        )
+    return True, raw.strip()
 
 
 # Migration bridge: the seeded "Visitor Pass" / "Parking Request" forms are now rendered through
@@ -121,6 +165,9 @@ class FormLibraryService:
                 opts = f.get("options")
                 if not isinstance(opts, list) or not [o for o in opts if str(o).strip()]:
                     return False, f"Select field '{name}' needs at least one option."
+            af = (f.get("autofill") or "").strip()
+            if af and af not in _AUTOFILL_SOURCES:
+                return False, f"Unknown auto-fill source '{af}' for '{name}'."
         return True, ""
 
     @staticmethod
@@ -139,6 +186,9 @@ class FormLibraryService:
                 entry["placeholder"] = str(f["placeholder"]).strip()
             if ftype == "select":
                 entry["options"] = [str(o).strip() for o in (f.get("options") or []) if str(o).strip()]
+            af = (f.get("autofill") or "").strip()
+            if af in _AUTOFILL_SOURCES:
+                entry["autofill"] = af
             out.append(entry)
         return out
 
@@ -174,6 +224,9 @@ class FormLibraryService:
         trigger_keywords = (trigger_keywords or "").strip()
         if not name or not description:
             return {"status": "error", "message": "name and description are required."}
+        kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+        if not kw_ok:
+            return {"status": "error", "message": kw_err}
         ok, err = FormLibraryService._validate_fields(fields)
         if not ok:
             return {"status": "error", "message": err}
@@ -229,6 +282,9 @@ class FormLibraryService:
             if category is not None:
                 row.category = category.strip() or None
             if trigger_keywords is not None:
+                kw_ok, kw_err = validate_trigger_keywords(trigger_keywords)
+                if not kw_ok:
+                    return {"status": "error", "message": kw_err}
                 row.trigger_keywords = trigger_keywords.strip() or None
             if fields is not None:
                 ok, err = FormLibraryService._validate_fields(fields)
@@ -296,6 +352,148 @@ class FormLibraryService:
         finally:
             db.close()
 
+    # ── Identity pre-fill ─────────────────────────────────────────────────────────
+    @staticmethod
+    def build_prefill(fields: list, employee_email: str) -> dict:
+        """Resolve {field_name: value} for fields bound to an identity source via `autofill`,
+        from the logged-in user's Employee profile, so the form opens pre-populated and the user
+        only confirms. Fail-soft: returns {} on any error or unknown user (the form still renders,
+        just empty) — never raises.
+
+        Caller must NOT pass anonymous-form fields here: pre-filling identity into an anonymous
+        form would record the submitter in field_values and defeat the anonymity promise.
+        """
+        email = (employee_email or "").strip()
+        if not email or not fields:
+            return {}
+        bound = [
+            (f.get("name"), (f.get("autofill") or "").strip())
+            for f in fields
+            if isinstance(f, dict) and f.get("name") and (f.get("autofill") or "").strip() in _AUTOFILL_SOURCES
+        ]
+        if not bound:
+            return {}
+        db = SessionLocal()
+        try:
+            emp = db.query(Employee).filter(Employee.email == email).first()
+            if not emp:
+                return {}
+            manager_name = None
+            if any(src == "manager" for _, src in bound) and emp.manager_id:
+                mgr = db.query(Employee).filter(Employee.id == emp.manager_id).first()
+                manager_name = mgr.name if mgr else None
+            resolvers = {
+                "name": emp.name,
+                "email": emp.email,
+                "employee_id": emp.employee_id,
+                "department": emp.department,
+                "designation": emp.designation,
+                "location": emp.location,
+                "manager": manager_name,
+            }
+            out: dict = {}
+            for name, src in bound:
+                val = resolvers.get(src)
+                if val:
+                    out[name] = str(val)
+            return out
+        except Exception as e:
+            _logger.warning("[FormLibrary.build_prefill] failed: %s", e)
+            return {}
+        finally:
+            db.close()
+
+    # ── Conversational fill: extract field values from natural language ────────────
+    @staticmethod
+    def extract_values(message: str, fields: list, skip: set | None = None) -> dict:
+        """Pull {field_name: value} that the user's message clearly provides, for the
+        conversational form-fill flow. Targets only fields not in `skip` (already collected).
+        Deterministic option-matching for selects, then a conservative, hard-sanitized LLM JSON
+        pass for the rest. Fail-soft: returns {} when the model is down or output is unusable —
+        the flow then just asks for the field — and never raises. The user always confirms the
+        full set before submission, so conservative over-extraction is caught downstream.
+        """
+        import json
+        import re
+
+        message = (message or "").strip()
+        skip = skip or set()
+        if not message or not fields:
+            return {}
+        targets = [
+            f for f in fields
+            if isinstance(f, dict) and f.get("name") and f["name"] not in skip
+            and f.get("type") != "image"  # images can't be extracted from text
+        ]
+        if not targets:
+            return {}
+
+        out: dict = {}
+        msg_low = message.lower()
+
+        # 1) Deterministic: a select whose option text appears verbatim (and unambiguously).
+        remaining = []
+        for f in targets:
+            if f.get("type") == "select":
+                hits = [o for o in (f.get("options") or []) if o and o.lower() in msg_low]
+                if len(hits) == 1:
+                    out[f["name"]] = hits[0]
+                    continue
+            remaining.append(f)
+        if not remaining:
+            return out
+
+        # 2) Conservative LLM JSON extraction for the rest.
+        try:
+            from app.services import llm_controls_service as llm_controls
+            schema_lines = []
+            for f in remaining:
+                line = f"- {f['name']} ({f.get('type', 'text')})"
+                if f.get("type") == "select" and f.get("options"):
+                    line += f" — one of: {', '.join(f['options'])}"
+                line += f" — {f.get('label') or f['name']}"
+                schema_lines.append(line)
+            prompt = (
+                "Extract form field values from the user's message. Return ONLY a JSON object "
+                "mapping field name to the value the user explicitly provided. OMIT any field the "
+                "user did not clearly answer — never guess. Use ISO dates (YYYY-MM-DD) for date "
+                "fields and digits only for number fields.\n\n"
+                f"Fields:\n{chr(10).join(schema_lines)}\n\n"
+                f"User message: {message}\n\nJSON:"
+            )
+            model = llm_controls.get_llm("general", default_timeout=30)
+            raw = (model.invoke(prompt).content or "").strip()
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = json.loads(m.group(0)) if m else {}
+        except Exception as e:
+            _logger.warning("[FormLibrary.extract_values] LLM extraction failed: %s", e)
+            parsed = {}
+
+        # 3) Hard-sanitize the model output against the schema.
+        by_name = {f["name"]: f for f in remaining}
+        if isinstance(parsed, dict):
+            for name, val in parsed.items():
+                f = by_name.get(name)
+                if not f or val is None:
+                    continue
+                ftype = f.get("type", "text")
+                if ftype == "checkbox":
+                    out[name] = val if isinstance(val, bool) else \
+                        str(val).strip().lower() in ("true", "yes", "1", "y")
+                    continue
+                sval = str(val).strip()
+                if not sval:
+                    continue
+                if ftype == "select":
+                    match = next((o for o in (f.get("options") or []) if o.lower() == sval.lower()), None)
+                    if not match:
+                        continue
+                    sval = match
+                elif ftype == "number" and not any(ch.isdigit() for ch in sval):
+                    continue
+                out[name] = sval
+        return out
+
     # ── Matching (used by the router) ─────────────────────────────────────────────
     @staticmethod
     def match(query: str, k: int = 1, threshold: float | None = None) -> dict | None:
@@ -310,7 +508,8 @@ class FormLibraryService:
 
         query_emb = PolicyService._get_embedding(query)
         if not query_emb:
-            return None  # embedding model unavailable — fall through silently
+            _logger.warning("[FormLibrary.match] Embedding model unavailable — form matching disabled for this request")
+            return None
 
         max_dist = 1.0 - threshold
         db = SessionLocal()
@@ -334,6 +533,7 @@ class FormLibraryService:
             d["similarity"] = round(1.0 - float(dist), 4)
             return d
         except Exception as e:
+            _logger.warning("[FormLibrary.match] DB query failed: %s", e)
             return None
         finally:
             db.close()
@@ -359,6 +559,123 @@ class FormLibraryService:
             return 0
         finally:
             db.close()
+
+    # ── Trigger-keyword learning ──────────────────────────────────────────────────
+    @staticmethod
+    def suggest_keywords(window_days: int = 30, max_queries: int = 300, per_form: int = 6) -> dict:
+        """Mine recent real chat queries for trigger keywords each form is *missing*.
+
+        A query is a "near-miss" for form X when it matches X's embedding above the chat-time
+        match threshold (so X is the right form) yet contains none of X's existing trigger
+        keywords — meaning the inline form never auto-opened for it. The words people used in
+        those queries are the keywords worth adding. Mirrors AppDirectoryService.suggest_keywords
+        (whose phrase-mining helpers it reuses) but over FormTemplate. Fail-soft → empty result.
+        """
+        import re
+
+        from app.models import AiRequestLog
+        from app.services.app_directory_service import AppDirectoryService, _cosine
+
+        threshold = settings.FORM_MATCH_SIM_THRESHOLD
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=window_days)
+
+        db = SessionLocal()
+        try:
+            forms = (
+                db.query(FormTemplate)
+                .filter(FormTemplate.enabled.is_(True), FormTemplate.embedding.isnot(None))
+                .all()
+            )
+            if not forms:
+                return {"forms": [], "scanned": 0, "window_days": window_days}
+
+            form_meta = []
+            for f in forms:
+                kws = {k.strip().lower() for k in (f.trigger_keywords or "").split(",") if k.strip()}
+                form_meta.append({
+                    "id": f.id,
+                    "name": f.name,
+                    "embedding": [float(x) for x in f.embedding],
+                    "keywords": kws,
+                })
+
+            rows = (
+                db.query(AiRequestLog.user_message)
+                .filter(
+                    AiRequestLog.created_at >= cutoff,
+                    AiRequestLog.user_message.isnot(None),
+                    AiRequestLog.error.is_(None),
+                )
+                .order_by(AiRequestLog.created_at.desc())
+                .limit(max_queries * 5)
+                .all()
+            )
+        except Exception:
+            db.close()
+            return {"forms": [], "scanned": 0, "window_days": window_days}
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+        seen_norm: set[str] = set()
+        distinct: list[str] = []
+        for (msg,) in rows:
+            msg = (msg or "").strip()
+            if len(msg) < 6 or len(msg) > 300:
+                continue
+            norm = re.sub(r"\s+", " ", msg.lower())
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            distinct.append(msg)
+            if len(distinct) >= max_queries:
+                break
+
+        per_form_msgs: dict[int, list[str]] = {}
+        for msg in distinct:
+            emb = PolicyService._get_embedding(msg)
+            if not emb:
+                continue
+            best, best_sim = None, threshold
+            for fm in form_meta:
+                sim = _cosine(emb, fm["embedding"])
+                if sim >= best_sim:
+                    best, best_sim = fm, sim
+            if best is None:
+                continue
+            low = msg.lower()
+            if any(kw in low for kw in best["keywords"]):
+                continue  # already triggers → not a near-miss
+            per_form_msgs.setdefault(best["id"], []).append(msg)
+
+        results = []
+        for fm in form_meta:
+            msgs = per_form_msgs.get(fm["id"], [])
+            if not msgs:
+                continue
+            phrases = AppDirectoryService._candidate_phrases(msgs, fm["keywords"], fm["name"])
+            ranked = sorted(
+                (
+                    {"keyword": p, "count": d["count"], "samples": d["samples"]}
+                    for p, d in phrases.items()
+                    if d["count"] >= 2 or " " in p
+                ),
+                key=lambda x: (x["count"], 1 if " " in x["keyword"] else 0),
+                reverse=True,
+            )
+            clean = [r for r in ranked if validate_trigger_keywords(r["keyword"])[0]][:per_form]
+            if clean:
+                results.append({
+                    "form_id": fm["id"],
+                    "form_name": fm["name"],
+                    "near_miss_count": len(msgs),
+                    "suggestions": clean,
+                })
+
+        results.sort(key=lambda r: r["near_miss_count"], reverse=True)
+        return {"forms": results, "scanned": len(distinct), "window_days": window_days}
 
     # ── Submissions ───────────────────────────────────────────────────────────────
     @staticmethod
@@ -423,11 +740,13 @@ class FormLibraryService:
             db.commit()
 
             # Notify (fail-soft) — explicit notify_email wins, else the default admin inbox.
+            _notified = False
             try:
                 from app.services.email_service import send_form_submission_email
+                import logging as _logging
                 email_rows = [(f.get("label") or f.get("name"), cleaned.get(f.get("name"), ""))
                               for f in (tpl.fields or [])]
-                send_form_submission_email(
+                _notified = send_form_submission_email(
                     user_email=employee_email if not anonymous else "anonymous@form",
                     employee_name="Anonymous" if anonymous else (emp.name if emp else employee_email),
                     employee_email="—" if anonymous else (emp.email if emp else employee_email),
@@ -436,14 +755,17 @@ class FormLibraryService:
                     rows=email_rows,
                     to=tpl.notify_email or None,
                 )
-            except Exception:
-                pass
+            except Exception as _e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("[form_submit] notification email failed: %s", _e)
 
+            _notif_note = " The team has been notified." if _notified else \
+                " (Note: the admin notification email could not be sent — your submission is recorded.)"
             return {
                 "status": "ok",
                 "reference_id": reference_id,
                 "message": (f"Your **{tpl.name}** request has been submitted. "
-                            f"**Reference: {reference_id}**. The team has been notified."),
+                            f"**Reference: {reference_id}**." + _notif_note),
             }
         except Exception as e:
             db.rollback()

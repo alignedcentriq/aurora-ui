@@ -19,7 +19,9 @@ export function LLMControlsPage() {
             <ShieldAlert className="h-6 w-6" />
           </div>
           <h2 className="text-lg font-bold text-foreground">Access Restricted</h2>
-          <p className="text-sm text-muted-foreground mt-2">LLM Model Controls are reserved for Super Admin only.</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            LLM Model Controls are reserved for Super Admin only.
+          </p>
         </div>
       </div>
     );
@@ -27,7 +29,7 @@ export function LLMControlsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">LLM Model Controls</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">

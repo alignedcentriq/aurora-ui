@@ -332,6 +332,21 @@ def get_summary(
     }
 
 
+@router.get("/adoption")
+def get_feature_adoption(
+    window_days: int = Query(90, ge=1, le=365),
+    _: CurrentUser = Depends(_require_super_admin),
+):
+    """Feature-adoption analytics — which capabilities are undiscovered.
+
+    Surfaces, per capability, how many distinct staff have ever used it (over the
+    trailing window) so an internal nudge campaign can target the blind spots.
+    Also returns `unmapped` traffic the capability registry doesn't yet claim.
+    """
+    from app.services.adoption_service import feature_adoption
+    return feature_adoption(window_days=window_days)
+
+
 @router.get("/charts/volume")
 def get_volume_chart(
     period: str = Query("24h"),
@@ -476,3 +491,72 @@ def get_node_performance(
         })
 
     return result
+
+
+# ── Feedback triage — the human-promotion gate of the eval flywheel (item 8) ──
+# Cluster 👎 + escalations, rank by frequency, one-click promote to a curated answer or a
+# routing fix. Super-admin only — promoting writes into the shared answer cache / router.
+
+class _PromoteAnswerReq(BaseModel):
+    query: str
+    answer: str
+    domain: Optional[str] = None
+    feedback_ids: Optional[list[int]] = None
+    escalation_ids: Optional[list[int]] = None
+
+
+class _PromoteRoutingReq(BaseModel):
+    utterance: str
+    domain: str
+    sub_intent: str
+    feedback_ids: Optional[list[int]] = None
+    escalation_ids: Optional[list[int]] = None
+
+
+class _DismissReq(BaseModel):
+    feedback_ids: Optional[list[int]] = None
+    escalation_ids: Optional[list[int]] = None
+
+
+@router.get("/feedback-triage/clusters")
+def feedback_triage_clusters(
+    domain: Optional[str] = Query(None),
+    days: int = Query(60, ge=1, le=365),
+    min_size: int = Query(1, ge=1),
+    _: CurrentUser = Depends(_require_super_admin),
+):
+    """Ranked failure clusters (most frequent first) awaiting triage."""
+    from app.services import feedback_triage_service as triage
+    return {"clusters": triage.list_clusters(domain=domain, days=days, min_size=min_size),
+            "stats": triage.stats()}
+
+
+@router.post("/feedback-triage/promote-answer")
+def feedback_triage_promote_answer(
+    req: _PromoteAnswerReq, user: CurrentUser = Depends(_require_super_admin),
+):
+    """Curate the correct answer for a cluster → seed the semantic cache + clear the cluster."""
+    from app.services import feedback_triage_service as triage
+    return triage.promote_curated_answer(
+        req.query, req.answer, domain=req.domain,
+        feedback_ids=req.feedback_ids, escalation_ids=req.escalation_ids, by=user.email)
+
+
+@router.post("/feedback-triage/promote-routing")
+def feedback_triage_promote_routing(
+    req: _PromoteRoutingReq, user: CurrentUser = Depends(_require_super_admin),
+):
+    """Insert the corrected (domain, sub_intent) routing example for a misrouted cluster."""
+    from app.services import feedback_triage_service as triage
+    return triage.promote_routing_fix(
+        req.utterance, req.domain, req.sub_intent,
+        feedback_ids=req.feedback_ids, escalation_ids=req.escalation_ids, by=user.email)
+
+
+@router.post("/feedback-triage/dismiss")
+def feedback_triage_dismiss(
+    req: _DismissReq, user: CurrentUser = Depends(_require_super_admin),
+):
+    """Clear a cluster from the queue without promoting (noise / already fixed)."""
+    from app.services import feedback_triage_service as triage
+    return triage.dismiss(feedback_ids=req.feedback_ids, escalation_ids=req.escalation_ids, by=user.email)

@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
+import { ArrowUpRight } from "lucide-react";
 
 export const HoverEffect = ({
   items,
@@ -9,6 +10,7 @@ export const HoverEffect = ({
   items: {
     title: string;
     description: string;
+    category?: string;
     onClick?: () => void;
     icon?: React.ReactNode;
     color?: string;
@@ -18,12 +20,7 @@ export const HoverEffect = ({
   let [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   return (
-    <div
-      className={cn(
-        "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 py-4 gap-4",
-        className
-      )}
-    >
+    <div className={cn("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 py-4 gap-4", className)}>
       {items.map((item, idx) => (
         <div
           key={idx}
@@ -47,25 +44,51 @@ export const HoverEffect = ({
                   transition: { duration: 0.15, delay: 0.1 },
                 }}
                 style={{
-                  border: item.color ? `1px solid color-mix(in oklab, ${item.color} 30%, transparent)` : undefined,
-                  boxShadow: item.color ? `0 10px 30px -10px color-mix(in oklab, ${item.color} 20%, transparent)` : undefined,
+                  border: item.color
+                    ? `1px solid color-mix(in oklab, ${item.color} 30%, transparent)`
+                    : undefined,
+                  boxShadow: item.color
+                    ? `0 10px 30px -10px color-mix(in oklab, ${item.color} 20%, transparent)`
+                    : undefined,
                 }}
               />
             )}
           </AnimatePresence>
           <Card color={item.color} className="relative z-10">
-            {item.icon && (
-              <div
-                className="flex h-10 w-10 items-center justify-center rounded-xl mb-4 transition-transform duration-300 group-hover:scale-110"
+            <div className="flex items-start justify-between gap-3">
+              {item.icon && (
+                <div
+                  className="flex h-11 w-11 items-center justify-center rounded-2xl transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3"
+                  style={{
+                    backgroundColor: item.color
+                      ? `color-mix(in oklab, ${item.color} 12%, transparent)`
+                      : "rgba(255,255,255,0.06)",
+                  }}
+                >
+                  {item.icon}
+                </div>
+              )}
+              <span
+                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0"
                 style={{
-                  backgroundColor: item.color ? `color-mix(in oklab, ${item.color} 12%, transparent)` : "rgba(255,255,255,0.06)",
+                  backgroundColor: item.color
+                    ? `color-mix(in oklab, ${item.color} 12%, transparent)`
+                    : "rgba(255,255,255,0.06)",
+                  color: item.color,
                 }}
               >
-                {item.icon}
-              </div>
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </span>
+            </div>
+            <div className="mt-4">
+              <CardTitle>{item.title}</CardTitle>
+              <CardDescription>{item.description}</CardDescription>
+            </div>
+            {item.category && (
+              <span className="mt-4 inline-flex items-center rounded-full border border-[#e2e8f0] dark:border-white/[0.08] bg-muted/40 px-2.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                {item.category}
+              </span>
             )}
-            <CardTitle>{item.title}</CardTitle>
-            <CardDescription>{item.description}</CardDescription>
           </Card>
         </div>
       ))}
@@ -86,7 +109,7 @@ export const Card = ({
     <div
       className={cn(
         "rounded-2xl h-full w-full p-5 overflow-hidden bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.06] group-hover:border-transparent transition-all duration-300 relative",
-        className
+        className,
       )}
     >
       {color && (
@@ -110,7 +133,12 @@ export const CardTitle = ({
   children: React.ReactNode;
 }) => {
   return (
-    <h4 className={cn("text-foreground font-extrabold tracking-tight text-[14px] leading-tight", className)}>
+    <h4
+      className={cn(
+        "text-foreground font-extrabold tracking-tight text-[14px] leading-tight",
+        className,
+      )}
+    >
       {children}
     </h4>
   );
@@ -127,7 +155,7 @@ export const CardDescription = ({
     <p
       className={cn(
         "mt-2 text-muted-foreground leading-snug text-[11.5px] line-clamp-2",
-        className
+        className,
       )}
     >
       {children}

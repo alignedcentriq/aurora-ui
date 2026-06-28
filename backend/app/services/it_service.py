@@ -27,48 +27,89 @@ class ITService:
         return emp
     @staticmethod
     def create_ticket(email: str, category: str, subject: str, description: str, priority: str = "Medium"):
+        """Public entry point (unchanged behaviour): create the ticket, emit a receipt, and
+        return the human string with the inline receipt+undo line appended. The side effect is
+        factored into _create_ticket_core so the action registry can reuse it and own receipt
+        emission itself — see docs/action-registry-design.md."""
         db = SessionLocal()
         try:
-            emp = ITService._get_or_create_employee(db, email)
+            core = ITService._create_ticket_core(db, email, category, subject, description, priority)
+            try:
+                from app.services import receipt_service as _receipt
+                _line = _receipt.format_receipt_line(_receipt.emit(
+                    email, "it_ticket", "IT Helpdesk (ManageEngine)",
+                    f"IT ticket: {subject}", confirmation_id=core["confirmation_id"],
+                    idempotency_key=core["confirmation_id"],
+                ))
+            except Exception:
+                _line = ""  # receipt bookkeeping must never break the action
+            return core["message"] + (f"\n\n{_line}" if _line else "")
+        finally:
+            db.close()
 
-            ticket_id = f"IT-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
-            new_t = ITTicket(
-                ticket_id=ticket_id,
-                employee_id=emp.id,
+    @staticmethod
+    def _create_ticket_core(db, email: str, category: str, subject: str, description: str,
+                            priority: str = "Medium") -> dict:
+        """Side effect only — create (or return the recent duplicate of) an IT ticket.
+
+        Returns {"confirmation_id", "already", "message"} WITHOUT emitting a receipt or
+        appending a receipt line, so each caller (the create_ticket shim and the action
+        registry's dispatch) owns receipt emission and it happens exactly once per path.
+        """
+        emp = ITService._get_or_create_employee(db, email)
+
+        # Idempotency: an identical open ticket created moments ago is a double-submit.
+        from app.services.idempotency import find_recent_duplicate
+        dup = find_recent_duplicate(
+            db, ITTicket, window_seconds=120,
+            employee_id=emp.id, category=category, description=description, status="Open",
+        )
+        if dup:
+            return {
+                "confirmation_id": dup.ticket_id,
+                "already": True,
+                "message": (f"You already have an open ticket for this — "
+                            f"**Ticket ID: {dup.ticket_id}**. I didn't create a duplicate."),
+            }
+
+        ticket_id = f"IT-{datetime.datetime.now().strftime('%m%d%H%M%S')}"
+        new_t = ITTicket(
+            ticket_id=ticket_id,
+            employee_id=emp.id,
+            category=category,
+            subject=subject,
+            description=description,
+            priority=priority,
+            status="Open",
+        )
+        db.add(new_t)
+        db.commit()
+
+        # Send email to helpdesk — ManageEngine auto-creates ticket from this
+        try:
+            from app.services.email_service import send_it_ticket_email
+            send_it_ticket_email(
+                user_email=email,
+                employee_name=emp.name,
+                employee_email=emp.email,
+                employee_id=emp.employee_id or str(emp.id),
+                department=emp.department or "N/A",
                 category=category,
                 subject=subject,
                 description=description,
                 priority=priority,
-                status="Open",
+                ticket_id=ticket_id,
             )
-            db.add(new_t)
-            db.commit()
+        except Exception:
+            pass  # email failure must never block ticket creation
 
-            # Send email to helpdesk — ManageEngine auto-creates ticket from this
-            try:
-                from app.services.email_service import send_it_ticket_email
-                send_it_ticket_email(
-                    user_email=email,
-                    employee_name=emp.name,
-                    employee_email=emp.email,
-                    employee_id=emp.employee_id or str(emp.id),
-                    department=emp.department or "N/A",
-                    category=category,
-                    subject=subject,
-                    description=description,
-                    priority=priority,
-                    ticket_id=ticket_id,
-                )
-            except Exception:
-                pass  # email failure must never block ticket creation
-
-            return (
-                f"IT Support Ticket created. **Ticket ID: {ticket_id}**. "
-                f"Your request has been sent to the helpdesk and a ticket will be created in ManageEngine. "
-                f"An IT executive will be assigned to you shortly."
-            )
-        finally:
-            db.close()
+        return {
+            "confirmation_id": ticket_id,
+            "already": False,
+            "message": (f"IT Support Ticket created. **Ticket ID: {ticket_id}**. "
+                        f"Your request has been sent to the helpdesk and a ticket will be created "
+                        f"in ManageEngine. An IT executive will be assigned to you shortly."),
+        }
 
     @staticmethod
     def get_ticket_status(ticket_id: str):
@@ -77,6 +118,31 @@ class ITService:
             t = db.query(ITTicket).filter(ITTicket.ticket_id == ticket_id).first()
             if not t: return "IT ticket not found."
             return f"Ticket: {t.ticket_id} | Subject: {t.subject} | Status: {t.status} | Priority: {t.priority}"
+        finally:
+            db.close()
+
+    @staticmethod
+    def cancel_ticket(ticket_id: str, email: str) -> dict:
+        """Undo handler for a just-created IT ticket. Cancels it ONLY while still 'Open'
+        (the helpdesk hasn't picked it up); once it moves past Open the downstream owns it
+        and we refuse rather than silently no-op. Verifies the ticket belongs to `email`."""
+        db = SessionLocal()
+        try:
+            t = db.query(ITTicket).filter(ITTicket.ticket_id == ticket_id).first()
+            if not t:
+                return {"success": False, "error": "not_found"}
+            emp = ITService._get_or_create_employee(db, email)
+            if t.employee_id != emp.id:
+                return {"success": False, "error": "not_owner"}
+            if t.status == "Cancelled":
+                return {"success": True, "already": True}
+            if t.status != "Open":
+                return {"success": False, "error": "in_progress",
+                        "message": f"This ticket is already '{t.status}' — IT has started on it, "
+                                   f"so it can't be auto-cancelled."}
+            t.status = "Cancelled"
+            db.commit()
+            return {"success": True}
         finally:
             db.close()
 

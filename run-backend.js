@@ -10,7 +10,10 @@ const spawnedChildren = [];
 const freePort = (port) => {
   if (os.platform() !== "win32") return;
   try {
-    const out = execFileSync("netstat", ["-ano"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("netstat", ["-ano"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     const pids = new Set();
     for (const line of out.split("\n")) {
       const m = line.match(/[:\s](\d+)\s+\S+\s+LISTENING\s+(\d+)/);
@@ -20,9 +23,13 @@ const freePort = (port) => {
       try {
         execFileSync("taskkill", ["/PID", pid, "/F"], { stdio: "ignore" });
         console.log(`Freed port ${port} (killed PID ${pid})`);
-      } catch { /* already dead */ }
+      } catch {
+        /* already dead */
+      }
     }
-  } catch { /* netstat unavailable */ }
+  } catch {
+    /* netstat unavailable */
+  }
 };
 
 const repoRoot = process.cwd();
@@ -152,7 +159,7 @@ const getWslRepoRoot = () => {
         "Install/enable WSL, then ensure Docker and Docker Compose are available inside your WSL distro.",
         `Expected WSL repo path: ${wslRepoRoot}`,
         `Original error: ${err.message}`,
-      ].join("\n")
+      ].join("\n"),
     );
   }
 };
@@ -172,11 +179,22 @@ const runDockerCompose = async () => {
     try {
       await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
     } catch (sudoErr) {
-      console.warn("Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.");
+      console.warn(
+        "Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.",
+      );
     }
   }
 
-  const composeArgs = ["--cd", wslRepoRoot, "docker", "compose", "-f", infraComposeFile, "up", "-d"];
+  const composeArgs = [
+    "--cd",
+    wslRepoRoot,
+    "docker",
+    "compose",
+    "-f",
+    infraComposeFile,
+    "up",
+    "-d",
+  ];
 
   try {
     await runCommand("wsl", composeArgs, { cwd: repoRoot });
@@ -187,10 +205,14 @@ const runDockerCompose = async () => {
     // Before falling back to V1, check if required ports are already up.
     // V2 may exit non-zero (e.g. a non-critical service failing its health check)
     // while the core infrastructure containers are actually running.
-    const requiredAfterV2 = infraPorts.filter(p => p.required);
-    const allUpAfterV2 = await Promise.all(requiredAfterV2.map(p => isPortOpen(p.port, localInfraHost)));
+    const requiredAfterV2 = infraPorts.filter((p) => p.required);
+    const allUpAfterV2 = await Promise.all(
+      requiredAfterV2.map((p) => isPortOpen(p.port, localInfraHost)),
+    );
     if (allUpAfterV2.every(Boolean)) {
-      console.log("--- Required infrastructure ports are open after V2 attempt; skipping V1 fallback ---");
+      console.log(
+        "--- Required infrastructure ports are open after V2 attempt; skipping V1 fallback ---",
+      );
       return;
     }
 
@@ -201,15 +223,19 @@ const runDockerCompose = async () => {
     await runCommand(
       "wsl",
       ["--cd", wslRepoRoot, "docker-compose", "-f", infraComposeFile, "up", "-d"],
-      { cwd: repoRoot }
+      { cwd: repoRoot },
     );
     return;
   } catch (legacyComposeErr) {
     console.warn("--- WSL Infrastructure Startup Warning ---");
     console.warn("Could not start Docker infrastructure from WSL automatically.");
     console.warn("Reason:", legacyComposeErr.message);
-    console.warn("\nIf you are running Redis, Postgres, etc. manually in WSL, the backend will try to use those.");
-    console.warn("To fix the Docker error in WSL, try running: sudo apt-get install docker-compose-v2");
+    console.warn(
+      "\nIf you are running Redis, Postgres, etc. manually in WSL, the backend will try to use those.",
+    );
+    console.warn(
+      "To fix the Docker error in WSL, try running: sudo apt-get install docker-compose-v2",
+    );
     console.warn("-------------------------------------------\n");
     // Let waitForInfrastructure check the published Windows ports.
     return;
@@ -304,7 +330,7 @@ const syncPythonDependencies = async (pythonCmd, venvPaths) => {
         `The existing backend/venv does not contain the expected Python executable for ${platform}.`,
         `Expected: ${venvPaths.python}`,
         "Remove backend/venv and rerun npm start to recreate it for this OS.",
-      ].join("\n")
+      ].join("\n"),
     );
   }
 
@@ -326,11 +352,7 @@ const syncPythonDependencies = async (pythonCmd, venvPaths) => {
 let uvicornShuttingDown = false;
 
 const runUvicornWithRestart = async (uvicornPath) => {
-  const args = [
-    "app.main:app",
-    "--host", "0.0.0.0",
-    "--port", "8080",
-  ];
+  const args = ["app.main:app", "--host", "0.0.0.0", "--port", "8080"];
   const env = { ...process.env, LANGFUSE_OTEL: "false" };
 
   while (!uvicornShuttingDown) {
@@ -390,7 +412,9 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
 
 const startBackend = async () => {
   if (!isWindows) {
-    throw new Error(`This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`);
+    throw new Error(
+      `This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`,
+    );
   }
 
   if (process.env.SKIP_DOCKER === "true") {
@@ -399,7 +423,7 @@ const startBackend = async () => {
     startWslKeepAlive();
 
     // Check if required ports are already open before trying to start Docker
-    const requiredPorts = infraPorts.filter(p => p.required);
+    const requiredPorts = infraPorts.filter((p) => p.required);
     let allRequiredOpen = true;
     for (const p of requiredPorts) {
       if (!(await isPortOpen(p.port, localInfraHost))) {
@@ -409,7 +433,9 @@ const startBackend = async () => {
     }
 
     if (allRequiredOpen && requiredPorts.length > 0) {
-      console.log("--- All required infrastructure ports are already open. Skipping Docker startup ---");
+      console.log(
+        "--- All required infrastructure ports are already open. Skipping Docker startup ---",
+      );
     } else {
       await runDockerCompose();
     }
@@ -426,7 +452,7 @@ const startBackend = async () => {
   await runCommand(venvPaths.python, ["init_db_script.py"]);
 
   // Start mock servers in background (non-blocking, auto-restart)
-  startMockServer(venvPaths.uvicorn, "mock_zoho_server:app",          8090, "Mock Zoho");
+  startMockServer(venvPaths.uvicorn, "mock_zoho_server:app", 8090, "Mock Zoho");
   startMockServer(venvPaths.uvicorn, "mock_manage_engine_server:app", 8091, "Mock ManageEngine");
   startMockServer(venvPaths.uvicorn, "mock_nexus_library_server:app", 8092, "Mock Nexus Library");
 
@@ -434,7 +460,6 @@ const startBackend = async () => {
   console.log("--- Starting backend on http://localhost:8080 ---");
   await runUvicornWithRestart(venvPaths.uvicorn);
 };
-
 
 startBackend().catch((err) => {
   console.error("Backend startup failed:");
@@ -446,7 +471,11 @@ startBackend().catch((err) => {
 const shutdownAll = () => {
   uvicornShuttingDown = true;
   for (const child of spawnedChildren) {
-    try { child.kill(); } catch { /* already gone */ }
+    try {
+      child.kill();
+    } catch {
+      /* already gone */
+    }
   }
   stopWslKeepAlive();
   process.exit(0);

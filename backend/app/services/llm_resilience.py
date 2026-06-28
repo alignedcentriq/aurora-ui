@@ -2,18 +2,25 @@
 LLM Resilience Layer — circuit breaker, TTFT watchdog hedging, fallback model.
 
 Usage:
-    from app.services.llm_resilience import resilient_stream
+    from app.services.llm_resilience import resilient_invoke, resilient_ainvoke
 
-    async for chunk in resilient_stream(tier="agent", messages=[...], config={}):
+    # Tool-calling / structured-output call sites (preserves message objects):
+    response = resilient_invoke("agent", messages, build=lambda l: l.bind_tools(tools))
+    result = await resilient_ainvoke("router", msgs,
+                                     build=lambda l: l.with_structured_output(Out))
+
+    # Plain text streaming:
+    async for chunk, is_fallback in resilient_stream(tier="agent", messages=[...]):
         yield chunk
 
 Design:
 - Circuit breaker: per-tier, Redis-shared so all workers see the same state.
   3 consecutive failures → open for 120s. Trips to fallback model while open.
-- TTFT watchdog: if no first token arrives within TTFT_HEDGE_SECONDS (8s),
+- TTFT watchdog (stream only): if no first token arrives within TTFT_HEDGE_SECONDS (8s),
   a second stream (fallback model) is started in parallel. Whichever emits
   its first token first wins; the other is cancelled.
-- Fallback: per-tier map. Default is llama3.2:3b (always-warm, fast).
+- Fallback: dynamic chain (SERVICE_MODEL_NAME → FAST_MODEL_NAME), first that differs
+  from the tier's live primary — tool-calling tiers need a capable fallback.
 - max_retries=0 on all LLM clients so langchain doesn't silent-retry and stack timeouts.
 """
 
@@ -33,13 +40,21 @@ TTFT_HEDGE_SECONDS = 8.0
 BREAKER_FAILURE_THRESHOLD = 3
 BREAKER_OPEN_SECONDS = 120.0
 
-# Per-tier fallback model (Ollama model name)
-FALLBACK_MODELS: dict[str, str] = {
-    "agent":      "llama3.2:3b",
-    "service":    "llama3.2:3b",
-    "summarizer": "llama3.2:3b",
-    "router":     "llama3.2:3b",
-}
+# Fallback chain, strongest-first. The fallback for a tier is the first entry that
+# differs from the tier's live primary model. llama3.1:8b leads because the agent and
+# service tiers do real tool-calling and llama3.2:3b refuses tool calls (see config.py);
+# 3b remains the last resort when 8b IS the primary that just failed.
+def _fallback_model_for(tier: str) -> str:
+    from app.config import settings
+    from app.services.llm_controls_service import tier_params
+    try:
+        primary = tier_params(tier)["model"]
+    except Exception:
+        primary = ""
+    for candidate in (settings.SERVICE_MODEL_NAME, settings.FAST_MODEL_NAME):
+        if candidate and candidate != primary:
+            return candidate
+    return "llama3.2:3b"
 
 # ── In-process circuit breaker state ─────────────────────────────────────────
 # Redis sync is best-effort; in-process state is always authoritative for THIS worker.
@@ -98,8 +113,14 @@ def is_circuit_open(tier: str) -> bool:
 
 # ── LLM stream helpers ────────────────────────────────────────────────────────
 
-def _make_llm(tier: str, model_override: Optional[str] = None):
-    """Build a ChatOpenAI with max_retries=0 (no silent langchain retry stacking)."""
+def _build_llm(
+    tier: str,
+    model_override: Optional[str] = None,
+    default_timeout: Optional[float] = None,
+    default_max_tokens: Optional[int] = None,
+):
+    """Build a ChatOpenAI for ``tier`` with max_retries=0 (no silent langchain retry
+    stacking — retry policy is owned by the resilient wrappers below)."""
     from app.services.llm_controls_service import get_llm, tier_params, _TIER_CONN
     from langchain_openai import ChatOpenAI
 
@@ -107,33 +128,101 @@ def _make_llm(tier: str, model_override: Optional[str] = None):
         # Build directly so we can override model without disturbing the cached client
         cfg = tier_params(tier)
         base_url, api_key = _TIER_CONN[tier]
-        return ChatOpenAI(
+        kwargs = dict(
             base_url=base_url,
             api_key=api_key,
             model=model_override,
             temperature=cfg["temperature"],
             max_retries=0,
-            timeout=cfg.get("timeout") or 30,
+            timeout=cfg["timeout"] if cfg.get("timeout") is not None else (default_timeout or 30),
             stream_usage=True,
             extra_body={"keep_alive": "30m"},
         )
+        max_tokens = cfg["max_tokens"] if cfg.get("max_tokens") is not None else default_max_tokens
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return ChatOpenAI(**kwargs)
 
-    llm = get_llm(tier, default_timeout=45)
-    # Patch max_retries=0 on the underlying client to stop silent retry stacking
-    try:
-        llm.max_retries = 0
-    except Exception:
-        pass
-    return llm
+    return get_llm(tier, default_timeout=default_timeout,
+                   default_max_tokens=default_max_tokens)
 
 
 async def _stream_llm(tier: str, messages, model_override: Optional[str] = None) -> AsyncIterator[str]:
     """Yield string chunks from an LLM stream. Raises on error."""
-    llm = _make_llm(tier, model_override)
+    llm = _build_llm(tier, model_override, default_timeout=45)
     async for chunk in llm.astream(messages):
         content = chunk.content if hasattr(chunk, "content") else str(chunk)
         if content:
             yield content
+
+
+# ── Resilient invoke (tool-calling and structured-output call sites) ──────────
+#
+# resilient_stream() below yields plain text chunks, which would drop tool_calls —
+# so every bind_tools()/with_structured_output() call site goes through these
+# wrappers instead. Same protection, message-object semantics:
+#   1. Breaker open → skip the primary entirely, call the fallback model.
+#   2. Primary raises → record the failure, retry ONCE on the fallback model.
+#   3. Primary succeeds → record success (closes a half-open breaker).
+# Fallback outcomes never touch the breaker: it tracks primary-model health only.
+#
+# ``build`` adapts the bare model before the call, e.g.
+#   resilient_invoke("agent", msgs, build=lambda l: l.bind_tools(tools))
+#   resilient_ainvoke("router", msgs, build=lambda l: l.with_structured_output(Out))
+
+def _prepare(tier, build, model_override, default_timeout, default_max_tokens):
+    llm = _build_llm(tier, model_override, default_timeout, default_max_tokens)
+    return build(llm) if build is not None else llm
+
+
+def resilient_invoke(
+    tier: str,
+    messages,
+    *,
+    build=None,
+    default_timeout: Optional[float] = None,
+    default_max_tokens: Optional[int] = None,
+):
+    fallback_model = _fallback_model_for(tier)
+
+    if _breaker.is_open(tier):
+        log.warning("Circuit open for tier %r — invoking fallback %r directly", tier, fallback_model)
+        return _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).invoke(messages)
+
+    try:
+        result = _prepare(tier, build, None, default_timeout, default_max_tokens).invoke(messages)
+        _breaker.record_success(tier)
+        return result
+    except Exception as exc:
+        _breaker.record_failure(tier)
+        log.warning("Primary invoke failed for tier %r (%s) — retrying on fallback %r",
+                    tier, exc, fallback_model)
+        return _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).invoke(messages)
+
+
+async def resilient_ainvoke(
+    tier: str,
+    messages,
+    *,
+    build=None,
+    default_timeout: Optional[float] = None,
+    default_max_tokens: Optional[int] = None,
+):
+    fallback_model = _fallback_model_for(tier)
+
+    if _breaker.is_open(tier):
+        log.warning("Circuit open for tier %r — invoking fallback %r directly", tier, fallback_model)
+        return await _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).ainvoke(messages)
+
+    try:
+        result = await _prepare(tier, build, None, default_timeout, default_max_tokens).ainvoke(messages)
+        _breaker.record_success(tier)
+        return result
+    except Exception as exc:
+        _breaker.record_failure(tier)
+        log.warning("Primary ainvoke failed for tier %r (%s) — retrying on fallback %r",
+                    tier, exc, fallback_model)
+        return await _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).ainvoke(messages)
 
 
 # ── Resilient stream ──────────────────────────────────────────────────────────
@@ -153,7 +242,7 @@ async def resilient_stream(
        parallel and serve whichever emits first.
     3. Records success/failure for circuit breaker tracking.
     """
-    fallback_model = FALLBACK_MODELS.get(tier, "llama3.2:3b")
+    fallback_model = _fallback_model_for(tier)
     breaker_open = _breaker.is_open(tier)
 
     if breaker_open:

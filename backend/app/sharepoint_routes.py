@@ -71,26 +71,6 @@ async def sync_sharepoint_policies(background_tasks: BackgroundTasks):
     }
 
 
-@router.post("/sharepoint/sync-templates")
-async def sync_sharepoint_templates(
-    background_tasks: BackgroundTasks,
-    user=Depends(require_hr),
-):
-    """Sync the document-template folder from SharePoint: convert each PDF/DOCX to HTML
-    and LLM-tag fill-in fields for the Documents generator. HR/Admin only; runs in
-    background."""
-    from app.config import settings
-    if not settings.SHAREPOINT_SITE_URL:
-        raise HTTPException(status_code=400, detail="SHAREPOINT_SITE_URL is not configured.")
-    if not getattr(settings, "SHAREPOINT_TEMPLATES_FOLDER", ""):
-        raise HTTPException(status_code=400, detail="SHAREPOINT_TEMPLATES_FOLDER is not configured.")
-
-    from app.services.sharepoint_template_sync import sync_templates
-    background_tasks.add_task(sync_templates)
-    return {
-        "message": "SharePoint document-template sync started in background.",
-        "folder": settings.SHAREPOINT_TEMPLATES_FOLDER,
-    }
 
 
 @router.post("/sharepoint/sync-projects")

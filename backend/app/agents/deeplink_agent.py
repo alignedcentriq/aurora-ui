@@ -34,26 +34,14 @@ class DeeplinkState(TypedDict):
 
 @tool
 def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: str = "", user_email: str = "") -> str:
-    """Apply leave via Zoho People API. Falls back to a direct Zoho link if API is unavailable.
-    start_date and end_date must be YYYY-MM-DD format. leave_type: Casual, Sick, Earned, or Optional."""
-    email = user_email or settings.DEFAULT_USER_EMAIL
-    zoho_link = (
-        ((settings.ZOHO_PEOPLE_URL or "").rstrip("/") + "#leavetracker/applyleave")
-        if settings.ZOHO_PEOPLE_URL
-        else "https://people.zoho.com"
-    )
+    """Hand the user the Zoho People apply-leave form to fill in (we never auto-submit).
 
-    # Apply leave internally via HRService (creates record + sends approval email)
-    try:
-        from app.hr_service import HRService
-        result_msg = HRService.apply_leave(
-            email, start_date, end_date, leave_type, reason or ""
-        )
-        return json.dumps({"success": True, "message": result_msg})
-    except Exception as exc:
-        pass
+    Product decision: leave application is owned by Zoho People — the assistant does NOT
+    create a leave record. It returns the apply-leave deep-link plus the details the user
+    gave, so they can fill them into the Zoho form (Zoho's form takes no prefill params).
+    start_date / end_date in YYYY-MM-DD; leave_type: Casual, Sick, Earned, or Optional."""
+    from app.services import zoho_leave_links
 
-    # API not configured or failed — return fallback link
     def _fmt(iso: str) -> str:
         try:
             return _dt.strptime(iso, "%Y-%m-%d").strftime("%d %b %Y")
@@ -61,17 +49,26 @@ def submit_zoho_leave(start_date: str, end_date: str, leave_type: str, reason: s
             return iso
 
     return json.dumps({
-        "success":    False,
-        "fallback":   True,
-        "link":       zoho_link,
+        "success": True,
+        "action": "open_apply_form",
+        "link": zoho_leave_links.apply_url(),
         "leave_type": leave_type,
         "start_date": start_date,
-        "end_date":   end_date,
-        "message": (
-            f"Please apply your {leave_type} leave ({_fmt(start_date)} to {_fmt(end_date)}) "
-            "directly in Zoho People."
-        ),
+        "end_date": end_date,
+        "message": _apply_handoff_message(leave_type, _fmt(start_date), _fmt(end_date)),
     })
+
+
+def _apply_handoff_message(leave_type: str, start_disp: str, end_disp: str) -> str:
+    from app.services import zoho_leave_links
+    detail = ""
+    if start_disp and end_disp:
+        lt = f"{leave_type} leave" if leave_type else "leave"
+        detail = f" Enter these in the form: **{lt}**, **{start_disp} to {end_disp}**."
+    return (
+        f"Apply your leave directly in Zoho People — [open the leave form]"
+        f"({zoho_leave_links.apply_url()}).{detail}"
+    )
 
 
 @tool
@@ -206,7 +203,8 @@ You automate form submissions in external portals on behalf of the employee.
 
 AVAILABLE TOOLS:
 1. setup_zoho_session()        → Opens Edge so the user can log in to Zoho via SSO once.
-2. submit_zoho_leave(...)      → Opens Zoho People leave form pre-filled. User clicks Submit.
+2. submit_zoho_leave(...)      → Returns the Zoho People apply-leave form link + the dates/type
+                                  for the user to fill in (no prefill, no auto-submit).
 3. setup_powerapps_session()   → Opens Edge so the user can log in to PowerApps via Azure AD SSO once.
 4. submit_powerapps_complaint(action_item, priority, location)
    → Opens the Admin Action Tracker (PowerApps) complaint form pre-filled in Edge.
@@ -227,13 +225,13 @@ AVAILABLE TOOLS:
 - If dates have no year (e.g. "June 10 to June 12") → "2026-06-10" and "2026-06-12".
 - Ask ONLY if both start date AND end date are completely absent.
 
+IMPORTANT: we do NOT apply leave ourselves — Zoho People owns leave application. Never say
+"your leave has been applied/submitted." Always hand the user the form to fill in.
+
 Tool response handling:
-- result.success = true  → confirm: "Your [leave_type] leave has been applied in Zoho."
-                           Add request_id if present: "Request ID: {id}"
-- result.fallback = true → say: "I couldn't apply via API. Please apply directly in Zoho:"
-                           then show result.link as a clickable link.
-                           Remind the user to fill: leave type, from, to dates from result fields.
-- result.error (no fallback) → tell user the submission failed and to try again.
+- Use result.message verbatim — it contains the clickable apply-leave link plus the
+  leave type and dates for the user to enter (Zoho's form cannot be pre-filled).
+- Do NOT claim the leave was submitted; the user submits it themselves in Zoho.
 
 ─── POWERAPPS COMPLAINT SUBMISSION ───────────────────────────────────────────
 Trigger: user says "raise a complaint", "file a complaint", "submit a complaint",
@@ -291,14 +289,16 @@ _compiled_agent = None
 
 
 def _build_graph(tools):
-    from app.services import llm_controls_service as llm_controls
+    from app.services.llm_resilience import resilient_invoke
     tool_node = ToolNode(tools)
 
     def deeplink_assistant(state: DeeplinkState):
         # Built per call from the live IT-tunable params (agent tier).
-        llm = llm_controls.get_llm("agent", default_timeout=45).bind_tools(tools)
         messages = [SystemMessage(content=_SYSTEM_PROMPT)] + state["messages"]
-        return {"messages": [llm.invoke(messages)]}
+        response = resilient_invoke("agent", messages,
+                                    build=lambda l: l.bind_tools(tools),
+                                    default_timeout=45)
+        return {"messages": [response]}
 
     def should_continue(state: DeeplinkState):
         last = state["messages"][-1]

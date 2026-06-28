@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { ChartSpec } from "@/components/analytics/ChartCanvas";
 
 export interface EmailDraftData {
   to: string;
@@ -53,10 +54,28 @@ export interface VisitorPassPrefill {
 export interface DynamicFormField {
   name: string;
   label: string;
-  type: "text" | "textarea" | "date" | "select" | "number" | "email" | "checkbox" | "user" | "image";
+  type:
+    | "text"
+    | "textarea"
+    | "date"
+    | "select"
+    | "number"
+    | "email"
+    | "checkbox"
+    | "user"
+    | "image";
   required?: boolean;
   options?: string[];
   placeholder?: string;
+  // Identity attribute this field pre-fills from (e.g. "department", "manager"). Empty = manual.
+  autofill?:
+    | "name"
+    | "email"
+    | "employee_id"
+    | "department"
+    | "designation"
+    | "location"
+    | "manager";
 }
 
 // Schema the backend sends for an admin-defined form matched in chat.
@@ -66,6 +85,19 @@ export interface DynamicFormData {
   description?: string;
   fields: DynamicFormField[];
   submit_endpoint: string;
+  // {field_name: value} resolved from the logged-in user's profile for autofill-bound fields.
+  prefill?: Record<string, string>;
+}
+
+// LLM-drafted form template shown for admin review/editing before it's actually created.
+// When `id` is present the draft revises an existing form (PUT/update); otherwise it's a new
+// form (POST/create).
+export interface FormBuilderDraft {
+  id?: number;
+  name: string;
+  description: string;
+  category?: string;
+  fields: DynamicFormField[];
 }
 
 export interface QuickChoiceOption {
@@ -96,11 +128,26 @@ export interface InteractivePayload {
     | "attendance_schedule"
     | "my_attendance"
     | "dynamic_form"
+    | "form_builder"
     | "quick_choice"
     | "travel_request_form"
     | "travel_expense_form"
-    | "cancel_leave_form";
-  data?: EmailDraftData | RoomBookingPrefill | AnnouncementPrefill | PromptConfigPrefill | SkillsEditorPrefill | VisitorPassPrefill | AttendanceSchedulePrefill | DynamicFormData | QuickChoiceData;
+    | "cancel_leave_form"
+    | "leave_application_form"
+    | "document_generation_form"
+    | "chart";
+  data?:
+    | EmailDraftData
+    | RoomBookingPrefill
+    | AnnouncementPrefill
+    | PromptConfigPrefill
+    | SkillsEditorPrefill
+    | VisitorPassPrefill
+    | AttendanceSchedulePrefill
+    | DynamicFormData
+    | QuickChoiceData
+    | FormBuilderDraft
+    | ChartSpec;
 }
 
 export interface Turn {
@@ -112,9 +159,18 @@ export interface Turn {
   domain?: string;
   interactive?: InteractivePayload;
   images?: string[];
+  /** Grounding sources for the answer (ARB #41) — rendered as a cited-answer trust card. */
+  citations?: Citation[];
   streaming?: boolean;
   /** True when this turn was generated from an error/failure, enabling the escalation prompt */
   isError?: boolean;
+}
+
+/** A single grounding source behind a cited answer (ARB #41). */
+export interface Citation {
+  title: string;
+  category: string;
+  excerpt: string;
 }
 
 export interface Thread {
@@ -240,7 +296,7 @@ export const useChatStore = create<ChatState>()(
                   ...thread,
                   turns: thread.turns.map(({ images: _images, ...turn }) => turn),
                 },
-              ])
+              ]),
           ),
         };
       },
@@ -251,13 +307,13 @@ export const useChatStore = create<ChatState>()(
           // Evict threads older than 30 days on every page load.
           const cutoff = Date.now() - RETENTION_MS;
           state.threads = Object.fromEntries(
-            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff)
+            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff),
           );
           if (state.activeId && !state.threads[state.activeId]) {
             state.activeId = null;
           }
         }
       },
-    }
-  )
+    },
+  ),
 );

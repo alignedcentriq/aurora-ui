@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CalendarX2, MapPin, Clock, Loader2, AlertCircle, CheckCircle2, Trash2 } from "lucide-react";
+import {
+  CalendarX2,
+  MapPin,
+  Clock,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Trash2,
+} from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 
 interface Booking {
@@ -26,7 +34,9 @@ function fmt12(hhmm: string) {
 function fmtDate(iso: string) {
   const [y, mo, d] = iso.slice(0, 10).split("-").map(Number);
   return new Date(y, mo - 1, d).toLocaleDateString("en-IN", {
-    weekday: "short", day: "numeric", month: "short",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
   });
 }
 
@@ -39,7 +49,7 @@ function fmtTimeRange(start: string, end: string) {
 export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props) {
   const auth = useMemo(
     () => ({ "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() }),
-    [userEmail, userRole]
+    [userEmail, userRole],
   );
 
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -54,9 +64,11 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
         const res = await fetch("/api/ms365/my-room-bookings?days=14", { headers: auth });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(res.status === 401
-            ? "Microsoft account not connected. Go to Settings → Connected Accounts."
-            : data.detail ?? "Failed to load bookings.");
+          setError(
+            res.status === 401
+              ? "Microsoft account not connected. Go to Settings → Connected Accounts."
+              : (data.detail ?? "Failed to load bookings."),
+          );
           return;
         }
         setBookings(data.bookings ?? []);
@@ -80,11 +92,11 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail ?? "Cancellation failed.");
       }
-      setCancelled(prev => new Set([...prev, booking.id]));
+      setCancelled((prev) => new Set([...prev, booking.id]));
       flyBanner(`${booking.room_name} booking cancelled`);
       onCancelled(
         `✅ Booking cancelled — **${booking.room_name}** on ${fmtDate(booking.start)}, ` +
-        `${fmtTimeRange(booking.start, booking.end)} (**"${booking.subject}"**)`
+          `${fmtTimeRange(booking.start, booking.end)} (**"${booking.subject}"**)`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Cancellation failed.");
@@ -93,7 +105,7 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
     }
   };
 
-  const visible = bookings.filter(b => !cancelled.has(b.id));
+  const visible = bookings.filter((b) => !cancelled.has(b.id));
 
   return (
     <motion.div
@@ -136,7 +148,7 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
 
         {/* Booking list */}
         <AnimatePresence>
-          {visible.map(booking => (
+          {visible.map((booking) => (
             <motion.div
               key={booking.id}
               initial={{ opacity: 0, y: 4 }}
@@ -165,9 +177,11 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
                 disabled={cancelling === booking.id}
                 className="flex shrink-0 items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs font-semibold text-destructive transition-all hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {cancelling === booking.id
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : <Trash2 className="h-3.5 w-3.5" />}
+                {cancelling === booking.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
                 {cancelling === booking.id ? "Cancelling…" : "Cancel"}
               </motion.button>
             </motion.div>
@@ -176,8 +190,11 @@ export function CancelBookingWidget({ userEmail, userRole, onCancelled }: Props)
 
         {/* All cancelled */}
         {!loading && !error && bookings.length > 0 && visible.length === 0 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            className="flex items-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex items-center gap-2 py-2 text-sm text-emerald-600 dark:text-emerald-400"
+          >
             <CheckCircle2 className="h-4 w-4" />
             All bookings cancelled.
           </motion.div>

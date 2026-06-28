@@ -1,4 +1,12 @@
-import { Users, Wrench, FileText, Megaphone, ArrowRight, Briefcase, type LucideIcon } from "lucide-react";
+import {
+  Users,
+  Wrench,
+  FileText,
+  Megaphone,
+  ArrowRight,
+  Briefcase,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, type Variants } from "framer-motion";
 
@@ -78,7 +86,10 @@ export function QuickActions({
       variants={container}
       initial="hidden"
       animate="show"
-      className={cn("grid gap-3", variant === "grid" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-5" : "grid-cols-1")}
+      className={cn(
+        "grid gap-3",
+        variant === "grid" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-5" : "grid-cols-1",
+      )}
     >
       {domains.map((d) => {
         const Icon = d.icon;
@@ -92,7 +103,7 @@ export function QuickActions({
             className={cn(
               "group relative flex flex-col items-center gap-3 rounded-2xl border border-border bg-card/40 p-5 text-center transition-all duration-300 hover:bg-card/70 hover:shadow-lg backdrop-blur-sm",
               d.glowColor,
-              variant === "grid" ? "min-h-[120px]" : "flex-row p-4 min-h-0"
+              variant === "grid" ? "min-h-[120px]" : "flex-row p-4 min-h-0",
             )}
           >
             <div
@@ -106,7 +117,14 @@ export function QuickActions({
             </div>
 
             <div className="flex-1 min-w-0">
-              <h3 className={cn("font-semibold text-foreground truncate", variant === "grid" ? "text-[14px]" : "text-[13px]")}>{d.label}</h3>
+              <h3
+                className={cn(
+                  "font-semibold text-foreground truncate",
+                  variant === "grid" ? "text-[14px]" : "text-[13px]",
+                )}
+              >
+                {d.label}
+              </h3>
             </div>
           </motion.button>
         );

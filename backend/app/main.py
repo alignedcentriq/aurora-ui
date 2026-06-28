@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
 import io
 import asyncio
 import datetime
@@ -10,7 +13,7 @@ import socket
 import time
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
@@ -38,15 +41,15 @@ from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
-from app.routes.project_update_routes import router as project_update_router
+from app.routes.capability_command_routes import router as capability_command_router
 from app.routes.library_portal_routes import router as library_portal_router
 from app.routes.pa_callback_routes import router as pa_callback_router
 from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.app_links_routes import router as app_links_router, public_router as app_links_public_router
 from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.analytics_routes import router as analytics_router
 from app.routes.llm_controls_routes import router as llm_controls_router
-from app.routes.security_news_routes import router as security_news_router
 from app.routes.integration_routes import router as integration_router
 from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
@@ -65,6 +68,10 @@ from app.routes.skill_hr_routes import router as skill_hr_router
 from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
 from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
+from app.routes.techelevate_local_routes import router as techelevate_local_router
+from app.routes.udemy_routes import router as udemy_router
+from app.routes.project_iq_routes import router as project_iq_router
+from app.routes.onboarding_routes import router as onboarding_router
 from app.services.feedback_service import FeedbackService
 
 # -- Langfuse tracing --
@@ -159,7 +166,7 @@ app.include_router(people_router)
 app.include_router(hr_portal_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
-app.include_router(project_update_router)
+app.include_router(capability_command_router)
 app.include_router(library_portal_router)
 app.include_router(pa_callback_router)
 app.include_router(company_settings_router)
@@ -167,8 +174,8 @@ app.include_router(app_links_router)
 app.include_router(app_links_public_router)
 app.include_router(form_library_router)
 app.include_router(observability_router)
+app.include_router(analytics_router)
 app.include_router(llm_controls_router)
-app.include_router(security_news_router)
 app.include_router(integration_router)
 app.include_router(installation_router)
 app.include_router(software_catalog_router)
@@ -191,10 +198,22 @@ app.include_router(skill_it_router)
 app.include_router(skill_doc_router)
 app.include_router(connector_admin_router)
 app.include_router(connector_invoke_router)
+app.include_router(techelevate_local_router)
+app.include_router(udemy_router)
+app.include_router(project_iq_router)
+app.include_router(onboarding_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(_uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
+
+# Chat-attachment upload limits. Only text-extractable formats are allowed —
+# images/binaries are rejected (the chat model is text-only). MAX_UPLOAD_CHARS
+# mirrors the slice the composer sends to the model, so anything bigger is
+# blocked up front instead of being silently truncated.
+_ALLOWED_UPLOAD_EXTS = {".pdf", ".txt", ".csv", ".json", ".md", ".xml", ".log"}
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_UPLOAD_CHARS = 6000
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -209,11 +228,22 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
+class PortalContext(BaseModel):
+    """What the user is currently looking at in the UI.
+    Passed by the frontend on every chat request so the agent can give
+    portal-aware answers and optionally return a portal_action to drive
+    the visible page (e.g. filter the directory list, highlight a row).
+    """
+    page: Optional[str] = None          # "directory" | "pmo" | "udemy" | "documents" | "team" | None
+    active_filters: Optional[dict] = {} # current filter state already applied on the portal
+
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[ChatMessage]] = []
     session_id: Optional[str] = "default_session_v2"
     is_private: Optional[bool] = False
+    portal_context: Optional[PortalContext] = None
+    active_mode: Optional[str] = None
 
 class FeedbackRequest(BaseModel):
     rating: str                          # "up" or "down"
@@ -261,8 +291,26 @@ class SendEmailDraftRequest(BaseModel):
     body: str
     requester_email: Optional[str] = ""
 
+# Handles for the long-lived background loops spawned in startup_event, so the
+# shutdown hook can cancel them cleanly (otherwise the event loop garbage-collects
+# them mid-await at shutdown → "Task was destroyed but it is pending!").
+_app_background_tasks: list = []
+
+
 @app.on_event("startup")
 async def startup_event():
+    # ARB #32 — warn early if running with >1 worker so operators know the
+    # module-level TTL caches in agent.py (_feedback_count_cache etc.) are
+    # per-process and will cause cache-miss churn.  Harmless at single-worker.
+    import os as _os
+    _worker_count = int(_os.environ.get("WEB_CONCURRENCY", "1"))
+    if _worker_count > 1:
+        logging.warning(
+            "[ARB#32] Running with WEB_CONCURRENCY=%s — module-level TTL caches "
+            "in agent.py are NOT shared across workers. Migrate them to Redis "
+            "before scaling horizontally.", _worker_count
+        )
+
     try:
         await asyncio.to_thread(init_db)
     except Exception as e:
@@ -285,6 +333,24 @@ async def startup_event():
     except Exception as e:
         pass
 
+    try:
+        from app.services.udemy_business_service import configured as udemy_configured, _ensure_index
+        if udemy_configured():
+            _ensure_index()
+    except Exception as e:
+        logging.warning("Udemy index warm-up failed (non-fatal): %s", e)
+
+    try:
+        from app.routes.access_routes import seed_system_roles
+        from app.database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            await asyncio.to_thread(seed_system_roles, _db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.warning("Access role seed failed (non-fatal): %s", e)
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -300,22 +366,17 @@ async def startup_event():
             except Exception as e:
                 pass
 
-    asyncio.create_task(periodic_renew())
+    _app_background_tasks.append(asyncio.create_task(periodic_renew()))
 
     # Run any due attendance-report automations every minute (schedules persist in DB).
     async def attendance_scheduler():
-        from app.services import attendance_schedule_service, project_update_service
+        from app.services import attendance_schedule_service
         while True:
             await asyncio.sleep(60)
             try:
                 fired = await asyncio.to_thread(attendance_schedule_service.run_due)
                 if fired:
                     pass
-            except Exception as e:
-                pass
-            # Biweekly project-update form — cadence gating lives inside run_due().
-            try:
-                await asyncio.to_thread(project_update_service.run_due)
             except Exception as e:
                 pass
             # Automation Hub — custom recurring email rules created by managers/HR/IT/PMO.
@@ -327,44 +388,7 @@ async def startup_event():
             except Exception as e:
                 pass
 
-    asyncio.create_task(attendance_scheduler())
-
-    # Send a daily cybersecurity news digest once per day at SECURITY_NEWS_HOUR.
-    async def security_news_scheduler():
-        import datetime as _dt
-        _last_sent_date = None
-        while True:
-            await asyncio.sleep(300)  # check every 5 minutes
-            try:
-                from app.services.security_news_service import get_config, fetch_digest
-                cfg = get_config()
-                if not cfg.get("enabled", False):
-                    continue
-                recipients = cfg.get("recipients") or []
-                if not recipients:
-                    continue
-                sender = (
-                    settings.SECURITY_NEWS_SENDER
-                    or settings.PARKING_REMINDER_SENDER
-                    or settings.NOTIFY_TO_EMAIL
-                )
-                if not sender:
-                    continue
-                now = _dt.datetime.now()
-                today = now.date()
-                send_hour = int(cfg.get("hour", settings.SECURITY_NEWS_HOUR))
-                if today == _last_sent_date or now.hour < send_hour:
-                    continue
-                _last_sent_date = today
-                from app.services.email_service import send_security_news_digest
-                items = await asyncio.to_thread(fetch_digest, cfg)
-                if items:
-                    date_str = today.strftime("%B %d, %Y")
-                    await asyncio.to_thread(send_security_news_digest, sender, recipients, items, date_str)
-            except Exception as _sne:
-                pass
-
-    asyncio.create_task(security_news_scheduler())
+    _app_background_tasks.append(asyncio.create_task(attendance_scheduler()))
 
     # ── Model keep-alive heartbeat ─────────────────────────────────────────
     # Fires a 0-token ping at every heavy model tier every 10 minutes.
@@ -376,7 +400,33 @@ async def startup_event():
             await _warmup_task()
             await asyncio.sleep(600)  # 10 minutes
 
-    asyncio.create_task(model_warmup_scheduler())
+    _app_background_tasks.append(asyncio.create_task(model_warmup_scheduler()))
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Cancel the connector registry's poll + pubsub loops cleanly so they don't
+    # trigger "Task was destroyed but it is pending!" / async-generator aclose
+    # warnings when the event loop tears down.
+    try:
+        from app.connectors.registry import stop_background_refresh
+        await stop_background_refresh()
+    except Exception as e:
+        logging.warning("Connector registry shutdown failed (non-fatal): %s", e)
+
+    # Cancel the long-lived schedulers (subscription renew, attendance/automation
+    # runner, model warm-up). They only ever act mid-loop while the app is alive,
+    # so cancelling at shutdown has no feature impact — it just avoids the
+    # "Task was destroyed but it is pending!" warning.
+    for task in _app_background_tasks:
+        if not task.done():
+            task.cancel()
+    for task in _app_background_tasks:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _app_background_tasks.clear()
 
     # ── Chat retention: 30-day purge ───────────────────────────────────────
     # Deletes ConversationSummary rows (the AI's medium-term memory) that
@@ -403,6 +453,42 @@ async def startup_event():
             await asyncio.sleep(6 * 3600)  # every 6 hours
 
     asyncio.create_task(chat_retention_scheduler())
+
+    # ── Action-safety maintenance (ARB #26) ────────────────────────────────
+    # Proactively expire past-TTL pending_action rows and purge terminal rows
+    # older than 48 h.  Runs every hour — low-cost table scans, keeps the
+    # table lean and makes DB queries accurate (no stale 'pending' phantoms).
+    async def pending_action_maintenance_scheduler():
+        from app.services.pending_action_service import PendingActionService as _PAS
+        await asyncio.sleep(90)  # let startup settle
+        while True:
+            try:
+                await asyncio.to_thread(_PAS.expire_stale)
+            except Exception:
+                pass
+            try:
+                await asyncio.to_thread(_PAS.purge_expired, 48)
+            except Exception:
+                pass
+            await asyncio.sleep(3600)  # every hour
+
+    asyncio.create_task(pending_action_maintenance_scheduler())
+
+    # ── Proactive nudge scan ───────────────────────────────────────────────
+    # Turns the assistant proactive: deterministic detectors (zero LLM) surface
+    # actionable nudges (expiring leaves, stale approvals) into the in-app feed.
+    # Best-effort Teams/email push stays OFF until NUDGE_PUSH_ENABLED is set.
+    async def proactive_nudge_scheduler():
+        from app.services import nudge_service
+        await asyncio.sleep(45)  # let startup settle
+        while True:
+            try:
+                await asyncio.to_thread(nudge_service.run_due)
+            except Exception:
+                pass
+            await asyncio.sleep(max(1, settings.NUDGE_SCAN_INTERVAL_MIN) * 60)
+
+    asyncio.create_task(proactive_nudge_scheduler())
 
     get_deeplink_agent()
 
@@ -432,8 +518,33 @@ async def me(user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/health/llm")
 async def llm_health():
-    """Check whether the LLM service is reachable (VPN required from outside office)."""
-    return {"status": "ok"}
+    """Probe the shared Ollama server (3s timeout) and report per-tier breaker state.
+
+    status: "ok" (reachable, all breakers closed), "degraded" (reachable but at least
+    one tier's circuit breaker is open — fallback models are serving that tier), or
+    "down" (Ollama unreachable — VPN required from outside office)."""
+    from app.services.llm_resilience import get_breaker_status
+    import urllib.request
+
+    base = settings.AGENT_BASE_URL.rsplit("/v1", 1)[0]
+
+    def _probe() -> bool:
+        try:
+            req = urllib.request.Request(f"{base}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    reachable = await asyncio.to_thread(_probe)
+    breakers = get_breaker_status()
+    if not reachable:
+        status = "down"
+    elif any(state == "open" for state in breakers.values()):
+        status = "degraded"
+    else:
+        status = "ok"
+    return {"status": status, "ollama_reachable": reachable, "circuit_breakers": breakers}
 
 @app.get("/api/chat/load")
 async def chat_load():
@@ -481,12 +592,28 @@ async def track_data(log: CustomLog):
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Accept a PDF or text file and return its extracted text content."""
+    """Accept a PDF or text file and return its extracted text content.
+
+    Images and other binary formats are rejected — the chat model is text-only,
+    so only the whitelisted text-extractable formats are accepted. Files whose
+    extracted text exceeds the model's window are blocked rather than truncated.
+    """
     filename = file.filename or "upload"
+
+    # Block images and any non-whitelisted format up front.
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Supported formats: PDF, TXT, CSV, JSON, MD, XML, LOG.",
+        )
+
     content_bytes = await file.read()
+    if len(content_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File must be under 10 MB.")
 
     extracted = ""
-    if filename.lower().endswith(".pdf"):
+    if ext == ".pdf":
         def _extract_pdf(data: bytes) -> str:
             import pdfplumber
             with pdfplumber.open(io.BytesIO(data)) as pdf:
@@ -504,7 +631,18 @@ async def upload_file(file: UploadFile = File(...)):
     if not extracted:
         raise HTTPException(status_code=422, detail="Could not extract text from file")
 
-    return {"text": extracted, "filename": filename, "char_count": len(extracted)}
+    char_count = len(extracted)
+    if char_count > _MAX_UPLOAD_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File is too large to analyze: {char_count:,} characters "
+                f"(limit {_MAX_UPLOAD_CHARS:,}). Upload a shorter file or paste "
+                "the relevant section."
+            ),
+        )
+
+    return {"text": extracted, "filename": filename, "char_count": char_count}
 
 
 @app.get("/api/documents/download/{file_id}")
@@ -558,7 +696,6 @@ _REJECT_LABELS = {
     "book_extension": "Reject Extension Request",
     "udemy_license": "Decline Training License",
     "desk_key": "Reject Desk Key Request",
-    "project_update": "Reject Project Update",
 }
 
 
@@ -610,6 +747,48 @@ def _reject_reason_form(token: str, subtitle: str, error: str = "") -> str:
       <label for="reason">Reason for rejection</label>
       <textarea id="reason" name="reason" required placeholder="e.g. Insufficient leave balance — please discuss with your manager before re-applying."></textarea>
       <button type="submit">Confirm Rejection</button>
+    </form>
+    <p class="foot">Centriq AI &mdash; Aligned Automation</p>
+    </div></div></body></html>
+    """
+
+
+def _undo_confirm_form(token: str, summary: str, system: str) -> str:
+    """Branded confirm page for undoing an action. The reversal runs ONLY on the POST this
+    page submits — so a GET (or a link prefetcher like SafeLinks / a chat unfurler) can never
+    silently undo the action."""
+    try:
+        from app.services.email_service import _BUDDY_B64
+    except Exception:
+        _BUDDY_B64 = ""
+    buddy = (
+        f'<img src="data:image/png;base64,{_BUDDY_B64}" alt="" '
+        f'style="width:60px;height:60px;display:block;margin:0 auto 10px;">'
+        if _BUDDY_B64 else ""
+    )
+    where = f" in {html.escape(system)}" if system else ""
+    return f"""<!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Undo action</title>
+    <style>
+    *{{box-sizing:border-box;}}
+    body{{font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4fa;padding:20px;}}
+    .card{{background:#fff;border-radius:18px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(13,27,46,.12);overflow:hidden;}}
+    .hero{{background:linear-gradient(135deg,#1B6FC8 0%,#0D9488 60%,#16A34A 100%);padding:24px;}}
+    .hero .brand{{color:#fff;font-size:20px;font-weight:800;letter-spacing:.2px;}}
+    .body{{padding:28px 36px 32px;}}
+    h1{{color:#0d1b2e;font-size:21px;margin:0 0 8px;}}
+    p.sub{{color:#64748b;font-size:14.5px;margin:0 0 20px;line-height:1.55;}}
+    button{{width:100%;background:#dc2626;color:#fff;border:0;border-radius:25px;padding:14px;font:700 15px 'Segoe UI',Arial,sans-serif;cursor:pointer;}}
+    button:hover{{background:#b91c1c;}}
+    .foot{{margin-top:16px;font-size:12px;color:#94a3b8;}}
+    </style></head>
+    <body><div class="card">
+    <div class="hero">{buddy}<div class="brand">Centriq AI</div></div>
+    <div class="body">
+    <h1>Undo this action?</h1>
+    <p class="sub">This will reverse <strong>{html.escape(summary)}</strong>{where}. You can only undo while it hasn't been picked up yet.</p>
+    <form method="post" action="/api/receipts/undo/{token}">
+      <button type="submit">Yes, undo it</button>
     </form>
     <p class="foot">Centriq AI &mdash; Aligned Automation</p>
     </div></div></body></html>
@@ -921,59 +1100,6 @@ def _finalize_decision(db, tok, decision: str, reason: str = "") -> HTMLResponse
             color,
         ))
 
-    if tok.entity_type == "project_update":
-        from app.services import project_update_service
-        from app.services.email_service import send_project_update_decision_notification
-        # Invalidate the sibling token
-        db.query(ApprovalToken).filter(
-            ApprovalToken.entity_type == "project_update",
-            ApprovalToken.entity_id == tok.entity_id,
-            ApprovalToken.token != tok.token,
-            ApprovalToken.used == False,
-        ).update({"used": True})
-        try:
-            if decision == "Approved":
-                sub = project_update_service.approve(db, tok.entity_id, approved_by=tok.approver_email)
-            else:
-                sub = project_update_service.reject(db, tok.entity_id, approved_by=tok.approver_email, reason=reject_note)
-            if sub is None:
-                return HTMLResponse(_approval_html(
-                    "Not Found", "This project update no longer exists.", "#dc2626",
-                ), status_code=404)
-            activity_type = sub.activity_type
-            project_name = sub.project_name or ""
-            employee_email = sub.employee_email
-            employee_name = sub.employee_name
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            return HTMLResponse(_approval_html(
-                "Action Failed", f"We couldn't update the project update: {html.escape(str(e))}", "#dc2626",
-            ), status_code=502)
-
-        try:
-            send_project_update_decision_notification(
-                user_email=tok.approver_email,
-                employee_email=employee_email,
-                employee_name=employee_name,
-                activity_type=activity_type,
-                project_name=project_name,
-                decision=decision,
-                decided_by=tok.approver_email,
-                reason=reject_note,
-            )
-        except Exception as e:
-            pass
-
-        color = "#16A34A" if decision == "Approved" else "#dc2626"
-        applied = " The allocation data has been updated." if decision == "Approved" else ""
-        return HTMLResponse(_approval_html(
-            f"Project Update {decision}",
-            f"The project update has been <strong>{decision}</strong>.{applied} "
-            f"The employee has been notified by email.{reason_block}",
-            color,
-        ))
-
     db.commit()
     return HTMLResponse(_approval_html("Action Completed", "Your action has been recorded."))
 
@@ -999,7 +1125,7 @@ async def serve_policy_image(image_id: int):
 
 # Nodes whose LLM stream events should NOT be forwarded to the user
 # (routing/context work, not the final answer)
-_SKIP_STREAMING_NODES = {"intent_router", "context_manager", "feedback_lookup"}
+_SKIP_STREAMING_NODES = {"followup_resolver", "intent_router", "context_manager", "feedback_lookup", "context_gate", "state_tracker", "form_builder_agent", "analytics_agent"}
 
 # Domains whose answers are safe & stable enough to serve from the semantic answer cache.
 # Excludes per-user/dynamic domains (pmo, functional_manager) and action-heavy ones (it_support, ms365).
@@ -1052,8 +1178,46 @@ _REFUSAL_RE = re.compile(
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
+_form_builder_re = re.compile(r'\[FORM_BUILDER_START\](.*?)\[FORM_BUILDER_END\]', re.DOTALL)
 _quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
+_chart_re = re.compile(r'\[CHART_START\](.*?)\[CHART_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
+# ARB #41 — citation extraction. RAG search tools (search_policies / search_projects /
+# search_it_docs / …) all format hits as "**Title** (Category):\n<text>" joined by
+# "\n\n---\n\n" (see PolicyService._hybrid_search). We parse that out of the ToolMessages
+# so the answer can be surfaced with its grounding sources in a trust UI.
+_citation_re = re.compile(
+    r"\*\*(.+?)\*\*\s*\((.+?)\):\n([\s\S]*?)(?=\n\n---|\n\n\[POLICY_IMG|\Z)"
+)
+
+
+def _extract_citations(all_messages: list) -> list[dict]:
+    """Pull grounding sources out of RAG tool outputs in the message history.
+
+    Returns a deduped list of ``{"title", "category", "excerpt"}`` in first-seen
+    order. Empty when the answer wasn't grounded in any retrieved document
+    (e.g. a pure-action turn), so the frontend simply renders no trust card.
+    """
+    citations: list[dict] = []
+    seen: set[str] = set()
+    for msg in all_messages:
+        content = getattr(msg, "content", None)
+        if not isinstance(content, str) or "**" not in content:
+            continue
+        for m in _citation_re.finditer(content):
+            title = m.group(1).strip()
+            category = m.group(2).strip()
+            excerpt = re.sub(r"\[POLICY_IMG:[^\]]*\]", "", m.group(3)).strip()
+            key = title.lower()
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            citations.append({
+                "title": title,
+                "category": category,
+                "excerpt": excerpt[:180].strip(),
+            })
+    return citations
 
 
 def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: float) -> dict:
@@ -1091,8 +1255,9 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             draft_data = json.loads(email_match.group(1))
             interactive = {"type": "email_draft", "data": draft_data}
             final_message = _email_draft_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse EMAIL_DRAFT marker JSON (widget dropped): %s; raw=%.200r", _e, email_match.group(1))
+            final_message = _email_draft_re.sub("", final_message).strip()
 
     # Extract dynamic form (Form Library) — must run BEFORE the JSON-blob stripping below so the
     # form schema JSON isn't mangled. The marker wraps the JSON, so it's gone before any blob regex.
@@ -1102,8 +1267,20 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             form_data = json.loads(form_match.group(1))
             interactive = {"type": "dynamic_form", "data": form_data}
             final_message = _dynamic_form_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse DYNAMIC_FORM marker JSON (widget dropped): %s; raw=%.200r", _e, form_match.group(1))
+            final_message = _dynamic_form_re.sub("", final_message).strip()
+
+    # Extract form builder draft (admin creates a NEW form template).
+    fb_match = _form_builder_re.search(final_message)
+    if fb_match:
+        try:
+            fb_data = json.loads(fb_match.group(1))
+            interactive = {"type": "form_builder", "data": fb_data}
+            final_message = _form_builder_re.sub("", final_message).strip()
+        except Exception as _e:
+            logger.warning("Failed to parse FORM_BUILDER marker JSON (widget dropped): %s; raw=%.200r", _e, fb_match.group(1))
+            final_message = _form_builder_re.sub("", final_message).strip()
 
     # Extract quick-choice card (zero-LLM choice widget).
     qc_match = _quick_choice_re.search(final_message)
@@ -1112,8 +1289,21 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
             qc_data = json.loads(qc_match.group(1))
             interactive = {"type": "quick_choice", "data": qc_data}
             final_message = _quick_choice_re.sub("", final_message).strip()
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.warning("Failed to parse QUICK_CHOICE marker JSON (widget dropped): %s; raw=%.200r", _e, qc_match.group(1))
+            final_message = _quick_choice_re.sub("", final_message).strip()
+
+    # Extract analytics chart (ChartSpec) — must run BEFORE the JSON-blob stripping below so the
+    # chart JSON isn't mangled. The marker wraps the JSON, so it's removed before any blob regex.
+    chart_match = _chart_re.search(final_message)
+    if chart_match:
+        try:
+            chart_data = json.loads(chart_match.group(1))
+            interactive = {"type": "chart", "data": chart_data}
+            final_message = _chart_re.sub("", final_message).strip()
+        except Exception as _e:
+            logger.warning("Failed to parse CHART marker JSON (widget dropped): %s; raw=%.200r", _e, chart_match.group(1))
+            final_message = _chart_re.sub("", final_message).strip()
 
     # Extract download tag
     dl_match = _download_tag_re.search(final_message)
@@ -1206,11 +1396,14 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
                     break
         final_message = _rescue if _rescue else "I'm sorry, I wasn't able to generate a response. Please try again or rephrase your question."
 
+    citations = _extract_citations(all_messages)
+
     return {
         "final_message": final_message,
         "download_url": download_url,
         "interactive": interactive,
         "images": policy_images if policy_images else None,
+        "citations": citations if citations else None,
         "processing_time": f"{time.time() - start_time:.2f}s",
     }
 
@@ -1295,7 +1488,11 @@ async def chat(
             return
 
         # ── Short-circuit "who is X" lookup (instant path, zero LLM) ──────────
-        name_match = re.search(r'^\s*who\s+is\s+([a-zA-Z0-9.-]+\s+[a-zA-Z0-9.-]+)[?.!\s]*$', request.message, re.IGNORECASE)
+        # Skipped while an assistant mode is active so mode stays sticky until /exit.
+        name_match = (
+            None if request.active_mode
+            else re.search(r'^\s*who\s+is\s+([a-zA-Z0-9.-]+\s+[a-zA-Z0-9.-]+)[?.!\s]*$', request.message, re.IGNORECASE)
+        )
         if name_match:
             person_name = name_match.group(1).strip()
             try:
@@ -1336,7 +1533,11 @@ async def chat(
         # If a near-identical informational question was answered recently, stream the saved
         # answer immediately and skip the concurrency gate + graph entirely. Guarded against
         # action phrasings so side-effecting requests never short-circuit.
-        if settings.ANSWER_CACHE_ENABLED and not request.is_private and not _CACHE_SKIP_RE.search(request.message):
+        # An active assistant mode (e.g. Analytics Builder) must drive routing — never let a
+        # stale cached text answer for the same phrasing preempt the mode's domain.
+        if (settings.ANSWER_CACHE_ENABLED and not request.is_private
+                and not request.active_mode
+                and not _CACHE_SKIP_RE.search(request.message)):
             try:
                 from app.services.answer_cache_service import AnswerCacheService
                 hit = await asyncio.to_thread(AnswerCacheService.lookup, request.message)
@@ -1379,6 +1580,7 @@ async def chat(
         llm_calls: dict[str, dict] = {}   # run_id → {node, model, start}
         completed_calls: list[dict] = []   # finished LLM calls for DB insert
         error_msg: str | None = None
+        ttft_ms: int | None = None         # ms from request start to first streamed token
 
         # Create Langfuse trace at the START so child spans can attach
         tracing = TracingContext(
@@ -1423,6 +1625,8 @@ async def chat(
             "graph_token": effective_graph_token,
             "session_id": request.session_id,
             "user_location": user_location,
+            "portal_context": request.portal_context.model_dump() if request.portal_context else None,
+            "active_mode": request.active_mode or None,
         }
 
         try:
@@ -1511,6 +1715,7 @@ async def chat(
                         "manager_agent": "thinking",
                         "ms365_agent": "thinking",
                         "deeplink_agent": "automating",
+                        "form_builder_agent": "designing form",
                         "doc_agent": "generating document",
                         "general_agent": "thinking",
                         "connector_agent": "connecting",
@@ -1533,6 +1738,8 @@ async def chat(
                             content = chunk.content if hasattr(chunk, "content") else ""
                             # Only stream plain text — skip tool-call argument dicts
                             if isinstance(content, str) and content:
+                                if ttft_ms is None:
+                                    ttft_ms = int((time.time() - start_time) * 1000)
                                 accumulated_text += content
                                 yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
@@ -1545,7 +1752,25 @@ async def chat(
 
         except Exception as exc:
             error_msg = str(exc)
-            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+            # Degraded mode: a connectivity-class failure means even the fallback model
+            # was unreachable (the resilience layer already retried). Tell the user what
+            # happened in plain language as a normal assistant message instead of
+            # surfacing a raw exception banner.
+            _low = error_msg.lower()
+            if any(k in _low for k in ("connection", "connect", "timed out", "timeout",
+                                       "refused", "unreachable", "name or service")):
+                friendly = (
+                    "I can't reach the AI model server right now — it may be restarting or "
+                    "under heavy load. Your message wasn't lost; please try again in a "
+                    "minute. If this keeps happening, contact IT support."
+                )
+                yield f"data: {json.dumps({'type': 'token', 'content': friendly})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': 'general', 'degraded': True})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+                # Always emit a done event after an error so the frontend can unlock the
+                # composer and stop showing the "composing" spinner.
+                yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain or 'general', 'error': True})}\n\n"
         finally:
             # Stop renewing and free the slot the moment generation ends.
             heartbeat_task.cancel()
@@ -1573,19 +1798,31 @@ async def chat(
             if accumulated_text:
                 yield f"data: {json.dumps({'type': 'token', 'content': accumulated_text})}\n\n"
 
-        # Post-process the accumulated text
-        post = _postprocess(accumulated_text, final_messages, routed_domain, start_time)
-        final_message = post["final_message"]
-
-        # If post-processing changed the text (HTML stripped, markers removed), patch the frontend
-        if final_message != accumulated_text:
-            yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
+        # Post-process the accumulated text. These finalization steps run AFTER the answer
+        # has already streamed to the user, so a failure here must NEVER turn a delivered
+        # answer into an error bubble — guard them and fall back to the raw answer.
+        latency_ms = int((time.time() - start_time) * 1000)
+        post = {
+            "final_message": accumulated_text, "download_url": None,
+            "interactive": None, "images": None, "citations": None,
+            "processing_time": latency_ms,
+        }
+        final_message = accumulated_text
+        try:
+            post = _postprocess(accumulated_text, final_messages, routed_domain, start_time)
+            final_message = post["final_message"]
+            # If post-processing changed the text (HTML stripped, markers removed), patch the frontend
+            if final_message != accumulated_text:
+                yield f"data: {json.dumps({'type': 'replace', 'content': final_message})}\n\n"
+        except Exception:
+            logger.exception("[chat] post-processing failed; serving the raw streamed answer")
 
         # ── Observability: dual-write to Langfuse + PostgreSQL ───────
-        latency_ms = int((time.time() - start_time) * 1000)
-
-        # Langfuse: finalise trace with output
-        tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
+        # Langfuse: finalise trace with output (best-effort — never break the response)
+        try:
+            tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
+        except Exception:
+            logger.exception("[chat] tracing.finalize failed")
 
         # PostgreSQL: insert request log + LLM call logs
         if not request.is_private:
@@ -1601,6 +1838,7 @@ async def chat(
                     response_text=final_message[:2000] if final_message else None,
                     response_length=len(final_message) if final_message else 0,
                     total_latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
                     llm_call_count=len(completed_calls),
                     total_prompt_tokens=sum(c.get("prompt_tokens") or 0 for c in completed_calls),
                     total_completion_tokens=sum(c.get("completion_tokens") or 0 for c in completed_calls),
@@ -1653,7 +1891,7 @@ async def chat(
         except Exception as _se:
             pass
 
-        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'processing_time': post['processing_time']})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -1698,8 +1936,28 @@ def _is_people_search(message: str) -> bool:
     )
 
 
+# Markers of a "nothing to follow up on" response — no results, an error, or the
+# assistant abstaining. Following these up produces troubleshooting/app-meta chips
+# ("reset my search", "how do I add an employee") that don't belong in a user-facing
+# assistant, so we surface no chips at all instead.
+_NO_FOLLOWUP_RESPONSE_MARKERS = (
+    "no employees found", "no results", "no matching", "no records", "none found",
+    "couldn't find", "could not find", "didn't find", "did not find", "not found",
+    "i don't have", "i do not have", "don't have that", "isn't available",
+    "is not available", "unable to", "something went wrong", "an error occurred",
+)
+
+
+def _has_no_followup(response: str) -> bool:
+    low = (response or "").lower()
+    return any(marker in low for marker in _NO_FOLLOWUP_RESPONSE_MARKERS)
+
+
 @app.post("/api/suggestions")
 async def get_suggestions(request: SuggestionsRequest):
+    # No-result / error / abstention responses → no chips (nothing useful to ask next).
+    if _has_no_followup(request.response):
+        return {"suggestions": []}
     # People/skill search → curated chips (skip the LLM entirely).
     if _is_people_search(request.message):
         return {"suggestions": list(_PEOPLE_SEARCH_CHIPS)}
@@ -1714,8 +1972,12 @@ async def get_suggestions(request: SuggestionsRequest):
             "generate exactly 3 short follow-up questions the user might ask next. "
             "Each question must be under 10 words. "
             "Never suggest questions about salary, compensation, pay, CTC, or whether the "
-            "user can contact, hire, or recruit someone. Keep suggestions task-relevant and "
-            "professional. "
+            "user can contact, hire, or recruit someone. "
+            "Never suggest meta questions about how to use this app, the search, or the "
+            "assistant itself (e.g. 'how do I reset my search', 'what is the correct search "
+            "criteria', 'how do I add an employee', 'how does this work'). "
+            "Suggest only natural next questions about the subject matter. "
+            "Keep suggestions task-relevant and professional. "
             "Return ONLY a valid JSON array of 3 strings, no explanation, no markdown."
         )
         user_content = f"User question: {request.message}\n\nAI response: {request.response[:800]}"
@@ -1748,6 +2010,51 @@ async def get_suggestions(request: SuggestionsRequest):
         return {"suggestions": suggestions}
     except Exception as e:
         return {"suggestions": []}
+
+@app.get("/api/capabilities")
+async def get_capabilities(user: CurrentUser = Depends(get_current_user)):
+    """Role-aware capability discovery — the answer to "what can you do?".
+
+    Returns the capabilities visible to the caller's role, grouped by category,
+    plus any live signals (e.g. pending approvals) worth surfacing up front.
+    Powers the assistant empty-state and onboarding of every user on day one.
+    """
+    from app.services import capability_registry as caps
+    visible = caps.capabilities_for_role(user.role)
+
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for c in visible:
+        if c.category not in groups:
+            groups[c.category] = []
+            order.append(c.category)
+        groups[c.category].append(c.to_dict())
+
+    # Live signals — turn "what can you do" into "here's what needs you now".
+    live: list[dict] = []
+    try:
+        from app.services import nudge_service
+        for n in nudge_service.list_for_user(user.email)[:3]:
+            live.append({
+                "title": n.get("title") or n.get("message"),
+                "prompt": n.get("title") or "what needs my attention?",
+            })
+    except Exception:
+        pass
+
+    # A flat, role-ordered starter set for a compact empty-state (first 6).
+    starters = [
+        {"title": c["title"], "prompt": c["examples"][0]}
+        for c in (cap.to_dict() for cap in visible[:6])
+    ]
+
+    return {
+        "role": user.role,
+        "groups": [{"category": cat, "capabilities": groups[cat]} for cat in order],
+        "starters": starters,
+        "live": live,
+    }
+
 
 @app.get("/api/admin/stats")
 async def get_admin_stats(_: CurrentUser = Depends(require_admin)):
@@ -2111,6 +2418,112 @@ async def cancel_leave(leave_id: int, user: CurrentUser = Depends(get_current_us
         db.close()
 
 
+# ── Morning Briefing (ARB #39) ───────────────────────────────────────────────
+
+@app.get("/api/briefing/me")
+async def get_my_briefing(user: CurrentUser = Depends(get_current_user)):
+    """A personalized daily digest fusing the caller's nudges, leave balance,
+    and self-scoped personal metrics. Read-only; every section degrades to empty."""
+    from app.services import briefing_service
+
+    def _build():
+        db = SessionLocal()
+        try:
+            return briefing_service.build_briefing(db, user.email, user.role, name="")
+        finally:
+            db.close()
+
+    return await asyncio.to_thread(_build)
+
+
+# ── Proactive nudges (system-initiated feed) ─────────────────────────────────
+
+class NudgeSeenRequest(BaseModel):
+    ids: Optional[List[int]] = None
+
+
+@app.get("/api/nudges")
+async def get_nudges(user: CurrentUser = Depends(get_current_user)):
+    """The current user's proactive-nudge feed + unread count."""
+    from app.services import nudge_service
+    nudges = await asyncio.to_thread(nudge_service.list_for_user, user.email)
+    unread = await asyncio.to_thread(nudge_service.count_unread, user.email)
+    return {"nudges": nudges, "unread": unread}
+
+
+@app.post("/api/nudges/seen")
+async def mark_nudges_seen(req: NudgeSeenRequest, user: CurrentUser = Depends(get_current_user)):
+    """Mark nudges as seen (all 'new' for the user, or just the given ids)."""
+    from app.services import nudge_service
+    n = await asyncio.to_thread(nudge_service.mark_seen, user.email, req.ids)
+    return {"marked": n}
+
+
+@app.post("/api/nudges/{nudge_id}/act")
+async def act_nudge(nudge_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Execute a nudge's one-click action (apply_leave → deeplink, nudge_manager → re-send approval)."""
+    from app.services import nudge_service
+    return await asyncio.to_thread(nudge_service.act, user.email, nudge_id)
+
+
+@app.post("/api/nudges/{nudge_id}/dismiss")
+async def dismiss_nudge(nudge_id: int, user: CurrentUser = Depends(get_current_user)):
+    from app.services import nudge_service
+    ok = await asyncio.to_thread(nudge_service.dismiss, user.email, nudge_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Nudge not found.")
+    return {"dismissed": True}
+
+
+# ── Action receipts + undo (trust / compliance ledger) ───────────────────────
+
+@app.get("/api/receipts")
+async def get_receipts(user: CurrentUser = Depends(get_current_user)):
+    """The current user's executed-action receipts (most recent first)."""
+    from app.services import receipt_service
+    receipts = await asyncio.to_thread(receipt_service.list_for_user, user.email)
+    return {"receipts": receipts}
+
+
+@app.get("/api/receipts/undo/{token}", response_class=HTMLResponse)
+async def undo_receipt_confirm(token: str):
+    """Show the undo CONFIRMATION page. A GET never mutates — so a link prefetcher
+    (Outlook SafeLinks, a Teams/Slack unfurler, antivirus) can't silently reverse the
+    action. The actual reversal happens on the POST the page submits. Mirrors the
+    approve/reject flow where reject likewise collects its confirmation before acting."""
+    from app.services import receipt_service
+    snap = await asyncio.to_thread(receipt_service.peek, token)
+    if not snap:
+        return HTMLResponse(_approval_html("Invalid Link", "This undo link is invalid or has already expired.", "#dc2626"), status_code=404)
+    if snap.get("status") == "undone":
+        return HTMLResponse(_approval_html("Already Undone", f"{snap.get('summary','This action')} was already reversed.", "#f59e0b"))
+    if snap.get("expired"):
+        return HTMLResponse(_approval_html("Link Expired", "The window to undo this action has passed.", "#f59e0b"))
+    if not snap.get("undoable"):
+        return HTMLResponse(_approval_html("Can't Undo", f"{snap.get('summary','This action')} can't be undone automatically.", "#f59e0b"))
+    return HTMLResponse(_undo_confirm_form(token, snap.get("summary", "this action"), snap.get("system") or ""))
+
+
+@app.post("/api/receipts/undo/{token}", response_class=HTMLResponse)
+async def undo_receipt(token: str):
+    """Perform the undo (POST only). The undo handler re-checks live downstream state, so a
+    stale confirmation safely refuses; a re-submit of an already-undone receipt is a friendly
+    success."""
+    from app.services import receipt_service
+    result = await asyncio.to_thread(receipt_service.undo, token)
+    if result.get("success"):
+        title = "Already Undone" if result.get("already") else "Action Undone"
+        return HTMLResponse(_approval_html(title, result.get("message", "Done."), "#16A34A"))
+    err = result.get("error")
+    # invalid/expired links read as a soft amber notice; a downstream refusal explains why.
+    color = "#dc2626" if err in ("error", "not_owner") else "#f59e0b"
+    status = 404 if err == "invalid" else 200
+    return HTMLResponse(
+        _approval_html("Couldn't Undo", result.get("message", "This action can't be undone."), color),
+        status_code=status,
+    )
+
+
 @app.post("/api/parking/submit")
 async def submit_parking(req: ParkingSubmitRequest):
     from app.services.admin_service import AdminService
@@ -2162,13 +2575,20 @@ async def submit_dynamic_form(req: FormSubmitRequest,
     return {"message": res["message"], "reference_id": res["reference_id"]}
 
 
+_MAX_FORM_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
 @app.post("/api/forms/upload-image")
 async def upload_form_image(
+    request: Request,
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Upload an image file for a form submission. Returns the URL."""
     import uuid
+    # Reject before reading the body when the client declares the size up front.
+    _cl = request.headers.get("content-length")
+    if _cl and int(_cl) > _MAX_FORM_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be under 10 MB.")
     allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, GIF, or WebP images are allowed.")
@@ -2179,8 +2599,8 @@ async def upload_form_image(
     forms_dir = os.path.join(_uploads_dir, "forms")
     os.makedirs(forms_dir, exist_ok=True)
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image must be under 10 MB.")
+    if len(content) > _MAX_FORM_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image must be under 10 MB.")
     with open(os.path.join(forms_dir, filename), "wb") as fh:
         fh.write(content)
     return {"url": f"/uploads/forms/{filename}"}

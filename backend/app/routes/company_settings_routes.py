@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from app.auth import CurrentUser, require_super_admin
+from app.config import settings
 from app.services.company_settings_service import CompanySettingsService
 from app.services.answer_cache_service import AnswerCacheService
 
@@ -9,6 +11,10 @@ router = APIRouter(prefix="/api/admin/company-settings", tags=["company-settings
 
 class CompanyContextPayload(BaseModel):
     value: str
+
+
+class PullContextPayload(BaseModel):
+    url: Optional[str] = None
 
 
 @router.get("")
@@ -29,6 +35,28 @@ async def set_company_context(
     # (Policy changes invalidate via the SharePoint sync; company context didn't.)
     AnswerCacheService.invalidate_domain("general")
     return {"status": "ok", "message": "Company context updated."}
+
+
+@router.post("/pull")
+async def pull_company_context(
+    payload: PullContextPayload,
+    _: CurrentUser = Depends(require_super_admin),
+):
+    """Auto-draft the company context from the company website (defaults to COMPANY_WEBSITE_URL).
+
+    Returns a DRAFT only — nothing is saved. The super-admin reviews it in the editor and
+    saves through the normal PUT.
+    """
+    url = (payload.url or "").strip() or settings.COMPANY_WEBSITE_URL
+    if not url:
+        raise HTTPException(status_code=422, detail="No company website is configured. Enter a URL.")
+    try:
+        result = CompanySettingsService.draft_context_from_web(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or "Couldn't pull from the company site.")
+    return {"status": "ok", "value": result["value"], "sources": result["sources"], "url": url}
 
 
 @router.get("/cabins")

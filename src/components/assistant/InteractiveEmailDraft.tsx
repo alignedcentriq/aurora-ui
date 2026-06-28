@@ -116,9 +116,7 @@ export function InteractiveEmailDraft({ data, onSent, userEmail }: Props) {
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <span className="text-[10px] text-muted-foreground">
-            Sends from your account
-          </span>
+          <span className="text-[10px] text-muted-foreground">Sends from your account</span>
           <motion.button
             whileHover={canSend ? { scale: 1.02 } : undefined}
             whileTap={canSend ? { scale: 0.97 } : undefined}
@@ -128,12 +126,24 @@ export function InteractiveEmailDraft({ data, onSent, userEmail }: Props) {
           >
             <AnimatePresence mode="wait" initial={false}>
               {sending ? (
-                <motion.span key="sending" className="flex items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <motion.span
+                  key="sending"
+                  className="flex items-center gap-2"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Sending…
                 </motion.span>
               ) : (
-                <motion.span key="send" className="flex items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <motion.span
+                  key="send"
+                  className="flex items-center gap-2"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
                   <Send className="h-3.5 w-3.5" />
                   Send Email
                 </motion.span>

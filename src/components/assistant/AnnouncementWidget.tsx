@@ -1,14 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Megaphone, Sparkles, Loader2, Send, CheckCircle2, ImagePlus, X, Link2, ChevronDown } from "lucide-react";
+import {
+  Megaphone,
+  Sparkles,
+  Loader2,
+  Send,
+  CheckCircle2,
+  ImagePlus,
+  X,
+  Link2,
+  ChevronDown,
+} from "lucide-react";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import type { AnnouncementPrefill } from "@/lib/chat-store";
 
 type ActionType = "url" | "form" | "app";
-interface ImageAction { type: ActionType; value: string; label: string }
-interface FormStub { id: number; name: string; description: string; fields: object[] }
-interface AppStub { id: number; name: string; url: string; purpose: string }
+interface ImageAction {
+  type: ActionType;
+  value: string;
+  label: string;
+}
+interface FormStub {
+  id: number;
+  name: string;
+  description: string;
+  fields: object[];
+}
+interface AppStub {
+  id: number;
+  name: string;
+  url: string;
+  purpose: string;
+}
 
 const ANNOUNCEMENT_CATEGORIES = [
   "General",
@@ -70,13 +94,26 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
   useEffect(() => {
     if (!showLinkPicker || (forms.length > 0 && apps.length > 0)) return;
     const h = { "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() };
-    fetch("/api/forms/list", { headers: h }).then(r => r.ok ? r.json() : []).then(setForms).catch(() => {});
-    fetch("/api/urls/list", { headers: h }).then(r => r.ok ? r.json() : []).then(setApps).catch(() => {});
+    fetch("/api/forms/list", { headers: h })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setForms)
+      .catch(() => {});
+    fetch("/api/urls/list", { headers: h })
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setApps)
+      .catch(() => {});
   }, [showLinkPicker]);
 
   const applyAction = () => {
-    if (!actionValue.trim()) { toast.error("Enter a destination"); return; }
-    setImageAction({ type: actionType, value: actionValue.trim(), label: actionLabel.trim() || actionValue.trim() });
+    if (!actionValue.trim()) {
+      toast.error("Enter a destination");
+      return;
+    }
+    setImageAction({
+      type: actionType,
+      value: actionValue.trim(),
+      label: actionLabel.trim() || actionValue.trim(),
+    });
     setShowLinkPicker(false);
   };
 
@@ -276,7 +313,10 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
               onChange={(e) => setBody(e.target.value)}
               onPaste={handlePaste}
               onDrop={handleDrop}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
               onDragLeave={() => setDragOver(false)}
               rows={4}
               placeholder="What do you want everyone to know? Paste or drop an image to attach."
@@ -294,7 +334,11 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
                 <img src={imageUrl} alt="Attached" className="max-h-40 w-full object-cover" />
                 <button
                   type="button"
-                  onClick={() => { setImageUrl(null); setImageAction(null); setShowLinkPicker(false); }}
+                  onClick={() => {
+                    setImageUrl(null);
+                    setImageAction(null);
+                    setShowLinkPicker(false);
+                  }}
                   className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
                   title="Remove image"
                 >
@@ -306,10 +350,29 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
               {imageAction ? (
                 <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5">
                   <Link2 className="h-3 w-3 shrink-0 text-primary" />
-                  <span className="flex-1 truncate text-[11px] text-foreground">{imageAction.label}</span>
-                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">{imageAction.type}</span>
-                  <button type="button" onClick={() => { setImageAction(null); setShowLinkPicker(true); }} className="ml-1 text-[10px] text-muted-foreground hover:text-foreground">Edit</button>
-                  <button type="button" onClick={() => setImageAction(null)} className="text-muted-foreground hover:text-rose-500 transition-colors"><X className="h-3 w-3" /></button>
+                  <span className="flex-1 truncate text-[11px] text-foreground">
+                    {imageAction.label}
+                  </span>
+                  <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                    {imageAction.type}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageAction(null);
+                      setShowLinkPicker(true);
+                    }}
+                    className="ml-1 text-[10px] text-muted-foreground hover:text-foreground"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImageAction(null)}
+                    className="text-muted-foreground hover:text-rose-500 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </div>
               ) : (
                 <button
@@ -319,7 +382,9 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
                 >
                   <Link2 className="h-3.5 w-3.5" />
                   Add click action
-                  <ChevronDown className={`h-3 w-3 transition-transform ${showLinkPicker ? "rotate-180" : ""}`} />
+                  <ChevronDown
+                    className={`h-3 w-3 transition-transform ${showLinkPicker ? "rotate-180" : ""}`}
+                  />
                 </button>
               )}
 
@@ -338,7 +403,11 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
                         <button
                           key={t}
                           type="button"
-                          onClick={() => { setActionType(t); setActionValue(""); setActionLabel(""); }}
+                          onClick={() => {
+                            setActionType(t);
+                            setActionValue("");
+                            setActionLabel("");
+                          }}
                           className={`flex-1 rounded-lg px-2 py-1 text-[11px] font-semibold capitalize transition-colors ${actionType === t ? "bg-primary text-white" : "bg-background text-muted-foreground hover:text-foreground border border-border"}`}
                         >
                           {t === "url" ? "External URL" : t === "form" ? "Open Form" : "Open App"}
@@ -359,14 +428,19 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">Select a form</p>
                         {forms.length === 0 ? (
-                          <p className="text-[11px] text-muted-foreground italic">No forms available</p>
+                          <p className="text-[11px] text-muted-foreground italic">
+                            No forms available
+                          </p>
                         ) : (
                           <div className="max-h-32 overflow-y-auto space-y-1 no-scrollbar">
                             {forms.map((f) => (
                               <button
                                 key={f.id}
                                 type="button"
-                                onClick={() => { setActionValue(String(f.id)); setActionLabel(f.name); }}
+                                onClick={() => {
+                                  setActionValue(String(f.id));
+                                  setActionLabel(f.name);
+                                }}
                                 className={`w-full rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${actionValue === String(f.id) ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-foreground hover:bg-muted/40"}`}
                               >
                                 {f.name}
@@ -381,18 +455,27 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
                       <div className="space-y-1">
                         <p className="text-[10px] text-muted-foreground">Select an app</p>
                         {apps.length === 0 ? (
-                          <p className="text-[11px] text-muted-foreground italic">No apps available</p>
+                          <p className="text-[11px] text-muted-foreground italic">
+                            No apps available
+                          </p>
                         ) : (
                           <div className="max-h-32 overflow-y-auto space-y-1 no-scrollbar">
                             {apps.map((a) => (
                               <button
                                 key={a.id}
                                 type="button"
-                                onClick={() => { setActionValue(a.url); setActionLabel(a.name); }}
+                                onClick={() => {
+                                  setActionValue(a.url);
+                                  setActionLabel(a.name);
+                                }}
                                 className={`w-full rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${actionValue === a.url ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-foreground hover:bg-muted/40"}`}
                               >
                                 <span className="font-medium">{a.name}</span>
-                                {a.purpose && <span className="ml-1.5 text-muted-foreground text-[10px]">— {a.purpose.slice(0, 40)}</span>}
+                                {a.purpose && (
+                                  <span className="ml-1.5 text-muted-foreground text-[10px]">
+                                    — {a.purpose.slice(0, 40)}
+                                  </span>
+                                )}
                               </button>
                             ))}
                           </div>
@@ -428,7 +511,11 @@ export function AnnouncementWidget({ userEmail, userRole, prefill, onPublished }
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(f); e.target.value = ""; }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) uploadImage(f);
+              e.target.value = "";
+            }}
           />
         </div>
 

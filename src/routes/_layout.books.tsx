@@ -105,26 +105,26 @@ function BooksCatalog() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-8 py-4 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground flex items-center gap-2">
+          <h1 className="text-[18px] sm:text-[20px] font-semibold text-foreground flex items-center gap-2">
             <BookOpen className="h-5 w-5 text-primary" /> Company Library
           </h1>
-          <p className="text-[13px] text-muted-foreground mt-0.5">
+          <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
             Browse available titles and request what you'd like to borrow.
           </p>
         </div>
         <Link
           to="/my-library"
-          className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/10 transition-colors"
+          className="self-start sm:self-auto rounded-lg px-3 py-1.5 text-[13px] font-medium text-primary hover:bg-primary/10 transition-colors"
         >
           My Library →
         </Link>
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 px-8 py-3 border-b border-[var(--border)] shrink-0">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-8 py-3 border-b border-[var(--border)] shrink-0">
+        <div className="relative flex-1 min-w-[160px] max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
@@ -145,7 +145,7 @@ function BooksCatalog() {
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-2 text-[13px] text-muted-foreground cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-[12px] sm:text-[13px] text-muted-foreground cursor-pointer select-none">
           <input
             type="checkbox"
             checked={availableOnly}
@@ -160,11 +160,11 @@ function BooksCatalog() {
           title="Refresh"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
+          <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-4 sm:px-8 py-4 sm:py-6">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading catalog…
@@ -177,7 +177,9 @@ function BooksCatalog() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((book) => {
-              const badge = AVAILABILITY_COLOR[book.availability_status] || "text-zinc-400 bg-zinc-500/10 border-zinc-500/20";
+              const badge =
+                AVAILABILITY_COLOR[book.availability_status] ||
+                "text-zinc-400 bg-zinc-500/10 border-zinc-500/20";
               const out = book.available_copies <= 0;
               return (
                 <div
@@ -186,7 +188,9 @@ function BooksCatalog() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h3 className="text-[15px] font-semibold text-foreground leading-snug line-clamp-2">{book.title}</h3>
+                      <h3 className="text-[15px] font-semibold text-foreground leading-snug line-clamp-2">
+                        {book.title}
+                      </h3>
                       <p className="text-[12px] text-muted-foreground mt-0.5">{book.author}</p>
                     </div>
                     {book.category && (
@@ -196,10 +200,14 @@ function BooksCatalog() {
                     )}
                   </div>
                   {book.description && (
-                    <p className="text-[12.5px] text-muted-foreground leading-relaxed line-clamp-3">{book.description}</p>
+                    <p className="text-[12.5px] text-muted-foreground leading-relaxed line-clamp-3">
+                      {book.description}
+                    </p>
                   )}
                   <div className="flex items-center justify-between mt-auto pt-2">
-                    <span className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium border", badge)}>
+                    <span
+                      className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium border", badge)}
+                    >
                       {book.available_copies}/{book.total_copies} • {book.availability_status}
                     </span>
                     <button

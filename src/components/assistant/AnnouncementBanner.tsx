@@ -5,12 +5,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAuth } from "@/lib/auth-store";
 import { motion, AnimatePresence } from "framer-motion";
 import { flyBanner, subscribeFlyBanner } from "@/lib/fly-banner";
-import { useSettings } from "@/lib/settings-store";
-import { getBuddyGender } from "@/components/assistant/GreetingBot";
-import { speakNotification } from "@/lib/speech";
 import { openFormById } from "@/lib/form-trigger";
+import { DynamicFormField } from "@/lib/chat-store";
 
-interface ImageAction { type: "url" | "form" | "app"; value: string; label: string }
+interface ImageAction {
+  type: "url" | "form" | "app";
+  value: string;
+  label: string;
+}
 
 interface Announcement {
   id: number;
@@ -67,7 +69,6 @@ const DOMAIN_MANAGER_ROLES = new Set(["HR", "IT", "PMO", "Admin"]);
 
 export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar" | "topbar" }) {
   const { user } = useAuth();
-  const { buddyGender } = useSettings();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<number[]>(getDismissed);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -97,15 +98,10 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
         const flown = new Set(getFlown());
         const fresh = active.filter((a) => !flown.has(a.id));
         if (seeded && fresh.length > 0) {
-          const newest = fresh.reduce((a, b) =>
-            a.created_at > b.created_at ? a : b,
-          );
+          const newest = fresh.reduce((a, b) => (a.created_at > b.created_at ? a : b));
           flyBanner(`📣 ${newest.title}`);
         }
-        localStorage.setItem(
-          FLOWN_KEY,
-          JSON.stringify(active.map((a) => a.id)),
-        );
+        localStorage.setItem(FLOWN_KEY, JSON.stringify(active.map((a) => a.id)));
       })
       .catch(() => {});
   };
@@ -116,30 +112,6 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
     return () => clearInterval(interval);
   }, [user?.role, user?.email]);
 
-  useEffect(() => {
-    const unsubscribe = subscribeFlyBanner((item) => {
-      const text = item.message.toLowerCase();
-      const resolvedGender = getBuddyGender(user?.name, buddyGender);
-      if (
-        text.includes("approved") ||
-        text.includes("released") ||
-        text.includes("issued") ||
-        text.includes("settled")
-      ) {
-        speakNotification("Your request is approved", resolvedGender);
-      } else if (
-        text.includes("request") ||
-        text.includes("ticket") ||
-        text.includes("submitted") ||
-        text.includes("added") ||
-        text.includes("new")
-      ) {
-        speakNotification("You got a new request", resolvedGender);
-      }
-    });
-    return unsubscribe;
-  }, [user?.name, buddyGender]);
-
   const dismiss = (id: number) => {
     const updated = [...dismissed, id];
     setDismissed(updated);
@@ -148,7 +120,10 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
 
   const deleteAnnouncement = (id: number, recall: boolean) => {
     fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers: authHeaders })
-      .then(() => { setRecallTarget(null); loadAnnouncements(); })
+      .then(() => {
+        setRecallTarget(null);
+        loadAnnouncements();
+      })
       .catch(() => {});
   };
 
@@ -161,10 +136,17 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
     }
     if (action.type === "form") {
       const formId = Number(action.value);
-      const authH = { "x-user-email": user?.email || "", "x-user-role": (user?.role || "employee").toLowerCase() };
+      const authH = {
+        "x-user-email": user?.email || "",
+        "x-user-role": (user?.role || "employee").toLowerCase(),
+      };
       try {
-        const data: { id: number; name: string; description: string; fields: object[] }[] =
-          await fetch("/api/forms/list", { headers: authH }).then((r) => r.json());
+        const data: {
+          id: number;
+          name: string;
+          description: string;
+          fields: DynamicFormField[];
+        }[] = await fetch("/api/forms/list", { headers: authH }).then((r) => r.json());
         const form = data.find((f) => f.id === formId);
         if (form) {
           openFormById({
@@ -187,12 +169,14 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button className={cn(
-          "relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
-          variant === "topbar"
-            ? "text-muted-foreground hover:bg-accent hover:text-foreground"
-            : "hover:bg-white/[0.08] ml-auto text-[var(--sidebar-foreground)]"
-        )}>
+        <button
+          className={cn(
+            "relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+            variant === "topbar"
+              ? "text-muted-foreground hover:bg-accent hover:text-foreground"
+              : "hover:bg-white/[0.08] ml-auto text-[var(--sidebar-foreground)]",
+          )}
+        >
           <Bell className="h-4 w-4" />
           {unreadCount > 0 && (
             <span className="absolute right-1.5 top-1.5 flex h-2 w-2 rounded-full bg-rose-500">
@@ -201,7 +185,11 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-80 p-0 border-white/[0.06] bg-[#0c1222]/95 backdrop-blur-xl shadow-2xl z-50 rounded-2xl" align="start" side="bottom">
+      <PopoverContent
+        className="w-80 p-0 border-white/[0.06] bg-[#0c1222]/95 backdrop-blur-xl shadow-2xl z-50 rounded-2xl"
+        align="start"
+        side="bottom"
+      >
         <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
           <span className="text-sm font-semibold text-white">Notifications</span>
           {unreadCount > 0 && (
@@ -217,9 +205,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
         </div>
         <div className="max-h-[400px] overflow-y-auto p-3 space-y-2 no-scrollbar">
           {visible.length === 0 ? (
-            <div className="py-8 text-center text-sm text-white/40">
-              No new notifications
-            </div>
+            <div className="py-8 text-center text-sm text-white/40">No new notifications</div>
           ) : (
             <AnimatePresence mode="popLayout">
               {visible.map((a) => {
@@ -249,7 +235,11 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
                           onClick={() => setExpanded(isExpanded ? null : a.id)}
                           className="flex h-6 w-6 items-center justify-center rounded text-white/40 hover:bg-white/[0.08] hover:text-white transition-colors"
                         >
-                          {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          {isExpanded ? (
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          )}
                         </button>
                         {isDomainManager ? (
                           <button
@@ -271,7 +261,12 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={cn("rounded px-2 py-0.5 text-[10px] font-semibold tracking-wider shrink-0", colorClass)}>
+                      <span
+                        className={cn(
+                          "rounded px-2 py-0.5 text-[10px] font-semibold tracking-wider shrink-0",
+                          colorClass,
+                        )}
+                      >
                         {a.category}
                       </span>
                     </div>
@@ -292,9 +287,12 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
                                 onClick={a.image_action ? () => handleImageAction(a) : undefined}
                                 className={cn(
                                   "w-full rounded-lg object-cover max-h-36",
-                                  a.image_action && "cursor-pointer hover:opacity-90 transition-opacity"
+                                  a.image_action &&
+                                    "cursor-pointer hover:opacity-90 transition-opacity",
                                 )}
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).style.display = "none";
+                                }}
                               />
                             )}
                             <p className="text-[12px] text-white/60 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">

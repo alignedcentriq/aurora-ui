@@ -332,7 +332,10 @@ def get_llm(tier: str, *, default_timeout: Optional[float] = None,
 
     kwargs: dict[str, Any] = dict(
         base_url=base_url, api_key=api_key, model=model,
-        temperature=temperature, max_retries=2, timeout=timeout,
+        # max_retries=0: retry/fallback policy is owned by llm_resilience — silent
+        # client retries stack timeouts (2 retries x 120s service timeout = 6 min
+        # before the breaker/fallback could even fire).
+        temperature=temperature, max_retries=0, timeout=timeout,
         # Include token usage in the final streaming chunk (stream_options.include_usage).
         # Required for the observability token charts — without this, usage_metadata is None.
         stream_usage=True,

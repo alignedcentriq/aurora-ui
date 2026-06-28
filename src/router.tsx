@@ -40,7 +40,7 @@ function DefaultErrorComponent({ error, reset }: { error: Error; reset: () => vo
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Something went wrong</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {isStaleChunk
-            ? "The app was updated. Click \"Try again\" to reload with the latest version."
+            ? 'The app was updated. Click "Try again" to reload with the latest version.'
             : "An unexpected error occurred. Please try again."}
         </p>
         {import.meta.env.DEV && error.message && (

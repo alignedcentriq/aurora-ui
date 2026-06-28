@@ -6,7 +6,8 @@ Auth: user must have a connected Microsoft account (OAuth2 delegated token).
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.auth import CurrentUser, get_current_user
@@ -120,13 +121,28 @@ async def my_room_bookings(
 # ── Org Users ──────────────────────────────────────────────────────────────────
 
 @router.post("/users/sync")
-async def sync_users(user: CurrentUser = Depends(get_current_user)):
-    """Pull all @alignedautomation.com users from Azure AD and upsert into the database."""
-    from app.services.ms365_service import sync_users_to_db
-    result = await sync_users_to_db()
-    if not result.get("success"):
-        raise HTTPException(status_code=502, detail=result.get("error", "Sync failed"))
-    return result
+async def sync_users(limit: int = 0, user: CurrentUser = Depends(get_current_user)):
+    """Kick off a background sync of @alignedautomation.com users from Azure AD.
+
+    A full sync (~1.1k users) takes 1-2 min because Graph throttles the per-user
+    manager lookups, so this returns immediately and the work runs in the
+    background. Poll GET /api/ms365/users/sync-status for progress. `limit=0` (the
+    default) syncs the whole company domain; pass a positive `limit` to cap it.
+    """
+    from app.services.ms365_service import run_sync_background, get_sync_status
+    status = get_sync_status()
+    if status["running"]:
+        return {"started": False, "running": True, **status}
+    # Fire-and-forget; the task records progress in the module-level status.
+    asyncio.create_task(run_sync_background(limit))
+    return {"started": True, "running": True, **get_sync_status()}
+
+
+@router.get("/users/sync-status")
+async def sync_status(user: CurrentUser = Depends(get_current_user)):
+    """Return the background sync state plus live directory totals."""
+    from app.services.ms365_service import get_sync_status
+    return get_sync_status()
 
 
 @router.get("/users")
@@ -177,6 +193,29 @@ async def list_users(
 
 
 # ── User profile / hierarchy (on-demand Graph lookup, requires User.Read.All) ────
+
+@router.get("/users/{email}/photo")
+async def get_user_photo(email: str):
+    """Stream a user's M365 profile photo. Public (no identity header) so it can be
+    used directly as an <img> src; returns 404 when there's no photo so the UI
+    falls back to initials. Cached a day client-side."""
+    from app.services.ms365_service import fetch_user_photo
+    res = await fetch_user_photo(email)
+    if not res:
+        # Cache the "no photo" outcome briefly so the browser doesn't re-request a
+        # photoless face on every render/scroll; short TTL so a newly-added photo
+        # still appears within the hour.
+        return Response(
+            status_code=404,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    content, content_type = res
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
 
 @router.get("/users/{email}/profile")
 async def get_user_profile(email: str, user: CurrentUser = Depends(get_current_user)):

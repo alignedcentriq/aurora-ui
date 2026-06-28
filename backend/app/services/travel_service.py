@@ -103,6 +103,23 @@ def submit_travel_request(
             except Exception:
                 pass
 
+        # Idempotency: an identical pending request raised moments ago is a double-submit.
+        from app.services.idempotency import find_recent_duplicate
+        dup = find_recent_duplicate(
+            db, TravelRequest, window_seconds=120,
+            employee_id=emp.id, from_location=from_location,
+            to_destination=to_destination, travel_date=t_date, status="pending_rm",
+        )
+        if dup:
+            return {
+                "success": True, "ref_id": dup.ref_id, "id": dup.id,
+                "rm_notified": False, "duplicate": True,
+                "message": (
+                    f"You just submitted a travel request to {to_destination} for {t_date} "
+                    f"(**{dup.ref_id}**) — it's awaiting approval. I didn't create a duplicate."
+                ),
+            }
+
         req = TravelRequest(
             ref_id=ref_id,
             employee_id=emp.id,
@@ -487,6 +504,21 @@ def submit_expense_claim(
                 "message": (
                     f"Claimed amount {effective_currency} {amount:,.0f} exceeds the limit of "
                     f"{effective_currency} {effective_limit:,.0f}. Please provide a reason for the excess."
+                ),
+            }
+
+        # Idempotency: an identical claim filed moments ago is a double-submit.
+        from app.services.idempotency import find_recent_duplicate
+        dup = find_recent_duplicate(
+            db, TravelExpenseClaim, window_seconds=120,
+            travel_request_id=req.id, employee_id=emp.id, amount=amount, status="Pending",
+        )
+        if dup:
+            return {
+                "success": True, "ref_id": dup.ref_id, "duplicate": True,
+                "message": (
+                    f"You just filed an expense claim of {currency} {amount:,.0f} for "
+                    f"{travel_ref_id} (**{dup.ref_id}**). I didn't create a duplicate."
                 ),
             }
 

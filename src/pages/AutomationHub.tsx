@@ -116,7 +116,10 @@ function describeCadence(rule: AutomationRule): string {
 function formatDt(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -161,7 +164,7 @@ function RecipientPill({ r, onRemove }: { r: Recipient; onRemove?: () => void })
     <span
       className={cn(
         "inline-flex items-center gap-1 text-xs font-medium border rounded-full px-2 py-0.5",
-        color
+        color,
       )}
     >
       {r.type === "individual" ? <Mail className="h-3 w-3" /> : <Users className="h-3 w-3" />}
@@ -197,17 +200,22 @@ function CoOwnerModal({
   async function addCoOwner() {
     const email = input.trim().toLowerCase();
     if (!email) return;
-    if ((rule.co_owners_json ?? []).map(e => e.toLowerCase()).includes(email)) {
+    if ((rule.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email)) {
       setError("Already a co-owner.");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
-        method: "PATCH",
-        body: JSON.stringify({ action: "add", email }),
-      });
+      const res = await apiFetch(
+        `/api/automation/rules/${rule.id}/co-owners`,
+        userEmail,
+        userRole,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ action: "add", email }),
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to add co-owner");
       onUpdated(data);
@@ -223,10 +231,15 @@ function CoOwnerModal({
     setSaving(true);
     setError("");
     try {
-      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
-        method: "PATCH",
-        body: JSON.stringify({ action: "remove", email }),
-      });
+      const res = await apiFetch(
+        `/api/automation/rules/${rule.id}/co-owners`,
+        userEmail,
+        userRole,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ action: "remove", email }),
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Failed to remove co-owner");
       onUpdated(data);
@@ -243,7 +256,9 @@ function CoOwnerModal({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <motion.div
         initial={{ scale: 0.95, y: 8 }}
@@ -251,18 +266,22 @@ function CoOwnerModal({
         exit={{ scale: 0.95, y: 8 }}
         className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-md w-full mx-4"
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
             <UserCheck className="h-4 w-4 text-primary" />
             <h3 className="font-semibold text-foreground text-sm">Manage Co-owners</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <p className="text-xs text-muted-foreground mb-4">
-          Co-owners can view this automation. Only the creator and Super Admins can edit or delete it.
+          Co-owners can view this automation. Only the creator and Super Admins can edit or delete
+          it.
         </p>
 
         {/* Add new co-owner */}
@@ -271,8 +290,16 @@ function CoOwnerModal({
             className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="Enter email address"
             value={input}
-            onChange={(e) => { setInput(e.target.value); setError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCoOwner(); } }}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setError("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addCoOwner();
+              }
+            }}
           />
           <button
             type="button"
@@ -296,7 +323,10 @@ function CoOwnerModal({
         ) : (
           <ul className="space-y-1.5 max-h-48 overflow-y-auto">
             {(rule.co_owners_json ?? []).map((email) => (
-              <li key={email} className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <li
+                key={email}
+                className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-lg border border-border bg-muted/20 px-3 py-2"
+              >
                 <div className="flex items-center gap-2">
                   <UserCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
                   <span className="text-sm truncate">{email}</span>
@@ -362,8 +392,7 @@ function RuleForm({
   // Individual email input
   const [emailInput, setEmailInput] = useState("");
 
-  const set = (key: keyof RuleFormState, val: any) =>
-    setForm((prev) => ({ ...prev, [key]: val }));
+  const set = (key: keyof RuleFormState, val: any) => setForm((prev) => ({ ...prev, [key]: val }));
 
   async function loadGroups() {
     if (groups.length > 0) return;
@@ -388,18 +417,13 @@ function RuleForm({
       email: e,
       name: e,
     }));
-    set(
-      "recipients_json",
-      [
-        ...form.recipients_json,
-        ...newRecipients.filter(
-          (nr) =>
-            !form.recipients_json.some(
-              (ex) => ex.type === "individual" && ex.email === nr.email
-            )
-        ),
-      ]
-    );
+    set("recipients_json", [
+      ...form.recipients_json,
+      ...newRecipients.filter(
+        (nr) =>
+          !form.recipients_json.some((ex) => ex.type === "individual" && ex.email === nr.email),
+      ),
+    ]);
     setEmailInput("");
   }
 
@@ -407,22 +431,39 @@ function RuleForm({
     setUserSearch(q);
     setShowUserSearch(q.length >= 2);
     if (userSearchRef.current) clearTimeout(userSearchRef.current);
-    if (q.length < 2) { setUserResults([]); return; }
+    if (q.length < 2) {
+      setUserResults([]);
+      return;
+    }
     userSearchRef.current = setTimeout(async () => {
       try {
-        const res = await apiFetch(`/api/automation/ms365/users/search?q=${encodeURIComponent(q)}`, userEmail, userRole);
+        const res = await apiFetch(
+          `/api/automation/ms365/users/search?q=${encodeURIComponent(q)}`,
+          userEmail,
+          userRole,
+        );
         const data = await res.json();
         setUserResults(Array.isArray(data) ? data : []);
-      } catch { setUserResults([]); }
+      } catch {
+        setUserResults([]);
+      }
     }, 250);
   }
 
   function addUserResult(u: { name: string; email: string }) {
     if (form.recipients_json.some((r) => r.type === "individual" && r.email === u.email)) {
-      setUserSearch(""); setUserResults([]); setShowUserSearch(false); return;
+      setUserSearch("");
+      setUserResults([]);
+      setShowUserSearch(false);
+      return;
     }
-    set("recipients_json", [...form.recipients_json, { type: "individual", email: u.email, name: u.name }]);
-    setUserSearch(""); setUserResults([]); setShowUserSearch(false);
+    set("recipients_json", [
+      ...form.recipients_json,
+      { type: "individual", email: u.email, name: u.name },
+    ]);
+    setUserSearch("");
+    setUserResults([]);
+    setShowUserSearch(false);
   }
 
   async function addTeamsGroup(group: TeamsGroup) {
@@ -435,12 +476,10 @@ function RuleForm({
       const res = await apiFetch(
         `/api/automation/ms365/groups/${group.id}/members`,
         userEmail,
-        userRole
+        userRole,
       );
       const data = await res.json();
-      const memberEmails: string[] = (data.members || [])
-        .map((m: any) => m.email)
-        .filter(Boolean);
+      const memberEmails: string[] = (data.members || []).map((m: any) => m.email).filter(Boolean);
       const newR: Recipient = {
         type: "teams_group",
         id: group.id,
@@ -458,7 +497,10 @@ function RuleForm({
   }
 
   function removeRecipient(idx: number) {
-    set("recipients_json", form.recipients_json.filter((_, i) => i !== idx));
+    set(
+      "recipients_json",
+      form.recipients_json.filter((_, i) => i !== idx),
+    );
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -479,7 +521,7 @@ function RuleForm({
   }
 
   const filteredGroups = groups.filter((g) =>
-    g.name.toLowerCase().includes(groupSearch.toLowerCase())
+    g.name.toLowerCase().includes(groupSearch.toLowerCase()),
   );
 
   return (
@@ -498,9 +540,7 @@ function RuleForm({
           />
         </div>
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1">
-            Description
-          </label>
+          <label className="block text-xs font-semibold text-foreground mb-1">Description</label>
           <input
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="What does this automation do?"
@@ -517,7 +557,9 @@ function RuleForm({
         </h4>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Frequency</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Frequency
+            </label>
             <select
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
               value={form.frequency}
@@ -533,16 +575,20 @@ function RuleForm({
             </select>
           </div>
 
-          {(form.frequency === "weekly") && (
+          {form.frequency === "weekly" && (
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Day of Week</label>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">
+                Day of Week
+              </label>
               <select
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 value={form.day_of_week ?? 0}
                 onChange={(e) => set("day_of_week", Number(e.target.value))}
               >
                 {DAY_NAMES.map((d, i) => (
-                  <option key={i} value={i}>{d}</option>
+                  <option key={i} value={i}>
+                    {d}
+                  </option>
                 ))}
               </select>
             </div>
@@ -550,21 +596,27 @@ function RuleForm({
 
           {form.frequency === "monthly" && (
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">Day of Month</label>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">
+                Day of Month
+              </label>
               <select
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                 value={form.day_of_month ?? 1}
                 onChange={(e) => set("day_of_month", Number(e.target.value))}
               >
                 {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
                 ))}
               </select>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Send Time</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Send Time
+            </label>
             <div className="flex gap-1.5">
               <select
                 className="flex-1 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -572,8 +624,13 @@ function RuleForm({
                 onChange={(e) => set("hour", Number(e.target.value))}
               >
                 {Array.from({ length: 24 }, (_, h) => {
-                  const label = h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
-                  return <option key={h} value={h}>{label}</option>;
+                  const label =
+                    h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+                  return (
+                    <option key={h} value={h}>
+                      {label}
+                    </option>
+                  );
                 })}
               </select>
               <select
@@ -582,7 +639,9 @@ function RuleForm({
                 onChange={(e) => set("minute", Number(e.target.value))}
               >
                 {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
-                  <option key={m} value={m}>{m.toString().padStart(2, "0")}</option>
+                  <option key={m} value={m}>
+                    {m.toString().padStart(2, "0")}
+                  </option>
                 ))}
               </select>
             </div>
@@ -613,7 +672,9 @@ function RuleForm({
           <textarea
             rows={6}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
-            placeholder={"Hi Team,\n\nThis is a reminder to complete your mandatory training by this Friday.\n\nPlease log in to the LMS portal and finish all pending modules.\n\nThank you!"}
+            placeholder={
+              "Hi Team,\n\nThis is a reminder to complete your mandatory training by this Friday.\n\nPlease log in to the LMS portal and finish all pending modules.\n\nThank you!"
+            }
             value={form.email_body}
             onChange={(e) => set("email_body", e.target.value)}
           />
@@ -699,7 +760,11 @@ function RuleForm({
           >
             <Users className="h-3.5 w-3.5" />
             Add Microsoft Teams group
-            {showGroupPicker ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {showGroupPicker ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
           </button>
 
           <AnimatePresence>
@@ -742,7 +807,9 @@ function RuleForm({
                     >
                       <span className="font-medium truncate">{g.name}</span>
                       {g.description && (
-                        <span className="text-xs text-muted-foreground truncate">{g.description}</span>
+                        <span className="text-xs text-muted-foreground truncate">
+                          {g.description}
+                        </span>
                       )}
                       {expandingGroup === g.id && (
                         <span className="text-xs text-muted-foreground">Fetching members…</span>
@@ -817,9 +884,11 @@ function RuleCard({
 }) {
   const [sendingNow, setSendingNow] = useState(false);
   const canManage = rule.can_manage;
-  const isCoOwnerView = !canManage && (rule.co_owners_json ?? [])
-    .map(e => e.toLowerCase())
-    .includes(currentUserEmail.toLowerCase());
+  const isCoOwnerView =
+    !canManage &&
+    (rule.co_owners_json ?? [])
+      .map((e) => e.toLowerCase())
+      .includes(currentUserEmail.toLowerCase());
 
   async function handleSendNow() {
     setSendingNow(true);
@@ -835,7 +904,7 @@ function RuleCard({
       exit={{ opacity: 0, scale: 0.97 }}
       className={cn(
         "rounded-2xl border bg-card shadow-sm p-5 transition-all",
-        rule.is_active ? "border-border" : "border-border/50 opacity-70"
+        rule.is_active ? "border-border" : "border-border/50 opacity-70",
       )}
     >
       {/* Header row */}
@@ -844,9 +913,7 @@ function RuleCard({
           <div
             className={cn(
               "flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center",
-              rule.is_active
-                ? "bg-amber-100 text-amber-600"
-                : "bg-muted text-muted-foreground"
+              rule.is_active ? "bg-amber-100 text-amber-600" : "bg-muted text-muted-foreground",
             )}
           >
             <Zap className="h-4 w-4" />
@@ -876,7 +943,7 @@ function RuleCard({
               "text-xs font-medium px-2 py-0.5 rounded-full border",
               rule.is_active
                 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-muted border-border text-muted-foreground"
+                : "bg-muted border-border text-muted-foreground",
             )}
           >
             {rule.is_active ? "Active" : "Paused"}
@@ -887,7 +954,11 @@ function RuleCard({
               title={rule.is_active ? "Pause" : "Resume"}
               className="p-1.5 rounded-lg hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
             >
-              {rule.is_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {rule.is_active ? (
+                <Pause className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
             </button>
           )}
         </div>
@@ -901,7 +972,10 @@ function RuleCard({
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Users className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>{recipientCount(rule.recipients_json)} recipient{recipientCount(rule.recipients_json) !== 1 ? "s" : ""}</span>
+          <span>
+            {recipientCount(rule.recipients_json)} recipient
+            {recipientCount(rule.recipients_json) !== 1 ? "s" : ""}
+          </span>
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Mail className="h-3.5 w-3.5 flex-shrink-0" />
@@ -918,7 +992,8 @@ function RuleCard({
         <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground border-t border-border/50 pt-3">
           <UserCheck className="h-3.5 w-3.5 flex-shrink-0 text-indigo-500" />
           <span>
-            {(rule.co_owners_json ?? []).length} co-owner{(rule.co_owners_json ?? []).length !== 1 ? "s" : ""}
+            {(rule.co_owners_json ?? []).length} co-owner
+            {(rule.co_owners_json ?? []).length !== 1 ? "s" : ""}
             {(rule.co_owners_json ?? []).length <= 2
               ? `: ${(rule.co_owners_json ?? []).join(", ")}`
               : `: ${(rule.co_owners_json ?? []).slice(0, 2).join(", ")} +${(rule.co_owners_json ?? []).length - 2} more`}
@@ -927,12 +1002,18 @@ function RuleCard({
       )}
 
       {/* Next / last run */}
-      <div className={cn(
-        "mt-3 flex gap-4 text-xs text-muted-foreground pt-3",
-        (rule.co_owners_json ?? []).length === 0 ? "border-t border-border/50" : ""
-      )}>
-        <span>Next: <span className="text-foreground">{formatDt(rule.next_run)}</span></span>
-        <span>Last: <span className="text-foreground">{formatDt(rule.last_run)}</span></span>
+      <div
+        className={cn(
+          "mt-3 flex gap-4 text-xs text-muted-foreground pt-3",
+          (rule.co_owners_json ?? []).length === 0 ? "border-t border-border/50" : "",
+        )}
+      >
+        <span>
+          Next: <span className="text-foreground">{formatDt(rule.next_run)}</span>
+        </span>
+        <span>
+          Last: <span className="text-foreground">{formatDt(rule.last_run)}</span>
+        </span>
       </div>
 
       {/* Actions — only for creator / super admin */}
@@ -1114,14 +1195,14 @@ export function AutomationHub() {
   const sharedRules = rules.filter(
     (r) =>
       !r.can_manage &&
-      (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase())
+      (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase()),
   );
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#f5f7fa] dark:bg-background">
       {/* Header */}
       <div className="flex-shrink-0 bg-background border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
               <Zap className="h-5 w-5 text-amber-600" />
@@ -1157,12 +1238,15 @@ export function AutomationHub() {
               transition={{ duration: 0.15 }}
               className="mb-6 rounded-2xl border border-border bg-card shadow-sm p-5"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
                 <h2 className="font-semibold text-sm text-foreground">
                   {editingRule ? "Edit Automation" : "New Automation"}
                 </h2>
                 <button
-                  onClick={() => { setShowForm(false); setEditingRule(null); }}
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingRule(null);
+                  }}
                   className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors"
                 >
                   <X className="h-4 w-4" />
@@ -1172,7 +1256,10 @@ export function AutomationHub() {
                 key={editingRule?.id ?? "new"}
                 initial={formInitial}
                 onSave={handleSave}
-                onCancel={() => { setShowForm(false); setEditingRule(null); }}
+                onCancel={() => {
+                  setShowForm(false);
+                  setEditingRule(null);
+                }}
                 userEmail={email}
                 userRole={role}
               />
@@ -1184,7 +1271,10 @@ export function AutomationHub() {
         {loading ? (
           <div className="flex flex-col gap-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="rounded-2xl border border-border bg-card h-36 animate-pulse" />
+              <div
+                key={i}
+                className="rounded-2xl border border-border bg-card h-36 animate-pulse"
+              />
             ))}
           </div>
         ) : error ? (
@@ -1336,7 +1426,7 @@ export function AutomationHub() {
               "fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl shadow-lg text-sm font-medium border",
               toast.type === "success"
                 ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-red-50 border-red-200 text-red-800"
+                : "bg-red-50 border-red-200 text-red-800",
             )}
           >
             {toast.msg}

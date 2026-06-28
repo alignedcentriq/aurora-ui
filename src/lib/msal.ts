@@ -1,17 +1,19 @@
 import { PublicClientApplication, Configuration, LogLevel } from "@azure/msal-browser";
+import { cleanUrlParams } from "./utils";
 
 const isBrowser = typeof window !== "undefined";
 
 const tenantId = import.meta.env.VITE_MSAL_TENANT_ID;
-const authority = tenantId 
-  ? `https://login.microsoftonline.com/${tenantId}` 
-  : (import.meta.env.VITE_MSAL_AUTHORITY || "https://login.microsoftonline.com/common");
+const authority = tenantId
+  ? `https://login.microsoftonline.com/${tenantId}`
+  : import.meta.env.VITE_MSAL_AUTHORITY || "https://login.microsoftonline.com/common";
 
 const msalConfig: Configuration = {
   auth: {
     clientId: import.meta.env.VITE_MSAL_CLIENT_ID || "",
     authority: authority,
-    redirectUri: import.meta.env.VITE_MSAL_REDIRECT_URI || (isBrowser ? window.location.origin : ""),
+    redirectUri:
+      import.meta.env.VITE_MSAL_REDIRECT_URI || (isBrowser ? window.location.origin : ""),
   },
   cache: {
     cacheLocation: "sessionStorage",
@@ -19,15 +21,21 @@ const msalConfig: Configuration = {
 };
 
 // Initialize only in the browser to avoid SSR window errors
-export const msalInstance = isBrowser 
-  ? new PublicClientApplication(msalConfig) 
+export const msalInstance = isBrowser
+  ? new PublicClientApplication(msalConfig)
   : (null as unknown as PublicClientApplication);
 
 // Ensure MSAL processes the redirect before TanStack Router can intercept the URL hash
 if (isBrowser && msalInstance) {
   msalInstance.initialize().then(() => {
-    msalInstance.handleRedirectPromise().catch(() => {
-      // redirect error handled silently
-    });
+    msalInstance
+      .handleRedirectPromise()
+      .then(() => {
+        cleanUrlParams();
+      })
+      .catch(() => {
+        // redirect error handled silently
+        cleanUrlParams();
+      });
   });
 }

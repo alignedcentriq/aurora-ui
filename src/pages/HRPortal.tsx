@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   X,
   Clock,
@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,7 +80,15 @@ interface WelcomeResource {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const CATEGORY_OPTIONS = [
-  "App Guide", "HR", "Policy", "IT", "Admin", "Facilities", "Video", "Deck", "General",
+  "App Guide",
+  "HR",
+  "Policy",
+  "IT",
+  "Admin",
+  "Facilities",
+  "Video",
+  "Deck",
+  "General",
 ];
 
 const CATEGORY_DEFAULT_ICON: Record<string, string> = {
@@ -144,7 +153,7 @@ export function HRPortal() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 py-6 border-b border-[var(--border)] shrink-0">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-[20px] font-semibold text-foreground">HR Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
@@ -154,7 +163,7 @@ export function HRPortal() {
       </div>
 
       {/* Top tabs */}
-      <div className="flex gap-1 px-8 pt-4 pb-0 border-b border-[var(--border)] shrink-0">
+      <div className="flex gap-1 overflow-x-auto px-4 sm:px-8 pt-4 pb-0 border-b border-[var(--border)] shrink-0 no-scrollbar">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -163,7 +172,7 @@ export function HRPortal() {
               "flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium rounded-t-lg border-b-2 transition-colors -mb-px",
               tab === id
                 ? "border-primary text-primary bg-primary/5"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/50",
             )}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -261,7 +270,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       ];
 
       normalized.sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
       setItems(normalized);
     } catch {
@@ -271,9 +280,14 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
-  const handleDone = useCallback(() => { setExpanded(null); fetchAll(); }, [fetchAll]);
+  const handleDone = useCallback(() => {
+    setExpanded(null);
+    fetchAll();
+  }, [fetchAll]);
 
   const filtered = typeFilter === "all" ? items : items.filter((i) => i.type === typeFilter);
 
@@ -287,8 +301,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const openCount = (type: RequestType) =>
     items.filter(
       (i) =>
-        i.type === type &&
-        !["resolved", "closed", "verified"].includes(i.status.toLowerCase())
+        i.type === type && !["resolved", "closed", "verified"].includes(i.status.toLowerCase()),
     ).length;
 
   const STATS: {
@@ -298,10 +311,34 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     color: string;
     bg: string;
   }[] = [
-    { type: "escalation", label: "Open Escalations", icon: AlertCircle, color: "text-rose-400", bg: "bg-rose-500/10" },
-    { type: "document", label: "Pending Documents", icon: FileText, color: "text-violet-400", bg: "bg-violet-500/10" },
-    { type: "query", label: "Open HR Queries", icon: MessageSquare, color: "text-sky-400", bg: "bg-sky-500/10" },
-    { type: "grievance", label: "Open Grievances", icon: ShieldAlert, color: "text-amber-400", bg: "bg-amber-500/10" },
+    {
+      type: "escalation",
+      label: "Open Escalations",
+      icon: AlertCircle,
+      color: "text-rose-400",
+      bg: "bg-rose-500/10",
+    },
+    {
+      type: "document",
+      label: "Pending Documents",
+      icon: FileText,
+      color: "text-violet-400",
+      bg: "bg-violet-500/10",
+    },
+    {
+      type: "query",
+      label: "Open HR Queries",
+      icon: MessageSquare,
+      color: "text-sky-400",
+      bg: "bg-sky-500/10",
+    },
+    {
+      type: "grievance",
+      label: "Open Grievances",
+      icon: ShieldAlert,
+      color: "text-amber-400",
+      bg: "bg-amber-500/10",
+    },
   ];
 
   const FILTER_PILLS: { key: RequestType | "all"; label: string }[] = [
@@ -312,7 +349,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     { key: "grievance", label: `Grievances (${counts.grievance})` },
   ];
 
-  const tableRows: JSX.Element[] = [];
+  const tableRows: React.ReactNode[] = [];
   filtered.forEach((item) => {
     const isExpanded = expanded === item.key;
     tableRows.push(
@@ -322,7 +359,12 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors cursor-pointer"
       >
         <td className="py-3.5 pr-4">
-          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", TYPE_BADGE[item.type])}>
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+              TYPE_BADGE[item.type],
+            )}
+          >
             {TYPE_LABEL[item.type]}
           </span>
         </td>
@@ -330,7 +372,9 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           {item.reference_id}
         </td>
         <td className="py-3.5 pr-4">
-          <div className="text-[13px] font-medium text-foreground leading-tight">{item.from_name}</div>
+          <div className="text-[13px] font-medium text-foreground leading-tight">
+            {item.from_name}
+          </div>
           {item.from_email && (
             <div className="text-[11px] text-muted-foreground">{item.from_email}</div>
           )}
@@ -346,7 +390,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                PRIORITY_BADGE[item.priority] ?? "bg-zinc-500/15 text-zinc-400"
+                PRIORITY_BADGE[item.priority] ?? "bg-zinc-500/15 text-zinc-400",
               )}
             >
               {item.priority}
@@ -363,10 +407,13 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         </td>
         <td className="py-3.5 pr-2 text-muted-foreground/50">
           <ChevronDown
-            className={cn("h-3.5 w-3.5 transition-transform duration-150", isExpanded && "rotate-180")}
+            className={cn(
+              "h-3.5 w-3.5 transition-transform duration-150",
+              isExpanded && "rotate-180",
+            )}
           />
         </td>
-      </tr>
+      </tr>,
     );
     if (isExpanded) {
       tableRows.push(
@@ -374,7 +421,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <td colSpan={8} className="p-0">
             <ActionPanel item={item} authHeaders={authHeaders} onDone={handleDone} />
           </td>
-        </tr>
+        </tr>,
       );
     }
   });
@@ -382,14 +429,14 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 px-8 py-4 shrink-0">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 px-4 py-4 sm:px-8 shrink-0">
         {STATS.map(({ type, label, icon: Icon, color, bg }) => (
           <button
             key={type}
             onClick={() => setTypeFilter(typeFilter === type ? "all" : type)}
             className={cn(
               "rounded-xl border border-[var(--border)] bg-card/40 px-5 py-4 flex items-center gap-4 text-left transition-colors hover:bg-card/70",
-              typeFilter === type && "ring-2 ring-primary/30 bg-primary/5"
+              typeFilter === type && "ring-2 ring-primary/30 bg-primary/5",
             )}
           >
             <div className={cn("rounded-lg p-2.5 shrink-0", bg, color)}>
@@ -404,7 +451,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
 
       {/* Filter pills + refresh */}
-      <div className="flex items-center justify-between px-8 pb-3 shrink-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-8 pb-3 shrink-0">
         <div className="flex gap-1.5 flex-wrap">
           {FILTER_PILLS.map(({ key, label }) => (
             <button
@@ -414,7 +461,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 "rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
                 typeFilter === key
                   ? "bg-primary/15 text-primary"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
               {label}
@@ -431,7 +478,7 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-8 pb-8">
+      <div className="flex-1 overflow-auto px-4 sm:px-8 pb-8">
         {loading ? (
           <TableLoader />
         ) : filtered.length === 0 ? (
@@ -440,14 +487,16 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-[var(--border)]">
-                {["Type", "Reference", "From", "Subject", "Priority", "Status", "Date", ""].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
-                  >
-                    {h}
-                  </th>
-                ))}
+                {["Type", "Reference", "From", "Subject", "Priority", "Status", "Date", ""].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>{tableRows}</tbody>
@@ -470,20 +519,26 @@ function ActionPanel({
   onDone: () => void;
 }) {
   const raw = item.raw;
-  const isFinal = ["resolved", "closed", "verified", "rejected"].includes(item.status.toLowerCase());
+  const isFinal = ["resolved", "closed", "verified", "rejected"].includes(
+    item.status.toLowerCase(),
+  );
 
   const [responseText, setResponseText] = useState(
-    item.type === "query" ? String(raw.response ?? "") : ""
+    item.type === "query" ? String(raw.response ?? "") : "",
   );
   const [selectedStatus, setSelectedStatus] = useState(
     item.type === "grievance"
-      ? (isFinal ? item.status : "Under Review")
+      ? isFinal
+        ? item.status
+        : "Under Review"
       : item.type === "escalation"
-      ? (item.status === "Open" ? "Acknowledged" : "Resolved")
-      : ""
+        ? item.status === "Open"
+          ? "Acknowledged"
+          : "Resolved"
+        : "",
   );
   const [notes, setNotes] = useState(
-    item.type === "grievance" ? String(raw.resolution_notes ?? "") : ""
+    item.type === "grievance" ? String(raw.resolution_notes ?? "") : "",
   );
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
@@ -549,13 +604,15 @@ function ActionPanel({
   const Detail = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value ? (
       <div>
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-0.5">{label}</p>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-0.5">
+          {label}
+        </p>
         <p className="text-[13px] text-foreground leading-relaxed">{value}</p>
       </div>
     ) : null;
 
   return (
-    <div className="flex gap-8 px-8 py-5 bg-muted/20 border-b border-[var(--border)]">
+    <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 px-4 py-4 sm:px-8 sm:py-5 bg-muted/20 border-b border-[var(--border)]">
       {/* Details */}
       <div className="flex-1 min-w-0 space-y-3">
         {item.type === "escalation" && (
@@ -594,11 +651,11 @@ function ActionPanel({
               <span className="text-[11px] font-semibold bg-sky-500/15 text-sky-400 rounded-full px-2.5 py-0.5">
                 {String(raw.category || "")}
               </span>
-              {raw.priority && (
+              {!!raw.priority && (
                 <span
                   className={cn(
                     "text-[11px] font-medium rounded-full px-2.5 py-0.5",
-                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400"
+                    PRIORITY_BADGE[String(raw.priority)] ?? "bg-zinc-500/15 text-zinc-400",
                   )}
                 >
                   {String(raw.priority)}
@@ -615,7 +672,7 @@ function ActionPanel({
                 <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-3 py-2 text-[12px] text-foreground/80 leading-relaxed">
                   {String(raw.response)}
                 </div>
-                {raw.responded_by && (
+                {!!raw.responded_by && (
                   <p className="text-[11px] text-muted-foreground/40 mt-1">
                     by {String(raw.responded_by)}
                     {raw.responded_at ? ` · ${String(raw.responded_at).slice(0, 10)}` : ""}
@@ -632,7 +689,7 @@ function ActionPanel({
               <span className="text-[11px] font-semibold bg-amber-500/15 text-amber-400 rounded-full px-2.5 py-0.5">
                 {String(raw.category || "")}
               </span>
-              {raw.is_anonymous && (
+              {!!raw.is_anonymous && (
                 <span className="text-[11px] bg-zinc-500/15 text-zinc-400 rounded-full px-2.5 py-0.5">
                   Anonymous
                 </span>
@@ -654,10 +711,10 @@ function ActionPanel({
       </div>
 
       {/* Action form */}
-      <div className="w-72 shrink-0 space-y-3">
+      <div className="w-full lg:w-72 shrink-0 space-y-3">
         {/* Escalation */}
-        {item.type === "escalation" && (
-          isFinal ? (
+        {item.type === "escalation" &&
+          (isFinal ? (
             <div className="flex items-center gap-2 text-emerald-400 text-[13px]">
               <CheckCircle2 className="h-4 w-4" />
               Resolved
@@ -686,13 +743,14 @@ function ActionPanel({
                 Update Status
               </button>
             </>
-          )
-        )}
+          ))}
 
         {/* Document */}
-        {item.type === "document" && (
-          isFinal ? (
-            <div className={`flex items-center gap-2 text-[13px] ${item.status.toLowerCase() === "rejected" ? "text-rose-400" : "text-emerald-400"}`}>
+        {item.type === "document" &&
+          (isFinal ? (
+            <div
+              className={`flex items-center gap-2 text-[13px] ${item.status.toLowerCase() === "rejected" ? "text-rose-400" : "text-emerald-400"}`}
+            >
               <CheckCircle2 className="h-4 w-4" />
               {item.status.toLowerCase() === "rejected"
                 ? `Rejected by ${String(raw.verified_by_email || "HR")}`
@@ -714,11 +772,18 @@ function ActionPanel({
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => { act("doc-reject"); setShowRejectForm(false); }}
+                  onClick={() => {
+                    act("doc-reject");
+                    setShowRejectForm(false);
+                  }}
                   disabled={acting}
                   className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
                 >
-                  {acting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  {acting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <X className="h-3.5 w-3.5" />
+                  )}
                   Confirm Reject
                 </button>
                 <button
@@ -752,12 +817,11 @@ function ActionPanel({
                 Reject
               </button>
             </div>
-          )
-        )}
+          ))}
 
         {/* HR Query */}
-        {item.type === "query" && (
-          item.status.toLowerCase() === "closed" ? (
+        {item.type === "query" &&
+          (item.status.toLowerCase() === "closed" ? (
             <div className="flex items-center gap-2 text-zinc-400 text-[13px]">
               <X className="h-4 w-4" />
               Closed
@@ -796,12 +860,11 @@ function ActionPanel({
                 Close Query
               </button>
             </>
-          )
-        )}
+          ))}
 
         {/* Grievance */}
-        {item.type === "grievance" && (
-          item.status.toLowerCase() === "closed" ? (
+        {item.type === "grievance" &&
+          (item.status.toLowerCase() === "closed" ? (
             <div className="flex items-center gap-2 text-zinc-400 text-[13px]">
               <X className="h-4 w-4" />
               Closed{raw.resolved_by ? ` by ${String(raw.resolved_by)}` : ""}
@@ -843,8 +906,7 @@ function ActionPanel({
                 Update Grievance
               </button>
             </>
-          )
-        )}
+          ))}
       </div>
     </div>
   );
@@ -870,7 +932,9 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
 
   const handleResend = async (logId: number, name: string) => {
     setResending(logId);
@@ -903,7 +967,12 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 px-8 py-4 shrink-0">
         {[
-          { label: "Pending HR Action", value: stats.pending, color: "text-amber-400", icon: Clock },
+          {
+            label: "Pending HR Action",
+            value: stats.pending,
+            color: "text-amber-400",
+            icon: Clock,
+          },
           { label: "Welcome Sent", value: stats.sent, color: "text-emerald-400", icon: Send },
           { label: "Skipped", value: stats.skipped, color: "text-zinc-400", icon: X },
         ].map(({ label, value, color, icon: Icon }) => (
@@ -922,9 +991,10 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
         ))}
       </div>
 
-      <div className="flex items-center justify-between px-8 pb-3 shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 pb-3 shrink-0">
         <p className="text-[12px] text-muted-foreground">
-          HR receives an email when a new employee is detected. Click Yes in that email to send them the welcome package.
+          HR receives an email when a new employee is detected. Click Yes in that email to send them
+          the welcome package.
         </p>
         <button
           onClick={fetchLogs}
@@ -1013,7 +1083,9 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
   const [form, setForm] = useState<Partial<WelcomeResource>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
-  const [resourceToDelete, setResourceToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [resourceToDelete, setResourceToDelete] = useState<{ id: number; name: string } | null>(
+    null,
+  );
 
   // Message editor state
   const [message, setMessage] = useState("");
@@ -1040,13 +1112,21 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
         const data = await res.json();
         setMessage(data.text ?? DEFAULT_WELCOME_MESSAGE);
       }
-    } catch { /* non-fatal */ }
+    } catch {
+      /* non-fatal */
+    }
   }, [authHeaders]);
 
-  useEffect(() => { fetchResources(); fetchMessage(); }, [fetchResources, fetchMessage]);
+  useEffect(() => {
+    fetchResources();
+    fetchMessage();
+  }, [fetchResources, fetchMessage]);
 
   const saveMessage = async () => {
-    if (!message.trim()) { toast.error("Message cannot be empty"); return; }
+    if (!message.trim()) {
+      toast.error("Message cannot be empty");
+      return;
+    }
     setMessageSaving(true);
     try {
       const res = await fetch("/api/portal/hr/welcome/message", {
@@ -1082,10 +1162,16 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
     });
   };
 
-  const cancelEdit = () => { setEditingId(null); setForm({}); };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm({});
+  };
 
   const saveResource = async () => {
-    if (!form.name?.trim()) { toast.error("Name is required"); return; }
+    if (!form.name?.trim()) {
+      toast.error("Name is required");
+      return;
+    }
     setSaving(true);
     try {
       const isNew = editingId === "new";
@@ -1144,11 +1230,13 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
     <div className="flex flex-col h-full overflow-hidden">
       {/* Welcome message editor */}
       <div className="mx-8 mt-4 mb-2 rounded-xl border border-[var(--border)] bg-card/40 shrink-0">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--border)]/50">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-5 py-3.5 border-b border-[var(--border)]/50">
           <div>
             <p className="text-[13px] font-medium text-foreground">Welcome Message</p>
             <p className="text-[12px] text-muted-foreground mt-0.5">
-              Intro text sent to new employees. Use <code className="bg-primary/10 text-primary rounded px-1">{"{name}"}</code> as a placeholder for their name.
+              Intro text sent to new employees. Use{" "}
+              <code className="bg-primary/10 text-primary rounded px-1">{"{name}"}</code> as a
+              placeholder for their name.
             </p>
           </div>
           {!messageEditing && (
@@ -1171,16 +1259,21 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Welcome to the team, {name}!…"
               />
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <button
-                  onClick={() => { setMessage(DEFAULT_WELCOME_MESSAGE); }}
+                  onClick={() => {
+                    setMessage(DEFAULT_WELCOME_MESSAGE);
+                  }}
                   className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Reset to default
                 </button>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setMessageEditing(false); fetchMessage(); }}
+                    onClick={() => {
+                      setMessageEditing(false);
+                      fetchMessage();
+                    }}
                     className="rounded-lg px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-secondary transition-colors"
                   >
                     Cancel
@@ -1204,7 +1297,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-8 py-3 shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-3 shrink-0">
         <p className="text-[13px] text-muted-foreground">
           Resources below appear in the email. Supports links, videos, and slide decks.
         </p>
@@ -1264,7 +1357,9 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                   }));
                 }}
               >
-                {CATEGORY_OPTIONS.map((c) => <option key={c}>{c}</option>)}
+                {CATEGORY_OPTIONS.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -1311,8 +1406,17 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
 
       <div className="flex-1 overflow-auto px-8 pb-8">
         {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="space-y-2 py-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
+                <Skeleton className="h-9 w-9 rounded-xl" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-3 w-64" />
+                </div>
+                <Skeleton className="h-7 w-16 rounded-lg" />
+              </div>
+            ))}
           </div>
         ) : resources.length === 0 ? (
           <div className="flex h-40 items-center justify-center gap-2 text-muted-foreground">
@@ -1328,7 +1432,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                   "flex items-center gap-4 rounded-xl border px-5 py-3.5 transition-all",
                   r.is_active
                     ? "border-[var(--border)] bg-card/40"
-                    : "border-[var(--border)]/40 bg-card/20 opacity-50"
+                    : "border-[var(--border)]/40 bg-card/20 opacity-50",
                 )}
               >
                 <span className="text-[22px] w-8 text-center shrink-0">{r.icon || "•"}</span>
@@ -1342,8 +1446,8 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                           r.category === "Video"
                             ? "bg-rose-500/10 text-rose-400"
                             : r.category === "Deck"
-                            ? "bg-violet-500/10 text-violet-400"
-                            : "bg-primary/10 text-primary"
+                              ? "bg-violet-500/10 text-violet-400"
+                              : "bg-primary/10 text-primary",
                         )}
                       >
                         {r.category}
@@ -1361,7 +1465,9 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                     )}
                   </div>
                   {r.description && (
-                    <p className="text-[12px] text-muted-foreground mt-0.5 truncate">{r.description}</p>
+                    <p className="text-[12px] text-muted-foreground mt-0.5 truncate">
+                      {r.description}
+                    </p>
                   )}
                 </div>
 
@@ -1372,7 +1478,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                     "text-[11px] font-medium rounded-full px-3 py-1 transition-colors shrink-0",
                     r.is_active
                       ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                      : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20"
+                      : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20",
                   )}
                 >
                   {r.is_active ? "Active" : "Inactive"}
@@ -1409,8 +1515,9 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Welcome Resource</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{resourceToDelete?.name}"? This action cannot be undone
-              and this resource will no longer be included in welcome emails sent to new employees.
+              Are you sure you want to delete "{resourceToDelete?.name}"? This action cannot be
+              undone and this resource will no longer be included in welcome emails sent to new
+              employees.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

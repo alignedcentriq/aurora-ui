@@ -9,7 +9,12 @@ export interface TableLoaderProps {
 
 export function TableLoader({ className, label }: TableLoaderProps) {
   return (
-    <div className={cn("flex h-40 items-center justify-center gap-2.5 text-sm text-muted-foreground", className)}>
+    <div
+      className={cn(
+        "flex h-40 items-center justify-center gap-2.5 text-sm text-muted-foreground",
+        className,
+      )}
+    >
       <Loader2 className="h-5 w-5 animate-spin text-[#94a3b8]" />
       {label && <span>{label}</span>}
     </div>

@@ -529,7 +529,7 @@ def my_requests(
     from app.models import (
         Leave, ParkingSticker, FacilityComplaint, Reimbursement,
         TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
-        HRQuery, Grievance, Escalation
+        HRQuery, Grievance, Escalation, FormSubmission, FormTemplate
     )
 
     db = SessionLocal()
@@ -546,7 +546,8 @@ def my_requests(
                 "udemy": [],
                 "hr_queries": [],
                 "grievances": [],
-                "escalations": []
+                "escalations": [],
+                "form_submissions": []
             }
 
         # 1. Leaves
@@ -578,6 +579,19 @@ def my_requests(
 
         # 10. Escalations
         escalations = db.query(Escalation).filter(Escalation.user_email == emp.email).order_by(Escalation.created_at.desc()).all()
+
+        # 11. Dynamic Form Library submissions (any admin-defined form, current or future).
+        #     Joined to the template so the UI can label + filter by the originating form.
+        form_subs = (
+            db.query(FormSubmission, FormTemplate)
+            .join(FormTemplate, FormSubmission.form_template_id == FormTemplate.id)
+            .filter(
+                (FormSubmission.employee_id == emp.id)
+                | (FormSubmission.employee_email == emp.email)
+            )
+            .order_by(FormSubmission.submitted_at.desc())
+            .all()
+        )
 
         return {
             "leaves": [
@@ -727,10 +741,137 @@ def my_requests(
                     "created_at": e.created_at.isoformat() if e.created_at else None,
                 }
                 for e in escalations
+            ],
+            "form_submissions": [
+                {
+                    "id": s.id,
+                    "reference_id": s.reference_id or f"FRM-{s.id}",
+                    "form_template_id": s.form_template_id,
+                    "form_name": t.name,
+                    "category": t.category or "",
+                    "field_values": s.field_values or {},
+                    "status": s.status or "Pending",
+                    "admin_remarks": s.admin_remarks or "",
+                    "reviewed_by": s.reviewed_by or "",
+                    "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+                }
+                for s, t in form_subs
             ]
         }
     finally:
         db.close()
+
+
+def _attach_enrichment(employees: list[dict]) -> None:
+    """Merge cached Alchemy skills/projects into directory rows in place, so the client
+    has everything in one payload (no per-profile fetch). Only rows present in the cache
+    get `skills`/`projects`; others are left without (the client lazy-loads those).
+    Fail-soft — any error leaves the directory untouched."""
+    try:
+        from app.services import alchemy_service
+        codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
+        cache = alchemy_service.get_cached_enrichment_map(codes)
+        attached = 0
+        for e in employees:
+            hit = cache.get(e.get("employee_code"))
+            if hit is not None:
+                e["skills"] = hit["skills"]
+                e["projects"] = hit["projects"]
+                attached += 1
+        # Full-coverage convergence: if any roster row has no cached enrichment yet,
+        # kick a deduped background fill so subsequent loads bundle skills for everyone.
+        # Non-blocking — this request still returns immediately with whatever is cached.
+        if codes and attached < len(codes):
+            alchemy_service.kick_enrichment_fill_async()
+    except Exception:
+        pass
+
+
+@router.get("/directory")
+def employee_directory(user: CurrentUser = Depends(get_current_user)):
+    """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
+
+    Primary source (when ZOHO_DBURL is configured) is the live Zoho People profile
+    VIEW on the separate HR Postgres server — the authoritative roster with full
+    coverage of employee code, designation, department, managers, phone and
+    birthday (see services/zoho_directory_service.py).
+
+    Fallback source is the synced MS365 / Azure AD directory enriched per-person by
+    the local Zoho HR overlay + Employee row, used when the Zoho DB is unset or
+    unreachable. Open to every authenticated user; photos load via the public MS365
+    photo proxy keyed by email.
+    """
+    from app.services import zoho_directory_service
+
+    # Live HR view is the source of truth when configured; fall back to MS365 only
+    # if it's unset or returns nothing (connection error / empty).
+    if zoho_directory_service.is_configured():
+        employees = zoho_directory_service.fetch_directory()
+        if employees:
+            _attach_enrichment(employees)
+            return {"count": len(employees), "employees": employees, "source": "zoho"}
+
+    from app.models import MS365User
+    from app.services.ms365_service import _is_non_human
+
+    db = SessionLocal()
+    try:
+        # Zoho HR overlay keyed by email (rich fields; sparse in this DB).
+        zoho: dict[str, EmployeeZohoProfile] = {}
+        for p in db.query(EmployeeZohoProfile).all():
+            key = (p.official_email or "").lower().strip()
+            if key:
+                zoho[key] = p
+
+        # Employee table keyed by email (AASPL code + office location).
+        emp_by_email: dict[str, Employee] = {}
+        for e in db.query(Employee).all():
+            if e.email:
+                emp_by_email[e.email.lower().strip()] = e
+
+        rows = db.query(MS365User).order_by(MS365User.name).all()
+        out = []
+        for r in rows:
+            email = (r.email or "").lower().strip()
+            name = r.name or email
+            if not email or _is_non_human(name, email):
+                continue
+            if r.account_enabled is False:
+                continue
+            z = zoho.get(email)
+            emp = emp_by_email.get(email)
+            out.append({
+                "name": name,
+                "email": r.email,
+                "employee_code": (emp.employee_id if emp else "") or "",
+                "designation": r.job_title or (z.designation if z else "") or "",
+                "department": r.department or (z.function if z else "") or "",
+                "location": r.office_location or (emp.location if emp else "")
+                            or (z.sub_location if z else "") or "",
+                "city": r.city or "",
+                "reporting_manager": r.manager_name or (z.reporting_manager if z else "") or "",
+                "functional_manager": (z.functional_manager if z else "") or "",
+                "phone": r.mobile_phone or r.business_phone or (z.work_phone if z else "") or "",
+                "extension": (z.extension if z else "") or "",
+                "nick_name": "",   # not synced
+                "birthday": "",    # DOB not synced
+            })
+        out.sort(key=lambda x: x["name"].lower())
+        _attach_enrichment(out)
+        return {"count": len(out), "employees": out, "source": "ms365"}
+    finally:
+        db.close()
+
+
+@router.get("/directory/{employee_code}/enrichment")
+def directory_enrichment(employee_code: str, user: CurrentUser = Depends(get_current_user)):
+    """Skills + projects for a directory person, pulled live from Alchemy by AASPL code.
+
+    Returns {available, skills, projects}. Fail-soft: available=false when Alchemy
+    has no service token configured / is unreachable, so the profile still renders.
+    """
+    from app.services import alchemy_service
+    return alchemy_service.get_profile_enrichment(employee_code)
 
 
 # NOTE: keep this LAST — a bare /{employee_id} path param would otherwise shadow

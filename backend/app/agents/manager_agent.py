@@ -34,7 +34,7 @@ tools = [get_my_team, search_people_directory]
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (router tier).
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 
 
 def manager_assistant(state: ManagerState):
@@ -54,8 +54,10 @@ def manager_assistant(state: ManagerState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(tools)
-    return {"messages": [llm.invoke(messages)]}
+    response = resilient_invoke("service", messages,
+                                build=lambda l: l.bind_tools(tools),
+                                default_timeout=120)
+    return {"messages": [response]}
 
 
 def should_continue(state: ManagerState):

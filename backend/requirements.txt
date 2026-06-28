@@ -29,6 +29,7 @@ markdown
 pandas
 openpyxl
 pgvector
+pyodbc
 httpx
 cryptography
 pyjwt

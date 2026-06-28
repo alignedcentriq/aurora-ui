@@ -130,6 +130,12 @@ class Config:
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
 
+    # ── Routing clarification gate (wrong-answer prevention) ──
+    # When the LLM router's confidence is below this, the assistant shows a quick-choice
+    # card asking the user to pick the domain instead of guessing. A clarifying question
+    # costs one click; a confident wrong-domain answer costs trust.
+    CLARIFY_CONF_THRESHOLD = float(os.getenv("CLARIFY_CONF_THRESHOLD", "0.6"))
+
     # ── Semantic Answer Cache (instant repeat-question answers, zero LLM) ──
     ANSWER_CACHE_ENABLED = os.getenv("ANSWER_CACHE_ENABLED", "true").lower() == "true"
     # Cosine similarity required to serve a cached answer. High by design — a near-miss must
@@ -151,6 +157,11 @@ class Config:
     # agent handling — so the gate is deliberately high: only a confident match should trigger a
     # form, otherwise a vaguely-similar message falls through to normal routing untouched.
     FORM_MATCH_SIM_THRESHOLD = float(os.getenv("FORM_MATCH_SIM_THRESHOLD", "0.62"))
+    # Higher gate for info-phrased queries ("how do I…", "what is the process for…") that have no
+    # action verb — only a very strong embedding match should short-circuit to a form there,
+    # because the question may genuinely need a policy/HR answer, not just a form widget.
+    # When an action verb IS present (submit, apply, request, book…), the normal threshold applies.
+    FORM_MATCH_INFO_SIM_THRESHOLD = float(os.getenv("FORM_MATCH_INFO_SIM_THRESHOLD", "0.80"))
 
     # ── Semantic Intent Router (embedding nearest-neighbour domain classification) ──
     # Closed-set routing: the message is matched against labeled seed utterances by cosine
@@ -208,8 +219,17 @@ class Config:
     CHAT_MAX_QUEUE = int(os.getenv("CHAT_MAX_QUEUE", "50"))
     CHAT_QUEUE_TIMEOUT = float(os.getenv("CHAT_QUEUE_TIMEOUT_SECONDS", "90"))
 
+    # Company website — the public portal the Company Context can be auto-pulled from.
+    # The super-admin "Pull from portal" action fetches this site, extracts the text, and
+    # the LLM distills it into a factual company profile (see company_settings_service).
+    COMPANY_WEBSITE_URL = os.getenv("COMPANY_WEBSITE_URL", "https://alignedautomation.com")
+
     # App
     DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "employee1@centriq.ai")
+    # Demo leave balances: when the signed-in user can't be matched to a row in
+    # app/data/leave_balances.csv, fall back to this employee code (AASPL-####) so
+    # the demo still shows real CSV data. Empty -> use the generic static fixture.
+    LEAVE_BALANCE_DEMO_EMPLOYEE = os.getenv("LEAVE_BALANCE_DEMO_EMPLOYEE", "AASPL-1333")
     PORT = int(os.getenv("PORT", "8080"))
     HOST = os.getenv("HOST", "0.0.0.0")
 
@@ -232,29 +252,28 @@ class Config:
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset
     NOTIFY_TO_EMAIL = os.getenv("NOTIFY_TO_EMAIL", "")
+    # When EMAIL_TEST_MODE=true (the default), _send() intercepts every outbound email
+    # and redirects it to NOTIFY_TO_EMAIL regardless of the original recipient.
+    # The original To address is appended to the subject so you can see where it would
+    # have gone.  Set EMAIL_TEST_MODE=false in .env only when ready for real delivery.
+    EMAIL_TEST_MODE = os.getenv("EMAIL_TEST_MODE", "true").lower() not in ("false", "0", "no")
     HELPDESK_EMAIL = os.getenv("HELPDESK_EMAIL", "shivam.sharma@alignedautomation.com")
     # Mailbox used as the SENDER for unattended/background emails (parking reminders).
     # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
     PARKING_REMINDER_SENDER = os.getenv("PARKING_REMINDER_SENDER", "")
-    # Mailbox used as the SENDER for the unattended biweekly project-update form email.
-    # Must be an account that has connected MS365 (delegated Graph token). Falls back to NOTIFY_TO_EMAIL.
-    PROJECT_UPDATE_SENDER = os.getenv("PROJECT_UPDATE_SENDER", "")
     # Bookshelf Buddy — book request notifications go to this admin
     BOOKSHELF_NOTIFY_EMAIL = os.getenv("BOOKSHELF_NOTIFY_EMAIL", "shivam.sharma@alignedautomation.com")
     # Nexus Library mock server — single source of truth for book inventory
     NEXUS_LIBRARY_URL = os.getenv("NEXUS_LIBRARY_URL", "http://localhost:8092")
     APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8080")
 
-    # ── Cybersecurity News Digest ─────────────────────────────────────────────
-    # Comma-separated recipient emails. Leave empty to disable the digest.
-    SECURITY_NEWS_RECIPIENTS = os.getenv("SECURITY_NEWS_RECIPIENTS", "")
-    # Sender mailbox (must have a connected MS365 delegated token). Falls back to
-    # PARKING_REMINDER_SENDER then NOTIFY_TO_EMAIL.
-    SECURITY_NEWS_SENDER = os.getenv("SECURITY_NEWS_SENDER", "")
-    # Hour of day (server local time, 24h) to send the digest. Default: 9 AM.
-    SECURITY_NEWS_HOUR = int(os.getenv("SECURITY_NEWS_HOUR", "9"))
-    # Master switch — set to false to pause without removing recipients.
-    SECURITY_NEWS_ENABLED = os.getenv("SECURITY_NEWS_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    # Base URL used ONLY for OAuth redirect URIs and the connect-popup postMessage
+    # origin. Falls back to APP_BASE_URL. Set this to the browser-facing origin
+    # (e.g. http://localhost:3000 in local dev) when it differs from APP_BASE_URL,
+    # which also drives email/deep links. The provider callback is
+    # {OAUTH_REDIRECT_BASE_URL}/api/integrations/callback/{provider} and must be
+    # registered verbatim in the Microsoft / Zoho app console.
+    OAUTH_REDIRECT_BASE_URL = os.getenv("OAUTH_REDIRECT_BASE_URL", "") or APP_BASE_URL
 
     # Power Automate — SharePoint/PowerApps complaint sync
     # Set this to the HTTP trigger URL from your Power Automate flow.
@@ -294,13 +313,86 @@ class Config:
         "Chat.Read Chat.ReadWrite "
         "Place.Read.All "
         "Team.ReadBasic.All Channel.ReadBasic.All "
-        "ChannelMessage.Read.All ChannelMessage.Send",
+        "ChannelMessage.Read.All ChannelMessage.Send "
+        # Teams Activity-feed notifications (sendActivityNotification). Inert until the
+        # Centriq Teams app is installed per user + admin consent is granted; users must
+        # reconnect MS365 after this scope is added so the new consent is captured.
+        "TeamsActivity.Send",
     )
+
+    # ── Proactive Nudge layer (system-initiated, deterministic — zero LLM) ────
+    # A background scan turns the assistant from reactive → proactive: it detects
+    # actionable situations (leaves about to lapse, an approval the manager hasn't
+    # actioned) and surfaces a one-click nudge in the in-app feed. Detection is
+    # pure DB look-ups; the LLM is NOT in the loop (messages are templated).
+    # The in-app feed is the source of truth; Teams/email push is best-effort and
+    # gated OFF by default (stays silent until Azure/Teams is provisioned).
+    NUDGE_SCAN_INTERVAL_MIN = int(os.getenv("NUDGE_SCAN_INTERVAL_MIN", "30"))
+    # Earned/non-carry-forward leaves with a remaining balance lapse at the FINANCIAL
+    # year-end. The company follows the Indian financial year (ends 31 March), so the
+    # default is "03-31". There is no fiscal-year concept in the schema, hence it's
+    # defined here as MM-DD. NOTE: LeaveBalance is calendar-year-bucketed throughout
+    # the app — but the expiry window (LEAVE_EXPIRY_WINDOW_DAYS before 31 Mar) always
+    # lands in Jan–Mar, the same calendar year as that 31 Mar, so the detector's
+    # current-calendar-year balance lookup lines up with what the user sees.
+    FISCAL_YEAR_END = os.getenv("FISCAL_YEAR_END", "03-31")
+    LEAVE_EXPIRY_WINDOW_DAYS = int(os.getenv("LEAVE_EXPIRY_WINDOW_DAYS", "45"))
+    # A leave left "Pending" longer than this many days is treated as stale → the
+    # employee gets a one-click "nudge manager" to re-send the approval request.
+    STALE_APPROVAL_DAYS = int(os.getenv("STALE_APPROVAL_DAYS", "3"))
+    # A nudge auto-expires (drops off the feed) this many days after creation.
+    NUDGE_TTL_DAYS = int(os.getenv("NUDGE_TTL_DAYS", "14"))
+    # Minimum gap between successive "nudge manager" re-sends for the same request,
+    # so a manager can't be spammed by repeated clicks.
+    NUDGE_MANAGER_COOLDOWN_HOURS = int(os.getenv("NUDGE_MANAGER_COOLDOWN_HOURS", "24"))
+    # Master switch for best-effort Teams/email push of new nudges. OFF until Azure
+    # is set up (see "Teams notification model"); the in-app feed works regardless.
+    NUDGE_PUSH_ENABLED = os.getenv("NUDGE_PUSH_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+    # ── Employee onboarding journey ───────────────────────────────────────────
+    # A new hire (joining_date within this many days) gets a guided, tracked
+    # onboarding flow: a personal step-by-step page, proactive nudges for the next
+    # step, and an HR tracking view. See services/onboarding_service.py.
+    ONBOARDING_WINDOW_DAYS = int(os.getenv("ONBOARDING_WINDOW_DAYS", "60"))
+    # A journey with no step completed in this many days is flagged "stalled" in the
+    # HR tracker so HR can follow up.
+    ONBOARDING_STALL_DAYS = int(os.getenv("ONBOARDING_STALL_DAYS", "7"))
+    # Filled joining documents are emailed to this address (the HR inbox). Falls back
+    # to NOTIFY_TO_EMAIL. Uploads are recorded regardless of whether the email sends.
+    ONBOARDING_HR_EMAIL = os.getenv("ONBOARDING_HR_EMAIL", "") or os.getenv("NOTIFY_TO_EMAIL", "")
+    # Induction video shown in the journey's video step. A direct URL the in-app HTML5
+    # player can load (e.g. a SharePoint/Stream/CDN MP4). Chapters let the hire seek.
+    INDUCTION_VIDEO_URL = os.getenv("INDUCTION_VIDEO_URL", "")
+    INDUCTION_VIDEO_TITLE = os.getenv("INDUCTION_VIDEO_TITLE", "Welcome to the team")
+
+    # ── Action receipts + undo ────────────────────────────────────────────────
+    # Every executed write action emits a durable ActionReceipt. For actions whose
+    # downstream still allows reversal (a freshly-created IT ticket / HR query that no
+    # one has actioned yet), the receipt carries a one-click undo link valid for this
+    # many minutes after execution. 0 disables the time window (undo allowed until the
+    # downstream itself closes the door, e.g. the ticket leaves "Open").
+    RECEIPT_UNDO_WINDOW_MIN = int(os.getenv("RECEIPT_UNDO_WINDOW_MIN", "120"))
+
+    # ── Teams Activity-feed notifications ─────────────────────────────────────
+    # Decisions, reminders and info notices are emailed AND pinged to the recipient's
+    # Teams Activity feed (the bell) via Graph sendActivityNotification. This stays a
+    # no-op until the prerequisites are provisioned (Centriq Teams app installed for the
+    # user, TeamsActivity.Send consented, activityType declared in the app manifest).
+    TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED = os.getenv(
+        "TEAMS_ACTIVITY_NOTIFICATIONS_ENABLED", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    # activityType must match an entry declared in the Teams app manifest's
+    # activities.activityTypes (Graph rejects undeclared types with 400).
+    TEAMS_ACTIVITY_TYPE = os.getenv("TEAMS_ACTIVITY_TYPE", "centriqNotification")
     # Fernet key for encrypting tokens at rest (32-byte URL-safe base64)
     TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY", "")
 
     # ── External Portal Automation (Playwright MCP) ───────────────────────────
     ZOHO_PEOPLE_URL    = os.getenv("ZOHO_PEOPLE_URL", "")
+    # Deep-link to the Zoho People document/letter generation area (employees fill it
+    # there). The exact hash route varies per org — override this env var with the
+    # confirmed URL. Falls back to ZOHO_PEOPLE_URL / people.zoho.com when unset.
+    ZOHO_PEOPLE_DOCS_URL = os.getenv("ZOHO_PEOPLE_DOCS_URL", "")
     # Zoho OAuth2 API (replaces session-file scraping)
     ZOHO_CLIENT_ID     = os.getenv("ZOHO_CLIENT_ID", "")
     ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "")
@@ -319,6 +411,33 @@ class Config:
     POWERAPPS_URL      = os.getenv("POWERAPPS_URL", "")
     PAYROLL_PORTAL_URL = os.getenv("PAYROLL_PORTAL_URL", "")
 
+    # ── Zoho employee-profile DB (read-only directory source) ─────────────────
+    # A separate Postgres server exposes a SQL VIEW of Zoho People profiles
+    # (vb_employees). The Employee Directory reads this view live instead of the
+    # synced MS365/Zoho-overlay tables. ZOHO_DBURL may be a full SQLAlchemy URL
+    # (postgresql://host:port/db, creds optional) or a bare host[:port][/db];
+    # username/password/view are supplied separately. Empty = feature disabled
+    # (directory falls back to the MS365 source). See services/zoho_directory_service.py.
+    ZOHO_DBURL     = os.getenv("ZOHO_DBURL", "")
+    ZOHO_USERNAME  = os.getenv("ZOHO_USERNAME", "")
+    ZOHO_PASSWORD  = os.getenv("ZOHO_PASSWORD", "")
+    ZOHO_VIEW      = os.getenv("ZOHO_VIEW", "vb_employees")
+
+    # ── eSSL Attendance DB (read-only SQL Server source) ──────────────────────
+    # A separate SQL Server database exposes a view of eSSL biometric attendance
+    # punches (dbo.vbUserTimeEntryLog). When configured, attendance queries use
+    # this live source instead of the locally-seeded dummy table. Employee records
+    # are matched by name (USERNAME column). ATTENDANCE_DBURL may be a JDBC-style
+    # URL (jdbc:sqlserver://;serverName=...;databaseName=...) or a plain MSSQL URL.
+    # Requires ODBC Driver 17 for SQL Server on the host OS.
+    ATTENDANCE_DBURL     = os.getenv("ATTENDANCE_DBURL", "")
+    ATTENDANCE_USERNAME  = os.getenv("ATTENDANCE_USERNAME", "")
+    ATTENDANCE_PASSWORD  = os.getenv("ATTENDANCE_PASSWORD", "")
+    ATTENDANCE_VIEW      = os.getenv("ATTENDANCE_VIEW", "dbo.vbUserTimeEntryLog")
+    # Check-in after this time (HH:MM, 24h) counts as "Late" on a Present day.
+    # Single source of truth for late-arrival across all attendance features.
+    ATTENDANCE_LATE_CUTOFF = os.getenv("ATTENDANCE_LATE_CUTOFF", "13:00")
+
     # ── Alchemy Skills Portal (Azure AD-secured internal API) ─────────────────
     ALCHEMY_BASE_URL          = os.getenv("ALCHEMY_BASE_URL", "https://apps.alignedautomation.com/alchemyapi/api/v1")
     # Prefix prepended to numeric employee IDs when calling the Alchemy API.
@@ -328,6 +447,35 @@ class Config:
     #   true  → query the authoritative Alchemy Skills Portal (skill name → id → users)
     #   false → fall back to the internal DB directory (dummy/demo data)
     ALCHEMY_SKILL_SEARCH_ENABLED = os.getenv("ALCHEMY_SKILL_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+    # Email of a connected-Microsoft account used as the shared SERVICE identity to read
+    # any employee's Alchemy skills/projects for the directory (Alchemy allows cross-user
+    # reads with one token). Blank → fall back to the first active Microsoft connection.
+    ALCHEMY_SERVICE_EMAIL = os.getenv("ALCHEMY_SERVICE_EMAIL", "")
+
+    # ── TechElevate Local LMS ─────────────────────────────────────────────────
+    TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
+    TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
+    # The real, external TechElevate portal (where employees actually sit the exam). The local
+    # LMS is the authoring surface — build courses + AI-draft MCQs here, take the test there.
+    TECHELEVATE_PORTAL_URL = os.getenv("TECHELEVATE_PORTAL_URL", "https://training.alignedautomation.com")
+
+    # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────
+    # Org-level service credential — NOT per-user OAuth. The client id/secret are
+    # base64-encoded as Basic auth against https://{subdomain}.udemy.com/api-2.0.
+    # Catalog + reporting endpoints are scoped to the numeric organization id.
+    UDEMY_SUBDOMAIN     = os.getenv("UDEMY_SUBDOMAIN", "alignedautomation")
+    UDEMY_ORG_ID        = os.getenv("UDEMY_ORG_ID", "178490")
+    UDEMY_CLIENT_ID     = os.getenv("UDEMY_CLIENT_ID", "")
+    UDEMY_CLIENT_SECRET = os.getenv("UDEMY_CLIENT_SECRET", "")
+    UDEMY_ENABLED       = os.getenv("UDEMY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+    @property
+    def UDEMY_API_BASE(self) -> str:
+        return f"https://{self.UDEMY_SUBDOMAIN}.udemy.com/api-2.0"
+
+    @property
+    def UDEMY_PORTAL_BASE(self) -> str:
+        return f"https://{self.UDEMY_SUBDOMAIN}.udemy.com"
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

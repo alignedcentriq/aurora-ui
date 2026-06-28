@@ -37,10 +37,14 @@ function dayClass(record: DayRecord | undefined, isFuture: boolean, isWeekend: b
   if (isFuture || (!record && isWeekend)) return "text-muted-foreground/30";
   if (!record) return "text-muted-foreground/40";
   if (record.late) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
-  if (record.status === "Present") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
-  if (record.status === "Absent") return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
-  if (record.status === "WFH") return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200";
-  if (record.status === "Half-day") return "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200";
+  if (record.status === "Present")
+    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
+  if (record.status === "Absent")
+    return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
+  if (record.status === "WFH")
+    return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200";
+  if (record.status === "Half-day")
+    return "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200";
   return "text-muted-foreground/40";
 }
 
@@ -58,34 +62,41 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
     fetch(`/api/attendance/my/calendar?month=${viewMonth}&year=${viewYear}`, {
       headers: { "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() },
     })
-      .then(r => r.json())
+      .then((r) => r.json())
       .then(setData)
       .catch(() => setData({ success: false, error: "network_error" }))
       .finally(() => setLoading(false));
   }, [viewMonth, viewYear, userEmail, userRole]);
 
-  const isCurrentMonth =
-    viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
+  const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
 
   const prevMonth = () => {
-    if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12); }
-    else setViewMonth(m => m - 1);
+    if (viewMonth === 1) {
+      setViewYear((y) => y - 1);
+      setViewMonth(12);
+    } else setViewMonth((m) => m - 1);
   };
   const nextMonth = () => {
     if (isCurrentMonth) return;
-    if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1); }
-    else setViewMonth(m => m + 1);
+    if (viewMonth === 12) {
+      setViewYear((y) => y + 1);
+      setViewMonth(1);
+    } else setViewMonth((m) => m + 1);
   };
 
   // Build lookup by date string
   const dayMap: Record<string, DayRecord> = {};
-  (data?.days ?? []).forEach(d => { dayMap[d.date] = d; });
+  (data?.days ?? []).forEach((d) => {
+    dayMap[d.date] = d;
+  });
 
   // Compute summary
   const stats = { present: 0, absent: 0, wfh: 0, late: 0, half_day: 0 };
-  (data?.days ?? []).forEach(d => {
-    if (d.status === "Present") { stats.present++; if (d.late) stats.late++; }
-    else if (d.status === "Absent") stats.absent++;
+  (data?.days ?? []).forEach((d) => {
+    if (d.status === "Present") {
+      stats.present++;
+      if (d.late) stats.late++;
+    } else if (d.status === "Absent") stats.absent++;
     else if (d.status === "WFH") stats.wfh++;
     else if (d.status === "Half-day") stats.half_day++;
   });
@@ -94,12 +105,14 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
   const firstDow = new Date(viewYear, viewMonth - 1, 1).getDay(); // 0=Sun
   const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
   const periodLabel = new Date(viewYear, viewMonth - 1, 1).toLocaleDateString("en-IN", {
-    month: "long", year: "numeric",
+    month: "long",
+    year: "numeric",
   });
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
       className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 backdrop-blur-sm"
     >
@@ -145,13 +158,36 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
             {/* Summary chips */}
             <div className="mb-3 flex flex-wrap gap-1.5">
               {[
-                { label: "Present", count: stats.present, cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" },
-                { label: "Absent", count: stats.absent, cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300" },
-                { label: "WFH", count: stats.wfh, cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
-                { label: "Late", count: stats.late, cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
-                { label: "Half-day", count: stats.half_day, cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" },
+                {
+                  label: "Present",
+                  count: stats.present,
+                  cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+                },
+                {
+                  label: "Absent",
+                  count: stats.absent,
+                  cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+                },
+                {
+                  label: "WFH",
+                  count: stats.wfh,
+                  cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+                },
+                {
+                  label: "Late",
+                  count: stats.late,
+                  cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+                },
+                {
+                  label: "Half-day",
+                  count: stats.half_day,
+                  cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+                },
               ].map(({ label, count, cls }) => (
-                <span key={label} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>
+                <span
+                  key={label}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}
+                >
                   {count} {label}
                 </span>
               ))}
@@ -161,8 +197,10 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
             <div className="overflow-hidden rounded-xl border border-border">
               {/* Day-of-week header */}
               <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(d => (
-                  <div key={d} className="py-1.5">{d}</div>
+                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                  <div key={d} className="py-1.5">
+                    {d}
+                  </div>
                 ))}
               </div>
               {/* Day cells */}
@@ -170,7 +208,7 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
                 {Array.from({ length: firstDow }).map((_, i) => (
                   <div key={`pre-${i}`} className="aspect-square" />
                 ))}
-                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
                   const dateStr = `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
                   const record = dayMap[dateStr];
                   const isFuture = dateStr > todayStr;
@@ -183,7 +221,9 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
                         record.status + (record.late ? " (Late)" : ""),
                         record.check_in ? `In: ${record.check_in}` : null,
                         record.check_out ? `Out: ${record.check_out}` : null,
-                      ].filter(Boolean).join(" · ")
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
                     : undefined;
 
                   return (

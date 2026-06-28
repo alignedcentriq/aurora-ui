@@ -6,7 +6,7 @@ export function ThemeManager() {
 
   React.useEffect(() => {
     const root = window.document.documentElement;
-    
+
     const applyTheme = (t: "light" | "dark" | "system") => {
       root.classList.remove("light", "dark");
 

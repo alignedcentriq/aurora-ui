@@ -48,7 +48,12 @@ const item = {
   },
 };
 
-function CircularProgress({ value, size = 48, strokeWidth = 4, color = "var(--primary)" }: {
+function CircularProgress({
+  value,
+  size = 48,
+  strokeWidth = 4,
+  color = "var(--primary)",
+}: {
   value: number;
   size?: number;
   strokeWidth?: number;
@@ -292,11 +297,20 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10">
               <CalendarDays className="h-4 w-4 text-emerald-500" />
             </div>
-            <CircularProgress value={Math.round((12 / cData.leave.amount) * 100)} size={36} strokeWidth={3} color="#10b981" />
+            <CircularProgress
+              value={Math.round((12 / cData.leave.amount) * 100)}
+              size={36}
+              strokeWidth={3}
+              color="#10b981"
+            />
           </div>
           <div>
-            <p className="text-2xl font-bold tracking-tight text-foreground">12 / {cData.leave.amount}</p>
-            <p className="text-[11px] text-muted-foreground font-medium">{cData.leave.label} Left</p>
+            <p className="text-2xl font-bold tracking-tight text-foreground">
+              12 / {cData.leave.amount}
+            </p>
+            <p className="text-[11px] text-muted-foreground font-medium">
+              {cData.leave.label} Left
+            </p>
           </div>
         </>
       );
@@ -315,7 +329,9 @@ function CardContent({ id }: { id: CardId }) {
           </div>
           <div>
             <p className="text-sm font-semibold text-foreground truncate">{cData.holiday.name}</p>
-            <p className="text-[11px] text-muted-foreground font-medium">{cData.holiday.date} · {cData.holiday.relative}</p>
+            <p className="text-[11px] text-muted-foreground font-medium">
+              {cData.holiday.date} · {cData.holiday.relative}
+            </p>
           </div>
         </>
       );
@@ -350,12 +366,16 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/10">
               <Ticket className="h-4 w-4 text-violet-500" />
             </div>
-            <span className="text-[9px] text-muted-foreground font-semibold bg-secondary px-2 py-0.5 rounded">{cData.helpdesk}</span>
+            <span className="text-[9px] text-muted-foreground font-semibold bg-secondary px-2 py-0.5 rounded">
+              {cData.helpdesk}
+            </span>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">All resolved</span>
+              <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                All resolved
+              </span>
             </div>
             <p className="text-[11px] text-muted-foreground font-medium">0 open tickets</p>
           </div>
@@ -395,7 +415,9 @@ function CardContent({ id }: { id: CardId }) {
           </div>
           <div>
             <p className="text-2xl font-bold tracking-tight text-foreground">5</p>
-            <p className="text-[11px] text-muted-foreground font-medium">Open tickets ({cData.code})</p>
+            <p className="text-[11px] text-muted-foreground font-medium">
+              Open tickets ({cData.code})
+            </p>
           </div>
         </>
       );
@@ -411,7 +433,9 @@ function CardContent({ id }: { id: CardId }) {
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <span className="flex h-2 w-2 rounded-full bg-amber-500" />
-              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">2 pending</span>
+              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                2 pending
+              </span>
             </div>
             <p className="text-[11px] text-muted-foreground font-medium">Expense claims</p>
           </div>
@@ -535,7 +559,9 @@ function CardContent({ id }: { id: CardId }) {
             </span>
           </div>
           <div>
-            <p className="text-xs font-semibold text-foreground truncate">"Great delivery!" - Alice</p>
+            <p className="text-xs font-semibold text-foreground truncate">
+              "Great delivery!" - Alice
+            </p>
             <p className="text-[11px] text-muted-foreground font-medium">Kudos Board</p>
           </div>
         </>
@@ -626,7 +652,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
   }
 
   const availableToAdd = CARD_CATALOG.filter(
-    (c) => isCardAllowed(c, role) && !activeCards.includes(c.id)
+    (c) => isCardAllowed(c, role) && !activeCards.includes(c.id),
   );
 
   const showAddSlot = editMode && activeCards.length < 4;
@@ -644,7 +670,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
             "flex items-center gap-1.5 text-[11px] font-medium transition-all rounded-full px-3 py-1 ml-3",
             editMode
               ? "text-primary bg-primary/10 border border-primary/20"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent",
           )}
         >
           {editMode ? (
@@ -666,7 +692,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
         variants={container}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 w-full items-stretch"
+        className="flex lg:grid lg:grid-cols-4 overflow-x-auto lg:overflow-visible no-scrollbar flex-nowrap lg:flex-wrap gap-3 w-full items-stretch px-1.5 pt-2 pb-1 -mx-1.5"
       >
         <AnimatePresence mode="popLayout">
           {activeCards.map((id) => {
@@ -677,7 +703,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 variants={item}
                 layout
                 exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-                className="relative h-full"
+                className="relative h-full w-[145px] sm:w-[170px] lg:w-auto shrink-0 lg:shrink"
               >
                 {/* Remove button — visible in edit mode */}
                 <AnimatePresence>
@@ -688,22 +714,28 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                       exit={{ scale: 0, opacity: 0 }}
                       transition={{ type: "spring", stiffness: 400, damping: 20 }}
                       onClick={() => removeCard(id)}
-                      className="absolute -top-1.5 -right-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-sm"
+                      whileHover={{ scale: 1.12 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="absolute -top-2 -right-2 z-30 flex h-6 w-6 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-md ring-2 ring-background hover:bg-destructive/90"
                       aria-label={`Remove ${def.label}`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </motion.button>
                   )}
                 </AnimatePresence>
 
                 <motion.button
-                  whileHover={editMode ? {} : { y: -4, transition: { duration: 0.25, ease: [0.16, 1, 0.3, 1] } }}
+                  whileHover={
+                    editMode
+                      ? {}
+                      : { y: -4, transition: { duration: 0.25, ease: [0.16, 1, 0.3, 1] } }
+                  }
                   whileTap={editMode ? {} : { scale: 0.97 }}
                   onClick={() => !editMode && onAction?.(getPrompt(def, role))}
                   className={cn(
                     "card-live-dot group flex flex-col justify-between gap-3 rounded-2xl glass-widget border-l-[3px] p-5 text-left w-full h-full min-h-[110px]",
                     CARD_LEFT_ACCENT[id],
-                    editMode ? "cursor-default" : CARD_HOVER[id]
+                    editMode ? "cursor-default" : CARD_HOVER[id],
                   )}
                 >
                   <CardContent id={id} />
@@ -719,7 +751,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
               variants={item}
               layout
               exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-              className="relative h-full"
+              className="relative h-full w-[145px] sm:w-[170px] lg:w-auto shrink-0 lg:shrink"
             >
               <div ref={addRef} className="h-full">
                 <button
@@ -734,11 +766,11 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 <AnimatePresence>
                   {addOpen && (
                     <motion.div
-                      initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                      exit={{ opacity: 0, y: 6, scale: 0.97 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute top-full mt-1 left-0 z-20 w-52 rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
+                      className="absolute bottom-full mb-1.5 left-0 z-40 w-52 max-w-[80vw] rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
                     >
                       {availableToAdd.length === 0 ? (
                         <p className="px-3 py-2.5 text-[12px] text-muted-foreground">
@@ -751,8 +783,12 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                             onClick={() => addCard(card.id)}
                             className="flex flex-col w-full px-3 py-2.5 text-left hover:bg-accent transition-colors gap-0.5"
                           >
-                            <span className="text-[12px] font-medium text-foreground">{card.label}</span>
-                            <span className="text-[11px] text-muted-foreground">{card.description}</span>
+                            <span className="text-[12px] font-medium text-foreground">
+                              {card.label}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {card.description}
+                            </span>
                           </button>
                         ))
                       )}

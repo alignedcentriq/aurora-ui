@@ -24,7 +24,7 @@ export function Toggle({
       className={cn(
         "h-6 w-11 rounded-full transition-colors duration-200 relative shrink-0 cursor-pointer focus:outline-none",
         on ? activeColor : inactiveColor,
-        className
+        className,
       )}
     >
       <motion.div
@@ -32,7 +32,7 @@ export function Toggle({
         transition={{ type: "spring", stiffness: 500, damping: 35 }}
         className={cn(
           "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm",
-          on ? "left-[22px]" : "left-0.5"
+          on ? "left-[22px]" : "left-0.5",
         )}
       />
     </button>

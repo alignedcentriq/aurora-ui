@@ -26,7 +26,8 @@ export function Logo({ className, size = "md" }: LogoProps) {
       <motion.div
         className="absolute inset-0 rounded-xl"
         style={{
-          background: "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
+          background:
+            "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
           padding: "1.5px",
           WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
           WebkitMaskComposite: "destination-out",

@@ -1,7 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
-  Users, Mail, CalendarClock, Loader2, AlertCircle, CheckCircle2, Clock,
+  Users,
+  Mail,
+  CalendarClock,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
 } from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 import type { AttendanceSchedulePrefill } from "@/lib/chat-store";
@@ -14,17 +20,27 @@ import {
 } from "@/components/ui/select";
 
 interface Member {
-  employee: string; department: string; reports_to: string;
-  present: number; absent: number; wfh: number; late: number; half_day: number;
+  employee: string;
+  department: string;
+  reports_to: string;
+  present: number;
+  absent: number;
+  wfh: number;
+  late: number;
+  half_day: number;
 }
 interface TeamReport {
-  success: boolean; message?: string; error?: string;
-  manager?: string; period?: string; headcount?: number;
+  success: boolean;
+  message?: string;
+  error?: string;
+  manager?: string;
+  period?: string;
+  headcount?: number;
   members?: Member[];
   totals?: { present: number; absent: number; wfh: number; late: number; half_day: number };
 }
 
-const DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 interface Props {
   userEmail: string;
@@ -34,16 +50,27 @@ interface Props {
   onDone: (message: string) => void;
 }
 
-function Shell({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function Shell({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
       className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 backdrop-blur-sm"
     >
       <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2.5">
         {icon}
-        <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{title}</span>
+        <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+          {title}
+        </span>
       </div>
       <div className="p-4">{children}</div>
     </motion.div>
@@ -53,7 +80,7 @@ function Shell({ icon, title, children }: { icon: React.ReactNode; title: string
 export function AttendanceScheduleWidget({ userEmail, userRole, mode, prefill, onDone }: Props) {
   const auth = useMemo(
     () => ({ "x-user-email": userEmail, "x-user-role": userRole.toLowerCase() }),
-    [userEmail, userRole]
+    [userEmail, userRole],
   );
   const isManager = userRole.toLowerCase() === "functional manager";
 
@@ -66,12 +93,20 @@ export function AttendanceScheduleWidget({ userEmail, userRole, mode, prefill, o
       </Shell>
     );
   }
-  return mode === "schedule"
-    ? <ScheduleMode auth={auth} prefill={prefill} onDone={onDone} />
-    : <ReportMode auth={auth} onDone={onDone} />;
+  return mode === "schedule" ? (
+    <ScheduleMode auth={auth} prefill={prefill} onDone={onDone} />
+  ) : (
+    <ReportMode auth={auth} onDone={onDone} />
+  );
 }
 
-function ReportMode({ auth, onDone }: { auth: Record<string, string>; onDone: (m: string) => void }) {
+function ReportMode({
+  auth,
+  onDone,
+}: {
+  auth: Record<string, string>;
+  onDone: (m: string) => void;
+}) {
   const [report, setReport] = useState<TeamReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailing, setEmailing] = useState(false);
@@ -81,11 +116,16 @@ function ReportMode({ auth, onDone }: { auth: Record<string, string>; onDone: (m
       try {
         const res = await fetch("/api/portal/manager/attendance", { headers: auth });
         const data = await res.json().catch(() => ({}));
-        if (res.status === 403) { setReport({ success: false, message: "Functional Managers only." }); return; }
+        if (res.status === 403) {
+          setReport({ success: false, message: "Functional Managers only." });
+          return;
+        }
         setReport(data);
       } catch {
         setReport({ success: false, message: "Could not reach the server." });
-      } finally { setLoading(false); }
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [auth]);
 
@@ -93,30 +133,47 @@ function ReportMode({ auth, onDone }: { auth: Record<string, string>; onDone: (m
     setEmailing(true);
     try {
       const res = await fetch("/api/portal/manager/attendance/email", {
-        method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: "{}",
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: "{}",
       });
       const data = await res.json().catch(() => ({}));
       if (data.success && data.sent) {
         flyBanner("Attendance report emailed");
-        onDone(`✅ Emailed your team attendance report for **${data.period}** to ${data.recipients?.join(", ")}.`);
+        onDone(
+          `✅ Emailed your team attendance report for **${data.period}** to ${data.recipients?.join(", ")}.`,
+        );
       } else {
-        onDone("⚠️ Couldn't send the email — make sure your Microsoft account is connected in Settings.");
+        onDone(
+          "⚠️ Couldn't send the email — make sure your Microsoft account is connected in Settings.",
+        );
       }
-    } catch { onDone("⚠️ Could not reach the server."); } finally { setEmailing(false); }
+    } catch {
+      onDone("⚠️ Could not reach the server.");
+    } finally {
+      setEmailing(false);
+    }
   };
 
   return (
-    <Shell icon={<Users className="h-3.5 w-3.5 text-[var(--collaboration)]" />} title="Team Attendance">
+    <Shell
+      icon={<Users className="h-3.5 w-3.5 text-[var(--collaboration)]" />}
+      title="Team Attendance"
+    >
       {loading ? (
         <div className="flex items-center gap-2.5 py-3 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" /> Gathering attendance for your hierarchy…
+          <Loader2 className="h-4 w-4 animate-spin text-primary" /> Gathering attendance for your
+          hierarchy…
         </div>
       ) : !report?.success ? (
-        <p className="py-2 text-sm text-muted-foreground">{report?.message || "No employees report up to you."}</p>
+        <p className="py-2 text-sm text-muted-foreground">
+          {report?.message || "No employees report up to you."}
+        </p>
       ) : (
         <>
           <p className="mb-3 text-sm text-foreground">
-            <strong>{report.headcount}</strong> people in your hierarchy · <strong>{report.period}</strong>
+            <strong>{report.headcount}</strong> people in your hierarchy ·{" "}
+            <strong>{report.period}</strong>
           </p>
           <div className="mb-3 overflow-x-auto rounded-xl border border-border">
             <table className="w-full text-xs">
@@ -156,11 +213,20 @@ function ReportMode({ auth, onDone }: { auth: Record<string, string>; onDone: (m
             </table>
           </div>
           {report.members!.length > 12 && (
-            <p className="mb-2 text-[11px] text-muted-foreground">Showing 12 of {report.members!.length}. The emailed Excel has everyone.</p>
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              Showing 12 of {report.members!.length}. The emailed Excel has everyone.
+            </p>
           )}
-          <button onClick={emailNow} disabled={emailing}
-            className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
-            {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+          <button
+            onClick={emailNow}
+            disabled={emailing}
+            className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {emailing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Mail className="h-3.5 w-3.5" />
+            )}
             Email me this report (with Excel)
           </button>
         </>
@@ -169,8 +235,14 @@ function ReportMode({ auth, onDone }: { auth: Record<string, string>; onDone: (m
   );
 }
 
-function ScheduleMode({ auth, prefill, onDone }: {
-  auth: Record<string, string>; prefill?: AttendanceSchedulePrefill; onDone: (m: string) => void;
+function ScheduleMode({
+  auth,
+  prefill,
+  onDone,
+}: {
+  auth: Record<string, string>;
+  prefill?: AttendanceSchedulePrefill;
+  onDone: (m: string) => void;
 }) {
   const [frequency, setFrequency] = useState(prefill?.frequency ?? "monthly");
   const [dayOfWeek, setDayOfWeek] = useState(prefill?.day_of_week ?? 0);
@@ -186,25 +258,49 @@ function ScheduleMode({ auth, prefill, onDone }: {
     const body: Record<string, unknown> = { frequency, hour, period_mode: periodMode };
     if (frequency === "weekly" || frequency === "custom") body.day_of_week = dayOfWeek;
     if (frequency === "monthly" || frequency === "custom") body.day_of_month = dayOfMonth;
-    if (recipients.trim()) body.recipients = recipients.split(",").map(r => r.trim()).filter(Boolean);
+    if (recipients.trim())
+      body.recipients = recipients
+        .split(",")
+        .map((r) => r.trim())
+        .filter(Boolean);
     try {
       const res = await fetch("/api/portal/manager/attendance/schedules", {
-        method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body),
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         flyBanner("Attendance automation scheduled");
         setDone(true);
-        const when = data.next_run ? new Date(data.next_run).toLocaleString("en-IN",
-          { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true }) : "soon";
-        onDone(`✅ Automation set up — your team's attendance report will be emailed **${frequency}**. First run: ${when}. Manage it anytime in the Manager Portal.`);
-      } else { onDone("⚠️ Couldn't create the automation."); }
-    } catch { onDone("⚠️ Could not reach the server."); } finally { setSaving(false); }
+        const when = data.next_run
+          ? new Date(data.next_run).toLocaleString("en-IN", {
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })
+          : "soon";
+        onDone(
+          `✅ Automation set up — your team's attendance report will be emailed **${frequency}**. First run: ${when}. Manage it anytime in the Manager Portal.`,
+        );
+      } else {
+        onDone("⚠️ Couldn't create the automation.");
+      }
+    } catch {
+      onDone("⚠️ Could not reach the server.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (done) {
     return (
-      <Shell icon={<CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />} title="Automation Scheduled">
+      <Shell
+        icon={<CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+        title="Automation Scheduled"
+      >
         <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
           <Clock className="h-4 w-4" /> Your attendance report automation is active.
         </p>
@@ -212,9 +308,13 @@ function ScheduleMode({ auth, prefill, onDone }: {
     );
   }
 
-  const field = "mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground";
+  const field =
+    "mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground";
   return (
-    <Shell icon={<CalendarClock className="h-3.5 w-3.5 text-[var(--collaboration)]" />} title="Schedule Attendance Email">
+    <Shell
+      icon={<CalendarClock className="h-3.5 w-3.5 text-[var(--collaboration)]" />}
+      title="Schedule Attendance Email"
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col">
           <label className="text-xs font-semibold text-muted-foreground mb-1.5">Frequency</label>
@@ -249,7 +349,9 @@ function ScheduleMode({ auth, prefill, onDone }: {
 
         {(frequency === "weekly" || frequency === "custom") && (
           <div className="flex flex-col">
-            <label className="text-xs font-semibold text-muted-foreground mb-1.5">Day of week</label>
+            <label className="text-xs font-semibold text-muted-foreground mb-1.5">
+              Day of week
+            </label>
             <Select value={String(dayOfWeek)} onValueChange={(val) => setDayOfWeek(Number(val))}>
               <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
                 <SelectValue />
@@ -267,14 +369,24 @@ function ScheduleMode({ auth, prefill, onDone }: {
 
         {(frequency === "monthly" || frequency === "custom") && (
           <div className="flex flex-col">
-            <label className="text-xs font-semibold text-muted-foreground mb-1.5">Day of month (1–28)</label>
-            <input type="number" min={1} max={28} value={dayOfMonth}
-              onChange={e => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))} className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow" />
+            <label className="text-xs font-semibold text-muted-foreground mb-1.5">
+              Day of month (1–28)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={28}
+              value={dayOfMonth}
+              onChange={(e) => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))}
+              className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow"
+            />
           </div>
         )}
 
         <div className="flex flex-col">
-          <label className="text-xs font-semibold text-muted-foreground mb-1.5">Report period</label>
+          <label className="text-xs font-semibold text-muted-foreground mb-1.5">
+            Report period
+          </label>
           <Select value={periodMode} onValueChange={setPeriodMode}>
             <SelectTrigger className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all hover:bg-muted/10">
               <SelectValue />
@@ -287,12 +399,24 @@ function ScheduleMode({ auth, prefill, onDone }: {
         </div>
         <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
           Recipients (comma-separated; blank = you)
-          <input value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="you@alignedautomation.com" className={field} />
+          <input
+            value={recipients}
+            onChange={(e) => setRecipients(e.target.value)}
+            placeholder="you@alignedautomation.com"
+            className={field}
+          />
         </label>
       </div>
-      <button onClick={submit} disabled={saving}
-        className="mt-3 flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
-        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+      <button
+        onClick={submit}
+        disabled={saving}
+        className="mt-3 flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+      >
+        {saving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <CheckCircle2 className="h-3.5 w-3.5" />
+        )}
         Save automation
       </button>
     </Shell>

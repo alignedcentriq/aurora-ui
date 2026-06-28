@@ -1,7 +1,7 @@
 ---
 name: project_centriq_ai
 description: "Full architecture, stack, file map, all agent tools, DB models, REST API, frontend routes, env vars, and current state of Centriq AI (Aurora UI). Read this first on every new session."
-metadata: 
+metadata:
   node_type: memory
   type: project
   originSessionId: cf7f106c-3a9e-474b-a62b-1077682a6606
@@ -20,18 +20,18 @@ metadata:
 
 ## Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React + Vite, TanStack Router (file-based), Zustand, shadcn/ui, Tailwind |
-| Auth | Azure MSAL SSO (`src/lib/msal.ts`, `useAuth()` hook). Frontend sends `x-user-email` + `x-user-role` headers derived from verified MSAL account on every API call. Backend reads headers in `auth.py` dependency. |
-| Backend | FastAPI (Python 3.11+) |
-| AI Framework | LangGraph StateGraph, LangChain `@tool` decorator |
-| LLM | Local Ollama via OpenAI-compatible API. Two configs: ROUTER (`gpt-oss:20b` macOS / `gpt-oss:latest` Windows Aligned server) handles intent classification AND all domain agent tool calling; AGENT (`llama3.3:70b`) used only for summarization. All domain agents use ROUTER settings intentionally — `gpt-oss` family is the tool-capable model. |
-| DB | PostgreSQL, schema `enterprise_ai`. SQLAlchemy ORM |
-| Checkpointer | Redis (`AsyncRedisSaver`), falls back to `MemorySaver` if unavailable |
-| Storage | MinIO (bucket: `aurora-bucket`) for PDF documents |
-| Email | SMTP via `email_service.py` — IT helpdesk, admin notifications |
-| Observability | Langfuse (LLM tracing), Loki + pythonjsonlogger logging |
+| Layer         | Technology                                                                                                                                                                                                                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend      | React + Vite, TanStack Router (file-based), Zustand, shadcn/ui, Tailwind                                                                                                                                                                                                                                                                           |
+| Auth          | Azure MSAL SSO (`src/lib/msal.ts`, `useAuth()` hook). Frontend sends `x-user-email` + `x-user-role` headers derived from verified MSAL account on every API call. Backend reads headers in `auth.py` dependency.                                                                                                                                   |
+| Backend       | FastAPI (Python 3.11+)                                                                                                                                                                                                                                                                                                                             |
+| AI Framework  | LangGraph StateGraph, LangChain `@tool` decorator                                                                                                                                                                                                                                                                                                  |
+| LLM           | Local Ollama via OpenAI-compatible API. Two configs: ROUTER (`gpt-oss:20b` macOS / `gpt-oss:latest` Windows Aligned server) handles intent classification AND all domain agent tool calling; AGENT (`llama3.3:70b`) used only for summarization. All domain agents use ROUTER settings intentionally — `gpt-oss` family is the tool-capable model. |
+| DB            | PostgreSQL, schema `enterprise_ai`. SQLAlchemy ORM                                                                                                                                                                                                                                                                                                 |
+| Checkpointer  | Redis (`AsyncRedisSaver`), falls back to `MemorySaver` if unavailable                                                                                                                                                                                                                                                                              |
+| Storage       | MinIO (bucket: `aurora-bucket`) for PDF documents                                                                                                                                                                                                                                                                                                  |
+| Email         | SMTP via `email_service.py` — IT helpdesk, admin notifications                                                                                                                                                                                                                                                                                     |
+| Observability | Langfuse (LLM tracing), Loki + pythonjsonlogger logging                                                                                                                                                                                                                                                                                            |
 
 ---
 
@@ -52,6 +52,7 @@ User → POST /api/chat {message, session_id}
 ```
 
 **AgentState:**
+
 ```python
 {
   messages: List[BaseMessage],
@@ -150,107 +151,116 @@ def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser
 **Removed tables:** Sprint, TeamCapacity, Milestone, ProjectAssignment, SessionTranscript, TrainingAssignment, EmployeeSkillMap — out of scope, seed data removed too.
 
 ### HR Domain
-| Model | Table | Key Columns |
-|-------|-------|-------------|
-| `Employee` | `employees` | id, employee_id, name, email, department, designation, manager_id (self-ref FK), joining_date, employment_type, location, pf_number, insurance_plan, tax_regime, shift_type |
-| `Leave` | `leaves` | employee_id→employees, leave_type (Casual/Sick/Earned/Optional), start_date, end_date, status (Pending/Approved/Rejected/Cancelled), reason |
-| `Payroll` | `payroll` | employee_id, month, year, base_salary, bonus, deductions, net_salary, tax_paid, status |
-| `Attendance` | `attendance` | employee_id, date, check_in, check_out, status (Present/Absent/WFH/Half-day) |
-| `Policy` | `policies` | title, category (Leave/WFH/etc.), content |
+
+| Model                 | Table                    | Key Columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Employee`            | `employees`              | id, employee_id, name, email, department, designation, manager_id (self-ref FK), joining_date, employment_type, location, pf_number, insurance_plan, tax_regime, shift_type                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `Leave`               | `leaves`                 | employee_id→employees, leave_type (Casual/Sick/Earned/Optional), start_date, end_date, status (Pending/Approved/Rejected/Cancelled), reason                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `Payroll`             | `payroll`                | employee_id, month, year, base_salary, bonus, deductions, net_salary, tax_paid, status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Attendance`          | `attendance`             | employee_id, date, check_in, check_out, status (Present/Absent/WFH/Half-day)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `Policy`              | `policies`               | title, category (Leave/WFH/etc.), content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `EmployeeZohoProfile` | `employee_zoho_profiles` | employee_id (FK unique), zoho_link_id, first_name, last_name, official_email, function, designation, zoho_role, employment_type, employee_status, source_of_hire, date_of_joining, date_of_confirmation, tenure_in_aa, total_experience, reporting_manager, age, gender, about_me, blood_group, expertise, work_phone, extension, sub_location, tags, onboarding_status, organization_structure, level, grade, skill_set, functional_manager, language_known, resource_management_function, project_manager, project_manager_2, role, date_for_360_feedback, nationality, active_details |
 
 **⚠️ SECURITY — NEVER expose from ZohoProfile:** Fixed CTC, Variable CTC, Total CTC, Bank Account, PAN, Aadhaar, UAN, Passport, Personal Mobile, Personal Email, Bank Name/Branch/IFSC, Monthly Pricing, Contract End Date.
 
 ### PMO Domain
-| Model | Table | Key Columns |
-|-------|-------|-------------|
+
+| Model     | Table      | Key Columns                                                                                     |
+| --------- | ---------- | ----------------------------------------------------------------------------------------------- |
 | `Project` | `projects` | name (unique), status, completion_pct, next_milestone, next_milestone_date, owner, achievements |
 
 ### Admin Domain
-| Model | Table | Key Columns |
-|-------|-------|-------------|
-| `Reimbursement` | `reimbursements` | employee_id, type, amount, receipt_url, status, approved_by, reason |
-| `ParkingSticker` | `parking_stickers` | employee_id, vehicle_type, vehicle_number, vehicle_make, vehicle_model, sticker_number, valid_from, valid_until, status |
-| `Accommodation` | `accommodations` | employee_id, type, check_in, check_out, location, status |
-| `FacilityComplaint` | `facility_complaints` | ticket_id (FC-xxx), employee_id, category, description, location, priority, status, assigned_to, resolved_at |
-| `FoodVendorFeedback` | `food_vendor_feedback` | employee_id, vendor_name, rating (1-5), food_quality, hygiene, service, comments |
-| `FoodComplaint` | `food_complaints` | employee_id, vendor_name, complaint_type, description, status |
+
+| Model                | Table                  | Key Columns                                                                                                             |
+| -------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `Reimbursement`      | `reimbursements`       | employee_id, type, amount, receipt_url, status, approved_by, reason                                                     |
+| `ParkingSticker`     | `parking_stickers`     | employee_id, vehicle_type, vehicle_number, vehicle_make, vehicle_model, sticker_number, valid_from, valid_until, status |
+| `Accommodation`      | `accommodations`       | employee_id, type, check_in, check_out, location, status                                                                |
+| `FacilityComplaint`  | `facility_complaints`  | ticket_id (FC-xxx), employee_id, category, description, location, priority, status, assigned_to, resolved_at            |
+| `FoodVendorFeedback` | `food_vendor_feedback` | employee_id, vendor_name, rating (1-5), food_quality, hygiene, service, comments                                        |
+| `FoodComplaint`      | `food_complaints`      | employee_id, vendor_name, complaint_type, description, status                                                           |
 
 ### IT Support Domain
-| Model | Table | Key Columns |
-|-------|-------|-------------|
-| `ITTicket` | `it_tickets` | ticket_id (IT-xxx / IT-SW-xxx), employee_id, category, subject, description, priority, status (Open/Awaiting Approval/In Progress/Resolved/Closed), requires_admin_password*, admin_password_provided*, resolved_at |
-| `SoftwareRequest` | `software_requests` | employee_id, it_ticket_id, software_name, version, justification, requires_admin, status |
-| `AssetAssignment` | `asset_assignments` | employee_id, asset_type, asset_tag, brand, model, serial_number, assigned_date, status |
-| `HITLRequest` | `hitl_requests` | ticket_id→it_tickets, request_type (software_approval/escalation), status (Pending/Completed/Expired), completed_at, completed_by |
 
-*`requires_admin_password` and `admin_password_provided` columns still exist in DB but are no longer written by service code. HITL is now a pure approval flow — no password concept.
+| Model             | Table               | Key Columns                                                                                                                                                                                                         |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ITTicket`        | `it_tickets`        | ticket_id (IT-xxx / IT-SW-xxx), employee_id, category, subject, description, priority, status (Open/Awaiting Approval/In Progress/Resolved/Closed), requires_admin_password*, admin_password_provided*, resolved_at |
+| `SoftwareRequest` | `software_requests` | employee_id, it_ticket_id, software_name, version, justification, requires_admin, status                                                                                                                            |
+| `AssetAssignment` | `asset_assignments` | employee_id, asset_type, asset_tag, brand, model, serial_number, assigned_date, status                                                                                                                              |
+| `HITLRequest`     | `hitl_requests`     | ticket_id→it_tickets, request_type (software_approval/escalation), status (Pending/Completed/Expired), completed_at, completed_by                                                                                   |
+
+\*`requires_admin_password` and `admin_password_provided` columns still exist in DB but are no longer written by service code. HITL is now a pure approval flow — no password concept.
 
 ### Functional Manager Domain
+
 No dedicated tables. Manager agent has a single tool: `get_my_team` (lists direct reports via `Employee.manager_id`).
 
 ### Cross-Domain / System
-| Model | Table | Key Columns |
-|-------|-------|-------------|
-| `PromptConfig` | `prompt_configs` | agent_domain, prompt_key (system_prompt/guardrail), prompt_value, version, is_active, allowed_roles, created_by |
-| `Announcement` | `announcements` | title, body, category, created_by (email from auth token), created_by_domain, target_audience, is_active, expires_at |
-| `ChatFeedback` | `chat_feedback` | session_id, domain, user_message, ai_response, rating (1/-1), feedback_text, created_at |
-| `GraphSubscription` | `graph_subscriptions` | subscription_id, site_id, drive_id, expiration_time, status |
-| `SharePointDeltaToken` | `sharepoint_delta_tokens` | drive_id (unique), delta_url, last_sync |
-| `SharePointFile` | `sharepoint_files` | file_id (unique), name, path, web_url, last_modified, processing_status |
-| `SyncFailureLog` | `sync_failure_logs` | resource_id, error_type, error_message, resolved |
+
+| Model                  | Table                     | Key Columns                                                                                                          |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `PromptConfig`         | `prompt_configs`          | agent_domain, prompt_key (system_prompt/guardrail), prompt_value, version, is_active, allowed_roles, created_by      |
+| `Announcement`         | `announcements`           | title, body, category, created_by (email from auth token), created_by_domain, target_audience, is_active, expires_at |
+| `ChatFeedback`         | `chat_feedback`           | session_id, domain, user_message, ai_response, rating (1/-1), feedback_text, created_at                              |
+| `GraphSubscription`    | `graph_subscriptions`     | subscription_id, site_id, drive_id, expiration_time, status                                                          |
+| `SharePointDeltaToken` | `sharepoint_delta_tokens` | drive_id (unique), delta_url, last_sync                                                                              |
+| `SharePointFile`       | `sharepoint_files`        | file_id (unique), name, path, web_url, last_modified, processing_status                                              |
+| `SyncFailureLog`       | `sync_failure_logs`       | resource_id, error_type, error_message, resolved                                                                     |
 
 ---
 
 ## Agent Tools — Complete List
 
 ### HR Agent (defined in `agent.py`, node is `hr_agent`)
-| Tool | What it calls |
-|------|--------------|
-| `get_leave_balance(email)` | HRService.get_leave_balance |
-| `apply_leave(email, start_date, end_date, leave_type, reason)` | HRService.apply_leave |
-| `search_hr_policies(query)` | HRService.search_policies |
-| `get_payroll_info(email)` | HRService.get_payroll_info |
-| `transfer_sharepoint_to_minio(site_name, folder_path, minio_prefix)` | sharepoint_transfer_service |
-| `list_minio_documents(prefix)` | minio_client.list_objects |
-| `search_employee_directory(query, function, location, designation)` | EmployeeService.search_directory |
-| `get_employee_profile(name_or_email)` | EmployeeService.get_profile |
-| `get_org_chart(name_or_email)` | EmployeeService.get_org_chart |
-| `get_team_roster(manager_name)` | EmployeeService.get_team_roster |
-| `find_skills_expert(skill)` | EmployeeService.find_skills_expert |
-| `get_department_headcount(function)` | EmployeeService.get_department_headcount |
-| `create_announcement(title, body, category, target_audience, expires_days)` | AnnouncementService.create |
-| `get_announcements(domain_filter)` | AnnouncementService.get_active |
-| `deactivate_announcement(id)` | AnnouncementService.deactivate |
-| `update_hr_prompt(new_prompt)` | PromptService.update_prompt (hr_manager role required) |
+
+| Tool                                                                        | What it calls                                          |
+| --------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `get_leave_balance(email)`                                                  | HRService.get_leave_balance                            |
+| `apply_leave(email, start_date, end_date, leave_type, reason)`              | HRService.apply_leave                                  |
+| `search_hr_policies(query)`                                                 | HRService.search_policies                              |
+| `get_payroll_info(email)`                                                   | HRService.get_payroll_info                             |
+| `transfer_sharepoint_to_minio(site_name, folder_path, minio_prefix)`        | sharepoint_transfer_service                            |
+| `list_minio_documents(prefix)`                                              | minio_client.list_objects                              |
+| `search_employee_directory(query, function, location, designation)`         | EmployeeService.search_directory                       |
+| `get_employee_profile(name_or_email)`                                       | EmployeeService.get_profile                            |
+| `get_org_chart(name_or_email)`                                              | EmployeeService.get_org_chart                          |
+| `get_team_roster(manager_name)`                                             | EmployeeService.get_team_roster                        |
+| `find_skills_expert(skill)`                                                 | EmployeeService.find_skills_expert                     |
+| `get_department_headcount(function)`                                        | EmployeeService.get_department_headcount               |
+| `create_announcement(title, body, category, target_audience, expires_days)` | AnnouncementService.create                             |
+| `get_announcements(domain_filter)`                                          | AnnouncementService.get_active                         |
+| `deactivate_announcement(id)`                                               | AnnouncementService.deactivate                         |
+| `update_hr_prompt(new_prompt)`                                              | PromptService.update_prompt (hr_manager role required) |
 
 ### PMO Agent (`agents/pmo_agent.py` — 5 tools)
-| Tool | Description |
-|------|-------------|
-| `list_projects()` | All project names from DB |
-| `get_project_status(project_name)` | Status, completion %, next milestone, owner |
-| `get_project_achievements(project_name)` | Achievements text |
-| `generate_project_report(project_name, report_type)` | PDF → returns `[DOWNLOAD_PDF:/api/documents/download/{id}:title]` |
-| `generate_multi_project_report(project_names, report_type)` | Multi-project PDF |
+
+| Tool                                                        | Description                                                       |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| `list_projects()`                                           | All project names from DB                                         |
+| `get_project_status(project_name)`                          | Status, completion %, next milestone, owner                       |
+| `get_project_achievements(project_name)`                    | Achievements text                                                 |
+| `generate_project_report(project_name, report_type)`        | PDF → returns `[DOWNLOAD_PDF:/api/documents/download/{id}:title]` |
+| `generate_multi_project_report(project_names, report_type)` | Multi-project PDF                                                 |
 
 **PMO PDF Interceptor:** `pdf_interceptor` graph node fires BEFORE pmo_assistant. Detects PDF keywords in user message ("generate report", "create pdf", etc.) and directly emits the tool_call without going through the LLM.
 
 ### Admin Agent (`agents/admin_agent.py` — 13 tools, Direct Action Rules)
-| Tool | Description |
-|------|-------------|
-| `submit_reimbursement(email, type, amount, reason)` | Create + email admin |
-| `check_reimbursement_status(email)` | All reimbursements for employee |
-| `request_parking_sticker(email, vehicle_type, vehicle_number, vehicle_make, vehicle_model)` | Create + email admin |
-| `surrender_parking_sticker(email, vehicle_number)` | Surrender + email admin |
-| `get_parking_info(email)` | All parking stickers |
-| `request_accommodation(email, type, check_in, check_out, location)` | Guest house/hotel |
-| `file_facility_complaint(email, category, description, location, priority)` | Create FC-xxx ticket + email admin |
-| `check_complaint_status(ticket_id)` | Facility complaint status |
-| `submit_food_complaint(email, vendor_name, complaint_type, description)` | Food complaint + email admin |
-| `submit_food_feedback(email, vendor_name, rating, comments)` | Star rating (1-5) |
-| `get_vendor_ratings(vendor_name)` | Average rating for vendor |
-| `post_admin_announcement(title, body, category, target_audience)` | Admin announcement |
-| `update_admin_prompt(new_prompt)` | Update Admin system prompt (admin_manager role) |
+
+| Tool                                                                                        | Description                                     |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `submit_reimbursement(email, type, amount, reason)`                                         | Create + email admin                            |
+| `check_reimbursement_status(email)`                                                         | All reimbursements for employee                 |
+| `request_parking_sticker(email, vehicle_type, vehicle_number, vehicle_make, vehicle_model)` | Create + email admin                            |
+| `surrender_parking_sticker(email, vehicle_number)`                                          | Surrender + email admin                         |
+| `get_parking_info(email)`                                                                   | All parking stickers                            |
+| `request_accommodation(email, type, check_in, check_out, location)`                         | Guest house/hotel                               |
+| `file_facility_complaint(email, category, description, location, priority)`                 | Create FC-xxx ticket + email admin              |
+| `check_complaint_status(ticket_id)`                                                         | Facility complaint status                       |
+| `submit_food_complaint(email, vendor_name, complaint_type, description)`                    | Food complaint + email admin                    |
+| `submit_food_feedback(email, vendor_name, rating, comments)`                                | Star rating (1-5)                               |
+| `get_vendor_ratings(vendor_name)`                                                           | Average rating for vendor                       |
+| `post_admin_announcement(title, body, category, target_audience)`                           | Admin announcement                              |
+| `update_admin_prompt(new_prompt)`                                                           | Update Admin system prompt (admin_manager role) |
 
 **Admin Direct Action Rules:** System prompt has 7 explicit trigger rules mapping user phrases to tool calls. Vehicle number is always required for parking sticker; vehicle make/model are optional.
 
@@ -258,15 +268,16 @@ No dedicated tables. Manager agent has a single tool: `get_my_team` (lists direc
 
 **Key pattern:** Email is injected from `ITState.user_email` via LangGraph `InjectedState` — it is **never in the LLM-visible tool schema**. The LLM cannot ask for email or justification because those fields do not exist in the schema it receives.
 
-| Tool | LLM-visible params | Description |
-|------|--------------------|-------------|
-| `request_software_install` | `software_name` only | Creates ITTicket + SoftwareRequest + HITLRequest; email from state, no justification |
-| `create_it_ticket` | `category, subject, description, priority` | Creates ITTicket + emails helpdesk; email from state |
-| `check_ticket_status` | `ticket_id` | Status of IT ticket |
-| `get_my_tickets` | _(none)_ | All IT tickets for the logged-in user; email from state |
-| `get_my_assets` | _(none)_ | Assigned IT assets; email from state |
+| Tool                       | LLM-visible params                         | Description                                                                          |
+| -------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `request_software_install` | `software_name` only                       | Creates ITTicket + SoftwareRequest + HITLRequest; email from state, no justification |
+| `create_it_ticket`         | `category, subject, description, priority` | Creates ITTicket + emails helpdesk; email from state                                 |
+| `check_ticket_status`      | `ticket_id`                                | Status of IT ticket                                                                  |
+| `get_my_tickets`           | _(none)_                                   | All IT tickets for the logged-in user; email from state                              |
+| `get_my_assets`            | _(none)_                                   | Assigned IT assets; email from state                                                 |
 
 **IT Direct Action Rules:** 5 explicit rules in system prompt:
+
 1. Install/setup request → call `request_software_install(software_name=<name>)` immediately. NEVER ask why.
 2. Hardware/network/system issue → call `create_it_ticket` immediately, infer category + priority from context
 3. Ticket status query → call `check_ticket_status(ticket_id=<id>)` immediately
@@ -276,14 +287,16 @@ No dedicated tables. Manager agent has a single tool: `get_my_team` (lists direc
 **Rules in system prompt:** NEVER ask for justification. NEVER ask for email. Act first.
 
 ### General Agent (`agent.py` — 2 tools, inline ToolNode loop)
-| Tool | Description |
-|------|-------------|
-| `get_announcements(domain_filter)` | Fetch all active announcements |
-| `search_hr_policies(query)` | RAG search for policy details by topic |
+
+| Tool                               | Description                            |
+| ---------------------------------- | -------------------------------------- |
+| `get_announcements(domain_filter)` | Fetch all active announcements         |
+| `search_hr_policies(query)`        | RAG search for policy details by topic |
 
 ### Manager Agent (`agents/manager_agent.py` — 1 tool)
-| Tool | Description |
-|------|-------------|
+
+| Tool                         | Description                                                              |
+| ---------------------------- | ------------------------------------------------------------------------ |
 | `get_my_team(manager_email)` | Direct reports via `Employee.manager_id` — name, designation, department |
 
 Manager agent is read-only for team composition. All other employee details (leave, payroll, profile) go through HR domain.
@@ -313,48 +326,54 @@ Guardrail can be overridden per-domain via `PromptConfig` row with `prompt_key='
 ## REST API Endpoints
 
 ### Core (`main.py`)
-| Method | Path | Auth | Response |
-|--------|------|------|----------|
-| GET | `/` | None | `{status, message}` |
-| POST | `/api/chat` | None | `{response, domain, id, processing_time, download_url}` |
-| POST | `/api/feedback` | None | `{status}` |
-| GET | `/api/feedback/stats` | None | `{total, helpful, unhelpful, score_pct}` |
-| POST | `/api/track` | None | `{status}` |
-| POST | `/api/upload` | None | `{text, filename, char_count}` |
-| GET | `/api/documents/download/{file_id}` | None | PDF stream |
-| GET | `/api/admin/stats` | **Admin only** | Ops metrics |
-| GET | `/api/hr/dashboard` | **Auth required** | Dashboard scoped to calling user |
-| GET | `/api/hr/leaves` | **Auth required** | Leaves scoped to calling user |
-| GET | `/api/hr/payroll` | **Auth required** | Payroll scoped to calling user |
+
+| Method | Path                                | Auth              | Response                                                |
+| ------ | ----------------------------------- | ----------------- | ------------------------------------------------------- |
+| GET    | `/`                                 | None              | `{status, message}`                                     |
+| POST   | `/api/chat`                         | None              | `{response, domain, id, processing_time, download_url}` |
+| POST   | `/api/feedback`                     | None              | `{status}`                                              |
+| GET    | `/api/feedback/stats`               | None              | `{total, helpful, unhelpful, score_pct}`                |
+| POST   | `/api/track`                        | None              | `{status}`                                              |
+| POST   | `/api/upload`                       | None              | `{text, filename, char_count}`                          |
+| GET    | `/api/documents/download/{file_id}` | None              | PDF stream                                              |
+| GET    | `/api/admin/stats`                  | **Admin only**    | Ops metrics                                             |
+| GET    | `/api/hr/dashboard`                 | **Auth required** | Dashboard scoped to calling user                        |
+| GET    | `/api/hr/leaves`                    | **Auth required** | Leaves scoped to calling user                           |
+| GET    | `/api/hr/payroll`                   | **Auth required** | Payroll scoped to calling user                          |
 
 ### PMO (`/api/pmo`)
-| Method | Path | Auth | Notes |
-|--------|------|------|-------|
-| GET | `/api/pmo/projects` | None | Paginated, filter: `status` |
-| GET | `/api/pmo/projects/{id}` | None | Single project |
+
+| Method | Path                     | Auth | Notes                       |
+| ------ | ------------------------ | ---- | --------------------------- |
+| GET    | `/api/pmo/projects`      | None | Paginated, filter: `status` |
+| GET    | `/api/pmo/projects/{id}` | None | Single project              |
 
 ### IT (`/api/it`)
-| Method | Path | Auth | Notes |
-|--------|------|------|-------|
-| POST | `/api/it/hitl/complete?ticket_id=` | **Admin only** | Approves pending HITL; `approved_by` from token |
-| GET | `/api/it/hitl/pending` | **Admin only** | All pending HITL requests |
-| GET | `/api/it/tickets?status=&email=` | **Auth required** | Non-admins see only own tickets |
+
+| Method | Path                               | Auth              | Notes                                           |
+| ------ | ---------------------------------- | ----------------- | ----------------------------------------------- |
+| POST   | `/api/it/hitl/complete?ticket_id=` | **Admin only**    | Approves pending HITL; `approved_by` from token |
+| GET    | `/api/it/hitl/pending`             | **Admin only**    | All pending HITL requests                       |
+| GET    | `/api/it/tickets?status=&email=`   | **Auth required** | Non-admins see only own tickets                 |
 
 ### Announcements (`/api/announcements`)
-| Method | Path | Auth | Notes |
-|--------|------|------|-------|
-| GET | `/api/announcements?include_inactive=` | **Auth required** | |
-| POST | `/api/announcements` | **Admin only** | `created_by` from auth token, not request body |
-| DELETE | `/api/announcements/{id}` | **Admin only** | `requested_by` from auth token |
+
+| Method | Path                                   | Auth              | Notes                                          |
+| ------ | -------------------------------------- | ----------------- | ---------------------------------------------- |
+| GET    | `/api/announcements?include_inactive=` | **Auth required** |                                                |
+| POST   | `/api/announcements`                   | **Admin only**    | `created_by` from auth token, not request body |
+| DELETE | `/api/announcements/{id}`              | **Admin only**    | `requested_by` from auth token                 |
 
 ### Prompts (`/api/prompts`)
-| Method | Path | Auth | Notes |
-|--------|------|------|-------|
-| GET | `/api/prompts?domain=` | **Auth required** | |
-| GET | `/api/prompts/{domain}` | **Auth required** | |
-| PUT | `/api/prompts/{domain}/{key}` | **Admin only** | Body: `{value}` only — `user_role` derived from token |
+
+| Method | Path                          | Auth              | Notes                                                 |
+| ------ | ----------------------------- | ----------------- | ----------------------------------------------------- |
+| GET    | `/api/prompts?domain=`        | **Auth required** |                                                       |
+| GET    | `/api/prompts/{domain}`       | **Auth required** |                                                       |
+| PUT    | `/api/prompts/{domain}/{key}` | **Admin only**    | Body: `{value}` only — `user_role` derived from token |
 
 ### Employees (`/api/employees`)
+
 | GET `/api/employees/search?q=&function=&location=&designation=&limit=` | None |
 | GET `/api/employees/profile?identifier=` | None |
 | GET `/api/employees/org-chart?name_or_email=` | None |
@@ -363,6 +382,7 @@ Guardrail can be overridden per-domain via `PromptConfig` row with `prompt_key='
 | GET `/api/employees/headcount?function=` | None |
 
 ### SharePoint (`/api`)
+
 | POST `/api/sharepoint/webhook` | MS Graph delta webhook |
 | GET `/api/sharepoint/files` | Synced files list |
 
@@ -390,14 +410,14 @@ Guardrail can be overridden per-domain via `PromptConfig` row with `prompt_key='
 
 SMTP (STARTTLS, port 587 default). Silent on failure — never blocks primary operation.
 
-| Function | Trigger | To / CC |
-|----------|---------|---------|
-| `send_it_ticket_email(...)` | IT ticket created | `HELPDESK_EMAIL` CC employee |
-| `send_parking_request_email(...)` | Parking request or surrender | `ADMIN_EMAIL` CC employee |
-| `send_facility_complaint_email(...)` | Facility complaint | `ADMIN_EMAIL` CC employee |
-| `send_food_complaint_email(...)` | Food complaint | `ADMIN_EMAIL` |
-| `send_reimbursement_email(...)` | Reimbursement submitted | `ADMIN_EMAIL` CC employee |
-| `send_announcement_email(recipients, ...)` | Announcement created | List of recipient emails |
+| Function                                   | Trigger                      | To / CC                      |
+| ------------------------------------------ | ---------------------------- | ---------------------------- |
+| `send_it_ticket_email(...)`                | IT ticket created            | `HELPDESK_EMAIL` CC employee |
+| `send_parking_request_email(...)`          | Parking request or surrender | `ADMIN_EMAIL` CC employee    |
+| `send_facility_complaint_email(...)`       | Facility complaint           | `ADMIN_EMAIL` CC employee    |
+| `send_food_complaint_email(...)`           | Food complaint               | `ADMIN_EMAIL`                |
+| `send_reimbursement_email(...)`            | Reimbursement submitted      | `ADMIN_EMAIL` CC employee    |
+| `send_announcement_email(recipients, ...)` | Announcement created         | List of recipient emails     |
 
 ---
 
@@ -426,6 +446,7 @@ src/
 ```
 
 **API header pattern in AssistantView.tsx:**
+
 ```ts
 headers: {
   "Content-Type": "application/json",
@@ -438,22 +459,22 @@ headers: {
 
 ## Configuration (`config.py`)
 
-| Env Var | Default / "auto" | Purpose |
-|---------|-----------------|---------|
-| `ROUTER_BASE_URL` | `auto` → Aligned server (Win) / localhost (mac) | LLM API for routing + all agents |
-| `ROUTER_MODEL_NAME` | `auto` → `gpt-oss:latest` (Win) / `gpt-oss:20b` (mac) | Tool-capable model |
-| `AGENT_BASE_URL` | `auto` | Summarization LLM only |
-| `AGENT_MODEL_NAME` | `llama3.3:70b` | Summarization only |
-| `DATABASE_URL` | `auto` → `postgresql://postgres:postgres@{host}:5433/centriq` | PostgreSQL |
-| `REDIS_URL` | `auto` → `redis://{host}:6380` | LangGraph checkpointer |
-| `MINIO_ENDPOINT` | `auto` → `{host}:9000` | Object storage |
-| `USE_MEMORY_SAVER` | `false` | Force MemorySaver (no Redis) |
-| `DEFAULT_USER_EMAIL` | `employee1@centriq.ai` | Dev fallback when x-user-email header absent |
-| `PORT` | `8080` | Backend port |
-| `SMTP_HOST/PORT/USER/PASS` | `smtp.gmail.com/587` | Email |
-| `HELPDESK_EMAIL` | `shivam.sharma@alignedautomation.com` | IT tickets destination |
-| `ADMIN_EMAIL` | `shivam.sharma@alignedautomation.com` | Admin notifications |
-| `GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | — | Azure AD for SharePoint Graph API |
+| Env Var                                   | Default / "auto"                                              | Purpose                                      |
+| ----------------------------------------- | ------------------------------------------------------------- | -------------------------------------------- |
+| `ROUTER_BASE_URL`                         | `auto` → Aligned server (Win) / localhost (mac)               | LLM API for routing + all agents             |
+| `ROUTER_MODEL_NAME`                       | `auto` → `gpt-oss:latest` (Win) / `gpt-oss:20b` (mac)         | Tool-capable model                           |
+| `AGENT_BASE_URL`                          | `auto`                                                        | Summarization LLM only                       |
+| `AGENT_MODEL_NAME`                        | `llama3.3:70b`                                                | Summarization only                           |
+| `DATABASE_URL`                            | `auto` → `postgresql://postgres:postgres@{host}:5433/centriq` | PostgreSQL                                   |
+| `REDIS_URL`                               | `auto` → `redis://{host}:6380`                                | LangGraph checkpointer                       |
+| `MINIO_ENDPOINT`                          | `auto` → `{host}:9000`                                        | Object storage                               |
+| `USE_MEMORY_SAVER`                        | `false`                                                       | Force MemorySaver (no Redis)                 |
+| `DEFAULT_USER_EMAIL`                      | `employee1@centriq.ai`                                        | Dev fallback when x-user-email header absent |
+| `PORT`                                    | `8080`                                                        | Backend port                                 |
+| `SMTP_HOST/PORT/USER/PASS`                | `smtp.gmail.com/587`                                          | Email                                        |
+| `HELPDESK_EMAIL`                          | `shivam.sharma@alignedautomation.com`                         | IT tickets destination                       |
+| `ADMIN_EMAIL`                             | `shivam.sharma@alignedautomation.com`                         | Admin notifications                          |
+| `GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | —                                                             | Azure AD for SharePoint Graph API            |
 
 ---
 
@@ -469,7 +490,7 @@ headers: {
 8. **`DEFAULT_USER_EMAIL`** → fallback only. Real identity comes from `x-user-email` header (MSAL-verified).
 9. **IT HITL flow** → approval only, no passwords. Admin calls `POST /api/it/hitl/complete?ticket_id=` to advance to "In Progress".
 10. **`ManagerService.get_reportees()`** uses `Employee.manager_id` (NOT `reporting_manager_id` which doesn't exist).
-10a. **`InjectedState` pattern for tool params the LLM should never see:** Use `state: Annotated[dict, InjectedState]` as a tool parameter; LangGraph's `ToolNode` injects the current state at execution time and `bind_tools` strips it from the OpenAI-format schema. Use this for `email` (already known from auth) and any other field the user should never be asked about. IT agent tools use this for all email params and removed `justification` entirely from `request_software_install`.
+    10a. **`InjectedState` pattern for tool params the LLM should never see:** Use `state: Annotated[dict, InjectedState]` as a tool parameter; LangGraph's `ToolNode` injects the current state at execution time and `bind_tools` strips it from the OpenAI-format schema. Use this for `email` (already known from auth) and any other field the user should never be asked about. IT agent tools use this for all email params and removed `justification` entirely from `request_software_install`.
 11. **Loki logging** — `_SilentLokiHandler` suppresses connection errors when Loki is not running.
 12. **Auth dependency pattern** — use `Depends(get_current_user)` for any endpoint returning user-specific data; use `Depends(require_admin)` for write/admin endpoints.
 
@@ -479,15 +500,15 @@ headers: {
 
 `init_db()` called on startup. Seeds only if count == 0.
 
-| Seed Function | What It Creates |
-|---------------|-----------------|
-| `_seed_hr_data(db)` | Employees, Leaves, Payroll, Attendance, Policies |
-| `_seed_pmo_data(db)` | 12 Projects only (no Sprints/Milestones/TeamCapacity) |
-| `_seed_admin_data(db)` | Reimbursements, ParkingStickers, Accommodations, FacilityComplaints, FoodVendorFeedback |
-| `_seed_it_data(db)` | ITTickets, SoftwareRequests, AssetAssignments |
-| `_seed_prompt_configs(db)` | PromptConfig rows for hr, admin, it_support, pmo, functional_manager |
-| `_seed_zoho_profiles(db)` | EmployeeZohoProfile rows for all employees |
-| `_seed_announcements(db)` | Sample Announcements |
+| Seed Function              | What It Creates                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `_seed_hr_data(db)`        | Employees, Leaves, Payroll, Attendance, Policies                                        |
+| `_seed_pmo_data(db)`       | 12 Projects only (no Sprints/Milestones/TeamCapacity)                                   |
+| `_seed_admin_data(db)`     | Reimbursements, ParkingStickers, Accommodations, FacilityComplaints, FoodVendorFeedback |
+| `_seed_it_data(db)`        | ITTickets, SoftwareRequests, AssetAssignments                                           |
+| `_seed_prompt_configs(db)` | PromptConfig rows for hr, admin, it_support, pmo, functional_manager                    |
+| `_seed_zoho_profiles(db)`  | EmployeeZohoProfile rows for all employees                                              |
+| `_seed_announcements(db)`  | Sample Announcements                                                                    |
 
 **Removed seed functions:** `_seed_manager_data()` (TrainingAssignments/SkillMap), `_seed_transcripts()` (SessionTranscripts).
 
@@ -497,14 +518,14 @@ headers: {
 
 `classify_intent(user_message)` → `{domain, confidence, reasoning, sub_intent, entities}`
 
-| Domain | What routes here |
-|--------|-----------------|
-| `hr` | Leave, payroll, salary slips, attendance, HR policies, benefits, appraisals, WFH |
-| `admin` | Reimbursement, parking sticker, accommodation, facility complaints, food, cafeteria |
-| `it_support` | Software install (HITL approval), IT tickets, assets, password reset, VPN, network |
-| `pmo` | Company/AI/internal projects, project status, completion %, achievements, PDF reports |
-| `functional_manager` | "Who is on my team", "who reports to me", direct reports, team members |
-| `general` | Greetings, small talk, questions about Centriq AI itself — NOT company data |
+| Domain               | What routes here                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `hr`                 | Leave, payroll, salary slips, attendance, HR policies, benefits, appraisals, WFH      |
+| `admin`              | Reimbursement, parking sticker, accommodation, facility complaints, food, cafeteria   |
+| `it_support`         | Software install (HITL approval), IT tickets, assets, password reset, VPN, network    |
+| `pmo`                | Company/AI/internal projects, project status, completion %, achievements, PDF reports |
+| `functional_manager` | "Who is on my team", "who reports to me", direct reports, team members                |
+| `general`            | Greetings, small talk, questions about Centriq AI itself — NOT company data           |
 
 Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `entities` (e.g., `{"software_name": "Node.js"}`). These flow into `AgentState` and are injected as a hint into `it_agent_node`.
 
@@ -512,9 +533,10 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 
 ## What Has Been Built (Completed Phases)
 
-*(earlier phases omitted for brevity — see git log)*
+_(earlier phases omitted for brevity — see git log)_
 
 **Phase 8 — Cleanup & Direct Action Rules:**
+
 - Removed Sprint, TeamCapacity, Milestone, ProjectAssignment, SessionTranscript, TrainingAssignment, EmployeeSkillMap models and all related code
 - PMO agent: 13 tools → 5 (project list/status/achievements + PDF generation only)
 - Manager agent: 9 tools → 1 (`get_my_team` only — read-only team lookup)
@@ -523,6 +545,7 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 - `AgentState`: extended with `sub_intent` and `entities` fields
 
 **Phase 9 — Security Hardening:**
+
 - `backend/app/auth.py` — new `get_current_user` + `require_admin` FastAPI dependencies
 - All 5 confirmed vulnerability groups patched:
   - `/api/admin/stats` → admin-only
@@ -537,6 +560,7 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 - Added `functional manager` to VALID_ROLES and SEARCH_ROLES to allow directory access without 403s.
 
 **Phase 10 — Role refinement & People Directory Enhancements:**
+
 - Removed the "Team Management" tab from Functional Manager role, as leave approvals and similar activities are performed by direct reporting managers (not HR or FM).
 - Resolved 403 errors on the People search tab for Functional Manager role by adding the role to both `VALID_ROLES` (in `auth.py`) and `SEARCH_ROLES` (in `people_routes.py`).
 - Enhanced `people_service.py` to return rich fields: primary skills (`skill_set`), secondary skills (`expertise`), certifications (`tags`), can teach (`expertise`), designation, reporting manager, and full project allocation attributes.
@@ -544,6 +568,7 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 - Verified PMO role has full, unrestricted access to the enhanced People search.
 
 **Phase 11 — Route Optimization & Code-Splitting Fixes:**
+
 - Resolved TanStack Router compilation and bundle size warnings by removing the `export default` statements from the core page components (`ITPortal`, `HRPortal`, and `AdminPortal`) defined in `src/routes/_layout.it-portal.tsx`, `src/routes/_layout.hr-portal.tsx`, and `src/routes/_layout.admin-portal.tsx`. This allows the bundler to successfully code-split them into separate lazy-loaded chunks, optimizing the initial load bundle size.
 
 ---
@@ -559,21 +584,21 @@ Router LLM outputs JSON with `sub_intent` (e.g., `"software_install"`) and `enti
 
 ## Known Bugs Fixed
 
-| Bug | File | Fix |
-|-----|------|-----|
-| IT agent asked for email and justification on software install | `it_agent.py`, `it_service.py` | Used `InjectedState` to inject email from state — absent from LLM schema entirely. Removed `justification` param from tool + service; description auto-generated. |
-| "install nodejs" → agent asked "What IT issue?" instead of acting | `it_agent.py` | Added Direct Action Rules — numbered trigger phrases force immediate tool calls |
-| `ManagerService.get_reportees()` always returned empty | `manager_service.py` | Wrong column: `Employee.reporting_manager_id` → `Employee.manager_id` |
-| `json` not imported in `request_software_install` | `agents/it_agent.py` | Added `import json` |
-| Admin/IT agents asked user for email/name | `admin_agent.py`, `it_agent.py` | Inject `user_email` from state into prompt |
-| "AI projects" routed to general, giving ChatGPT examples | `router.py` | Added AI/tech project keywords to PMO domain |
-| PMO hallucinated generic AI project examples | `pmo_agent.py` | Always call `list_projects` first |
-| `/api/feedback` silently discarded data | `main.py` | Now stores to DB via `FeedbackService.record()` |
-| `/api/hr/leaves` and `/api/hr/payroll` returned ALL employees' data | `main.py` | Now scoped to authenticated user via `employee_id` filter |
-| `DEFAULT_USER_EMAIL` hardcoded as identity for HR dashboard | `main.py` | Now uses `user.email` from `get_current_user` dependency |
-| HITL endpoint accepted `admin_email` as query param (unauthenticated) | `it_routes.py` | Admin auth required; email from token via `require_admin` |
-| `user_role` could be set to "admin" by anyone via request body | `prompt_routes.py` | Removed from `PromptUpdate` body; derived from auth token only |
-| `DATABASE_URL=auto` caused SQLAlchemy parse error | `create_db.py` | Uses `settings.DATABASE_URL` (resolved URL) |
-| Loki `--- Logging error ---` spam when Loki not running | `main.py` | `_SilentLokiHandler` overrides `handleError` as no-op |
-| 403 Forbidden for People Directory for Functional Manager role | `auth.py`, `people_routes.py` | Added `"functional manager"` to `VALID_ROLES` in `auth.py` (preventing silent role downgrade to `"employee"`) and to `SEARCH_ROLES` in `people_routes.py`. |
+| Bug                                                                                         | File                                                                                                          | Fix                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IT agent asked for email and justification on software install                              | `it_agent.py`, `it_service.py`                                                                                | Used `InjectedState` to inject email from state — absent from LLM schema entirely. Removed `justification` param from tool + service; description auto-generated.                                                                       |
+| "install nodejs" → agent asked "What IT issue?" instead of acting                           | `it_agent.py`                                                                                                 | Added Direct Action Rules — numbered trigger phrases force immediate tool calls                                                                                                                                                         |
+| `ManagerService.get_reportees()` always returned empty                                      | `manager_service.py`                                                                                          | Wrong column: `Employee.reporting_manager_id` → `Employee.manager_id`                                                                                                                                                                   |
+| `json` not imported in `request_software_install`                                           | `agents/it_agent.py`                                                                                          | Added `import json`                                                                                                                                                                                                                     |
+| Admin/IT agents asked user for email/name                                                   | `admin_agent.py`, `it_agent.py`                                                                               | Inject `user_email` from state into prompt                                                                                                                                                                                              |
+| "AI projects" routed to general, giving ChatGPT examples                                    | `router.py`                                                                                                   | Added AI/tech project keywords to PMO domain                                                                                                                                                                                            |
+| PMO hallucinated generic AI project examples                                                | `pmo_agent.py`                                                                                                | Always call `list_projects` first                                                                                                                                                                                                       |
+| `/api/feedback` silently discarded data                                                     | `main.py`                                                                                                     | Now stores to DB via `FeedbackService.record()`                                                                                                                                                                                         |
+| `/api/hr/leaves` and `/api/hr/payroll` returned ALL employees' data                         | `main.py`                                                                                                     | Now scoped to authenticated user via `employee_id` filter                                                                                                                                                                               |
+| `DEFAULT_USER_EMAIL` hardcoded as identity for HR dashboard                                 | `main.py`                                                                                                     | Now uses `user.email` from `get_current_user` dependency                                                                                                                                                                                |
+| HITL endpoint accepted `admin_email` as query param (unauthenticated)                       | `it_routes.py`                                                                                                | Admin auth required; email from token via `require_admin`                                                                                                                                                                               |
+| `user_role` could be set to "admin" by anyone via request body                              | `prompt_routes.py`                                                                                            | Removed from `PromptUpdate` body; derived from auth token only                                                                                                                                                                          |
+| `DATABASE_URL=auto` caused SQLAlchemy parse error                                           | `create_db.py`                                                                                                | Uses `settings.DATABASE_URL` (resolved URL)                                                                                                                                                                                             |
+| Loki `--- Logging error ---` spam when Loki not running                                     | `main.py`                                                                                                     | `_SilentLokiHandler` overrides `handleError` as no-op                                                                                                                                                                                   |
+| 403 Forbidden for People Directory for Functional Manager role                              | `auth.py`, `people_routes.py`                                                                                 | Added `"functional manager"` to `VALID_ROLES` in `auth.py` (preventing silent role downgrade to `"employee"`) and to `SEARCH_ROLES` in `people_routes.py`.                                                                              |
 | TanStack Router bundle size warning / code-splitting disabled for IT, HR, and Admin Portals | `src/routes/_layout.it-portal.tsx`, `src/routes/_layout.hr-portal.tsx`, `src/routes/_layout.admin-portal.tsx` | Removed `export default` from the page component declarations. Without the export statement, the router compiler can successfully code-split the route components into distinct lazy-loaded chunk files, reducing initial bundle sizes. |

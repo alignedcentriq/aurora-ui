@@ -45,7 +45,9 @@ def create_it_ticket(
     Default priority to Medium unless user says urgent/critical/emergency.
     Use user's own words as subject and description. Never use placeholder text."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
-    return ITService.create_ticket(email, category, subject, description, priority)
+    from app.services import actions  # routed through the action registry spine
+    return actions.run("it_ticket", actor_email=email, category=category,
+                       subject=subject, description=description, priority=priority).human_message
 
 
 @tool
@@ -95,7 +97,7 @@ tools = [request_software_install, request_asset, create_it_ticket, check_ticket
 tool_node = ToolNode(tools)
 
 # LLM built on demand from the live IT-tunable params (router tier).
-from app.services import llm_controls_service as llm_controls
+from app.services.llm_resilience import resilient_invoke
 
 
 # -- Agent Node ---------------------------------------------------------------
@@ -133,8 +135,10 @@ def it_assistant(state: ITState):
     system_prompt = base_prompt + guardrail + feedback_ctx
 
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    llm = llm_controls.get_llm("service", default_timeout=120).bind_tools(tools)
-    return {"messages": [llm.invoke(messages)]}
+    response = resilient_invoke("service", messages,
+                                build=lambda l: l.bind_tools(tools),
+                                default_timeout=120)
+    return {"messages": [response]}
 
 
 def should_continue(state: ITState):

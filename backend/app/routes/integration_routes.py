@@ -46,13 +46,20 @@ async def integration_status(user: CurrentUser = Depends(get_current_user)):
 async def connect_provider(
     provider: str,
     email: Optional[str] = Query(None),
-    user: CurrentUser = Depends(get_current_user),
 ):
-    """Redirect user to provider's OAuth consent screen."""
+    """Redirect user to provider's OAuth consent screen.
+
+    NOTE: This is a top-level browser navigation (the popup is pointed straight
+    at this URL), so the SPA's x-user-email / x-user-role headers are NOT sent
+    and get_current_user cannot be used here. We authenticate from the ?email=
+    query param instead and validate it against ALLOWED_EMAILS.
+    """
     if provider not in PROVIDERS:
         raise HTTPException(400, f"Unknown provider: {provider}")
 
-    user_email = (email or user.email).lower().strip()
+    user_email = (email or "").lower().strip()
+    if not user_email or (settings.ALLOWED_EMAILS and user_email not in settings.ALLOWED_EMAILS):
+        raise HTTPException(403, "Access denied.")
 
     try:
         if provider == "microsoft":
@@ -77,7 +84,7 @@ def _callback_html(success: bool, provider: str, message: str = "") -> str:
         message or (f'{provider.title()} account connected successfully.' if success else 'Something went wrong.')
     )
     safe_provider = html.escape(provider)
-    origin = html.escape(settings.APP_BASE_URL.rstrip("/"))
+    origin = html.escape(settings.OAUTH_REDIRECT_BASE_URL.rstrip("/"))
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{title}</title>
 <style>
@@ -156,6 +163,43 @@ async def callback_zoho(
     except Exception as e:
         log.exception("[oauth] Zoho token exchange failed")
         return HTMLResponse(_callback_html(False, "zoho", str(e)))
+
+
+# -- Zoho People leave form ----------------------------------------------------
+
+@router.get("/zoho/leave-form")
+async def zoho_leave_form(user: CurrentUser = Depends(get_current_user)):
+    """Return the Zoho People apply-leave form URL for the embedded leave widget.
+
+    The user fills and submits the leave directly in Zoho People (we don't
+    auto-submit), so this just hands back the deep-link to the apply-leave page.
+    """
+    base = (settings.ZOHO_PEOPLE_URL or "").rstrip("/")
+    if base:
+        url = f"{base}#leavetracker/applyleave"
+    else:
+        # Sensible default so the widget still works before ZOHO_PEOPLE_URL is set.
+        url = "https://people.zoho.com/#leavetracker/applyleave"
+    return {"url": url, "configured": bool(settings.ZOHO_PEOPLE_URL)}
+
+
+# -- Zoho People document / letter generation ----------------------------------
+
+@router.get("/zoho/document-form")
+async def zoho_document_form(user: CurrentUser = Depends(get_current_user)):
+    """Return the Zoho People document/letter generation URL for the embedded widget.
+
+    Zoho People handles document generation natively (letter templates, mail-merge,
+    e-sign), so we deep-link the user into it rather than generating documents in-app.
+    """
+    if settings.ZOHO_PEOPLE_DOCS_URL:
+        url = settings.ZOHO_PEOPLE_DOCS_URL
+    elif settings.ZOHO_PEOPLE_URL:
+        # Land on the Zoho People dashboard; the user navigates to the document area.
+        url = settings.ZOHO_PEOPLE_URL.rstrip("/")
+    else:
+        url = "https://people.zoho.com"
+    return {"url": url, "configured": bool(settings.ZOHO_PEOPLE_DOCS_URL)}
 
 
 # -- Disconnect ----------------------------------------------------------------

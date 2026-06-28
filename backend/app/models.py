@@ -45,13 +45,15 @@ class Leave(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"))
-    leave_type = Column(String) # Casual, Sick, Earned, Optional
+    leave_type = Column(String)
     start_date = Column(Date)
     end_date = Column(Date)
-    status = Column(String, default="Pending") # Pending, Approved, Rejected, Cancelled
+    days = Column(Float, nullable=True)
+    status = Column(String, default="Pending")
     reason = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
+    zoho_id = Column(String, unique=True, nullable=True)
+
     employee = relationship("Employee", back_populates="leaves")
 
 class Attendance(Base):
@@ -215,6 +217,121 @@ class Project(Base):
     achievements = Column(Text)
 
 
+# ── Project IQ (Project DNA) ──────────────────────────────
+# Structured, reusable per-project profiles ("Project DNA") extracted by LLM from
+# the SharePoint "Project Showcase" corpus (transcripts + project files already
+# ingested into Policy/PolicyChunk, keyed sp:PROJECT/{slug}/...). Internal-only:
+# powers Find-Similar-Projects, Lessons Learned, Expertise matching, Reusable-Asset
+# discovery. Every extracted fact carries confidence (verified|inferred); profiles
+# start review_status='draft' until a PMO/admin reviews them.
+
+class ProjectProfile(Base):
+    __tablename__ = "project_profiles"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_slug = Column(String, unique=True, nullable=False, index=True)  # matches sp:PROJECT/{slug}/
+    name = Column(String, nullable=False, index=True)
+    client_industry = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+    business_problem = Column(Text, nullable=True)
+    solution_summary = Column(Text, nullable=True)
+    business_outcomes = Column(Text, nullable=True)
+    technology_stack = Column(JSON, nullable=True)        # list[str]
+    architecture_summary = Column(Text, nullable=True)
+    complexity_drivers = Column(JSON, nullable=True)      # list[str]
+    project_size = Column(String, nullable=True)
+    team_size = Column(String, nullable=True)
+    delivery_start_date = Column(String, nullable=True)
+    delivery_end_date = Column(String, nullable=True)
+    dna_summary = Column(Text, nullable=True)             # text fed to the embedder
+    embedding = Column(Vector(768), nullable=True)
+    confidence = Column(String, default="inferred")       # verified | inferred (overall)
+    review_status = Column(String, default="draft")       # draft | reviewed
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    source_doc_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    capabilities = relationship("ProjectCapability", back_populates="profile", cascade="all, delete-orphan")
+    integrations = relationship("ProjectIntegration", back_populates="profile", cascade="all, delete-orphan")
+    lessons = relationship("ProjectLesson", back_populates="profile", cascade="all, delete-orphan")
+    reusable_assets = relationship("ProjectReusableAsset", back_populates="profile", cascade="all, delete-orphan")
+    expertise = relationship("ProjectExpertise", back_populates="profile", cascade="all, delete-orphan")
+
+
+class ProjectCapability(Base):
+    __tablename__ = "project_capabilities"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    capability_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    maturity_level = Column(String, nullable=True)
+    confidence = Column(String, default="inferred")
+    evidence = Column(Text, nullable=True)
+    profile = relationship("ProjectProfile", back_populates="capabilities")
+
+
+class ProjectIntegration(Base):
+    __tablename__ = "project_integrations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    system_name = Column(String, nullable=False)
+    integration_type = Column(String, nullable=True)
+    complexity_level = Column(String, nullable=True)
+    lessons_learned = Column(Text, nullable=True)
+    confidence = Column(String, default="inferred")
+    profile = relationship("ProjectProfile", back_populates="integrations")
+
+
+class ProjectLesson(Base):
+    __tablename__ = "project_lessons"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    category = Column(String, nullable=True)
+    lesson = Column(Text, nullable=False)
+    impact_level = Column(String, nullable=True)
+    recommendation = Column(Text, nullable=True)
+    confidence = Column(String, default="inferred")
+    evidence = Column(Text, nullable=True)
+    profile = relationship("ProjectProfile", back_populates="lessons")
+
+
+class ProjectReusableAsset(Base):
+    __tablename__ = "project_reusable_assets"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    asset_name = Column(String, nullable=False)
+    asset_type = Column(String, nullable=True)
+    repository_url = Column(String, nullable=True)
+    owner = Column(String, nullable=True)
+    reuse_readiness = Column(String, nullable=True)
+    documentation_url = Column(String, nullable=True)
+    confidence = Column(String, default="inferred")
+    profile = relationship("ProjectProfile", back_populates="reusable_assets")
+
+
+class ProjectExpertise(Base):
+    __tablename__ = "project_expertise"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey(f"{SCHEMA}.project_profiles.id", ondelete="CASCADE"), index=True, nullable=False)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), nullable=True)
+    person_name = Column(String, nullable=False)
+    role_on_project = Column(String, nullable=True)
+    capability = Column(String, nullable=True)
+    evidence_level = Column(String, default="inferred")  # verified | inferred
+    profile = relationship("ProjectProfile", back_populates="expertise")
 
 
 # ── Admin Domain ──────────────────────────
@@ -458,42 +575,7 @@ class EmployeeAllocation(Base):
     functional_manager = Column(String, nullable=True)
     function = Column(String, nullable=True)
     status = Column(String, nullable=True)              # Active / Inactive
-    expected_end_date = Column(Date, nullable=True)     # set by approved biweekly project-update drafts
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
-
-
-# ── Biweekly Project-Update Submission (audited draft → main allocation) ──────
-class ProjectUpdateSubmission(Base):
-    """An employee's biweekly self-report of what they're working on.
-
-    This is an AUDITED DRAFT — it never writes to employee_allocations directly.
-    It becomes real allocation data only after the Reporting Manager approves it
-    (see app.main._finalize_decision, entity_type="project_update").
-    """
-    __tablename__ = "project_update_submissions"
-    __table_args__ = {"schema": SCHEMA}
-
-    id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(Integer, index=True)           # employees.id
-    employee_email = Column(String, index=True)
-    employee_name = Column(String)
-    period_start = Column(Date, nullable=True)          # the fortnight covered
-    period_end = Column(Date, nullable=True)
-    activity_type = Column(String)                      # Project | Learning | PoC (PMO-configurable)
-    project_name = Column(String, nullable=True)        # required when activity_type == "Project"
-    expected_end_date = Column(Date, nullable=True)     # parsed "how long" answer
-    duration_text = Column(String, nullable=True)       # free-text "how long" answer
-    details = Column(Text, nullable=True)
-    # audit: who filled
-    filled_by_email = Column(String)
-    filled_at = Column(DateTime, default=datetime.datetime.utcnow)
-    status = Column(String, default="submitted")        # submitted | approved | rejected
-    # audit: who approved
-    approved_by_email = Column(String, nullable=True)
-    approved_at = Column(DateTime, nullable=True)
-    decision_reason = Column(Text, nullable=True)
-    allocation_id = Column(Integer, nullable=True)      # employee_allocations row written on approval
+    expected_end_date = Column(Date, nullable=True)     # optional end date for the allocation
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -733,6 +815,11 @@ class ChatFeedback(Base):
     feedback_text = Column(String, nullable=True)   # optional free-text comment
     user_message_embedding = Column(Vector(768), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Feedback-triage flywheel: set when an admin promotes/dismisses this failure so it
+    # drops out of the triage queue. triaged_action ∈ curated_answer | routing_fix | dismissed.
+    triaged_at = Column(DateTime, nullable=True, index=True)
+    triaged_action = Column(String, nullable=True)
+    triaged_by = Column(String, nullable=True)
 
 
 class CachedAnswer(Base):
@@ -1260,6 +1347,145 @@ class EmployeeSkill(Base):
     employee = relationship("Employee", back_populates="skills")
 
 
+# ── Local TechElevate LMS ─────────────────────────────────────────────────────
+# An in-house mirror of the external TechElevate training portal. The external API
+# is unreachable (no stored Microsoft refresh token), so these tables back the same
+# learning experience locally AND close the upskilling flywheel: each training is
+# tagged with Alchemy-aligned skills, and completing + passing it writes those back
+# as *verified* EmployeeSkill rows that resource-matching and Skill Supply then read.
+
+class TeTraining(Base):
+    """A course in the local TechElevate LMS. `skill_tags` are Alchemy-aligned skill
+    names; passing this training writes them back as verified EmployeeSkills."""
+    __tablename__ = "te_trainings"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True)            # Technical | Governance & Compliance | Business
+    training_type = Column(String, default="single")    # single | levels
+    duration_minutes = Column(Integer, default=0)
+    pass_percentage = Column(Float, default=60.0)
+    max_attempts = Column(Integer, default=3)
+    video_link = Column(String, nullable=True)
+    skill_tags = Column(JSON, nullable=True)            # ["Python","Machine Learning"] — Alchemy-aligned
+    photo_url = Column(String, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    levels = relationship("TeTrainingLevel", back_populates="training",
+                          cascade="all, delete-orphan", order_by="TeTrainingLevel.sort_order")
+    questions = relationship("TeMcqQuestion", back_populates="training", cascade="all, delete-orphan")
+    assignments = relationship("TeAssignment", back_populates="training", cascade="all, delete-orphan")
+    content_items = relationship("TeContentItem", back_populates="training",
+                                 cascade="all, delete-orphan", order_by="TeContentItem.sort_order")
+
+
+class TeContentItem(Base):
+    """A learning material attached to a training (single-level → level_id NULL) or to a
+    specific level of a multi-level track. Kinds: document (uploaded file), link (web URL),
+    udemy (Udemy course/video URL), video (YouTube/other video URL). These are both the
+    curriculum a learner studies AND the grounding the AI uses to draft MCQs."""
+    __tablename__ = "te_content_items"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    level_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_training_levels.id", ondelete="CASCADE"), nullable=True, index=True)
+    kind = Column(String, default="link")              # document | link | udemy | video
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=True)                # external URL, or /uploads/te_local/<file> for documents
+    description = Column(Text, nullable=True)
+    file_name = Column(String, nullable=True)          # original filename for uploaded documents
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="content_items")
+
+
+class TeTrainingLevel(Base):
+    """A level within a multi-level training (Basic / Intermediate / Advanced)."""
+    __tablename__ = "te_training_levels"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    name = Column(String, nullable=False)               # Basic | Intermediate | Advanced
+    sort_order = Column(Integer, default=0)
+    duration_minutes = Column(Integer, default=0)
+    pass_percentage = Column(Float, default=60.0)
+    description = Column(Text, nullable=True)
+
+    training = relationship("TeTraining", back_populates="levels")
+
+
+class TeMcqQuestion(Base):
+    """An MCQ assessment question. Grading these produces the score that drives pass/fail
+    (and therefore the verified-skill write-back)."""
+    __tablename__ = "te_mcq_questions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    level_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_training_levels.id", ondelete="CASCADE"), nullable=True)
+    question = Column(Text, nullable=False)
+    options = Column(JSON, nullable=True)               # {"A":..,"B":..,"C":..,"D":..}
+    correct_answer = Column(String, nullable=True)      # "A".."D"
+    marks = Column(Integer, default=1)
+    explanation = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="questions")
+
+
+class TeAssignment(Base):
+    """An employee's enrolment in a training. On pass, the training's skill_tags are
+    written back once (guarded by `skills_applied`) as verified EmployeeSkills."""
+    __tablename__ = "te_assignments"
+    __table_args__ = (
+        UniqueConstraint("training_id", "employee_id", name="uq_te_assignment_training_emp"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_id = Column(Integer, ForeignKey(f"{SCHEMA}.te_trainings.id", ondelete="CASCADE"), index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id", ondelete="SET NULL"), nullable=True, index=True)
+    employee_email = Column(String, index=True)
+    employee_name = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    status = Column(String, default="Assigned", index=True)   # Assigned | In Progress | Completed | Failed
+    score = Column(Float, nullable=True)
+    attempts = Column(Integer, default=0)
+    start_date = Column(Date, nullable=True)
+    due_date = Column(Date, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    skills_applied = Column(Boolean, default=False)     # guard: verified-skill write-back runs once
+    assigned_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    training = relationship("TeTraining", back_populates="assignments")
+
+
+class TeGroup(Base):
+    """A named cohort of employees for bulk training assignment. Members are stored
+    inline as JSON [{employee_id, name, email, department}] for simple display."""
+    __tablename__ = "te_groups"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    project_name = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    photo_url = Column(String, nullable=True)
+    members = Column(JSON, nullable=True)               # [{employee_id, name, email, department}]
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class UdemyLicenseRequest(Base):
     """Employee request for a training-platform license (Udemy, Coursera, …),
     managed by the PMO team (granted subject to availability)."""
@@ -1325,10 +1551,38 @@ class UserRoleOverride(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     role = Column(String, nullable=False)            # e.g. "admin", "hr", "it", "pmo", "functional manager"
-    scopes = Column(JSON, nullable=True)             # Optional feature-level scopes; None/[] = full role access
+    scopes = Column(JSON, nullable=True)             # Restrictive: if set, user only gets these scopes (subset of role)
+    extra_capabilities = Column(JSON, nullable=True) # Additive: caps granted beyond the role (portals, modes, features)
     granted_by = Column(String, nullable=True)       # Super Admin's email
     granted_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class AppRole(Base):
+    """Platform roles — system built-ins (is_system=True) + Super Admin custom roles."""
+    __tablename__ = "app_roles"
+    __table_args__ = {"schema": SCHEMA}
+
+    slug = Column(String, primary_key=True)          # e.g. "hr", "devops_lead"
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    color = Column(String, nullable=True)            # hex color for UI badge, e.g. "#22C55E"
+    is_system = Column(Boolean, default=False, nullable=False)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class RoleCapabilityMap(Base):
+    """Tracks which capability keys a role includes. Replaces hardcoded ROLE_SCOPES."""
+    __tablename__ = "role_capability_maps"
+    __table_args__ = (
+        UniqueConstraint("role_slug", "capability_key", name="uq_role_capability"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_slug = Column(String, nullable=False, index=True)
+    capability_key = Column(String, nullable=False, index=True)
 
 
 # ── Automation Hub ─────────────────────────────────────────────────────────────
@@ -1382,6 +1636,11 @@ class AutomationRule(Base):
     hour = Column(Integer, default=9)                         # local hour of day, 0..23
     minute = Column(Integer, default=0)                       # minute of hour, 0..59
 
+    # Kind: "email" (default static body) | "roi_digest" (body rendered from live ROI metrics at send).
+    # roi_digest rules carry their period in extra_config and attach the ROI PDF when sent.
+    automation_kind = Column(String, default="email")
+    extra_config = Column(JSON, nullable=True)                 # roi_digest: {"period": "30d"}
+
     # Email
     email_subject = Column(String, nullable=False)
     email_body = Column(Text, nullable=False)                 # plain text; wrapped in branded shell at send
@@ -1399,6 +1658,25 @@ class AutomationRule(Base):
     last_run = Column(DateTime, nullable=True)
     last_status = Column(String, nullable=True)               # sent | failed:<reason>
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SavedDashboard(Base):
+    """A user-built analytics board from the Analytics Studio. Holds one or more chart
+    widgets, each naming entries from the server-side metric catalog (never raw SQL).
+
+    Access: the creator always sees their boards; role_visibility (a JSON list of role
+    names) optionally shares a board read-only with other non-employee roles."""
+    __tablename__ = "saved_dashboards"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    owner_email = Column(String, index=True, nullable=False)
+    role_visibility = Column(JSON, nullable=True)             # list[str] of roles | null = owner only
+    # widgets: list of {title, metric, dimension, period, chart_type, layout:{x,y,w,h}}
+    widgets = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 class WelcomeResource(Base):
@@ -1572,6 +1850,7 @@ class ConnectorScope(Base):
     persona_id = Column(Integer, ForeignKey(f"{SCHEMA}.personas.id", ondelete="CASCADE"), nullable=True)
     role = Column(String, nullable=True)
     department = Column(String, nullable=True)
+    user_email = Column(String, nullable=True, index=True)  # grant access to one specific user
 
     connector = relationship("Connector", back_populates="scopes")
     operation = relationship("ConnectorOperation", back_populates="scopes")
@@ -1717,3 +1996,207 @@ class DashboardConfig(Base):
     widgets = Column(JSON, nullable=True)       # ordered list of {widget_type, config}
     updated_by = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class PendingAction(Base):
+    """Durable store for a state-changing action awaiting user confirmation.
+
+    Replaces the in-memory PENDING_IT_EMAIL_DRAFTS dict so a confirmed/awaiting action
+    survives a process restart. One row per pending write, keyed by session + idempotency
+    key; the action layer creates it on intent, then executes ONLY on explicit confirm.
+    See docs/action-safety-audit.md (Phase 2 of the routing/agent redesign).
+    """
+    __tablename__ = "pending_actions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_key = Column(String, index=True)        # _draft_key: session_id or user_email
+    user_email = Column(String, index=True)
+    action_type = Column(String, index=True)        # e.g. "software_install"
+    payload = Column(JSON, nullable=True)           # action args, e.g. {"software_name": "..."}
+    idempotency_key = Column(String, index=True, nullable=True)  # dedupe a single logical action
+    status = Column(String, default="pending", index=True)       # pending|executed|cancelled|expired
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+
+
+class ActionReceipt(Base):
+    """Durable receipt for every executed write action — the trust / compliance ledger.
+
+    One row per executed action recording WHAT was done, in WHICH system, WHEN, the
+    downstream CONFIRMATION id, and — where the downstream allows it — a one-click UNDO.
+    Emitted by receipt_service.emit() immediately after an action's side effect succeeds,
+    then surfaced both as an undo link in the assistant's confirmation and in the in-app
+    receipts feed. Idempotency_key dedupes re-emits of one logical action (retries / the
+    'you already have a ticket' path) so an action never yields two receipts.
+    """
+    __tablename__ = "action_receipts"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True)
+    action_type = Column(String, index=True)        # it_ticket | hr_query | grievance | software_install | ...
+    system = Column(String)                          # human label of the downstream system
+    summary = Column(String)                         # the "what", human-readable
+    confirmation_id = Column(String, index=True, nullable=True)   # IT-001 / HRQ-001 / RE-7964
+    entity_type = Column(String, nullable=True)      # for the undo handler to locate the row
+    entity_id = Column(String, nullable=True)
+    idempotency_key = Column(String, index=True, nullable=True)   # dedupe re-emits of one logical action
+    status = Column(String, default="executed", index=True)       # executed | undone
+    undoable = Column(Boolean, default=False)
+    undo_token = Column(String, unique=True, index=True, nullable=True)
+    undo_deadline = Column(DateTime, nullable=True)  # undo allowed only before this instant
+    undone_at = Column(DateTime, nullable=True)
+    receipt_metadata = Column("metadata", JSON, nullable=True)    # extra context for the feed / audit
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
+class ProactiveNudge(Base):
+    """A system-initiated, deterministic nudge surfaced in the in-app feed.
+
+    A background scan (nudge_service.run_due, fired by the startup scheduler)
+    detects actionable situations with pure DB look-ups — no LLM — and upserts one
+    row per (recipient, situation), keyed by ``dedup_key`` so re-scanning never
+    creates duplicates and a dismissed nudge stays dismissed for its period.
+
+    The in-app feed (GET /api/nudges) is the source of truth; an optional
+    best-effort Teams/email push is gated by settings.NUDGE_PUSH_ENABLED.
+    """
+    __tablename__ = "proactive_nudges"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=False)   # recipient (who to nudge)
+    nudge_type = Column(String, index=True, nullable=False)   # leave_expiring | approval_stale
+    # Stable identity of the situation; unique so the detector can upsert idempotently.
+    # Encodes the period so dismissals persist, e.g. "leave_expiring:u@x:2026:CL".
+    dedup_key = Column(String, unique=True, index=True, nullable=False)
+
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    severity = Column(String, default="action")              # info | action
+
+    # One-click action: apply_leave (returns a deeplink) | nudge_manager (re-sends approval).
+    action_type = Column(String, nullable=True)
+    action_payload = Column(JSON, nullable=True)             # prefilled args for the action
+
+    # What the nudge is about, for deep-linking from the UI.
+    entity_type = Column(String, nullable=True)             # leave | leave_type
+    entity_id = Column(String, nullable=True)
+
+    status = Column(String, default="new", index=True)      # new|seen|actioned|dismissed|expired
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    # Last time the action was fired / pushed — drives the manager-nudge cooldown.
+    last_actioned_at = Column(DateTime, nullable=True)
+    last_delivered_at = Column(DateTime, nullable=True)     # best-effort Teams/email push
+
+
+class OnboardingJourney(Base):
+    """One new hire's onboarding journey — the parent record tracking overall progress.
+
+    Created lazily (onboarding_service.ensure_journey) the first time a new hire opens
+    the onboarding page or the assistant asks about it. The ordered steps themselves live
+    in OnboardingStepProgress; the canonical step *definitions* are in
+    services/onboarding_template.py (code, not DB), so the sequence is versioned with the app.
+    """
+    __tablename__ = "onboarding_journeys"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), unique=True, index=True, nullable=False)
+    status = Column(String, default="active", index=True)    # active | completed
+    started_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    employee = relationship("Employee")
+    steps = relationship("OnboardingStepProgress", back_populates="journey",
+                         cascade="all, delete-orphan")
+    documents = relationship("OnboardingDocSubmission", back_populates="journey",
+                            cascade="all, delete-orphan")
+
+
+class OnboardingStepProgress(Base):
+    """Per-step status for one journey. One row per template step, seeded on journey creation."""
+    __tablename__ = "onboarding_step_progress"
+    __table_args__ = (
+        UniqueConstraint("journey_id", "step_key", name="uq_onboarding_step"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    journey_id = Column(Integer, ForeignKey(f"{SCHEMA}.onboarding_journeys.id"), index=True, nullable=False)
+    step_key = Column(String, nullable=False)                # matches onboarding_template.STEPS[].key
+    status = Column(String, default="pending")               # pending | in_progress | done | skipped
+    completed_at = Column(DateTime, nullable=True)
+    completed_by = Column(String, nullable=True)             # email of who marked it (self / HR)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    journey = relationship("OnboardingJourney", back_populates="steps")
+
+
+class OnboardingDocSubmission(Base):
+    """A joining document the hire uploaded — saved to disk and emailed to HR.
+
+    `doc_key` matches onboarding_template.ONBOARDING_DOCS[].doc_key. The
+    `onboarding_documents` step auto-completes once every required doc has a row here.
+    """
+    __tablename__ = "onboarding_doc_submissions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    journey_id = Column(Integer, ForeignKey(f"{SCHEMA}.onboarding_journeys.id"), index=True, nullable=False)
+    doc_key = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)               # path under uploads/onboarding_docs/<email>/
+    original_name = Column(String, nullable=True)
+    status = Column(String, default="submitted")             # submitted | emailed
+    emailed_to = Column(String, nullable=True)               # HR address the file was sent to
+    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    journey = relationship("OnboardingJourney", back_populates="documents")
+
+
+# ── Insight Bus (ARB #48) ──────────────────────────────────────────────────────
+
+class InsightSignalLog(Base):
+    """Persistent log of all signals emitted to the InsightBus.
+
+    Enables audit, replay on restart, and cross-worker signal sharing (future).
+    """
+    __tablename__ = "insight_signal_log"
+    __table_args__ = {"schema": SCHEMA}
+
+    id          = Column(Integer, primary_key=True, index=True)
+    signal_type = Column(String, nullable=False, index=True)   # delivery_risk | skill_gap | …
+    source_domain = Column(String, nullable=True)
+    payload     = Column(JSON, nullable=True)                  # full signal as JSON
+    emitted_at  = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    processed   = Column(Boolean, default=False)               # True once all reactors ran
+
+
+class InsightNudgeLog(Base):
+    """Audit trail for nudges proposed by InsightBus reactors.
+
+    Separate from the live Nudge table — this is the immutable record of what
+    was proposed and when, even if the Nudge was later dismissed.
+    """
+    __tablename__ = "insight_nudge_log"
+    __table_args__ = {"schema": SCHEMA}
+
+    id            = Column(Integer, primary_key=True, index=True)
+    signal_log_id = Column(Integer, ForeignKey(f"{SCHEMA}.insight_signal_log.id"),
+                           nullable=True, index=True)
+    nudge_type    = Column(String, nullable=False)
+    target_email  = Column(String, nullable=True, index=True)
+    title         = Column(String, nullable=True)
+    body          = Column(Text, nullable=True)
+    priority      = Column(String, default="medium")
+    action_hint   = Column(String, nullable=True)
+    action_payload= Column(JSON, nullable=True)
+    human_gate    = Column(Boolean, default=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow)
