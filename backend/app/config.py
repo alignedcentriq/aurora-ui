@@ -455,6 +455,7 @@ class Config:
     # ── TechElevate Local LMS ─────────────────────────────────────────────────
     TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
     TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
+    TECHELEVATE_PORTAL_URL = os.getenv("TECHELEVATE_PORTAL_URL", "")
 
     # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────
     # Org-level service credential — NOT per-user OAuth. The client id/secret are

@@ -185,14 +185,49 @@ def _prune_deleted_projects(live_slugs: set[str]) -> dict:
 
 
 def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]:
-    """List the whole Projects tree once and route every file to a project.
+    """List only the project-bearing sub-trees and route every file to a project.
+
+    Only recurses into the two relevant top-level folders — Individual Project Data
+    and Transcripts & Summary — skipping Flash Review Transcripts, Newsletters,
+    Policy, and any other non-project folders entirely. This keeps the tree-walk
+    fast and avoids partial-listing failures in the large excluded folders.
 
     Returns ``(slug -> display name, all_listed_items)``. The raw listing is
     returned so the caller can hand it straight to the sync worker instead of
     re-listing the (large) tree a second time."""
-    all_items = sp_client.list_files_recursive(drive_id, root)
     exts = _exts()
+    all_items: list[dict] = []
     live: dict[str, str] = {}
+
+    # List the top-level children to find the right sub-folders.
+    top_children = sp_client.list_folder_contents(drive_id, root)
+    for child in top_children:
+        if "folder" not in child:
+            continue
+        folder_name = child.get("name", "")
+        top_lower = folder_name.lower()
+
+        if top_lower == _FOLDER_AS_PROJECT:
+            # Recurse into Individual Project Data recursively (each subfolder = project).
+            folder_path = f"{root}/{folder_name}"
+            sub_items = sp_client.list_files_recursive(drive_id, folder_path)
+            # Reattach relative_path relative to the Projects root.
+            for it in sub_items:
+                rel = it.get("relative_path", it.get("name", ""))
+                it["relative_path"] = f"{folder_name}/{rel}"
+            all_items.extend(sub_items)
+
+        elif top_lower == _DOC_AS_PROJECT:
+            # List direct children only — each doc file = its own project.
+            folder_path = f"{root}/{folder_name}"
+            doc_items = sp_client.list_folder_contents(drive_id, folder_path)
+            for it in doc_items:
+                if "file" not in it:
+                    continue
+                it["relative_path"] = f"{folder_name}/{it['name']}"
+                all_items.append(it)
+        # else: Flash Review Transcripts, Newsletters, Policy, unknown → skip entirely
+
     for it in all_items:
         name = it.get("name", "")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
@@ -201,6 +236,7 @@ def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]
         route = _route_file(it.get("relative_path", name))
         if route:
             live[route[0]] = route[1]
+
     return live, all_items
 
 

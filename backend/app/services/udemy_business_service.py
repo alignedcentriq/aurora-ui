@@ -652,11 +652,21 @@ def _build_org_stats() -> None:
     total_completions = 0
     total_minutes = 0.0
     page = 1
+    analytics_access_denied = False
+    fetch_error: str | None = None
     try:
         while True:
             try:
                 data = get_user_course_activity(page=page, page_size=100)
+            except PermissionError:
+                analytics_access_denied = True
+                log.warning(
+                    "[udemy-stats] analytics API access denied — "
+                    "the org credential may lack reporting scope or the plan doesn't include analytics."
+                )
+                break
             except Exception as exc:
+                fetch_error = str(exc)
                 log.warning("[udemy-stats] page %d failed: %s", page, exc)
                 break
             results = data.get("results") or []
@@ -763,6 +773,8 @@ def _build_org_stats() -> None:
         "low_engagement": low_engagement,
         "categories": categories,
         "generated_at": datetime.datetime.utcnow().isoformat(),
+        "analytics_access_denied": analytics_access_denied,
+        "fetch_error": fetch_error,
     }
 
     with _org_stats_lock:

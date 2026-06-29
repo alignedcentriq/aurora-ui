@@ -484,3 +484,356 @@ async def udemy_scim_assign_pro(
     if not (email and pool):
         raise HTTPException(status_code=400, detail="email and pro_pool_group_id are required.")
     return _scim_result(scim.assign_pro_license(email, pool))
+
+
+# ── Udemy Notification Automations (PMO/Admin) ──────────────────────────────
+# These wrap the generic AutomationRule CRUD but are scoped to
+# automation_kind="udemy_inactive" and exposed within the Udemy portal.
+
+from pydantic import BaseModel
+from typing import Any, Optional
+from app.services import automation_service
+
+
+class UdemyAutomationBody(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    frequency: str  # daily | weekly | monthly
+    day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
+    hour: Optional[int] = 9
+    minute: Optional[int] = 0
+    email_subject: str  # subject for the summary report email
+    email_body: Optional[str] = ""  # optional intro text in the report
+    recipients_json: Optional[list[Any]] = []  # PMO/Admin who receive the report
+    # Udemy-specific config:
+    inactive_days: Optional[int] = 30
+    notify_mode: Optional[str] = "report"  # report | nudge | both
+    filter_groups: Optional[list[str]] = []
+    filter_users: Optional[list[str]] = []
+    exclude_deactivated: Optional[bool] = True
+    nudge_subject: Optional[str] = ""
+    nudge_body: Optional[str] = ""
+    is_active: Optional[bool] = True
+
+
+def _udemy_extra_config(body) -> dict:
+    """Extract udemy_inactive-specific fields into extra_config dict."""
+    d = body if isinstance(body, dict) else body.model_dump()
+    return {
+        "inactive_days": d.get("inactive_days") or 30,
+        "notify_mode": d.get("notify_mode") or "report",
+        "filter_groups": d.get("filter_groups") or [],
+        "filter_users": d.get("filter_users") or [],
+        "exclude_deactivated": d.get("exclude_deactivated", True),
+        "nudge_subject": d.get("nudge_subject") or "",
+        "nudge_body": d.get("nudge_body") or "",
+    }
+
+
+@router.get("/automations")
+def list_udemy_automations(user: CurrentUser = Depends(get_current_user)):
+    """List notification automations created for Udemy Business."""
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    all_rules = automation_service.list_rules(user.email, user.role)
+    return [r for r in all_rules if r.get("automation_kind") == "udemy_inactive"]
+
+
+@router.post("/automations")
+def create_udemy_automation(
+    body: UdemyAutomationBody,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Create a new Udemy inactive-seat notification automation."""
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    payload = body.model_dump()
+    payload["automation_kind"] = "udemy_inactive"
+    payload["extra_config"] = _udemy_extra_config(body)
+    result = automation_service.create(user.email, user.role, payload)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "create_failed"))
+    return result["rule"]
+
+
+@router.patch("/automations/{rule_id}")
+def update_udemy_automation(
+    rule_id: int,
+    body: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Update an existing Udemy notification automation."""
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    if any(k in body for k in ("inactive_days", "notify_mode", "filter_groups",
+                                "filter_users", "exclude_deactivated",
+                                "nudge_subject", "nudge_body")):
+        body["extra_config"] = _udemy_extra_config(body)
+    result = automation_service.update(user.email, user.role, rule_id, body)
+    if not result.get("success"):
+        error = result.get("error", "error")
+        status = 404 if error == "not_found" else 403 if error == "forbidden" else 400
+        raise HTTPException(status_code=status, detail=error)
+    return result["rule"]
+
+
+@router.delete("/automations/{rule_id}")
+def delete_udemy_automation(rule_id: int, user: CurrentUser = Depends(get_current_user)):
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    result = automation_service.delete(user.email, user.role, rule_id)
+    if not result.get("success"):
+        error = result.get("error", "error")
+        raise HTTPException(status_code=404 if error == "not_found" else 403, detail=error)
+    return {"success": True}
+
+
+@router.post("/automations/{rule_id}/send-now")
+def send_udemy_automation_now(rule_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Fire a Udemy notification automation immediately (test / on-demand)."""
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    result = automation_service.send_now(rule_id, user.email, user.role)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "send_failed"))
+    return result
+
+
+@router.patch("/automations/{rule_id}/toggle")
+def toggle_udemy_automation(rule_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Toggle active/inactive for a Udemy automation."""
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to PMO / Admin.")
+    from app.database import SessionLocal
+    from app.models import AutomationRule as AR
+    db = SessionLocal()
+    try:
+        rule = db.query(AR).filter(AR.id == rule_id).first()
+        if not rule:
+            raise HTTPException(status_code=404, detail="not_found")
+        rule.is_active = not rule.is_active
+        db.commit()
+        return {"success": True, "is_active": rule.is_active}
+    finally:
+        db.close()
+
+
+@router.get("/groups")
+def udemy_groups(user: CurrentUser = Depends(get_current_user)):
+    """Distinct Udemy groups from the user directory — used by the automation filter picker."""
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    _guard_configured()
+    try:
+        directory = udemy._ensure_user_directory()
+        groups: set[str] = set()
+        for entry in directory.values():
+            for g in (entry.get("groups") or []):
+                if g:
+                    groups.add(g)
+        return {"groups": sorted(groups)}
+    except Exception as e:
+        _err(e)
+
+
+# ── Export endpoints (Excel download for any tabular data) ───────────────────
+
+@router.get("/export/inactive-users")
+def export_inactive_users(
+    days: int = Query(None, ge=1, le=3650),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Export inactive users as an Excel file."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    threshold = days if days is not None else udemy.get_inactive_default_days()
+    try:
+        result = udemy.get_inactive_users(threshold)
+        if "error" in result:
+            raise HTTPException(status_code=503, detail=result["error"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+    rows = result.get("results") or []
+    return _build_xlsx_response(
+        rows,
+        columns=["name", "email", "role", "groups", "last_active", "joined_date",
+                 "idle_days", "never_visited", "video_minutes", "completed_courses",
+                 "is_deactivated"],
+        headers=["Name", "Email", "Role", "Groups", "Last Active", "Joined",
+                 "Idle Days", "Never Visited", "Video Minutes", "Completed Courses",
+                 "Deactivated"],
+        filename=f"udemy-inactive-users-{threshold}d.xlsx",
+        sheet_name="Inactive Users",
+    )
+
+
+@router.get("/export/user-activity")
+def export_user_activity(user: CurrentUser = Depends(get_current_user)):
+    """Export learner activity as an Excel file."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    try:
+        data = udemy.get_user_activity(page=1, page_size=100)
+    except Exception as e:
+        _err(e)
+
+    rows = data.get("results") or []
+    return _build_xlsx_response(
+        rows,
+        columns=["user_name", "user_surname", "user_email", "user_role",
+                 "user_joined_date", "last_date_visit", "user_is_deactivated",
+                 "num_video_consumed_minutes", "num_web_visited_days",
+                 "num_completed_courses"],
+        headers=["First Name", "Last Name", "Email", "Role",
+                 "Joined", "Last Visit", "Deactivated",
+                 "Video Minutes", "Days Visited", "Completed Courses"],
+        filename="udemy-learner-activity.xlsx",
+        sheet_name="Learner Activity",
+    )
+
+
+@router.get("/export/course-activity")
+def export_course_activity(user: CurrentUser = Depends(get_current_user)):
+    """Export per-user course activity as an Excel file."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    try:
+        all_rows: list[dict] = []
+        page = 1
+        while True:
+            data = udemy.get_user_course_activity(page=page, page_size=100)
+            results = data.get("results") or []
+            if not results:
+                break
+            all_rows.extend(results)
+            if not data.get("next"):
+                break
+            page += 1
+    except Exception as e:
+        _err(e)
+
+    return _build_xlsx_response(
+        all_rows,
+        columns=["user_email", "course_title", "course_category",
+                 "completion_ratio", "num_video_consumed_minutes",
+                 "course_completion_date"],
+        headers=["Email", "Course", "Category",
+                 "Completion %", "Video Minutes", "Completed On"],
+        filename="udemy-course-activity.xlsx",
+        sheet_name="Course Activity",
+    )
+
+
+@router.get("/export/insights")
+def export_insights(user: CurrentUser = Depends(get_current_user)):
+    """Export course insights as an Excel file."""
+    _guard_configured()
+    if user.role not in _REPORT_ROLES:
+        raise HTTPException(status_code=403, detail="Restricted to HR / PMO / Admin.")
+    try:
+        data = udemy.get_course_insights()
+        if "error" in data:
+            raise HTTPException(status_code=503, detail=data["error"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+    # Flatten top_enrolled + top_completed + low_engagement into one list
+    all_courses = []
+    seen_ids = set()
+    for key in ("top_enrolled", "top_completed", "low_engagement"):
+        for c in (data.get(key) or []):
+            cid = c.get("course_id")
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                all_courses.append(c)
+
+    return _build_xlsx_response(
+        all_courses,
+        columns=["title", "category", "enrolled", "completed",
+                 "completion_rate", "avg_completion_pct", "hours"],
+        headers=["Course", "Category", "Enrolled", "Completed",
+                 "Completion Rate %", "Avg Completion %", "Hours"],
+        filename="udemy-insights.xlsx",
+        sheet_name="Course Insights",
+    )
+
+
+def _build_xlsx_response(
+    rows: list[dict],
+    columns: list[str],
+    headers: list[str],
+    filename: str,
+    sheet_name: str = "Sheet1",
+):
+    """Build an Excel file from dict rows and return a StreamingResponse."""
+    import io
+    from fastapi.responses import StreamingResponse
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+
+    header_font = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1B6FC8", end_color="1B6FC8", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin", color="D1D5DB"),
+        right=Side(style="thin", color="D1D5DB"),
+        top=Side(style="thin", color="D1D5DB"),
+        bottom=Side(style="thin", color="D1D5DB"),
+    )
+    cell_font = Font(name="Segoe UI", size=10)
+    alt_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+
+    for row_idx, row_data in enumerate(rows, 2):
+        for col_idx, col_key in enumerate(columns, 1):
+            val = row_data.get(col_key, "")
+            if isinstance(val, list):
+                val = ", ".join(str(v) for v in val)
+            if isinstance(val, bool):
+                val = "Yes" if val else "No"
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.font = cell_font
+            cell.border = thin_border
+            if row_idx % 2 == 0:
+                cell.fill = alt_fill
+
+    for col_idx in range(1, len(headers) + 1):
+        max_len = max(
+            len(str(ws.cell(row=r, column=col_idx).value or ""))
+            for r in range(1, min(len(rows) + 2, 100))
+        )
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_len + 4, 50)
+
+    ws.auto_filter.ref = ws.dimensions
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

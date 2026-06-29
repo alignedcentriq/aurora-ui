@@ -26,6 +26,7 @@ class CurrentUser:
     email: str
     role: str                                   # EFFECTIVE role (after any test impersonation)
     scopes: List[str] = field(default_factory=list)
+    extra_capabilities: List[str] = field(default_factory=list)
     real_role: Optional[str] = None             # true role; differs from `role` only while a
                                                 # Super Admin is test-impersonating another role
 
@@ -57,12 +58,14 @@ def get_current_user(
     # 1. Resolve the REAL role + scopes (DB override wins over the Azure AD header claim).
     real_role = None
     scopes: List[str] = []
+    extra_capabilities: List[str] = []
     try:
         from app.models import UserRoleOverride
         override = db.query(UserRoleOverride).filter(UserRoleOverride.email == email).first()
         if override:
             real_role = override.role
             scopes = override.scopes or []
+            extra_capabilities = override.extra_capabilities or []
     except Exception:
         pass
     if real_role is None:
@@ -80,7 +83,8 @@ def get_current_user(
         if imp != "super admin":
             scopes = []  # test the target role cleanly, without the super-admin scopes
 
-    return CurrentUser(email=email, role=effective_role, scopes=scopes, real_role=real_role)
+    return CurrentUser(email=email, role=effective_role, scopes=scopes,
+                       extra_capabilities=extra_capabilities, real_role=real_role)
 
 
 def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

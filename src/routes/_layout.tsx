@@ -487,7 +487,7 @@ function LayoutComponent() {
       {/* --- DESKTOP LEFT SIDEBAR --- */}
       <aside
         className={cn(
-          "hidden lg:flex flex-col h-full bg-[#090f21] border-r border-blue-950/60 backdrop-blur-xl shrink-0 transition-all duration-300 relative select-none z-30 overflow-hidden",
+          "hidden lg:flex flex-col h-full bg-[#090f21] border-r border-blue-950/60 backdrop-blur-xl shrink-0 transition-all duration-300 relative select-none z-30",
           sidebarCollapsed ? "w-[78px]" : "w-[260px]"
         )}
       >
@@ -511,11 +511,11 @@ function LayoutComponent() {
 
         {/* Navigation List */}
         <nav
-          className="flex-1 py-4 px-3 space-y-1.5 overflow-y-auto no-scrollbar flex flex-col justify-between"
+          className="flex-1 py-3 px-3 overflow-y-auto overflow-x-hidden no-scrollbar flex flex-col"
           onMouseLeave={() => setHoveredPath(null)}
         >
           {/* Main Links */}
-          <div className="space-y-1.5">
+          <div className="space-y-0.5">
             {navItems
               .filter((n) => n.show)
               .map((item) => {
@@ -589,22 +589,94 @@ function LayoutComponent() {
               })}
           </div>
 
-          {/* Collapse/Expand Toggle Link inside Nav list */}
-          <div className="pt-2 border-t border-zinc-850">
+          {/* Recent Conversations — flows directly under nav items */}
+          {!sidebarCollapsed && (
+            <div className="mt-3 pt-3 border-t border-blue-950/60">
+              <div className="flex items-center justify-between px-2 mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-500">
+                  Recent Chats
+                </span>
+                <button
+                  onClick={() => {
+                    const newId = createThread();
+                    setActiveId(newId);
+                    if (location.pathname !== "/") {
+                      navigate({ to: "/" });
+                    }
+                  }}
+                  className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 hover:bg-primary/20 hover:text-primary transition-all cursor-pointer"
+                  title="New Conversation"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              </div>
+
+              <div className="space-y-0.5">
+                {Object.keys(threads).length === 0 ? (
+                  <div className="text-[10px] text-zinc-600 italic px-2 py-1.5">
+                    No conversations yet
+                  </div>
+                ) : (
+                  Object.values(threads)
+                    .filter((t) => t.turns.length > 0)
+                    .sort((a, b) => b.updatedAt - a.updatedAt)
+                    .slice(0, 8)
+                    .map((t) => {
+                      const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
+                      const chatTitle = firstUserMsg
+                        ? firstUserMsg.length > 32 ? firstUserMsg.slice(0, 32) + "…" : firstUserMsg
+                        : "New conversation";
+                      const isActiveChat = activeId === t.id && location.pathname === "/";
+                      return (
+                        <div
+                          key={t.id}
+                          className={cn(
+                            "group relative flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
+                            isActiveChat
+                              ? "bg-primary/12 text-white"
+                              : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200"
+                          )}
+                          onClick={() => {
+                            setActiveId(t.id);
+                            if (location.pathname !== "/") navigate({ to: "/" });
+                          }}
+                        >
+                          <MessageSquare className={cn("h-3 w-3 shrink-0", isActiveChat ? "text-primary" : "text-zinc-600")} />
+                          <span className="truncate flex-1 text-[11px] font-medium pr-4">{chatTitle}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                            className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Push collapse button to bottom */}
+          <div className="flex-1" />
+
+          {/* Collapse/Expand Toggle */}
+          <div className="pt-2 mt-2 border-t border-blue-950/60">
             <button
               onClick={toggleSidebar}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
                 sidebarCollapsed ? "justify-center" : "justify-start",
-                "text-zinc-400 hover:text-white hover:bg-zinc-900/50"
+                "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
               )}
               title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             >
               {sidebarCollapsed ? (
-                <ChevronRight className="h-4.5 w-4.5 shrink-0" />
+                <ChevronRight className="h-4 w-4 shrink-0" />
               ) : (
                 <>
-                  <ChevronLeft className="h-4.5 w-4.5 shrink-0" />
+                  <ChevronLeft className="h-4 w-4 shrink-0" />
                   <span>Collapse Sidebar</span>
                 </>
               )}
@@ -709,31 +781,33 @@ function LayoutComponent() {
             <AnimatePresence>
               {profileDropdownOpen && (
                 <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute bottom-full left-0 mb-2 w-54 z-50 rounded-2xl border border-blue-950 bg-[#0a122c]/95 backdrop-blur-xl p-2 shadow-2xl"
-                  style={{ minWidth: "210px" }}
+                  exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                  transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-full left-0 mb-2 z-[100] rounded-xl border border-zinc-700/60 bg-[#0d1628] p-1.5 shadow-2xl"
+                  style={{ minWidth: "220px", width: "220px" }}
                 >
-                  <div className="px-3 py-1.5 border-b border-blue-950/40 mb-1.5 flex flex-col">
-                    <span className="text-xs font-bold text-white truncate">{user.name}</span>
-                    <span className="text-[10px] text-zinc-400 truncate font-medium">
-                      {user.role}
-                    </span>
+                  {/* User identity header */}
+                  <div className="px-2.5 py-2 mb-1 flex items-center gap-2.5">
+                    <div className="shrink-0">{avatarEl}</div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-white truncate">{user.name}</div>
+                      <div className="text-[10px] text-zinc-400 truncate">{user.role}</div>
+                    </div>
                   </div>
 
                   <RoleSwitcher />
 
-                  <div className="border-t border-blue-950/40 mt-1.5 pt-1.5">
+                  <div className="border-t border-zinc-700/50 mt-1.5 pt-1.5">
                     <button
                       onClick={() => {
                         logout();
                         setProfileDropdownOpen(false);
                       }}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-rose-500 hover:bg-rose-500/10 transition-all text-left font-medium"
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all text-left cursor-pointer"
                     >
-                      <LogOut className="h-3.5 w-3.5" />
+                      <LogOut className="h-3.5 w-3.5 shrink-0" />
                       <span>Sign Out</span>
                     </button>
                   </div>
@@ -762,17 +836,17 @@ function LayoutComponent() {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="fixed inset-y-0 left-0 w-72 bg-background border-r border-border shadow-2xl z-50 flex flex-col p-4 pt-6 lg:hidden select-none"
+              className="fixed inset-y-0 left-0 w-72 bg-[#090f21] border-r border-blue-950/60 shadow-2xl z-50 flex flex-col p-4 pt-6 lg:hidden select-none"
             >
               {/* Drawer Header */}
               <div className="flex items-center justify-between mb-6 px-2 shrink-0">
                 <Link to="/" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
                   <Logo size="sm" />
-                  <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
+                  <BrandName className="text-sm font-bold tracking-tight text-white" withAI={true} />
                 </Link>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
-                  className="p-1.5 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
+                  className="p-1.5 rounded-xl text-zinc-400 hover:bg-zinc-800/40 hover:text-white transition-all cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -795,7 +869,7 @@ function LayoutComponent() {
                           "relative flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer z-10",
                           active
                             ? "font-bold"
-                            : "text-muted-foreground hover:text-foreground",
+                            : "text-zinc-400 hover:text-white hover:bg-zinc-800/20",
                         )}
                         style={{
                           color: active ? accentColor : undefined,
@@ -806,7 +880,7 @@ function LayoutComponent() {
                             layoutId="mobile-drawer-active-pill"
                             className="absolute inset-0 rounded-xl -z-10"
                             style={{
-                              background: `color-mix(in oklab, ${accentColor} 15%, transparent)`,
+                              background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
                               boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
                             }}
                           />
@@ -822,15 +896,15 @@ function LayoutComponent() {
               </div>
 
               {/* Drawer Footer Actions */}
-              <div className="border-t border-border/40 pt-4 mt-4 space-y-3 px-2 shrink-0">
+              <div className="border-t border-blue-950/60 pt-4 mt-4 space-y-3 px-2 shrink-0">
                 {/* Utilities */}
-                <div className="flex items-center justify-around py-1.5 bg-muted/20 rounded-xl border border-border/40">
+                <div className="flex items-center justify-around py-1.5 bg-[#0c1630]/40 rounded-xl border border-blue-950/40">
                   <button
                     onClick={() => {
                       openIntro();
                       setMobileMenuOpen(false);
                     }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Watch intro tour"
                   >
                     <PlayCircle className="h-4.5 w-4.5 text-primary" />
@@ -841,7 +915,7 @@ function LayoutComponent() {
                       setClocksOverlayOpen(true);
                       setMobileMenuOpen(false);
                     }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Office Clocks"
                   >
                     <Globe className="h-4.5 w-4.5 text-primary" />
@@ -849,7 +923,7 @@ function LayoutComponent() {
 
                   <button
                     onClick={handleThemeToggle}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Toggle Theme"
                   >
                     {activeTheme === "dark" ? (
@@ -861,11 +935,11 @@ function LayoutComponent() {
                 </div>
 
                 {/* User card / switcher */}
-                <div className="flex items-center gap-3 p-2 bg-muted/10 rounded-2xl border border-border/40">
+                <div className="flex items-center gap-3 p-2 bg-[#0c1630]/35 rounded-2xl border border-blue-950">
                   <div className="shrink-0">{avatarEl}</div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-foreground truncate">{user.name}</div>
-                    <div className="text-[9px] text-muted-foreground truncate">{user.role}</div>
+                    <div className="text-xs font-bold text-white truncate">{user.name}</div>
+                    <div className="text-[9px] text-zinc-400 truncate">{user.role}</div>
                   </div>
                   <button
                     onClick={() => {
@@ -924,19 +998,7 @@ function LayoutComponent() {
             {/* Proactive Nudges Feed */}
             <ProactiveNudgeFeed />
 
-            {/* Recent Chats Drawer Toggle */}
-            <button
-              onClick={() => setHistoryDrawerOpen(!historyDrawerOpen)}
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer shadow-sm",
-                historyDrawerOpen
-                  ? "border-primary/30 bg-primary/10 text-primary"
-                  : "border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground",
-              )}
-              title="Recent Chats"
-            >
-              <MessageSquare className="h-4 w-4" />
-            </button>
+
           </div>
         </header>
 

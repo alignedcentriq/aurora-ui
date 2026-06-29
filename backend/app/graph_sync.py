@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class GraphClient:
+    API_TIMEOUT = 30  # seconds — prevents hanging forever on unresponsive Graph calls
+
     def __init__(self):
         """All Graph calls — webhooks/subscriptions and SharePoint document
         ingestion alike — use the single GRAPH_CLIENT_ID/SECRET/TENANT_ID app."""
@@ -41,7 +43,7 @@ class GraphClient:
             "client_secret": self.client_secret,
             "grant_type": "client_credentials",
         }
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=self.API_TIMEOUT)
         if response.status_code != 200:
             pass
         response.raise_for_status()
@@ -68,7 +70,7 @@ class GraphClient:
         }
 
         
-        response = requests.post(url, headers=self._headers(), json=payload)
+        response = requests.post(url, headers=self._headers(), json=payload, timeout=self.API_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -78,7 +80,7 @@ class GraphClient:
         payload = {
             "expirationDateTime": expiration.isoformat() + "Z"
         }
-        response = requests.patch(url, headers=self._headers(), json=payload)
+        response = requests.patch(url, headers=self._headers(), json=payload, timeout=self.API_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -86,7 +88,7 @@ class GraphClient:
         url = delta_link if delta_link else f"{self.base_url}/drives/{drive_id}/root/delta"
         max_retries = 3
         for attempt in range(max_retries):
-            response = requests.get(url, headers=self._headers())
+            response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 5))
                 time.sleep(retry_after)
@@ -103,7 +105,7 @@ class GraphClient:
 
     def get_file_metadata(self, drive_id: str, item_id: str):
         url = f"{self.base_url}/drives/{drive_id}/items/{item_id}"
-        response = requests.get(url, headers=self._headers())
+        response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -112,21 +114,26 @@ class GraphClient:
             url = f"{self.base_url}/drives/{drive_id}/root:/{folder_path}:/children"
         else:
             url = f"{self.base_url}/drives/{drive_id}/root/children"
-        
-        response = requests.get(url, headers=self._headers())
-        response.raise_for_status()
-        return response.json().get("value", [])
+
+        items = []
+        while url:
+            response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+            items.extend(data.get("value", []))
+            url = data.get("@odata.nextLink")  # follow pagination
+        return items
 
     def download_file(self, drive_id: str, item_id: str):
         url = f"{self.base_url}/drives/{drive_id}/items/{item_id}/content"
-        response = requests.get(url, headers=self._headers(), stream=True)
+        response = requests.get(url, headers=self._headers(), stream=True, timeout=60)
         response.raise_for_status()
         return response
 
     def download_file_by_path(self, drive_id: str, file_path: str):
         """Download a file by its path within the drive (e.g. 'IQ/HR/Leave Policy.pdf')."""
         url = f"{self.base_url}/drives/{drive_id}/root:/{file_path}:/content"
-        response = requests.get(url, headers=self._headers(), stream=True)
+        response = requests.get(url, headers=self._headers(), stream=True, timeout=60)
         response.raise_for_status()
         return response
 
@@ -161,7 +168,7 @@ class GraphClient:
         url = f"{self.base_url}/sites/{clean_site}"
         logger.info(f"Resolving SharePoint site ID for: {clean_site}")
         
-        response = requests.get(url, headers=self._headers())
+        response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
         if response.status_code == 401:
              logger.error(f"Graph API 401 Unauthorized. Check if Client Secret is correct and App has 'Sites.Read.All' permission. Response: {response.text}")
         response.raise_for_status()
@@ -169,7 +176,7 @@ class GraphClient:
 
     def get_drive_id(self, site_id: str):
         url = f"{self.base_url}/sites/{site_id}/drive"
-        response = requests.get(url, headers=self._headers())
+        response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
         response.raise_for_status()
         return response.json().get("id")
 

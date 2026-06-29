@@ -265,6 +265,17 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
             {"id": "write", "label": "Write", "description": "Create and edit form templates"},
         ],
     },
+    "lms_manage": {
+        "label": "LMS Administration",
+        "description": "Allows creating, editing, and deleting trainings, managing assessments, and assigning courses to employees in TechElevate LMS.",
+        "category": "feature",
+        "actions": [
+            {"id": "read",   "label": "View",   "description": "View training admin panel and assignments"},
+            {"id": "write",  "label": "Create/Edit", "description": "Create and edit trainings, questions, and materials"},
+            {"id": "delete", "label": "Delete",  "description": "Delete trainings and their content"},
+            {"id": "assign", "label": "Assign",  "description": "Assign trainings to employees and groups"},
+        ],
+    },
     "manage_access": {
         "label": "Manage Admin Access",
         "description": "Allows granting or revoking Admin roles for other users (delegated Super Admin action).",
@@ -413,7 +424,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
         "mode:analytics", "mode:training", "mode:project", "mode:resource",
-        "pmo_portal", "people_directory", "email_automation", "prompt_config",
+        "pmo_portal", "lms_manage", "people_directory", "email_automation", "prompt_config",
     ],
     "functional manager": [
         "portal:roi", "portal:analytics_studio", "portal:analytics_builder",

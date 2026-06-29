@@ -344,7 +344,13 @@ def _sync_files_into_policies(
                 }
 
             # ── Chunk & embed ─────────────────────────────────────────────
-            PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+            try:
+                PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+            except Exception as embed_err:
+                logger.warning(
+                    f"  [EMBED] Embedding failed for {filename}: {embed_err} "
+                    "— chunks saved without vectors (backfill later)"
+                )
 
             action = "NEW" if is_new else "UPDATED"
             img_count = len(raw_images) if raw_images else 0
@@ -355,23 +361,44 @@ def _sync_files_into_policies(
             else:
                 updated += 1
 
-            # Commit per file. Downloads + embeddings are slow, so a single
-            # transaction spanning the whole folder would hold row locks on every
-            # touched chunk for the entire run — which deadlocks against concurrent
-            # syncs/embeds on the shared DB. Per-file commits keep lock windows tiny
-            # and make a partial sync durable/resumable.
-            db.commit()
+            # Commit per file — keeps lock windows tiny and makes partial syncs
+            # durable/resumable. If the commit fails (e.g. SSL connection drop on
+            # the remote DB), recover the session so the next file can proceed.
+            try:
+                db.commit()
+            except Exception as commit_err:
+                logger.error(f"  [DB] Commit failed for {filename}: {commit_err} — recovering session")
+                errors.append(f"DB commit failed ({filename}): {commit_err}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                db = SessionLocal()
+                changed_keys.pop()
+                if is_new:
+                    new -= 1
+                else:
+                    updated -= 1
 
         # ── Delete policies whose file was removed from SharePoint ────────
-        removed_keys = set(existing.keys()) - seen_keys
-        if removed_keys:
-            db.query(Policy).filter(Policy.source_key.in_(removed_keys)).delete(
+        # Batch in groups of 20 with a commit per batch so we never hold a
+        # long lock that would race against concurrent syncs or embed workers.
+        removed_keys = list(set(existing.keys()) - seen_keys)
+        deleted = 0
+        _BATCH = 20
+        for i in range(0, len(removed_keys), _BATCH):
+            batch = removed_keys[i : i + _BATCH]
+            db.query(Policy).filter(Policy.source_key.in_(batch)).delete(
                 synchronize_session="fetch"
             )
-            deleted = len(removed_keys)
+            db.commit()
+            deleted += len(batch)
+        if deleted:
             logger.info(f"  [DELETED] {deleted} policies removed (source files gone)")
-
-        db.commit()
     except Exception as e:
         db.rollback()
         errors.append(str(e))

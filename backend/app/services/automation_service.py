@@ -266,6 +266,146 @@ def _build_html(subject: str, body_text: str) -> str:
     return _email_shell(subject, intro, "")
 
 
+def _render_udemy_inactive(rule: AutomationRule) -> tuple[str, str, list[dict]]:
+    """For a udemy_inactive rule, pull the live inactive-user list, apply filters,
+    and render:
+      1. A summary report email for the rule's recipients (PMO/Admin).
+      2. Optionally, per-user nudge emails sent directly to the inactive learners.
+
+    Returns (report_html, nudge_html_template, filtered_users).
+    nudge_html_template contains {name} and {idle_days} placeholders.
+    """
+    from app.services import udemy_business_service as udemy
+    from app.services.email_service import (
+        _email_shell, _detail_rows, _status_pill, _note, _nl2br,
+        _C_AMBER, _C_PRIMARY, _C_NO, _C_INFO,
+    )
+    import html as _html
+
+    cfg = rule.extra_config or {}
+    inactive_days = int(cfg.get("inactive_days") or udemy.get_inactive_default_days())
+    filter_groups: list[str] = cfg.get("filter_groups") or []
+    filter_users: list[str] = cfg.get("filter_users") or []
+    exclude_deactivated = cfg.get("exclude_deactivated", True)
+
+    if not udemy.configured():
+        empty_html = _email_shell(
+            "Udemy Inactive Seats Report",
+            "<p>Udemy Business is not configured — the report could not be generated.</p>",
+            "",
+        )
+        return empty_html, "", []
+
+    result = udemy.get_inactive_users(
+        inactive_days, include_deactivated=not exclude_deactivated
+    )
+    users = result.get("results") or []
+
+    if filter_groups:
+        lower_groups = {g.lower() for g in filter_groups}
+        users = [
+            u for u in users
+            if any(g.lower() in lower_groups for g in (u.get("groups") or []))
+        ]
+
+    if filter_users:
+        lower_emails = {e.lower() for e in filter_users}
+        users = [u for u in users if (u.get("email") or "").lower() in lower_emails]
+
+    total = result.get("total_learners", 0)
+    today = datetime.datetime.now().strftime("%d %b %Y")
+    custom_body = rule.email_body or ""
+
+    # ── Report email (sent to recipients_json) ───────────────────────────
+    intro = (
+        f'<p>{_status_pill("Inactive Seats Report", _C_AMBER)}</p>'
+        f"<p>{_nl2br(custom_body)}</p>" if custom_body else
+        f'<p>{_status_pill("Inactive Seats Report", _C_AMBER)}</p>'
+    )
+    summary_rows = [
+        ("Report Date", today),
+        ("Idle Threshold", f"{inactive_days} days"),
+        ("Total Learners", str(total)),
+        ("Inactive Count", f'<strong style="color:{_C_NO};">{len(users)}</strong>'),
+    ]
+    if filter_groups:
+        summary_rows.append(("Filtered Groups", ", ".join(filter_groups)))
+
+    # Build the user table inline (top 50 rows — keep email size sane)
+    FONT = "'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    if users:
+        head_cells = "".join(
+            f'<th style="padding:9px 10px;background:{_C_PRIMARY};color:#fff;font:700 11px {FONT};'
+            f'text-align:left;">{h}</th>'
+            for h in ["Learner", "Email", "Groups", "Last Active", "Idle Days", "Completed"]
+        )
+        body_rows_html = ""
+        for idx, u in enumerate(users[:50]):
+            bg = "#ffffff" if idx % 2 == 0 else "#f5f8fc"
+            groups_str = ", ".join(u.get("groups") or []) or "—"
+            last = u.get("last_active") or "Never"
+            body_rows_html += (
+                f'<tr>'
+                f'<td style="padding:7px 10px;background:{bg};font:400 12px {FONT};color:#0d1b2e;">{_html.escape(u.get("name",""))}</td>'
+                f'<td style="padding:7px 10px;background:{bg};font:400 12px {FONT};color:#475569;">{_html.escape(u.get("email",""))}</td>'
+                f'<td style="padding:7px 10px;background:{bg};font:400 11px {FONT};color:#475569;">{_html.escape(groups_str)}</td>'
+                f'<td style="padding:7px 10px;background:{bg};font:400 12px {FONT};color:#475569;">{_html.escape(str(last))}</td>'
+                f'<td style="padding:7px 10px;background:{bg};font:700 12px {FONT};color:{_C_NO};">{u.get("idle_days",0)}</td>'
+                f'<td style="padding:7px 10px;background:{bg};font:400 12px {FONT};color:#475569;">{u.get("completed_courses",0)}</td>'
+                f'</tr>'
+            )
+        overflow = len(users) - 50
+        table_html = (
+            f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+            f'style="border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;'
+            f'margin:16px 0;border:1px solid #e6edf6;">'
+            f'<tr>{head_cells}</tr>{body_rows_html}</table>'
+        )
+        if overflow > 0:
+            table_html += _note(f"Showing the first 50 of {len(users)} inactive learners.")
+    else:
+        table_html = (
+            '<div style="padding:24px;text-align:center;color:#16A34A;font-weight:700;">'
+            'No inactive learners found for this threshold and filter combination.</div>'
+        )
+
+    report_body = _detail_rows(summary_rows) + table_html
+    report_body += _note("Generated by Centriq AI · Udemy Business Automation")
+    report_html = _email_shell("Udemy Inactive Seats Report", intro, report_body,
+                               preheader=f"{len(users)} inactive seats · {inactive_days}+ days idle")
+
+    # ── Nudge email template (sent per-user if notify_mode includes nudge) ──
+    nudge_subject = cfg.get("nudge_subject") or "Your Udemy Business account needs attention"
+    nudge_body_text = cfg.get("nudge_body") or (
+        "We noticed you haven't visited Udemy Business in a while. "
+        "Your organization provides access to thousands of courses to help you "
+        "grow your skills. Inactive seats may be reclaimed for other team members."
+    )
+    nudge_intro = (
+        f'<p>{_status_pill("Action Needed", _C_INFO)}</p>'
+        f"<p>Hi {{name}},</p>"
+        f"<p>{_nl2br(nudge_body_text)}</p>"
+    )
+    nudge_detail = _detail_rows([
+        ("Last Active", "{{last_active}}"),
+        ("Idle Days", "{{idle_days}}"),
+    ])
+    portal_url = "https://alignedautomation.udemy.com"
+    nudge_detail += (
+        f'<div style="text-align:center;margin:20px 0;">'
+        f'<a href="{portal_url}" style="background:{_C_PRIMARY};color:#ffffff;display:inline-block;'
+        f'font:600 14px {FONT};line-height:44px;height:44px;padding:0 28px;text-align:center;'
+        f'text-decoration:none;border-radius:22px;box-shadow:0 2px 8px rgba(13,27,46,.20);">'
+        f'Resume Learning on Udemy</a></div>'
+    )
+    nudge_detail += _note("This is an automated reminder from your organization. "
+                          "If you believe this was sent in error, please contact PMO.")
+    nudge_html = _email_shell(nudge_subject, nudge_intro, nudge_detail,
+                              preheader="Your Udemy Business account has been idle")
+
+    return report_html, nudge_html, users
+
+
 def _render_roi_digest(rule: AutomationRule) -> tuple[str, dict | None]:
     """For a roi_digest rule, compute the live ROI summary and return (html_body, files).
 
@@ -308,6 +448,43 @@ def _render_roi_digest(rule: AutomationRule) -> tuple[str, dict | None]:
     return html_body, files
 
 
+def _fire_udemy_inactive(rule: AutomationRule, sender_email: str) -> dict:
+    """Execute a udemy_inactive automation: send report + optional nudges."""
+    from app.services.email_service import _send_html
+
+    report_html, nudge_html_tpl, users = _render_udemy_inactive(rule)
+    cfg = rule.extra_config or {}
+    notify_mode = cfg.get("notify_mode", "report")
+    nudge_subject = cfg.get("nudge_subject") or "Your Udemy Business account needs attention"
+
+    report_emails = _extract_emails(rule.recipients_json)
+    results = {"report_sent": False, "nudges_sent": 0, "nudge_failed": 0, "inactive_count": len(users)}
+
+    if notify_mode in ("report", "both") and report_emails:
+        ok = _send_html(sender_email, report_emails, rule.email_subject, report_html)
+        results["report_sent"] = ok
+
+    if notify_mode in ("nudge", "both") and users and nudge_html_tpl:
+        for u in users:
+            email = (u.get("email") or "").strip()
+            if not email:
+                continue
+            personalized = nudge_html_tpl.replace("{name}", u.get("name") or "there")
+            personalized = personalized.replace("{{name}}", u.get("name") or "there")
+            personalized = personalized.replace("{{last_active}}", u.get("last_active") or "Never")
+            personalized = personalized.replace("{{idle_days}}", str(u.get("idle_days", 0)))
+            try:
+                ok = _send_html(sender_email, email, nudge_subject, personalized)
+                if ok:
+                    results["nudges_sent"] += 1
+                else:
+                    results["nudge_failed"] += 1
+            except Exception:
+                results["nudge_failed"] += 1
+
+    return results
+
+
 def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
     """Send an automation email immediately (test / on-demand).
     Only creator or Super Admin may trigger this."""
@@ -319,6 +496,11 @@ def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
             return {"success": False, "error": "not_found"}
         if not _can_manage(rule, sender_email, user_role):
             return {"success": False, "error": "forbidden"}
+
+        if rule.automation_kind == "udemy_inactive":
+            results = _fire_udemy_inactive(rule, sender_email)
+            return {"success": True, **results}
+
         emails = _extract_emails(rule.recipients_json)
         if not emails:
             return {"success": False, "error": "no_recipients"}
@@ -354,17 +536,26 @@ def run_due() -> int:
         fired = 0
         for rule in due:
             try:
-                emails = _extract_emails(rule.recipients_json)
-                if emails:
-                    if rule.automation_kind == "roi_digest":
-                        html_body, files = _render_roi_digest(rule)
-                        ok = _send_html(rule.created_by, emails, rule.email_subject, html_body, files=files)
-                    else:
-                        html_body = _build_html(rule.email_subject, rule.email_body)
-                        ok = _send_html(rule.created_by, emails, rule.email_subject, html_body)
-                    rule.last_status = "sent" if ok else "failed:send_error"
+                if rule.automation_kind == "udemy_inactive":
+                    res = _fire_udemy_inactive(rule, rule.created_by)
+                    sent = res.get("report_sent") or res.get("nudges_sent", 0) > 0
+                    rule.last_status = (
+                        f"sent:report={'yes' if res.get('report_sent') else 'no'}"
+                        f",nudges={res.get('nudges_sent',0)}"
+                        f",inactive={res.get('inactive_count',0)}"
+                    ) if sent else "failed:no_delivery"
                 else:
-                    rule.last_status = "failed:no_recipients"
+                    emails = _extract_emails(rule.recipients_json)
+                    if emails:
+                        if rule.automation_kind == "roi_digest":
+                            html_body, files = _render_roi_digest(rule)
+                            ok = _send_html(rule.created_by, emails, rule.email_subject, html_body, files=files)
+                        else:
+                            html_body = _build_html(rule.email_subject, rule.email_body)
+                            ok = _send_html(rule.created_by, emails, rule.email_subject, html_body)
+                        rule.last_status = "sent" if ok else "failed:send_error"
+                    else:
+                        rule.last_status = "failed:no_recipients"
             except Exception as exc:
                 rule.last_status = f"failed:{str(exc)[:120]}"
             finally:

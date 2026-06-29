@@ -50,9 +50,6 @@ const LeadershipPortal = lazy(() =>
 const AutomationHub = lazy(() =>
   import("@/pages/AutomationHub").then((m) => ({ default: m.AutomationHub })),
 );
-const PeoplePage = lazy(() =>
-  import("@/pages/PeoplePage").then((m) => ({ default: m.PeoplePage })),
-);
 const ConfigPage = lazy(() =>
   import("@/pages/ConfigPage").then((m) => ({ default: m.ConfigPage })),
 );
@@ -119,7 +116,6 @@ type TabId =
   | "project-iq"
   | "te-lms"
   | "udemy-business"
-  | "people"
   | "config"
   | "url-library"
   | "form-library"
@@ -297,16 +293,6 @@ const TABS: TabItem[] = [
   },
   // ASSETS & CONFIG
   {
-    id: "people",
-    label: "People Directory",
-    category: "Assets & Config",
-    icon: Users,
-    color: "#00a29a",
-    show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
-    requireScope: "people_directory",
-    component: PeoplePage,
-  },
-  {
     id: "config",
     label: "AI Prompt Config",
     category: "Assets & Config",
@@ -379,7 +365,6 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
     "Org-wide workforce intelligence: capability heat map, pipeline readiness, SPOF risk, and bench cost.",
   "project-iq":
     "Reuse delivery knowledge: find similar past projects, lessons, experts, and reusable assets.",
-  people: "Browse team directories, organization hierarchy, and contact cards.",
   config: "Customize base templates, instructions, and system guardrails.",
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",

@@ -21,11 +21,21 @@ import {
   Pencil,
   ShieldOff,
   User,
+  Bell,
+  Plus,
+  Trash2,
+  Play,
+  Power,
+  Send,
+  Filter,
+  Download,
+  Mail,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
-type Tab = "catalog" | "insights" | "activity" | "course-activity" | "inactive";
+type Tab = "catalog" | "insights" | "activity" | "course-activity" | "inactive" | "automations";
 
 interface Course {
   id: number;
@@ -201,6 +211,75 @@ function TableSkeleton() {
   );
 }
 
+const ROWS_PER_PAGE_OPTIONS = [5, 10, 25, 50] as const;
+
+function TablePagination({
+  total,
+  page,
+  rowsPerPage,
+  onPage,
+  onRowsPerPage,
+}: {
+  total: number;
+  page: number;
+  rowsPerPage: number;
+  onPage: (p: number) => void;
+  onRowsPerPage: (n: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / rowsPerPage));
+  const start = total === 0 ? 0 : page * rowsPerPage + 1;
+  const end = Math.min((page + 1) * rowsPerPage, total);
+
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 dark:border-zinc-800/50 text-xs text-slate-500 dark:text-zinc-400 bg-slate-50/40 dark:bg-zinc-900/40">
+      <div className="flex items-center gap-2">
+        <span className="font-medium">Rows per page:</span>
+        <select
+          value={rowsPerPage}
+          onChange={(e) => { onRowsPerPage(Number(e.target.value)); onPage(0); }}
+          className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-semibold text-slate-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-[#A435F0]/40 cursor-pointer"
+        >
+          {ROWS_PER_PAGE_OPTIONS.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="font-medium tabular-nums">{start}–{end} of {total}</span>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => onPage(0)}
+            disabled={page === 0}
+            className="px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-bold"
+            title="First page"
+          >«</button>
+          <button
+            onClick={() => onPage(page - 1)}
+            disabled={page === 0}
+            className="px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-bold"
+            title="Previous page"
+          >‹</button>
+          <span className="px-2.5 font-semibold tabular-nums text-slate-700 dark:text-zinc-300">
+            {page + 1} / {totalPages}
+          </span>
+          <button
+            onClick={() => onPage(page + 1)}
+            disabled={page >= totalPages - 1}
+            className="px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-bold"
+            title="Next page"
+          >›</button>
+          <button
+            onClick={() => onPage(totalPages - 1)}
+            disabled={page >= totalPages - 1}
+            className="px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors font-bold"
+            title="Last page"
+          >»</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getRowHeaderInfo(row: any) {
   const keys = Object.keys(row);
   let titleKey = keys[0];
@@ -231,16 +310,22 @@ function ResponsiveTable({
   rows: any[];
   type?: "default" | "course-activity" | "activity";
 }) {
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(5);
+
+  useEffect(() => { setPage(0); }, [rows]);
+
   if (!rows || rows.length === 0) return null;
   const cols = Object.keys(rows[0]);
   const { titleKey, subtitleKey } = getRowHeaderInfo(rows[0]);
+  const pageRows = rows.slice(page * rowsPerPage, (page + 1) * rowsPerPage);
 
   return (
     <>
       {/* Desktop view */}
       <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 shadow-md bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                 {cols.map((c) => (
@@ -254,7 +339,7 @@ function ResponsiveTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {pageRows.map((r, i) => (
                 <tr
                   key={i}
                   className={cn(
@@ -292,11 +377,18 @@ function ResponsiveTable({
             </tbody>
           </table>
         </div>
+        <TablePagination
+          total={rows.length}
+          page={page}
+          rowsPerPage={rowsPerPage}
+          onPage={setPage}
+          onRowsPerPage={(n) => { setRowsPerPage(n); setPage(0); }}
+        />
       </div>
 
       {/* Mobile view */}
       <div className="block md:hidden flex flex-col gap-4">
-        {rows.map((row, i) => (
+        {pageRows.map((row, i) => (
           <div
             key={i}
             className="bg-white dark:bg-zinc-900/60 backdrop-blur-md p-5 rounded-2xl border border-slate-200 dark:border-zinc-800/80 shadow-sm flex flex-col gap-3.5"
@@ -358,6 +450,13 @@ function ResponsiveTable({
             </div>
           </div>
         ))}
+        <TablePagination
+          total={rows.length}
+          page={page}
+          rowsPerPage={rowsPerPage}
+          onPage={setPage}
+          onRowsPerPage={(n) => { setRowsPerPage(n); setPage(0); }}
+        />
       </div>
     </>
   );
@@ -438,6 +537,7 @@ export function UdemyBusinessPortal() {
     { id: "activity", label: "Learner Activity", icon: BarChart2, show: !!status?.can_view_reports },
     { id: "course-activity", label: "Course Activity", icon: Activity, show: !!status?.can_view_reports },
     { id: "inactive", label: "Inactive Seats", icon: UserMinus, show: !!status?.can_view_reports },
+    { id: "automations", label: "Automations", icon: Bell, show: !!status?.can_view_reports },
   ] as const;
 
   return (
@@ -532,7 +632,9 @@ export function UdemyBusinessPortal() {
 
         {/* Tab Viewport */}
         <div className="min-h-[400px]">
-          {tab === "insights" ? (
+          {tab === "automations" ? (
+            <AutomationsTab authHeaders={authHeaders} />
+          ) : tab === "insights" ? (
             <InsightsTab authHeaders={authHeaders} />
           ) : tab === "inactive" ? (
             <InactiveSeatsTab
@@ -680,6 +782,7 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ExportBtn href="/api/portal/udemy/export/course-activity" authHeaders={authHeaders} label="Export" />
           <button
             onClick={load}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer"
@@ -832,7 +935,54 @@ function InsightsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       </div>
     );
   }
-  if (!data) return null;
+  if (!data || !data.totals) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-slate-500 dark:text-zinc-400 gap-3 border border-slate-200 dark:border-zinc-800/80 rounded-2xl bg-white/70 dark:bg-zinc-900/60">
+        <div className="w-14 h-14 rounded-3xl bg-slate-200/50 dark:bg-zinc-800 flex items-center justify-center">
+          <BarChart2 className="w-7 h-7 text-slate-400/50" />
+        </div>
+        <p className="text-sm font-bold">No learning activity data available yet.</p>
+        <p className="text-xs text-slate-400 dark:text-zinc-500 text-center max-w-xs leading-relaxed">
+          Insights are built from course-activity data and appear once learners start or complete courses.
+        </p>
+      </div>
+    );
+  }
+
+  if ((data as any).analytics_access_denied) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-slate-500 dark:text-zinc-400 gap-4 border border-amber-500/20 bg-amber-500/[0.03] rounded-2xl">
+        <div className="w-14 h-14 rounded-3xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+          <AlertCircle className="w-7 h-7 text-amber-500" />
+        </div>
+        <div className="text-center max-w-sm">
+          <p className="text-sm font-bold text-slate-800 dark:text-white">Analytics API access denied</p>
+          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-2 leading-relaxed">
+            The Udemy Business API credential doesn't have reporting scope, or your plan doesn't include
+            the Analytics API. Check that the API client has <strong>Organization Analytics</strong> access
+            in the Udemy admin console.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.totals.enrollments === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-slate-500 dark:text-zinc-400 gap-3 border border-slate-200 dark:border-zinc-800/80 rounded-2xl bg-white/70 dark:bg-zinc-900/60">
+        <div className="w-14 h-14 rounded-3xl bg-slate-200/50 dark:bg-zinc-800 flex items-center justify-center">
+          <BarChart2 className="w-7 h-7 text-slate-400/50" />
+        </div>
+        <p className="text-sm font-bold">No course activity recorded yet.</p>
+        <p className="text-xs text-slate-400 dark:text-zinc-500 text-center max-w-xs leading-relaxed">
+          Insights appear once learners start or complete courses in your Udemy Business org.
+          {(data as any).fetch_error && (
+            <span className="block mt-1 text-rose-400">API error: {(data as any).fetch_error}</span>
+          )}
+        </p>
+      </div>
+    );
+  }
 
   const t = data.totals;
   const maxEnroll = Math.max(1, ...data.top_enrolled.map((c) => c.enrolled));
@@ -899,7 +1049,7 @@ function InsightsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                 <thead>
                   <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                     {["Course", "Category", "Enrolled", "Avg progress"].map((h) => (
-                      <th key={h} className="text-left px-5 py-3 font-bold text-slate-500 dark:text-zinc-400 text-xs uppercase tracking-wide">{h}</th>
+                      <th key={h} className="text-left px-5 py-3 font-bold text-slate-500 dark:text-zinc-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -947,9 +1097,12 @@ function InsightsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         )}
       </div>
 
-      <p className="text-[11px] text-slate-400 dark:text-zinc-500 ml-1">
-        Aggregated from Udemy course-activity · cached hourly{data.generated_at ? ` · updated ${fmtDate(data.generated_at.slice(0, 10))}` : ""}.
-      </p>
+      <div className="flex items-center justify-between mt-1">
+        <p className="text-[11px] text-slate-400 dark:text-zinc-500 ml-1">
+          Aggregated from Udemy course-activity · cached hourly{data.generated_at ? ` · updated ${fmtDate(data.generated_at.slice(0, 10))}` : ""}.
+        </p>
+        <ExportBtn href="/api/portal/udemy/export/insights" authHeaders={authHeaders} label="Export Insights" />
+      </div>
     </div>
   );
 }
@@ -1392,6 +1545,8 @@ function InactiveSeatsTab({
   const [confirming, setConfirming] = useState<string | null>(null); // email pending confirm
   const [busy, setBusy] = useState<string | null>(null); // email being deactivated
   const [done, setDone] = useState<Record<string, string>>({}); // email -> "done" | error msg
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(5);
 
   const deactivate = useCallback(
     async (email: string) => {
@@ -1443,6 +1598,10 @@ function InactiveSeatsTab({
     if (days > 0) load(days); // wait for the configured default (set by SeatPills) before loading
   }, [load, days]);
 
+  useEffect(() => { setPage(0); }, [rows]);
+
+  const pageRows = rows.slice(page * rowsPerPage, (page + 1) * rowsPerPage);
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 flex-wrap">
@@ -1477,6 +1636,7 @@ function InactiveSeatsTab({
               </button>
             ))}
           </div>
+          <ExportBtn href={`/api/portal/udemy/export/inactive-users?days=${days}`} authHeaders={authHeaders} label="Export" />
           <button
             onClick={() => load(days)}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer"
@@ -1533,7 +1693,7 @@ function InactiveSeatsTab({
           {/* Desktop Table View */}
           <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 shadow-md bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                     {["Learner", "Role", "Groups", "Last active", "Idle Status", "Activity History", ""].map((h) => (
@@ -1547,7 +1707,7 @@ function InactiveSeatsTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
+                  {pageRows.map((r, i) => (
                     <tr
                       key={r.email || i}
                       className={cn(
@@ -1653,11 +1813,18 @@ function InactiveSeatsTab({
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              total={rows.length}
+              page={page}
+              rowsPerPage={rowsPerPage}
+              onPage={setPage}
+              onRowsPerPage={(n) => { setRowsPerPage(n); setPage(0); }}
+            />
           </div>
 
           {/* Mobile Cards Stack View */}
           <div className="block md:hidden flex flex-col gap-4">
-            {rows.map((r, i) => (
+            {pageRows.map((r, i) => (
               <InactiveSeatCard
                 key={r.email || i}
                 r={r}
@@ -1669,6 +1836,13 @@ function InactiveSeatsTab({
                 done={done}
               />
             ))}
+            <TablePagination
+              total={rows.length}
+              page={page}
+              rowsPerPage={rowsPerPage}
+              onPage={setPage}
+              onRowsPerPage={(n) => { setRowsPerPage(n); setPage(0); }}
+            />
           </div>
         </>
       )}
@@ -1736,15 +1910,697 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             <p className="text-xs text-slate-500 dark:text-zinc-400">{rows.length} record(s)</p>
           </div>
         </div>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer self-start md:self-auto"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <ExportBtn href="/api/portal/udemy/export/user-activity" authHeaders={authHeaders} label="Export" />
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
       </div>
       <ResponsiveTable rows={rows} type="activity" />
+    </div>
+  );
+}
+
+// ── Export button (downloads via fetch + blob) ────────────────────────────────
+
+function ExportBtn({
+  href,
+  authHeaders,
+  label = "Export",
+}: {
+  href: string;
+  authHeaders: Record<string, string>;
+  label?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(href, { headers: authHeaders });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const disposition = r.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const name = match?.[1] || "export.xlsx";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch {
+      /* silently fail — user sees no file */
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      onClick={download}
+      disabled={busy}
+      className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer disabled:opacity-50"
+    >
+      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+      {label}
+    </button>
+  );
+}
+
+// ── Automations Tab ──────────────────────────────────────────────────────────
+
+interface AutomationRule {
+  id: number;
+  name: string;
+  description: string;
+  frequency: string;
+  day_of_week: number | null;
+  day_of_month: number | null;
+  hour: number;
+  minute: number;
+  email_subject: string;
+  email_body: string;
+  recipients_json: any[];
+  extra_config: {
+    inactive_days?: number;
+    notify_mode?: string;
+    filter_groups?: string[];
+    filter_users?: string[];
+    exclude_deactivated?: boolean;
+    nudge_subject?: string;
+    nudge_body?: string;
+  };
+  is_active: boolean;
+  next_run: string | null;
+  last_run: string | null;
+  last_status: string | null;
+  created_by: string;
+  created_at: string | null;
+  can_manage: boolean;
+}
+
+const FREQ_LABELS: Record<string, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
+const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MODE_LABELS: Record<string, string> = {
+  report: "Summary report to recipients",
+  nudge: "Nudge emails to inactive users",
+  both: "Report + nudge emails",
+};
+
+function fmtSchedule(r: AutomationRule) {
+  const t = `${String(r.hour).padStart(2, "0")}:${String(r.minute || 0).padStart(2, "0")}`;
+  if (r.frequency === "weekly" && r.day_of_week != null) return `${FREQ_LABELS.weekly} · ${DOW_LABELS[r.day_of_week]} · ${t}`;
+  if (r.frequency === "monthly" && r.day_of_month != null) return `${FREQ_LABELS.monthly} · Day ${r.day_of_month} · ${t}`;
+  return `${FREQ_LABELS[r.frequency] || r.frequency} · ${t}`;
+}
+
+function AutomationsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const { user } = useAuth();
+  const [rules, setRules] = useState<AutomationRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<AutomationRule | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [sendResult, setSendResult] = useState<Record<number, string>>({});
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError("");
+    fetch("/api/portal/udemy/automations", { headers: authHeaders })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(setRules)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (id: number) => {
+    setBusy(id);
+    try {
+      const r = await fetch(`/api/portal/udemy/automations/${id}/toggle`, { method: "PATCH", headers: authHeaders });
+      if (!r.ok) throw new Error("Toggle failed");
+      load();
+    } catch {
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendNow = async (id: number) => {
+    setBusy(id);
+    setSendResult((p) => ({ ...p, [id]: "sending…" }));
+    try {
+      const r = await fetch(`/api/portal/udemy/automations/${id}/send-now`, { method: "POST", headers: authHeaders });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail || "Send failed");
+      const parts: string[] = [];
+      if (body.report_sent) parts.push("Report sent");
+      if (body.nudges_sent > 0) parts.push(`${body.nudges_sent} nudge(s) sent`);
+      if (body.inactive_count != null) parts.push(`${body.inactive_count} inactive`);
+      setSendResult((p) => ({ ...p, [id]: parts.join(" · ") || "Sent" }));
+    } catch (e: any) {
+      setSendResult((p) => ({ ...p, [id]: e.message || "Failed" }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteRule = async (id: number) => {
+    if (!confirm("Delete this automation?")) return;
+    setBusy(id);
+    try {
+      await fetch(`/api/portal/udemy/automations/${id}`, { method: "DELETE", headers: authHeaders });
+      load();
+    } catch {
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSaved = () => {
+    setShowForm(false);
+    setEditing(null);
+    load();
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-2xl bg-[#A435F0]/10 flex items-center justify-center border border-[#A435F0]/20">
+            <Bell className="w-5 h-5 text-[#A435F0]" />
+          </div>
+          <div>
+            <p className="text-sm font-extrabold text-slate-800 dark:text-white">Notification Automations</p>
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              Create scheduled notifications for inactive Udemy users
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800/80 px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+          <button
+            onClick={() => { setEditing(null); setShowForm(true); }}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-[#A435F0] to-[#7C3AED] hover:opacity-95 px-4 py-2.5 rounded-xl transition-all shadow-md shadow-purple-500/15 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New Automation
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-400 max-w-xl animate-fade-in">
+          <AlertCircle className="w-4.5 h-4.5 mt-0.5 shrink-0 text-rose-500" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <AutomationForm
+              authHeaders={authHeaders}
+              editing={editing}
+              onSaved={onSaved}
+              onCancel={() => { setShowForm(false); setEditing(null); }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {loading ? (
+        <TableSkeleton />
+      ) : rules.length === 0 && !showForm ? (
+        <div className="flex flex-col items-center justify-center py-20 text-slate-500 dark:text-zinc-400 gap-3 border border-slate-200 dark:border-zinc-800/80 rounded-2xl bg-white/70 dark:bg-zinc-900/60">
+          <div className="w-14 h-14 rounded-3xl bg-violet-500/10 flex items-center justify-center border border-violet-500/25">
+            <Bell className="w-7 h-7 text-violet-500/50" />
+          </div>
+          <p className="text-sm font-bold">No automations yet</p>
+          <p className="text-xs text-slate-400 dark:text-zinc-500 text-center max-w-xs leading-relaxed">
+            Create a notification rule to automatically email inactive learners or send reports to PMO on a schedule.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {rules.map((r) => (
+            <motion.div
+              key={r.id}
+              layout
+              className={cn(
+                "rounded-2xl border bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md p-5 shadow-sm transition-all",
+                r.is_active ? "border-slate-200 dark:border-zinc-800/80" : "border-slate-200/60 dark:border-zinc-800/40 opacity-60"
+              )}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className={cn(
+                    "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5",
+                    r.is_active ? "bg-emerald-500/10 border border-emerald-500/20" : "bg-slate-200/50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-800"
+                  )}>
+                    {r.is_active ? <Bell className="w-4 h-4 text-emerald-500" /> : <Bell className="w-4 h-4 text-slate-400" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-extrabold text-slate-800 dark:text-white truncate">{r.name}</h4>
+                      <Badge variant={r.is_active ? "default" : "secondary"} className="text-[10px] py-0 px-1.5 font-bold">
+                        {r.is_active ? "Active" : "Paused"}
+                      </Badge>
+                    </div>
+                    {r.description && <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5 truncate">{r.description}</p>}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-slate-500 dark:text-zinc-400">
+                      <span className="font-semibold">{fmtSchedule(r)}</span>
+                      <span>{r.extra_config?.inactive_days || 30}+ days idle</span>
+                      <span>{MODE_LABELS[r.extra_config?.notify_mode || "report"]}</span>
+                      {(r.extra_config?.filter_groups?.length ?? 0) > 0 && (
+                        <span className="flex items-center gap-1"><Filter className="w-3 h-3" />{r.extra_config.filter_groups!.join(", ")}</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[11px] text-slate-400 dark:text-zinc-500">
+                      {r.next_run && <span>Next: {new Date(r.next_run).toLocaleString()}</span>}
+                      {r.last_run && <span>Last: {new Date(r.last_run).toLocaleString()}</span>}
+                      {r.last_status && <span className={r.last_status.startsWith("sent") ? "text-emerald-500" : "text-rose-400"}>{r.last_status}</span>}
+                    </div>
+                    {sendResult[r.id] && (
+                      <div className="mt-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                        {sendResult[r.id]}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0 self-start md:self-center">
+                  <button
+                    onClick={() => toggle(r.id)}
+                    disabled={busy === r.id}
+                    title={r.is_active ? "Pause" : "Activate"}
+                    className={cn(
+                      "p-2.5 rounded-xl border transition-all cursor-pointer",
+                      r.is_active
+                        ? "text-amber-600 dark:text-amber-400 border-amber-500/20 hover:bg-amber-500/10"
+                        : "text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/10"
+                    )}
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => sendNow(r.id)}
+                    disabled={busy === r.id}
+                    title="Send now"
+                    className="p-2.5 rounded-xl border border-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-all cursor-pointer"
+                  >
+                    {busy === r.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => { setEditing(r); setShowForm(true); }}
+                    title="Edit"
+                    className="p-2.5 rounded-xl border border-slate-200 dark:border-zinc-800 text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-all cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => deleteRule(r.id)}
+                    disabled={busy === r.id}
+                    title="Delete"
+                    className="p-2.5 rounded-xl border border-rose-500/20 text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Automation Form (Create / Edit) ──────────────────────────────────────────
+
+function AutomationForm({
+  authHeaders,
+  editing,
+  onSaved,
+  onCancel,
+}: {
+  authHeaders: Record<string, string>;
+  editing: AutomationRule | null;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const { user } = useAuth();
+  const cfg = editing?.extra_config || {};
+
+  const [name, setName] = useState(editing?.name || "");
+  const [description, setDescription] = useState(editing?.description || "");
+  const [frequency, setFrequency] = useState(editing?.frequency || "weekly");
+  const [dayOfWeek, setDayOfWeek] = useState<number>(editing?.day_of_week ?? 0);
+  const [dayOfMonth, setDayOfMonth] = useState<number>(editing?.day_of_month ?? 1);
+  const [hour, setHour] = useState(editing?.hour ?? 9);
+  const [minute, setMinute] = useState(editing?.minute ?? 0);
+  const [subject, setSubject] = useState(editing?.email_subject || "Udemy Business — Inactive Seats Report");
+  const [body, setBody] = useState(editing?.email_body || "");
+  const [inactiveDays, setInactiveDays] = useState(cfg.inactive_days ?? 30);
+  const [notifyMode, setNotifyMode] = useState(cfg.notify_mode || "report");
+  const [filterGroups, setFilterGroups] = useState<string[]>(cfg.filter_groups || []);
+  const [nudgeSubject, setNudgeSubject] = useState(cfg.nudge_subject || "");
+  const [nudgeBody, setNudgeBody] = useState(cfg.nudge_body || "");
+  const [isActive, setIsActive] = useState(editing?.is_active ?? true);
+
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState<{ name: string; email: string }[]>([]);
+  const [recipients, setRecipients] = useState<{ type: string; email: string; name: string }[]>(
+    (editing?.recipients_json || []).filter((r: any) => r.type === "individual")
+  );
+
+  const [availableGroups, setAvailableGroups] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    fetch("/api/portal/udemy/groups", { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) => setAvailableGroups(d.groups || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (recipientSearch.length < 2) { setRecipientResults([]); return; }
+    const t = setTimeout(() => {
+      fetch(`/api/automation/ms365/users/search?q=${encodeURIComponent(recipientSearch)}`, { headers: authHeaders })
+        .then((r) => r.json())
+        .then((d) => setRecipientResults(Array.isArray(d) ? d : []))
+        .catch(() => setRecipientResults([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [recipientSearch]);
+
+  const addRecipient = (r: { name: string; email: string }) => {
+    if (!recipients.find((x) => x.email.toLowerCase() === r.email.toLowerCase())) {
+      setRecipients((p) => [...p, { type: "individual", email: r.email, name: r.name }]);
+    }
+    setRecipientSearch("");
+    setRecipientResults([]);
+  };
+
+  const removeRecipient = (email: string) => {
+    setRecipients((p) => p.filter((r) => r.email !== email));
+  };
+
+  const toggleGroup = (g: string) => {
+    setFilterGroups((p) => p.includes(g) ? p.filter((x) => x !== g) : [...p, g]);
+  };
+
+  const save = async () => {
+    if (!name.trim() || !subject.trim()) { setErr("Name and email subject are required."); return; }
+    if (notifyMode !== "nudge" && recipients.length === 0) { setErr("Add at least one report recipient."); return; }
+    setSaving(true);
+    setErr("");
+
+    const payload: any = {
+      name: name.trim(),
+      description: description.trim(),
+      frequency,
+      day_of_week: frequency === "weekly" ? dayOfWeek : null,
+      day_of_month: frequency === "monthly" ? dayOfMonth : null,
+      hour,
+      minute,
+      email_subject: subject.trim(),
+      email_body: body.trim(),
+      recipients_json: recipients,
+      inactive_days: inactiveDays,
+      notify_mode: notifyMode,
+      filter_groups: filterGroups,
+      filter_users: [],
+      exclude_deactivated: true,
+      nudge_subject: nudgeSubject.trim(),
+      nudge_body: nudgeBody.trim(),
+      is_active: isActive,
+    };
+
+    try {
+      const url = editing ? `/api/portal/udemy/automations/${editing.id}` : "/api/portal/udemy/automations";
+      const method = editing ? "PATCH" : "POST";
+      const r = await fetch(url, { method, headers: authHeaders, body: JSON.stringify(payload) });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b.detail || `HTTP ${r.status}`);
+      onSaved();
+    } catch (e: any) {
+      setErr(e.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = "w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-zinc-800/80 bg-white dark:bg-zinc-900 text-sm text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#A435F0]/30 focus:border-[#A435F0] transition-all";
+  const labelCls = "text-xs font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-wider";
+  const selectCls = cn(inputCls, "cursor-pointer appearance-none");
+
+  return (
+    <div className="rounded-2xl border border-[#A435F0]/20 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md p-6 shadow-lg">
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-sm font-extrabold text-slate-800 dark:text-white">
+          {editing ? "Edit Automation" : "New Automation"}
+        </h3>
+        <button onClick={onCancel} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 cursor-pointer">
+          <X className="w-4 h-4 text-slate-400" />
+        </button>
+      </div>
+
+      {err && (
+        <div className="mb-4 text-xs text-rose-600 dark:text-rose-400 font-semibold bg-rose-500/5 border border-rose-500/20 rounded-xl px-3.5 py-2.5">
+          {err}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Name */}
+        <div className="flex flex-col gap-1.5">
+          <label className={labelCls}>Name</label>
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weekly Inactive Report" />
+        </div>
+
+        {/* Description */}
+        <div className="flex flex-col gap-1.5">
+          <label className={labelCls}>Description</label>
+          <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" />
+        </div>
+
+        {/* Schedule */}
+        <div className="flex flex-col gap-1.5">
+          <label className={labelCls}>Frequency</label>
+          <select className={selectCls} value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+            <option value="daily">Daily (weekdays)</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+
+        {frequency === "weekly" && (
+          <div className="flex flex-col gap-1.5">
+            <label className={labelCls}>Day of Week</label>
+            <select className={selectCls} value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
+              {DOW_LABELS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+          </div>
+        )}
+
+        {frequency === "monthly" && (
+          <div className="flex flex-col gap-1.5">
+            <label className={labelCls}>Day of Month</label>
+            <select className={selectCls} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))}>
+              {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <div className="flex flex-col gap-1.5 flex-1">
+            <label className={labelCls}>Hour</label>
+            <select className={selectCls} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
+              {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5 flex-1">
+            <label className={labelCls}>Minute</label>
+            <select className={selectCls} value={minute} onChange={(e) => setMinute(Number(e.target.value))}>
+              {[0, 15, 30, 45].map((m) => <option key={m} value={m}>:{String(m).padStart(2, "0")}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Inactive days */}
+        <div className="flex flex-col gap-1.5">
+          <label className={labelCls}>Idle Days Threshold</label>
+          <input type="number" className={inputCls} min={1} max={3650} value={inactiveDays}
+            onChange={(e) => setInactiveDays(Number(e.target.value) || 30)} />
+        </div>
+
+        {/* Notify mode */}
+        <div className="flex flex-col gap-1.5">
+          <label className={labelCls}>Notification Mode</label>
+          <select className={selectCls} value={notifyMode} onChange={(e) => setNotifyMode(e.target.value)}>
+            <option value="report">Summary report to recipients only</option>
+            <option value="nudge">Nudge emails to inactive users only</option>
+            <option value="both">Report + nudge emails</option>
+          </select>
+        </div>
+
+        {/* Email subject */}
+        <div className="flex flex-col gap-1.5 md:col-span-2">
+          <label className={labelCls}>Report Email Subject</label>
+          <input className={inputCls} value={subject} onChange={(e) => setSubject(e.target.value)} />
+        </div>
+
+        {/* Email body */}
+        <div className="flex flex-col gap-1.5 md:col-span-2">
+          <label className={labelCls}>Report Intro Text (optional)</label>
+          <textarea className={cn(inputCls, "min-h-[70px] resize-y")} value={body} onChange={(e) => setBody(e.target.value)}
+            placeholder="Custom message at the top of the report email" />
+        </div>
+
+        {/* Nudge fields (shown when mode includes nudge) */}
+        {(notifyMode === "nudge" || notifyMode === "both") && (
+          <>
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className={labelCls}>Nudge Email Subject</label>
+              <input className={inputCls} value={nudgeSubject} onChange={(e) => setNudgeSubject(e.target.value)}
+                placeholder="Your Udemy Business account needs attention" />
+            </div>
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className={labelCls}>Nudge Email Body</label>
+              <textarea className={cn(inputCls, "min-h-[70px] resize-y")} value={nudgeBody} onChange={(e) => setNudgeBody(e.target.value)}
+                placeholder="Message sent to each inactive learner" />
+            </div>
+          </>
+        )}
+
+        {/* Group filter */}
+        {availableGroups.length > 0 && (
+          <div className="flex flex-col gap-1.5 md:col-span-2">
+            <label className={labelCls}>Filter by Udemy Groups (optional — blank = all)</label>
+            <div className="flex flex-wrap gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800/80 bg-slate-50/50 dark:bg-zinc-950/50 max-h-[120px] overflow-y-auto">
+              {availableGroups.map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => toggleGroup(g)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer",
+                    filterGroups.includes(g)
+                      ? "bg-[#A435F0] text-white border-[#A435F0]"
+                      : "bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-400 border-slate-200 dark:border-zinc-800 hover:border-[#A435F0]/50"
+                  )}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recipients (report goes to these people) */}
+        {notifyMode !== "nudge" && (
+          <div className="flex flex-col gap-1.5 md:col-span-2">
+            <label className={labelCls}>Report Recipients (PMO / Admin emails)</label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {recipients.map((r) => (
+                <span key={r.email} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-violet-500/10 text-violet-700 dark:text-violet-300 text-xs font-semibold border border-violet-500/20">
+                  <Mail className="w-3 h-3" />
+                  {r.name || r.email}
+                  <button onClick={() => removeRecipient(r.email)} className="ml-0.5 hover:text-rose-500 cursor-pointer">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="relative">
+              <input
+                className={inputCls}
+                value={recipientSearch}
+                onChange={(e) => setRecipientSearch(e.target.value)}
+                placeholder="Search by name or email…"
+              />
+              {recipientResults.length > 0 && (
+                <div className="absolute z-20 top-full left-0 right-0 mt-1 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg max-h-[200px] overflow-y-auto">
+                  {recipientResults.map((r) => (
+                    <button
+                      key={r.email}
+                      onClick={() => addRecipient(r)}
+                      className="w-full text-left px-3.5 py-2.5 text-sm hover:bg-violet-500/5 transition-colors cursor-pointer flex items-center gap-2"
+                    >
+                      <UserAvatar name={r.name} email={r.email} />
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-white text-xs">{r.name}</div>
+                        <div className="text-[11px] text-slate-400">{r.email}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Active toggle */}
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button
+            type="button"
+            onClick={() => setIsActive(!isActive)}
+            className={cn(
+              "w-10 h-6 rounded-full transition-colors cursor-pointer relative",
+              isActive ? "bg-emerald-500" : "bg-slate-300 dark:bg-zinc-700"
+            )}
+          >
+            <span className={cn(
+              "absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform",
+              isActive ? "left-[18px]" : "left-0.5"
+            )} />
+          </button>
+          <span className="text-xs font-bold text-slate-600 dark:text-zinc-400">
+            {isActive ? "Active — will fire on schedule" : "Paused — won't fire until enabled"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-200 dark:border-zinc-800/80">
+        <button
+          onClick={onCancel}
+          className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 border border-slate-200 dark:border-zinc-800 transition-all cursor-pointer"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#A435F0] to-[#7C3AED] hover:opacity-95 disabled:opacity-60 shadow-md shadow-purple-500/15 transition-all cursor-pointer"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" /> : null}
+          {editing ? "Update Automation" : "Create Automation"}
+        </button>
+      </div>
     </div>
   );
 }
