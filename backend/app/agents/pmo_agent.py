@@ -37,6 +37,14 @@ Rules:
     - 'who has done X before?', 'who has delivered Y?' (proven past experience, NOT availability) → 'find_project_experts'. For who is FREE to staff a new project, still use 'match_resources'.
     - 'do we already have a Z component?', 'any reusable X we can reuse?' → 'find_reusable_assets'.
     These are internal-only — never draft client-facing proposals or case studies from them.
+13. Udemy Business seat administration (for HR/PMO/Admin):
+    - 'who hasn't used Udemy / inactive Udemy users / idle seats / who can we remove' → 'udemy_inactive_seats' (infer the idle-day threshold; default 30).
+    - 'how many Udemy licenses are left / seat usage / are we out of seats / utilisation' → 'udemy_seat_utilization'.
+    - 'Udemy learning insights / most popular courses / completion rate / what are people learning' → 'udemy_course_insights'.
+    - 'deactivate / remove / revoke Udemy access for / reclaim the seat of <person>' → 'deactivate_udemy_user' (needs their email).
+    - 'reactivate / restore Udemy access for <person>' → 'reactivate_udemy_user'.
+    - 'add / provision / give Udemy access to <person>' → 'provision_udemy_user'.
+    Present each tool's result verbatim. These tools enforce their own permissions; if one says it's restricted or not connected, relay that — don't work around it.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -362,6 +370,166 @@ def get_my_trainings(state: Annotated[dict, InjectedState] = None):
     return "\n".join(lines)
 
 
+# ── Udemy seat administration (reporting + SCIM provisioning) ────────────────
+_UDEMY_REPORT_ROLES = {"hr", "pmo", "admin", "super admin"}
+_UDEMY_ADMIN_ROLES = {"pmo", "admin", "super admin"}
+
+
+def _caller_role(state) -> str:
+    return ((state or {}).get("user_role") or "employee").strip().lower()
+
+
+@tool
+def udemy_inactive_seats(days: int = None, state: Annotated[dict, InjectedState] = None) -> str:
+    """List Udemy Business learners who haven't logged in for a while, so their seats can be
+    reclaimed. Call for 'who hasn't used Udemy', 'inactive Udemy users', 'idle seats',
+    'who can we remove from Udemy', 'Udemy users inactive for 90 days'. days: idle-day
+    threshold ONLY if the user states one; leave unset to use the PMO-configured org default.
+    HR/PMO/Admin only."""
+    if _caller_role(state) not in _UDEMY_REPORT_ROLES:
+        return "Udemy seat reporting is restricted to HR, PMO and Admin users."
+    from app.services import udemy_business_service as udemy
+    if not udemy.configured():
+        return "Udemy Business isn't connected, so I can't read learner activity."
+    try:
+        days = max(1, int(days)) if days not in (None, "") else udemy.get_inactive_default_days()
+    except (TypeError, ValueError):
+        days = udemy.get_inactive_default_days()
+    res = udemy.get_inactive_users(days)
+    if res.get("error"):
+        return "Udemy Business isn't connected, so I can't read learner activity."
+    rows = res.get("results") or []
+    if not rows:
+        return f"No Udemy learners have been idle for {days}+ days — every active seat is in use."
+    lines = [f"**{res['count']} of {res['total_learners']} Udemy learners** are idle {days}+ days "
+             f"(longest-idle first):\n"]
+    for r in rows[:12]:
+        grp = f" · {', '.join(r['groups'])}" if r.get("groups") else ""
+        last = "never visited" if r.get("never_visited") else f"last active {r.get('last_active')}"
+        lines.append(f"- **{r['name']}** ({r['email']}) — {r['idle_days']}d idle, {last}{grp}")
+    if len(rows) > 12:
+        lines.append(f"\n…and {len(rows) - 12} more.")
+    lines.append("\nWant me to deactivate any of them? Tell me the person and I'll free the seat "
+                 "(if SCIM provisioning is connected).")
+    return "\n".join(lines)
+
+
+@tool
+def udemy_seat_utilization(state: Annotated[dict, InjectedState] = None) -> str:
+    """Report Udemy Business license usage — how many seats are purchased, used and available.
+    Call for 'how many Udemy licenses are left', 'Udemy seat usage', 'are we out of Udemy
+    seats', 'Udemy utilisation'. HR/PMO/Admin only."""
+    if _caller_role(state) not in _UDEMY_REPORT_ROLES:
+        return "Udemy seat reporting is restricted to HR, PMO and Admin users."
+    from app.services import udemy_business_service as udemy
+    if not udemy.configured():
+        return "Udemy Business isn't connected, so I can't read seat usage."
+    s = udemy.get_license_summary()
+    if s.get("error"):
+        return "Udemy Business isn't connected, so I can't read seat usage."
+    parts = []
+    if s.get("purchased") is not None:
+        parts.append(f"**{s.get('used', '?')} of {s['purchased']} seats used**")
+        if s.get("available") is not None:
+            parts.append(f"**{s['available']} available**")
+        if s.get("utilization_pct") is not None:
+            parts.append(f"{s['utilization_pct']}% utilised")
+    else:
+        parts.append("seat totals not set yet (PMO can set them on the Udemy portal)")
+    head = "Udemy Business licenses: " + ", ".join(parts) + "."
+    tail = (f" For context, the activity report shows {s.get('active_in_report', 0)} active learners "
+            f"and {s.get('deactivated', 0)} deactivated accounts.")
+    return head + tail
+
+
+@tool
+def udemy_course_insights(state: Annotated[dict, InjectedState] = None) -> str:
+    """High-level Udemy learning insights — total enrollments, completions, completion rate,
+    hours consumed, top courses and categories. Call for 'Udemy learning insights', 'most
+    popular Udemy courses', 'Udemy completion rate', 'what are people learning on Udemy'.
+    HR/PMO/Admin only. (First call of the day can take a moment to aggregate.)"""
+    if _caller_role(state) not in _UDEMY_REPORT_ROLES:
+        return "Udemy learning insights are restricted to HR, PMO and Admin users."
+    from app.services import udemy_business_service as udemy
+    if not udemy.configured():
+        return "Udemy Business isn't connected, so I can't compute learning insights."
+    ins = udemy.get_course_insights()
+    if ins.get("error"):
+        return "Udemy Business isn't connected, so I can't compute learning insights."
+    t = ins.get("totals", {})
+    lines = [
+        f"**Udemy learning at a glance** — {t.get('learners_engaged', 0)} learners, "
+        f"{t.get('enrollments', 0)} enrollments, {t.get('completions', 0)} completions "
+        f"({t.get('completion_rate', 0)}% completion rate), {t.get('hours_consumed', 0)} hours consumed.\n",
+        "Most-enrolled courses:",
+    ]
+    for c in (ins.get("top_enrolled") or [])[:5]:
+        lines.append(f"- {c['title']} — {c['enrolled']} enrolled, {c['completion_rate']}% completed")
+    cats = ins.get("categories") or []
+    if cats:
+        lines.append("\nTop categories: " + ", ".join(f"{c['category']} ({c['enrolled']})" for c in cats[:5]) + ".")
+    return "\n".join(lines)
+
+
+@tool
+def deactivate_udemy_user(email: str, state: Annotated[dict, InjectedState] = None) -> str:
+    """Deactivate (deprovision) a Udemy Business user via SCIM to free their seat. Call when
+    a PMO/Admin asks to 'deactivate', 'remove', 'revoke Udemy access for', or 'reclaim the
+    seat of' a named person. email: the user's email. PMO/Admin only."""
+    if _caller_role(state) not in _UDEMY_ADMIN_ROLES:
+        return "Deactivating Udemy seats is restricted to PMO and Admin users."
+    from app.services import udemy_scim_service as scim
+    if not scim.configured():
+        return ("Udemy SCIM provisioning isn't connected yet, so I can't deactivate seats directly. "
+                "Once it's set up I can do this in one step; for now it can be done in Udemy admin.")
+    res = scim.deactivate_user((email or "").strip())
+    if res.get("ok"):
+        return f"Done — **{email}** has been deactivated in Udemy and their seat is freed. ✓"
+    if res.get("error") == "not_found":
+        return f"I couldn't find a Udemy user for **{email}**. Double-check the email."
+    return f"Couldn't deactivate **{email}**: {res.get('message', 'SCIM error')}."
+
+
+@tool
+def reactivate_udemy_user(email: str, state: Annotated[dict, InjectedState] = None) -> str:
+    """Reactivate a previously-deactivated Udemy Business user via SCIM. Call for 'reactivate',
+    're-enable', or 'restore Udemy access for' a named person. email: the user's email.
+    PMO/Admin only."""
+    if _caller_role(state) not in _UDEMY_ADMIN_ROLES:
+        return "Reactivating Udemy seats is restricted to PMO and Admin users."
+    from app.services import udemy_scim_service as scim
+    if not scim.configured():
+        return "Udemy SCIM provisioning isn't connected yet, so I can't reactivate users directly."
+    res = scim.reactivate_user((email or "").strip())
+    if res.get("ok"):
+        return f"Done — **{email}** has been reactivated in Udemy. ✓"
+    if res.get("error") == "not_found":
+        return f"I couldn't find a Udemy user for **{email}**."
+    return f"Couldn't reactivate **{email}**: {res.get('message', 'SCIM error')}."
+
+
+@tool
+def provision_udemy_user(email: str, given_name: str = "", family_name: str = "",
+                         state: Annotated[dict, InjectedState] = None) -> str:
+    """Provision (create) a new Udemy Business user via SCIM and grant access. Call for 'add',
+    'provision', 'give Udemy access to', or 'create a Udemy account for' a named person.
+    email required; given_name/family_name optional. PMO/Admin only."""
+    if _caller_role(state) not in _UDEMY_ADMIN_ROLES:
+        return "Provisioning Udemy users is restricted to PMO and Admin users."
+    from app.services import udemy_scim_service as scim
+    if not scim.configured():
+        return "Udemy SCIM provisioning isn't connected yet, so I can't provision users directly."
+    email = (email or "").strip()
+    if not email:
+        return "I need the person's email to provision them."
+    res = scim.provision_user(email, given_name=given_name, family_name=family_name)
+    if res.get("ok"):
+        if res.get("already"):
+            return f"**{email}** already has a Udemy account — nothing to do."
+        return f"Done — provisioned **{email}** in Udemy Business with access. ✓"
+    return f"Couldn't provision **{email}**: {res.get('message', 'SCIM error')}."
+
+
 @tool
 def find_similar_projects(description: str) -> str:
     """Project IQ — find past projects similar to a described need ('have we done
@@ -424,6 +592,12 @@ pmo_tools = [
     search_udemy_courses,
     recommend_training,
     get_my_trainings,
+    udemy_inactive_seats,
+    udemy_seat_utilization,
+    udemy_course_insights,
+    deactivate_udemy_user,
+    reactivate_udemy_user,
+    provision_udemy_user,
 ]
 
 # LLM built on demand from the live IT-tunable params (router tier).
@@ -435,6 +609,7 @@ from app.services.llm_resilience import resilient_invoke
 class PMOState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
     user_email: str
+    user_role: Optional[str]    # caller role — gates Udemy seat reporting + SCIM writes
     feedback_context: str
     sub_intent: Optional[str]   # passed from router
     entities: Optional[dict]    # passed from router
@@ -635,6 +810,13 @@ _PASSTHROUGH_TOOLS = {
     # In-house training recommendations + personal training list are display-ready.
     "recommend_training",
     "get_my_trainings",
+    # Udemy seat admin (reporting + SCIM) — all return display-ready confirmations/lists.
+    "udemy_inactive_seats",
+    "udemy_seat_utilization",
+    "udemy_course_insights",
+    "deactivate_udemy_user",
+    "reactivate_udemy_user",
+    "provision_udemy_user",
 }
 
 

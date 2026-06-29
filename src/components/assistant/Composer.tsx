@@ -542,15 +542,18 @@ export function Composer({
                                     : "App"}
                             </span>
                           </div>
-                          {(item.kind === "form"
-                            ? item.description || item.category
-                            : item.description) && (
-                            <p className="text-[11px] text-muted-foreground truncate">
-                              {item.kind === "form"
-                                ? `${item.category ? item.category + " · " : ""}${item.description}`
-                                : item.description}
-                            </p>
-                          )}
+                          {(() => {
+                            const desc = item.kind === "url" ? item.purpose : item.description;
+                            const hasDesc = item.kind === "form" ? (item.description || item.category) : desc;
+                            if (!hasDesc) return null;
+                            return (
+                              <p className="text-[11px] text-muted-foreground truncate">
+                                {item.kind === "form"
+                                  ? `${item.category ? item.category + " · " : ""}${item.description}`
+                                  : desc}
+                              </p>
+                            );
+                          })()}
                         </div>
                       </button>
                     ))

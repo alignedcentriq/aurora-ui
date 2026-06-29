@@ -503,6 +503,14 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".attendance_schedules ADD COLUMN IF NOT EXISTS minute INTEGER DEFAULT 0',
                 f'ALTER TABLE "{SCHEMA}".travel_requests ADD COLUMN IF NOT EXISTS expense_limit_currency VARCHAR DEFAULT \'INR\'',
                 f'ALTER TABLE "{SCHEMA}".travel_expense_claims ADD COLUMN IF NOT EXISTS currency VARCHAR DEFAULT \'INR\'',
+                # Project IQ — evidence drill-through (fact → source PolicyChunk) + triage signals
+                f'ALTER TABLE "{SCHEMA}".project_capabilities ADD COLUMN IF NOT EXISTS source_chunk_id INTEGER',
+                f'ALTER TABLE "{SCHEMA}".project_integrations ADD COLUMN IF NOT EXISTS source_chunk_id INTEGER',
+                f'ALTER TABLE "{SCHEMA}".project_lessons ADD COLUMN IF NOT EXISTS source_chunk_id INTEGER',
+                f'ALTER TABLE "{SCHEMA}".project_reusable_assets ADD COLUMN IF NOT EXISTS source_chunk_id INTEGER',
+                f'ALTER TABLE "{SCHEMA}".project_expertise ADD COLUMN IF NOT EXISTS source_chunk_id INTEGER',
+                f'ALTER TABLE "{SCHEMA}".project_profiles ADD COLUMN IF NOT EXISTS query_count INTEGER DEFAULT 0',
+                f'ALTER TABLE "{SCHEMA}".project_profiles ADD COLUMN IF NOT EXISTS last_queried_at TIMESTAMP',
             ]:
                 try:
                     conn.execute(text(_col_stmt))

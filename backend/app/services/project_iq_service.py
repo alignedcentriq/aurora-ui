@@ -302,6 +302,11 @@ def extract_project_dna(slug: str, name: str | None = None) -> dict:
         return {"slug": slug, "status": "error", "reason": "LLM returned unparseable output"}
 
     profile_id = _upsert_profile(slug, name, data, doc_count)
+    # Link each extracted fact back to its source chunk for drill-through.
+    try:
+        link_evidence(slug)
+    except Exception as exc:
+        logger.warning("[ProjectIQ] evidence link failed for %s: %s", slug, exc)
     return {"slug": slug, "name": name, "status": "ok", "profile_id": profile_id, "docs": doc_count}
 
 
@@ -322,7 +327,7 @@ def build_all_dna() -> dict:
 # ── Serialization ────────────────────────────────────────────────────────────
 
 def _profile_to_dict(p: ProjectProfile, similarity: float | None = None,
-                     include_children: bool = True) -> dict:
+                     include_children: bool = True, with_quotes: bool = False) -> dict:
     d = {
         "id": p.id,
         "slug": p.project_slug,
@@ -344,6 +349,7 @@ def _profile_to_dict(p: ProjectProfile, similarity: float | None = None,
         "reviewed_by": p.reviewed_by,
         "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
         "source_doc_count": p.source_doc_count,
+        "query_count": p.query_count or 0,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
     if similarity is not None:
@@ -351,33 +357,86 @@ def _profile_to_dict(p: ProjectProfile, similarity: float | None = None,
     if include_children:
         d["capabilities"] = [
             {"capability_name": c.capability_name, "category": c.category,
-             "maturity_level": c.maturity_level, "confidence": c.confidence, "evidence": c.evidence}
+             "maturity_level": c.maturity_level, "confidence": c.confidence, "evidence": c.evidence,
+             "source_chunk_id": c.source_chunk_id}
             for c in p.capabilities
         ]
         d["integrations"] = [
             {"system_name": i.system_name, "integration_type": i.integration_type,
              "complexity_level": i.complexity_level, "lessons_learned": i.lessons_learned,
-             "confidence": i.confidence}
+             "confidence": i.confidence, "source_chunk_id": i.source_chunk_id}
             for i in p.integrations
         ]
         d["lessons"] = [
             {"category": l.category, "lesson": l.lesson, "impact_level": l.impact_level,
-             "recommendation": l.recommendation, "confidence": l.confidence, "evidence": l.evidence}
+             "recommendation": l.recommendation, "confidence": l.confidence, "evidence": l.evidence,
+             "source_chunk_id": l.source_chunk_id}
             for l in p.lessons
         ]
         d["reusable_assets"] = [
             {"asset_name": a.asset_name, "asset_type": a.asset_type, "repository_url": a.repository_url,
              "owner": a.owner, "reuse_readiness": a.reuse_readiness,
-             "documentation_url": a.documentation_url, "confidence": a.confidence}
+             "documentation_url": a.documentation_url, "confidence": a.confidence,
+             "source_chunk_id": a.source_chunk_id}
             for a in p.reusable_assets
         ]
         d["expertise"] = [
             {"person_name": e.person_name, "role_on_project": e.role_on_project,
              "capability": e.capability, "evidence_level": e.evidence_level,
-             "employee_id": e.employee_id}
+             "employee_id": e.employee_id, "source_chunk_id": e.source_chunk_id}
             for e in p.expertise
         ]
+        if with_quotes:
+            _attach_quotes(d)
+        d["health"] = compute_health(d)
     return d
+
+
+# ── Health score ─────────────────────────────────────────────────────────────
+
+# Field → weight. A DNA card is "healthy" when the high-value reuse fields are
+# present; thin single-doc extractions score low and get flagged for review.
+_HEALTH_FIELDS = {
+    "business_problem": 12, "solution_summary": 14, "business_outcomes": 12,
+    "architecture_summary": 8, "client_industry": 4, "status": 2,
+}
+_HEALTH_LISTS = {
+    "technology_stack": 8, "capabilities": 14, "integrations": 8,
+    "lessons": 10, "reusable_assets": 4, "expertise": 4,
+}
+
+
+def compute_health(d: dict) -> dict:
+    """Completeness score (0-100) + human-readable flags for a DNA card dict."""
+    score = 0
+    for f, w in _HEALTH_FIELDS.items():
+        if (d.get(f) or "").strip() if isinstance(d.get(f), str) else d.get(f):
+            score += w
+    for f, w in _HEALTH_LISTS.items():
+        if d.get(f):
+            score += w
+    score = min(100, score)
+
+    flags: list[str] = []
+    if (d.get("source_doc_count") or 0) <= 1:
+        flags.append("Single source document")
+    if not d.get("business_outcomes"):
+        flags.append("No business outcomes captured")
+    if not d.get("technology_stack"):
+        flags.append("No technology stack")
+    if not d.get("expertise"):
+        flags.append("No people / expertise linked")
+    # Any verified fact at all?
+    verified = (d.get("confidence") == "verified") or any(
+        x.get("confidence") == "verified" or x.get("evidence_level") == "verified"
+        for key in ("capabilities", "integrations", "lessons", "reusable_assets", "expertise")
+        for x in (d.get(key) or [])
+    )
+    if not verified:
+        flags.append("No verified facts — all inferred")
+
+    level = "strong" if score >= 70 else "moderate" if score >= 40 else "thin"
+    return {"score": score, "level": level, "flags": flags}
 
 
 # ── Queries (structured) ─────────────────────────────────────────────────────
@@ -398,7 +457,7 @@ def get_profile(slug: str) -> dict | None:
     db = SessionLocal()
     try:
         p = db.query(ProjectProfile).filter(ProjectProfile.project_slug == slug).first()
-        return _profile_to_dict(p) if p else None
+        return _profile_to_dict(p, with_quotes=True) if p else None
     finally:
         db.close()
 
@@ -660,3 +719,221 @@ def render_reusable_assets(need: str) -> str:
         if sub:
             lines.append("  " + " · ".join(sub))
     return "\n".join(lines).strip()
+
+
+# ── Evidence drill-through (fact → source chunk, lexical match, no LLM) ────────
+
+_STOP = {
+    "the", "and", "for", "with", "that", "this", "from", "into", "was", "were", "are",
+    "has", "have", "had", "will", "would", "can", "could", "our", "their", "its", "a",
+    "an", "of", "to", "in", "on", "by", "as", "at", "is", "it", "be", "or", "we", "they",
+    "project", "client", "team", "using", "used", "use", "via", "which", "also", "data",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 3 and w not in _STOP}
+
+
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text or "")
+    return [s.strip() for s in parts if len(s.strip()) > 25]
+
+
+def _best_quote(chunk_text: str, fact_text: str, cap: int = 320) -> str:
+    """Pick the sentence within a chunk that best supports the fact."""
+    ft = _tokens(fact_text)
+    if not ft:
+        return (chunk_text or "")[:cap].strip()
+    best, best_score = "", 0.0
+    for sent in _split_sentences(chunk_text):
+        st = _tokens(sent)
+        if not st:
+            continue
+        score = len(ft & st) / (len(ft) ** 0.5)
+        if score > best_score:
+            best, best_score = sent, score
+    snippet = best or (chunk_text or "")[:cap]
+    return snippet[:cap].strip()
+
+
+def _project_chunks(db, slug: str) -> list[tuple[int, str]]:
+    rows = (
+        db.query(PolicyChunk.id, PolicyChunk.text)
+        .join(Policy, PolicyChunk.policy_id == Policy.id)
+        .filter(Policy.source_key.like(f"{_KEY_PREFIX}{slug}/%"))
+        .all()
+    )
+    return [(cid, txt or "") for cid, txt in rows]
+
+
+def link_evidence(slug: str) -> dict:
+    """Match every extracted fact of a project to the source chunk that best
+    supports it (lexical overlap) and store its id for drill-through. No LLM."""
+    db = SessionLocal()
+    try:
+        p = db.query(ProjectProfile).filter(ProjectProfile.project_slug == slug).first()
+        if not p:
+            return {"slug": slug, "status": "no_profile"}
+        chunks = _project_chunks(db, slug)
+        if not chunks:
+            return {"slug": slug, "status": "no_chunks"}
+        chunk_tokens = [(cid, _tokens(txt)) for cid, txt in chunks]
+
+        def _match(fact_text: str):
+            ft = _tokens(fact_text)
+            if not ft:
+                return None
+            best_id, best = None, 0
+            for cid, ctoks in chunk_tokens:
+                overlap = len(ft & ctoks)
+                if overlap > best:
+                    best_id, best = cid, overlap
+            return best_id if best >= 2 else None
+
+        linked = 0
+        for c in p.capabilities:
+            c.source_chunk_id = _match(f"{c.capability_name} {c.category or ''} {c.evidence or ''}")
+            linked += bool(c.source_chunk_id)
+        for i in p.integrations:
+            i.source_chunk_id = _match(f"{i.system_name} {i.integration_type or ''} {i.lessons_learned or ''}")
+            linked += bool(i.source_chunk_id)
+        for l in p.lessons:
+            l.source_chunk_id = _match(f"{l.lesson} {l.recommendation or ''} {l.evidence or ''}")
+            linked += bool(l.source_chunk_id)
+        for a in p.reusable_assets:
+            a.source_chunk_id = _match(f"{a.asset_name} {a.asset_type or ''}")
+            linked += bool(a.source_chunk_id)
+        for e in p.expertise:
+            e.source_chunk_id = _match(f"{e.person_name} {e.role_on_project or ''} {e.capability or ''}")
+            linked += bool(e.source_chunk_id)
+        db.commit()
+        return {"slug": slug, "status": "ok", "linked": linked}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def link_all_evidence() -> dict:
+    """One-shot: link evidence for every existing profile (no rebuild needed)."""
+    db = SessionLocal()
+    try:
+        slugs = [s for (s,) in db.query(ProjectProfile.project_slug).all()]
+    finally:
+        db.close()
+    results = []
+    for s in slugs:
+        try:
+            results.append(link_evidence(s))
+        except Exception as exc:
+            results.append({"slug": s, "status": "error", "reason": str(exc)})
+    linked = sum(r.get("linked", 0) for r in results)
+    return {"profiles": len(slugs), "facts_linked": linked}
+
+
+def _attach_quotes(d: dict) -> None:
+    """Resolve source_chunk_id → a supporting quote snippet for each child fact."""
+    ids = set()
+    for key in ("capabilities", "integrations", "lessons", "reusable_assets", "expertise"):
+        for x in d.get(key) or []:
+            if x.get("source_chunk_id"):
+                ids.add(x["source_chunk_id"])
+    if not ids:
+        return
+    db = SessionLocal()
+    try:
+        rows = db.query(PolicyChunk.id, PolicyChunk.text).filter(PolicyChunk.id.in_(ids)).all()
+        texts = {cid: txt for cid, txt in rows}
+    finally:
+        db.close()
+
+    def _ft(key, x):
+        if key == "capabilities":
+            return f"{x.get('capability_name','')} {x.get('evidence') or ''}"
+        if key == "integrations":
+            return f"{x.get('system_name','')} {x.get('lessons_learned') or ''}"
+        if key == "lessons":
+            return f"{x.get('lesson','')} {x.get('recommendation') or ''}"
+        if key == "reusable_assets":
+            return x.get("asset_name", "")
+        return f"{x.get('person_name','')} {x.get('capability') or ''}"
+
+    for key in ("capabilities", "integrations", "lessons", "reusable_assets", "expertise"):
+        for x in d.get(key) or []:
+            cid = x.get("source_chunk_id")
+            if cid and cid in texts:
+                x["source_quote"] = _best_quote(texts[cid], _ft(key, x))
+
+
+# ── Portfolio analytics (aggregate across all DNA) ───────────────────────────
+
+def portfolio_analytics() -> dict:
+    """Org-wide rollups over the DNA library: capability/tech/integration frequency,
+    industry & status distribution, and overall health — powers the analytics tab."""
+    from collections import Counter
+    db = SessionLocal()
+    try:
+        profiles = db.query(ProjectProfile).all()
+        dicts = [_profile_to_dict(p, include_children=True) for p in profiles]
+    finally:
+        db.close()
+
+    caps, techs, integ = Counter(), Counter(), Counter()
+    industries, statuses, health_levels = Counter(), Counter(), Counter()
+    reviewed = total_lessons = total_assets = total_experts = 0
+    for d in dicts:
+        for c in d.get("capabilities", []):
+            if c.get("capability_name"):
+                caps[c["capability_name"].strip()] += 1
+        for t in d.get("technology_stack", []):
+            if t:
+                techs[str(t).strip()] += 1
+        for i in d.get("integrations", []):
+            if i.get("system_name"):
+                integ[i["system_name"].strip()] += 1
+        if d.get("client_industry"):
+            industries[d["client_industry"].strip()] += 1
+        if d.get("status"):
+            statuses[d["status"].strip()] += 1
+        if d.get("review_status") == "reviewed":
+            reviewed += 1
+        total_lessons += len(d.get("lessons", []))
+        total_assets += len(d.get("reusable_assets", []))
+        total_experts += len(d.get("expertise", []))
+        health_levels[d["health"]["level"]] += 1
+
+    def _top(counter, n=20):
+        return [{"label": k, "count": v} for k, v in counter.most_common(n)]
+
+    return {
+        "total_projects": len(dicts),
+        "reviewed": reviewed,
+        "draft": len(dicts) - reviewed,
+        "totals": {"lessons": total_lessons, "assets": total_assets, "experts": total_experts},
+        "health": dict(health_levels),
+        "capabilities": _top(caps),
+        "technologies": _top(techs),
+        "integrations": _top(integ),
+        "industries": _top(industries),
+        "statuses": _top(statuses),
+    }
+
+
+def record_queries(slugs: list[str]) -> None:
+    """Bump query_count / last_queried_at for surfaced projects (triage signal)."""
+    slugs = [s for s in slugs if s]
+    if not slugs:
+        return
+    db = SessionLocal()
+    try:
+        for p in db.query(ProjectProfile).filter(ProjectProfile.project_slug.in_(slugs)).all():
+            p.query_count = (p.query_count or 0) + 1
+            p.last_queried_at = datetime.datetime.utcnow()
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()

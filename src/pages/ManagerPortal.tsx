@@ -196,13 +196,13 @@ type TabId =
   | "pmo-requests"
   | "appreciations";
 
-const TABS: { id: TabId; label: string; icon: typeof Users }[] = [
+const BASE_TABS: { id: TabId; label: string; icon: typeof Users; fmOnly?: boolean }[] = [
   { id: "attendance", label: "Attendance", icon: CalendarClock },
   { id: "allocations", label: "Allocations", icon: Briefcase },
   { id: "readiness", label: "Readiness", icon: Gauge },
   { id: "skills", label: "Skills", icon: Wrench },
-  { id: "onboarding", label: "Onboarding", icon: ClipboardList },
-  { id: "pmo-requests", label: "PMO Requests", icon: Server },
+  { id: "onboarding", label: "Onboarding", icon: ClipboardList, fmOnly: true },
+  { id: "pmo-requests", label: "PMO Requests", icon: Server, fmOnly: true },
   { id: "appreciations", label: "Appreciations", icon: Trophy },
 ];
 
@@ -217,13 +217,21 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function ManagerPortal() {
   const { user } = useAuth();
+  const isFM = user?.role === "Functional Manager" || user?.role === "Super Admin";
   const auth = useMemo(
     () => ({ "x-user-email": user?.email ?? "", "x-user-role": (user?.role ?? "").toLowerCase() }),
     [user?.email, user?.role],
   );
 
+  const TABS = BASE_TABS.filter((t) => !t.fmOnly || isFM);
+
   const [activeTab, setActiveTab] = useState<TabId>("attendance");
   const [team, setTeam] = useState<TeamMember[]>([]);
+
+  // Reset to first available tab when role changes
+  useEffect(() => {
+    if (!TABS.find((t) => t.id === activeTab)) setActiveTab("attendance");
+  }, [isFM]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch("/api/portal/manager/team", { headers: auth })
@@ -243,14 +251,16 @@ export function ManagerPortal() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">My Team</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Manage hierarchy allocations, track readiness, skills, and appreciations.
+              {isFM
+                ? "Manage hierarchy allocations, track readiness, onboarding, and team operations."
+                : "View your team's attendance, allocations, readiness, and skills."}
             </p>
           </div>
         </div>
       </div>
 
       {/* Tab bar */}
-      <div className="mb-6 flex gap-1.5 overflow-x-auto no-scrollbar rounded-2xl border border-border/80 bg-muted/40 p-1.5 backdrop-blur-sm max-w-fit">
+      <div className="mb-6 flex w-full max-w-full gap-1.5 overflow-x-auto no-scrollbar rounded-2xl border border-border/80 bg-muted/40 p-1.5 backdrop-blur-sm">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = activeTab === t.id;
@@ -278,8 +288,8 @@ export function ManagerPortal() {
         {activeTab === "allocations" && <AllocationsTab auth={auth} />}
         {activeTab === "readiness" && <ReadinessTab auth={auth} />}
         {activeTab === "skills" && <SkillsTab auth={auth} />}
-        {activeTab === "onboarding" && <OnboardingTab auth={auth} team={team} />}
-        {activeTab === "pmo-requests" && <PMORequestsTab auth={auth} team={team} />}
+        {activeTab === "onboarding" && isFM && <OnboardingTab auth={auth} team={team} />}
+        {activeTab === "pmo-requests" && isFM && <PMORequestsTab auth={auth} team={team} />}
         {activeTab === "appreciations" && <AppreciationsTab auth={auth} team={team} />}
       </div>
     </div>
@@ -396,12 +406,12 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
       <SchedulesSection auth={auth} />
 
       {/* Controls bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/60 bg-card/40 px-5 py-4 backdrop-blur-sm shadow-sm">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card/40 px-5 py-4 backdrop-blur-sm shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <select
             value={month}
             onChange={(e) => setMonth(Number(e.target.value))}
-            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all w-full sm:w-auto"
           >
             {MONTHS.map((m, i) => (
               <option key={m} value={i + 1}>{m}</option>
@@ -410,7 +420,7 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
           <select
             value={year}
             onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all w-full sm:w-auto"
           >
             {[year - 1, year, year + 1]
               .filter((v, i, a) => a.indexOf(v) === i)
@@ -420,23 +430,23 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
           </select>
           <button
             onClick={loadReport}
-            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium hover:bg-muted hover:shadow-sm transition-all"
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium hover:bg-muted hover:shadow-sm transition-all w-full sm:w-auto cursor-pointer"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <button
             onClick={downloadCsv}
             disabled={!report?.success}
-            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-4 py-2.5 text-sm font-semibold hover:bg-muted hover:shadow-sm transition-all disabled:opacity-40"
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background/80 px-4 py-2.5 text-sm font-semibold hover:bg-muted hover:shadow-sm transition-all disabled:opacity-40 w-full sm:w-auto cursor-pointer"
           >
             <Download className="h-3.5 w-3.5" /> CSV
           </button>
           <button
             onClick={emailNow}
             disabled={!report?.success || emailing}
-            className="flex items-center gap-2 rounded-xl bg-[var(--collaboration)] px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 whitespace-nowrap shadow-md"
+            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--collaboration)] px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 whitespace-nowrap shadow-md w-full sm:w-auto cursor-pointer"
           >
             {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
             Email Report
@@ -575,7 +585,7 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
 
   return (
     <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-sm p-5 shadow-sm">
-      <div className="mb-4 flex flex-row items-center justify-between gap-2">
+      <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--collaboration)]/10 border border-[var(--collaboration)]/20">
             <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
@@ -587,7 +597,7 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-xl border border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 px-3.5 py-2 text-xs font-bold text-[var(--collaboration)] hover:bg-[var(--collaboration)]/10 transition-all shrink-0"
+          className="flex items-center gap-1.5 rounded-xl border border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 px-3.5 py-2 text-xs font-bold text-[var(--collaboration)] hover:bg-[var(--collaboration)]/10 transition-all shrink-0 w-full sm:w-auto justify-center cursor-pointer"
         >
           <Plus className="h-3.5 w-3.5" /> New Automation
         </button>

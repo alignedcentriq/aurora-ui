@@ -29,6 +29,7 @@ Config:
 
 import logging
 import re
+import threading
 
 from app.config import settings
 from app.graph_sync import sp_client
@@ -37,12 +38,69 @@ from app.services.sharepoint_policy_sync import _sync_files_into_policies
 
 logger = logging.getLogger(__name__)
 
+# Guards against two project syncs running at once (background loop + a manual
+# trigger, or overlapping loop ticks). Concurrent syncs deadlock on the shared
+# policy/policy_chunk tables, so a second caller skips instead of piling up.
+_sync_lock = threading.Lock()
+
 # Demo transcripts are the headline data, so .vtt/.srt are included by default.
 _DEFAULT_EXTS = "pdf,docx,pptx,vtt,srt,txt,md,xlsx,csv,html,htm"
 
 _SUMMARY_HINTS = ("summary", "summ", "overview", "abstract")
 _TRANSCRIPT_HINTS = ("transcript", "demo", "recording", "meeting", "call")
 _TRANSCRIPT_EXTS = ("vtt", "srt")
+
+# ── Project routing ──────────────────────────────────────────────────────────
+# The `Projects` tree is organised by document *type*, not one-folder-per-project,
+# so the top-level folder name is NOT a reliable project key. We route each file
+# to a project by its first path segment (relative to the Projects root):
+#
+#   Individual Project Data/<Project>/...   → one project per <Project> subfolder
+#   Transcripts & Summary/<file>            → one project per summary document
+#   Newsletters / Policy / Flash Review …   → NOT projects, skipped entirely
+#
+# Everything else (loose files, unknown folders) is skipped so non-project content
+# never becomes a bogus "project".
+_FOLDER_AS_PROJECT = "individual project data"   # subfolder = project
+_DOC_AS_PROJECT = "transcripts & summary"        # each file = project
+
+
+def _route_file(rel_path: str) -> tuple[str, str] | None:
+    """Map a file's path (relative to the Projects root) to ``(slug, name)`` of the
+    project it belongs to, or ``None`` if the file is not project content."""
+    segs = [s for s in (rel_path or "").split("/") if s]
+    if len(segs) < 2:
+        return None  # loose file directly under the root — not a project
+    top = segs[0].lower()
+    if top == _FOLDER_AS_PROJECT and len(segs) >= 3:
+        name = segs[1]
+        return (_project_slug(name), name)
+    if top == _DOC_AS_PROJECT:
+        stem = segs[-1].rsplit(".", 1)[0].strip()
+        return (_project_slug(stem), stem)
+    return None  # Newsletters, Policy, Flash Review Transcripts, unknown → skip
+
+
+def _key_builder(filename: str, rel_path: str) -> str | None:
+    """source_key for a file: ``sp:PROJECT/{project_slug}/{rel_path}`` (None = skip).
+
+    The project slug sits at position 1 so the existing ``sp:PROJECT/{slug}/%``
+    conventions in project_iq_service keep working unchanged."""
+    route = _route_file(rel_path)
+    if not route:
+        return None
+    slug, _name = route
+    return f"sp:PROJECT/{slug}/{rel_path}"
+
+
+def _title_builder(filename: str, rel_path: str) -> str:
+    """Self-describing Policy.title, e.g. 'CMDR — Transcript: Kickoff'. The project
+    name (segment 0 of the title) is what list_project_slugs reads back."""
+    route = _route_file(rel_path)
+    name = route[1] if route else filename.rsplit(".", 1)[0].strip()
+    stem = filename.rsplit(".", 1)[0].strip()
+    doc_type = _classify_doc_type(filename, rel_path).capitalize()
+    return f"{name} — {doc_type}: {stem}"
 
 
 def _exts() -> tuple:
@@ -69,16 +127,6 @@ def _classify_doc_type(filename: str, rel_path: str = "") -> str:
     if any(h in hay for h in _SUMMARY_HINTS):
         return "summary"
     return "details"
-
-
-def _make_title_builder(project: str):
-    """Self-describing Policy.title so retrieved chunks/answers identify
-    themselves, e.g. 'Acme Corp — Transcript: Q2 Demo'."""
-    def _build(filename: str, rel_path: str) -> str:
-        stem = filename.rsplit(".", 1)[0].strip()
-        doc_type = _classify_doc_type(filename, rel_path).capitalize()
-        return f"{project} — {doc_type}: {stem}"
-    return _build
 
 
 def _list_project_folders(drive_id: str, root: str) -> list[str]:
@@ -136,13 +184,51 @@ def _prune_deleted_projects(live_slugs: set[str]) -> dict:
         db.close()
 
 
-def sync_projects() -> dict:
-    """Sync every project folder under SHAREPOINT_PROJECTS_ROOT into the
-    Project Showcase category. Project content is queried via the general agent,
-    so the 'general' answer cache is invalidated on any change.
+def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]:
+    """List the whole Projects tree once and route every file to a project.
 
-    Also prunes Policy chunks and ProjectProfile DNA for any project whose
-    top-level folder has been deleted from SharePoint since the last sync."""
+    Returns ``(slug -> display name, all_listed_items)``. The raw listing is
+    returned so the caller can hand it straight to the sync worker instead of
+    re-listing the (large) tree a second time."""
+    all_items = sp_client.list_files_recursive(drive_id, root)
+    exts = _exts()
+    live: dict[str, str] = {}
+    for it in all_items:
+        name = it.get("name", "")
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext not in exts:
+            continue
+        route = _route_file(it.get("relative_path", name))
+        if route:
+            live[route[0]] = route[1]
+    return live, all_items
+
+
+def sync_projects() -> dict:
+    """Sync the SHAREPOINT_PROJECTS_ROOT tree into the Project Showcase category.
+
+    Single unified pass over the whole tree: each file is routed to a project by
+    _route_file (subfolders of 'Individual Project Data' = projects; each
+    'Transcripts & Summary' document = its own project; Newsletters/Policy/Flash
+    Review/unknown content is skipped). Project content is queried via the general
+    agent, so the 'general' answer cache is invalidated on any change.
+
+    Also prunes Policy chunks and ProjectProfile DNA for any project that no longer
+    routes from a live SharePoint file (covers re-keying from the old
+    one-folder-per-project scheme).
+
+    Re-entrancy: only one sync runs at a time. A concurrent caller returns
+    immediately rather than contending for table locks."""
+    if not _sync_lock.acquire(blocking=False):
+        logger.info("[Project sync] Another sync is already in progress — skipping this trigger.")
+        return {"status": "skipped", "message": "a project sync is already in progress"}
+    try:
+        return _sync_projects_locked()
+    finally:
+        _sync_lock.release()
+
+
+def _sync_projects_locked() -> dict:
     site_url = settings.SHAREPOINT_SITE_URL
     if not site_url:
         return {"status": "error", "message": "SHAREPOINT_SITE_URL is not configured."}
@@ -153,54 +239,60 @@ def sync_projects() -> dict:
 
     exts = _exts()
 
-    # Resolve the drive once, then discover the per-project subfolders.
+    # Resolve the drive once, then route every file to its project. The listing is
+    # reused by the sync worker below so the tree is walked only once per run.
     try:
         site_id = sp_client.get_site_id(site_url)
         drive_id = sp_client.get_drive_id(site_id)
-        project_folders = _list_project_folders(drive_id, root)
+        live, all_items = route_live_projects(drive_id, root)
     except Exception as e:
         msg = f"Failed listing projects root '{root}': {e}"
         logger.error(msg)
         return {"status": "error", "message": msg}
 
-    live_slugs = {_project_slug(name) for name in project_folders}
+    live_slugs = set(live)
 
-    # Prune stale project data for folders that no longer exist in SharePoint.
+    # Prune stale project data for projects that no longer route from SharePoint
+    # (includes old one-folder-per-project slugs being replaced by per-file slugs).
     prune_result: dict = {}
     try:
         prune_result = _prune_deleted_projects(live_slugs)
         if prune_result.get("pruned_projects"):
             logger.info(
-                f"[Project sync] Pruned {prune_result['pruned_projects']} deleted project(s): "
+                f"[Project sync] Pruned {prune_result['pruned_projects']} stale project(s): "
                 f"{prune_result.get('slugs', [])}"
             )
     except Exception as e:
         logger.error(f"[Project sync] Prune step failed: {e}")
 
-    if not project_folders:
-        logger.info(f"[Project sync] No project subfolders found under '{root}'.")
+    if not live_slugs:
+        logger.info(f"[Project sync] No project content routed under '{root}'.")
         return {"status": "success", "total_new": 0, "total_updated": 0,
-                "total_deleted_projects": prune_result.get("pruned_projects", 0), "results": []}
+                "total_deleted_projects": prune_result.get("pruned_projects", 0),
+                "projects": 0, "results": []}
 
-    results = []
-    for name in project_folders:
-        r = _sync_files_into_policies(
-            label=f"PROJECT:{name}",
-            full_path=f"{root}/{name}",
-            key_prefix=f"sp:PROJECT/{_project_slug(name)}/",
-            categorizer=lambda _fn: PROJECT_CATEGORY,
-            exts=exts,
-            cache_domains=["general"],
-            title_builder=_make_title_builder(name),
-        )
-        results.append({"project": name, **r})
+    # ── Single unified pass over the whole tree ───────────────────────────────
+    r = _sync_files_into_policies(
+        label="PROJECTS",
+        full_path=root,
+        key_prefix="sp:PROJECT/",          # stale-deletion scope for ALL project rows
+        categorizer=lambda _fn: PROJECT_CATEGORY,
+        exts=exts,
+        cache_domains=["general"],
+        title_builder=_title_builder,
+        key_builder=_key_builder,          # per-file project routing (None = skip)
+        prelisted_items=all_items,         # reuse the listing from route_live_projects
+    )
 
-    total_new = sum(r["new"] for r in results)
-    total_updated = sum(r["updated"] for r in results)
-    total_deleted_files = sum(r.get("deleted", 0) for r in results)
-    errors = [e for r in results for e in r.get("errors", [])]
+    total_new = r.get("new", 0)
+    total_updated = r.get("updated", 0)
+    total_deleted_files = r.get("deleted", 0)
+    errors = r.get("errors", [])
+    changed_keys = r.get("changed_keys", [])
 
-    anything_changed = total_new or total_updated or total_deleted_files or prune_result.get("pruned_projects")
+    anything_changed = (
+        total_new or total_updated or total_deleted_files or prune_result.get("pruned_projects")
+    )
 
     # Re-embed any chunks still missing vectors.
     if total_new or total_updated:
@@ -210,28 +302,29 @@ def sync_projects() -> dict:
         except Exception as e:
             logger.error(f"[Project sync] Post-sync embed error: {e}")
 
-    # Rebuild Project IQ DNA for projects that had content changes.
-    if anything_changed:
+    # Rebuild Project IQ DNA only for projects whose content actually changed.
+    if changed_keys:
         try:
             from app.services.project_iq_service import extract_project_dna
             changed_slugs = set()
-            for r in results:
-                if r.get("new") or r.get("updated") or r.get("deleted"):
-                    changed_slugs.add(_project_slug(r["project"]))
-            for slug in changed_slugs:
+            for k in changed_keys:
+                parts = (k or "").split("/")
+                if len(parts) >= 2:
+                    changed_slugs.add(parts[1])
+            for slug in sorted(changed_slugs):
                 logger.info(f"[Project sync] Triggering DNA rebuild for '{slug}'")
-                extract_project_dna(slug)
+                extract_project_dna(slug, live.get(slug))
         except Exception as e:
             logger.error(f"[Project sync] DNA rebuild error: {e}")
 
     return {
         "status": "partial_error" if errors else "success",
-        "projects": len(project_folders),
+        "projects": len(live_slugs),
         "total_new": total_new,
         "total_updated": total_updated,
         "total_deleted_files": total_deleted_files,
         "total_deleted_projects": prune_result.get("pruned_projects", 0),
-        "results": results,
+        "errors": errors,
     }
 
 

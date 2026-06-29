@@ -9,7 +9,7 @@ services:
     # Host nginx config already has: proxy_pass http://127.0.0.1:8090 — no admin action needed.
     # Branch A only (we own 80/443): change to "80:80","443:443" and run first-deploy.sh.
     ports:
-      - "8090:80"
+      - "8091:80"
     volumes:
       # Mounted conf wins over the baked copy — edit + `docker compose restart nginx`, no rebuild.
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -18,7 +18,7 @@ services:
     depends_on:
       - backend
     restart: always
-
+ 
   backend:
     build: ./backend
     env_file:
@@ -34,11 +34,9 @@ services:
       redis:
         condition: service_healthy
     restart: always
-
+ 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6380:6379"
     command: redis-server /etc/redis/redis.conf --requirepass ${REDIS_PASSWORD}
     networks:
       - centriq-network
@@ -51,7 +49,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
+ 
   # Separate postgres only for Langfuse — app uses hosted DB via backend/.env
   langfuse-db:
     image: ankane/pgvector:latest
@@ -69,14 +67,12 @@ services:
     volumes:
       - langfuse_db_data:/var/lib/postgresql/data
     restart: always
-
+ 
   langfuse-server:
     image: langfuse/langfuse:2
     depends_on:
       langfuse-db:
         condition: service_healthy
-    ports:
-      - "3003:3000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/langfuse
       - NEXTAUTH_SECRET=mysecret
@@ -86,11 +82,13 @@ services:
     networks:
       - centriq-network
     restart: always
-
+ 
 volumes:
   redis_data:
   langfuse_db_data:
-
+ 
 networks:
   centriq-network:
     driver: bridge
+ 
+ 

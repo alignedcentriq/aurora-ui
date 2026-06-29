@@ -50,7 +50,7 @@ interface StepView {
   order: number;
   kind: "manual" | "deeplink" | "documents" | "video";
   cta_label: string;
-  action_payload: { prompt?: string; route?: string };
+  action_payload: { prompt?: string; route?: string; tab?: string };
   auto: boolean;
   required: boolean;
   status: "pending" | "in_progress" | "done" | "skipped";

@@ -605,9 +605,16 @@ class PolicyService:
     def _get_embedding_client(cls):
         if cls._embedding_client is None:
             from openai import OpenAI
+            # Fail fast on a busy/unavailable embed server: the default client retries
+            # 503s with backoff, which AMPLIFIES load against a saturated ml01 (the
+            # "maximum pending requests exceeded" feedback loop) and holds DB locks
+            # for the duration when called mid-transaction. One quick attempt, then
+            # the caller falls back to keyword search / stores the chunk unembedded.
             cls._embedding_client = OpenAI(
                 base_url=settings.EMBEDDING_BASE_URL,
                 api_key=settings.EMBEDDING_API_KEY,
+                max_retries=0,
+                timeout=15.0,
             )
         return cls._embedding_client
 

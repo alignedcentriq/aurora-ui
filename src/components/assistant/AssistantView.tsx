@@ -171,6 +171,7 @@ export interface DirectoryFilter {
   certified?: boolean;
   project?: string;
   usedWithinMonths?: number;
+  available?: boolean;
 }
 
 const _DIR_STOPWORDS =
@@ -190,6 +191,13 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
 
   // Certification: "certified in React", "who has a React certificate".
   const certified = /\bcertif(?:ied|ication|icate)\b/i.test(lower) || undefined;
+
+  // Availability: "who is available", "free React devs", "on the bench", "unallocated".
+  // Drives an allocation-aware filter (current free capacity from the latest snapshot).
+  const available =
+    /\b(available|availability|unallocated|not\s+allocated|on\s+(?:the\s+)?bench|free\s+(?:capacity|now|developers?|resources?|engineers?)|spare\s+capacity)\b/i.test(
+      lower,
+    ) || undefined;
 
   // Recency on last-used: "used X in the last 2 months", "past 6 weeks", "within 1 year".
   let usedWithinMonths: number | undefined;
@@ -258,9 +266,16 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
   if (project && skill && project.toLowerCase().includes(skill.toLowerCase())) skill = undefined;
 
   // Only act when we actually parsed a filterable dimension.
-  if (!skill && minYears === undefined && !certified && !project && usedWithinMonths === undefined)
+  if (
+    !skill &&
+    minYears === undefined &&
+    !certified &&
+    !project &&
+    usedWithinMonths === undefined &&
+    !available
+  )
     return null;
-  return { skill, minYears, certified, project, usedWithinMonths };
+  return { skill, minYears, certified, project, usedWithinMonths, available };
 }
 
 // ── My Requests filter parsing ───────────────────────────────────────────────
@@ -535,6 +550,21 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
   };
   const [activity, setActivity] = useState("");
   const [activeMode, setActiveMode] = useState<ModeKey | null>(null);
+  const [transitionState, setTransitionState] = useState<{
+    active: boolean;
+    targetMode: ModeKey | null;
+  } | null>(null);
+
+  const changeModeWithAnimation = useCallback((newMode: ModeKey | null) => {
+    if (newMode === activeMode) return;
+    setTransitionState({ active: true, targetMode: newMode });
+    window.setTimeout(() => {
+      setActiveMode(newMode);
+    }, 450);
+    window.setTimeout(() => {
+      setTransitionState(null);
+    }, 950);
+  }, [activeMode]);
   // Proactive load awareness: warn (but never block) when the shared LLM server
   // has no free slots. `serverBusy` is independent of the per-thread `busy` above.
   const { serverBusy, waiting } = useServerLoad();
@@ -844,7 +874,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       const modeCmd = parseModeCommand(text);
       if (modeCmd === "exit") {
         if (activeMode) {
-          setActiveMode(null);
+          changeModeWithAnimation(null);
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
             role: "ai",
@@ -859,7 +889,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       }
       if (modeCmd) {
         const mode = CHAT_MODES[modeCmd];
-        setActiveMode(modeCmd);
+        changeModeWithAnimation(modeCmd);
         addTurn(activeId, { role: "user", text });
         addTurn(activeId, {
           role: "ai",
@@ -901,6 +931,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               ? `used in the last ${dirFilter.usedWithinMonths} month${dirFilter.usedWithinMonths === 1 ? "" : "s"}`
               : null,
             dirFilter.project ? `project **${dirFilter.project}**` : null,
+            dirFilter.available ? "currently **available**" : null,
           ].filter(Boolean);
           addTurn(activeId, {
             role: "ai",
@@ -2023,7 +2054,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
 
   const handleNewChat = () => {
     createThread();
-    setActiveMode(null);
+    changeModeWithAnimation(null);
     setIsSidebarOpen(false);
   };
 
@@ -2151,7 +2182,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                 <span className="font-semibold">{mode.label}</span>
                 <span className="text-xs opacity-70 hidden sm:inline">{mode.description}</span>
                 <button
-                  onClick={() => setActiveMode(null)}
+                  onClick={() => changeModeWithAnimation(null)}
                   className="ml-auto shrink-0 rounded-lg p-1 opacity-60 hover:opacity-100 transition-opacity"
                   aria-label="Exit mode"
                 >
@@ -2987,6 +3018,66 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Mode Transition Overlay */}
+      <AnimatePresence>
+        {transitionState?.active && (() => {
+          const targetMode = transitionState.targetMode;
+          const modeInfo = targetMode ? CHAT_MODES[targetMode] : null;
+          const ModeIcon = modeInfo ? modeInfo.Icon : Sparkles;
+          
+          let color = "#3b82f6";
+          if (targetMode === "analytics") color = "#8b5cf6";
+          if (targetMode === "training") color = "#10b981";
+          if (targetMode === "project") color = "#f59e0b";
+          if (targetMode === "resource") color = "#06b6d4";
+
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
+              className="absolute inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/5 pointer-events-auto"
+              style={{
+                backdropFilter: "blur(12px)",
+                WebkitBackdropFilter: "blur(12px)",
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0, opacity: 0.3 }}
+                animate={{ 
+                  scale: 60,
+                  opacity: [0.3, 0.75, 0.75],
+                }}
+                transition={{ 
+                  duration: 0.8, 
+                  ease: [0.16, 1, 0.3, 1]
+                }}
+                className="absolute rounded-full shrink-0 w-20 h-20"
+                style={{
+                  background: `radial-gradient(circle, color-mix(in srgb, ${color} 45%, transparent) 0%, color-mix(in srgb, ${color} 20%, transparent) 60%, transparent 100%)`,
+                  transformOrigin: "center",
+                  willChange: "transform",
+                }}
+              />
+
+              <motion.div
+                initial={{ scale: 0, rotate: -30, opacity: 0 }}
+                animate={{ scale: [0, 1.25, 1], rotate: 0, opacity: 1 }}
+                transition={{ 
+                  duration: 0.55, 
+                  ease: [0.34, 1.56, 0.64, 1],
+                  delay: 0.1 
+                }}
+                className="relative z-10 flex h-28 w-28 items-center justify-center rounded-[32px] border border-white/20 bg-white/10 backdrop-blur-xl shadow-2xl"
+              >
+                <ModeIcon className="h-14 w-14 text-white drop-shadow-[0_4px_16px_rgba(0,0,0,0.35)] animate-pulse" />
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }

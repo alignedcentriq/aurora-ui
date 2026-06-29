@@ -251,6 +251,8 @@ class ProjectProfile(Base):
     reviewed_by = Column(String, nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     source_doc_count = Column(Integer, default=0)
+    query_count = Column(Integer, default=0)            # times surfaced via search/tools (triage signal)
+    last_queried_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -272,6 +274,7 @@ class ProjectCapability(Base):
     maturity_level = Column(String, nullable=True)
     confidence = Column(String, default="inferred")
     evidence = Column(Text, nullable=True)
+    source_chunk_id = Column(Integer, nullable=True)  # PolicyChunk this fact was matched to (drill-through)
     profile = relationship("ProjectProfile", back_populates="capabilities")
 
 
@@ -286,6 +289,7 @@ class ProjectIntegration(Base):
     complexity_level = Column(String, nullable=True)
     lessons_learned = Column(Text, nullable=True)
     confidence = Column(String, default="inferred")
+    source_chunk_id = Column(Integer, nullable=True)  # PolicyChunk this fact was matched to (drill-through)
     profile = relationship("ProjectProfile", back_populates="integrations")
 
 
@@ -301,6 +305,7 @@ class ProjectLesson(Base):
     recommendation = Column(Text, nullable=True)
     confidence = Column(String, default="inferred")
     evidence = Column(Text, nullable=True)
+    source_chunk_id = Column(Integer, nullable=True)  # PolicyChunk this fact was matched to (drill-through)
     profile = relationship("ProjectProfile", back_populates="lessons")
 
 
@@ -317,6 +322,7 @@ class ProjectReusableAsset(Base):
     reuse_readiness = Column(String, nullable=True)
     documentation_url = Column(String, nullable=True)
     confidence = Column(String, default="inferred")
+    source_chunk_id = Column(Integer, nullable=True)  # PolicyChunk this fact was matched to (drill-through)
     profile = relationship("ProjectProfile", back_populates="reusable_assets")
 
 
@@ -331,6 +337,7 @@ class ProjectExpertise(Base):
     role_on_project = Column(String, nullable=True)
     capability = Column(String, nullable=True)
     evidence_level = Column(String, default="inferred")  # verified | inferred
+    source_chunk_id = Column(Integer, nullable=True)  # PolicyChunk this fact was matched to (drill-through)
     profile = relationship("ProjectProfile", back_populates="expertise")
 
 

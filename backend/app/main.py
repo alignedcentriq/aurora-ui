@@ -25,6 +25,7 @@ from app.auth import CurrentUser, get_current_user, require_admin
 from app.agent import app_agent
 from app.agents.deeplink_agent import get_deeplink_agent
 from app.concurrency import chat_gate
+from app.services.llm_resilience import ServerBusyError
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
 from app.config import settings, ALIGNED_LLM_HOST
@@ -1752,13 +1753,17 @@ async def chat(
 
         except Exception as exc:
             error_msg = str(exc)
+            # ML01 server-busy: the Ollama queue was full — tell the user to retry,
+            # same UX as the concurrency gate's "busy" signal.
+            if isinstance(exc, ServerBusyError):
+                yield f"data: {json.dumps({'type': 'busy', 'message': 'The AI server is handling too many requests right now. Please try again in a moment.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain or 'general'})}\n\n"
             # Degraded mode: a connectivity-class failure means even the fallback model
             # was unreachable (the resilience layer already retried). Tell the user what
             # happened in plain language as a normal assistant message instead of
             # surfacing a raw exception banner.
-            _low = error_msg.lower()
-            if any(k in _low for k in ("connection", "connect", "timed out", "timeout",
-                                       "refused", "unreachable", "name or service")):
+            elif any(k in error_msg.lower() for k in ("connection", "connect", "timed out", "timeout",
+                                                       "refused", "unreachable", "name or service")):
                 friendly = (
                     "I can't reach the AI model server right now — it may be restarting or "
                     "under heavy load. Your message wasn't lost; please try again in a "

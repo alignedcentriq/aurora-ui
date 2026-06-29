@@ -70,7 +70,11 @@ DOMAIN_REGISTRY = {
                        "assigning seats, checking who has access, revoking expired licenses, "
                        "learning and upskilling — recommending or searching for online courses on a skill or topic "
                        "('what course should I take to learn React', 'find Udemy courses on AWS', 'I want to upskill in Power BI'), "
-                       "browsing the company's Udemy Business catalog",
+                       "browsing the company's Udemy Business catalog, "
+                       "Udemy seat administration — who hasn't used Udemy / inactive or idle Udemy users, "
+                       "how many Udemy licenses are left / seat usage / utilisation, Udemy learning insights / "
+                       "completion rates / most popular courses, and deactivating / reactivating / provisioning "
+                       "a Udemy user to free or grant a seat",
         "status": "active",
     },
     "functional_manager": {

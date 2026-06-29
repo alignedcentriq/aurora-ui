@@ -787,6 +787,80 @@ def _attach_enrichment(employees: list[dict]) -> None:
         pass
 
 
+def _attach_allocations(employees: list[dict]) -> None:
+    """Bundle each employee's distinct project allocations (from employee_allocations,
+    keyed by employee_id == directory employee_code) so the grid can filter/search by
+    project the person was actually staffed on — far broader coverage (~1.3k people)
+    than the Alchemy profile `projects`, which only ~200 have.
+
+    Also bundles current availability from the LATEST allocation snapshot: allocated %
+    (sum of efforts across real projects), free capacity, and an `available` flag
+    (free capacity > 0, or sitting on the 'No Allocation' bench). Fail-soft."""
+    try:
+        from app.models import SCHEMA
+        from sqlalchemy import text
+        codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
+        codes = [c for c in {(c or "").strip() for c in codes} if c]
+        if not codes:
+            return
+        db = SessionLocal()
+        try:
+            rows = db.execute(
+                text(
+                    f'SELECT employee_id, '
+                    f'array_agg(DISTINCT project_name) FILTER '
+                    f"(WHERE project_name IS NOT NULL AND project_name <> ''), "
+                    f'array_agg(DISTINCT client_master) FILTER '
+                    f"(WHERE client_master IS NOT NULL AND client_master <> '') "
+                    f'FROM "{SCHEMA}".employee_allocations '
+                    f'WHERE employee_id = ANY(:codes) GROUP BY employee_id'
+                ),
+                {"codes": codes},
+            ).all()
+            # Current allocation from the latest monthly snapshot.
+            avail = db.execute(
+                text(
+                    f"SELECT employee_id, "
+                    f"sum(CASE WHEN project_name = 'No Allocation' THEN 0 "
+                    f"ELSE coalesce(efforts_percent, 0) END) AS allocated, "
+                    f"bool_or(project_name = 'No Allocation') AS on_bench "
+                    f'FROM "{SCHEMA}".employee_allocations '
+                    f"WHERE employee_id = ANY(:codes) AND allocation_date = "
+                    f"(SELECT max(allocation_date) FROM \"{SCHEMA}\".employee_allocations) "
+                    f"GROUP BY employee_id"
+                ),
+                {"codes": codes},
+            ).all()
+        finally:
+            db.close()
+        by_code = {r[0]: {"projects": r[1] or [], "clients": r[2] or []} for r in rows}
+        avail_by_code = {}
+        for r in avail:
+            allocated = float(r[1] or 0)
+            free = max(0.0, 100.0 - allocated)
+            avail_by_code[r[0]] = {
+                "allocated_percent": round(allocated, 1),
+                "availability_percent": round(free, 1),
+                "available": bool(r[2]) or free > 0,
+            }
+        for e in employees:
+            hit = by_code.get(e.get("employee_code"))
+            if hit is not None:
+                e["allocation_projects"] = hit["projects"]
+                e["allocation_clients"] = hit["clients"]
+            av = avail_by_code.get(e.get("employee_code"))
+            if av is not None:
+                e["allocated_percent"] = av["allocated_percent"]
+                e["availability_percent"] = av["availability_percent"]
+                e["available"] = av["available"]
+            else:
+                e["allocated_percent"] = 0.0
+                e["availability_percent"] = 100.0
+                e["available"] = True
+    except Exception:
+        pass
+
+
 @router.get("/directory")
 def employee_directory(user: CurrentUser = Depends(get_current_user)):
     """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
@@ -809,6 +883,7 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
         employees = zoho_directory_service.fetch_directory()
         if employees:
             _attach_enrichment(employees)
+            _attach_allocations(employees)
             return {"count": len(employees), "employees": employees, "source": "zoho"}
 
     from app.models import MS365User
@@ -858,6 +933,7 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
             })
         out.sort(key=lambda x: x["name"].lower())
         _attach_enrichment(out)
+        _attach_allocations(out)
         return {"count": len(out), "employees": out, "source": "ms365"}
     finally:
         db.close()
@@ -872,6 +948,169 @@ def directory_enrichment(employee_code: str, user: CurrentUser = Depends(get_cur
     """
     from app.services import alchemy_service
     return alchemy_service.get_profile_enrichment(employee_code)
+
+
+@router.get("/skill-detail")
+def employee_skill_detail(name: str, user: CurrentUser = Depends(get_current_user)):
+    """What a skill is (Alchemy catalog description) + everyone in the org who has it.
+
+    Powers the click-through popup on a profile's skill pill. Returns the skill's
+    description/category/image, headline counts, and the peer list (name + competency +
+    years). Fail-soft → {available: false} when Alchemy is unreachable / has no match."""
+    from app.services import alchemy_service
+    tok = alchemy_service.get_service_token()
+    if not tok:
+        return {"available": False, "skill_name": name}
+    sid, canonical = alchemy_service.resolve_skill_id(tok, name)
+    if not sid:
+        return {"available": False, "skill_name": name}
+    try:
+        det = alchemy_service.get_skill_details(tok, sid)
+    except Exception:
+        return {"available": False, "skill_name": canonical or name}
+    emps = det.get("employees") if isinstance(det, dict) else None
+    emps = emps or []
+
+    def _exp(e):
+        try:
+            return float(e.get("experience") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    peers = sorted(emps, key=_exp, reverse=True)[:100]
+    peers = [
+        {
+            "employee_id": e.get("employee_id"),
+            "name": e.get("name"),
+            "competency": e.get("competency") or "",
+            "experience": e.get("experience") or "",
+            "last_used": e.get("last_used") or "",
+        }
+        for e in peers
+    ]
+    return {
+        "available": True,
+        "skill_name": det.get("skill_name") or canonical or name,
+        "description": det.get("skill_description") or "",
+        "image_url": det.get("skill_image_url") or "",
+        "category": det.get("skill_category") or "",
+        "total_employees": det.get("total_employees") or len(emps),
+        "certified_count": det.get("certified_count") or 0,
+        "instructor_count": det.get("instructor_count") or 0,
+        "expert_count": det.get("expert_count") or 0,
+        "peers": peers,
+    }
+
+
+@router.get("/project-detail")
+def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_user)):
+    """Project overview + the team that worked on it. Members come from BOTH the
+    allocation records (employee_allocations) AND the Alchemy project history
+    (alchemy_profile_cache.projects), merged by employee code — the two sources cover
+    different people, so neither alone is complete. Powers the click-through popup on a
+    profile's project row. Fail-soft → {available: false} when nothing matches."""
+    from app.models import SCHEMA
+    from sqlalchemy import text
+    pn = (name or "").strip()
+    if not pn:
+        return {"available": False, "project_name": name}
+    db = SessionLocal()
+    try:
+        alloc = db.execute(
+            text(
+                f"SELECT employee_id, max(employee_name) AS name, "
+                f"max(efforts_percent) AS efforts, max(billability_percent) AS billability, "
+                f"bool_or(completion_status ILIKE 'Done') AS done "
+                f'FROM "{SCHEMA}".employee_allocations '
+                f"WHERE project_name = :pn AND employee_id IS NOT NULL "
+                f"GROUP BY employee_id"
+            ),
+            {"pn": pn},
+        ).mappings().all()
+        meta = db.execute(
+            text(
+                f"SELECT client_master, project_status, project_lead, delivery_manager, "
+                f"project_type FROM \"{SCHEMA}\".employee_allocations "
+                f"WHERE project_name = :pn GROUP BY client_master, project_status, "
+                f"project_lead, delivery_manager, project_type "
+                f"ORDER BY max(allocation_date) DESC NULLS LAST LIMIT 1"
+            ),
+            {"pn": pn},
+        ).mappings().first()
+        # Alchemy project history: anyone whose cached profile lists this project.
+        alch = db.execute(
+            text(
+                f"SELECT c.employee_code AS code, max(p->>'role') AS role "
+                f'FROM "{SCHEMA}".alchemy_profile_cache c, '
+                f"jsonb_array_elements(c.projects) p "
+                f"WHERE p->>'name' = :pn GROUP BY c.employee_code"
+            ),
+            {"pn": pn},
+        ).mappings().all()
+        # Resolve names for Alchemy-only codes (allocation rows already carry names).
+        alch_codes = [r["code"] for r in alch if r["code"]]
+        names: dict[str, str] = {}
+        if alch_codes:
+            nrows = db.execute(
+                text(
+                    f'SELECT employee_id, name FROM "{SCHEMA}".employees '
+                    f"WHERE employee_id = ANY(:codes)"
+                ),
+                {"codes": alch_codes},
+            ).all()
+            names = {r[0]: r[1] for r in nrows}
+    finally:
+        db.close()
+
+    # Merge by employee code; allocation data wins for billability/status, Alchemy
+    # contributes role and any people allocations missed.
+    merged: dict[str, dict] = {}
+    for m in alloc:
+        merged[m["employee_id"]] = {
+            "employee_id": m["employee_id"],
+            "name": m["name"] or names.get(m["employee_id"]) or "",
+            "efforts": m["efforts"],
+            "billability": m["billability"],
+            "done": bool(m["done"]),
+            "role": "",
+        }
+    for r in alch:
+        code = r["code"]
+        if code in merged:
+            merged[code]["role"] = r["role"] or merged[code]["role"]
+        else:
+            merged[code] = {
+                "employee_id": code,
+                "name": names.get(code) or "",
+                "efforts": None,
+                "billability": None,
+                "done": False,
+                "role": r["role"] or "",
+            }
+    members = sorted(merged.values(), key=lambda x: (x["name"] or "").lower())
+
+    if not members and not meta:
+        return {"available": False, "project_name": pn}
+    return {
+        "available": True,
+        "project_name": pn,
+        "client": (meta or {}).get("client_master") or "",
+        "status": (meta or {}).get("project_status") or "",
+        "lead": (meta or {}).get("project_lead") or "",
+        "delivery_manager": (meta or {}).get("delivery_manager") or "",
+        "project_type": (meta or {}).get("project_type") or "",
+        "member_count": len(members),
+        "members": members,
+    }
+
+
+@router.post("/admin/rewire-manager-hierarchy")
+def rewire_manager_hierarchy_endpoint(user: CurrentUser = Depends(require_non_employee)):
+    """Re-wire Employee.manager_id from Zoho reporting_manager_email.
+    Useful after a Zoho CSV import or when team hierarchy shows empty in the portal."""
+    from app.services.manager_service import rewire_manager_hierarchy
+    result = rewire_manager_hierarchy()
+    return {"success": True, **result}
 
 
 # NOTE: keep this LAST — a bare /{employee_id} path param would otherwise shadow

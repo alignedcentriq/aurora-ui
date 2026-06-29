@@ -33,6 +33,26 @@ from typing import AsyncIterator, Optional
 
 log = logging.getLogger(__name__)
 
+
+class ServerBusyError(Exception):
+    """Raised when ml01 Ollama rejects a request because its pending-request queue is full.
+
+    Unlike a connection error, this is not a model failure — the server is reachable but
+    saturated.  Do NOT count it against the circuit breaker and do NOT fall back to another
+    model on the same server; surface it to the user as a transient busy signal instead.
+    """
+
+
+# Phrases Ollama uses when its request queue is exhausted (checked case-insensitively).
+_BUSY_PHRASES = ("maximum pending requests exceeded", "server busy")
+
+
+def _is_server_busy(exc: Exception) -> bool:
+    """Return True if *exc* (or its cause) signals that the Ollama queue is full."""
+    text = (str(exc) + " " + str(getattr(exc, "__cause__", "") or "")).lower()
+    return any(p in text for p in _BUSY_PHRASES)
+
+
 # TTFT threshold before we hedge with a fallback stream
 TTFT_HEDGE_SECONDS = 8.0
 
@@ -194,6 +214,9 @@ def resilient_invoke(
         _breaker.record_success(tier)
         return result
     except Exception as exc:
+        if _is_server_busy(exc):
+            log.warning("ML01 server busy for tier %r — rejecting immediately (no fallback)", tier)
+            raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
         _breaker.record_failure(tier)
         log.warning("Primary invoke failed for tier %r (%s) — retrying on fallback %r",
                     tier, exc, fallback_model)
@@ -219,6 +242,9 @@ async def resilient_ainvoke(
         _breaker.record_success(tier)
         return result
     except Exception as exc:
+        if _is_server_busy(exc):
+            log.warning("ML01 server busy for tier %r — rejecting immediately (no fallback)", tier)
+            raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
         _breaker.record_failure(tier)
         log.warning("Primary ainvoke failed for tier %r (%s) — retrying on fallback %r",
                     tier, exc, fallback_model)
@@ -318,6 +344,9 @@ async def resilient_stream(
                 if primary_task and primary_task.done():
                     exc = primary_task.exception()
                     if exc:
+                        if _is_server_busy(exc):
+                            log.warning("ML01 server busy for tier %r — stopping stream immediately (no fallback)", tier)
+                            raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
                         _breaker.record_failure(tier)
                         if not fallback_active:
                             log.warning("Primary stream failed for tier %r: %s — switching to fallback", tier, exc)
@@ -341,6 +370,8 @@ async def resilient_stream(
 
     except asyncio.CancelledError:
         pass
+    except ServerBusyError:
+        raise  # propagate without touching the circuit breaker
     except Exception as exc:
         _breaker.record_failure(tier)
         log.error("resilient_stream error for tier %r: %s", tier, exc)

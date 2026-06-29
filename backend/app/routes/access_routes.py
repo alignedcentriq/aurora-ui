@@ -511,22 +511,32 @@ class UpdateRolePayload(BaseModel):
 
 @router.get("/me")
 def get_my_access(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Return current user's effective role, scopes, extra_capabilities, and role capability list."""
+    """Return current user's EFFECTIVE role, scopes, extra_capabilities, and role capability list.
+
+    `real_role` and `impersonating` let the UI keep showing the Super Admin role-switcher even
+    while a Super Admin is test-acting as another role. Capabilities reflect the EFFECTIVE role
+    so the app genuinely behaves as the role being tested.
+    """
+    impersonating = user.role if user.is_impersonating else None
     override = db.query(UserRoleOverride).filter(UserRoleOverride.email == user.email).first()
-    if override:
-        role_caps = _role_capabilities(override.role, db)
+    role_caps = _role_capabilities(user.role, db)
+    # While impersonating, present the target role cleanly (no super-admin extras/scopes).
+    if override and not impersonating:
         return {
             "has_override": True,
-            "role": override.role,
+            "role": user.role,
+            "real_role": user.real_role,
+            "impersonating": None,
             "scopes": override.scopes or [],
             "extra_capabilities": override.extra_capabilities or [],
             "role_capabilities": role_caps,
         }
-    role_caps = _role_capabilities(user.role, db)
     return {
-        "has_override": False,
+        "has_override": bool(override),
         "role": user.role,
-        "scopes": [],
+        "real_role": user.real_role or user.role,
+        "impersonating": impersonating,
+        "scopes": user.scopes or [],
         "extra_capabilities": [],
         "role_capabilities": role_caps,
     }

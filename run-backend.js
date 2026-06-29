@@ -177,7 +177,9 @@ const runDockerCompose = async () => {
   } catch (err) {
     console.log("--- Ensuring Docker service is running in WSL ---");
     try {
-      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+      // Run as root rather than `sudo` — non-interactive sudo would hang on the
+      // password prompt (stdio is ignored), so the service never starts.
+      await runCommand("wsl", ["-u", "root", "service", "docker", "start"], { stdio: "ignore" });
     } catch (sudoErr) {
       console.warn(
         "Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.",
@@ -375,7 +377,7 @@ const runUvicornWithRestart = async (uvicornPath) => {
  * Used for mock_zoho_server (8090) and mock_manage_engine_server (8091).
  */
 const startMockServer = (uvicornPath, appModule, port, label) => {
-  const args = [appModule, "--host", "0.0.0.0", "--port", String(port)];
+  const args = [appModule, "--host", "0.0.0.0", "--port", String(port), "--loop", "asyncio"];
   const env = { ...process.env, LANGFUSE_OTEL: "false" };
 
   const launch = () => {

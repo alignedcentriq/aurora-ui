@@ -455,9 +455,6 @@ class Config:
     # ── TechElevate Local LMS ─────────────────────────────────────────────────
     TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
     TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
-    # The real, external TechElevate portal (where employees actually sit the exam). The local
-    # LMS is the authoring surface — build courses + AI-draft MCQs here, take the test there.
-    TECHELEVATE_PORTAL_URL = os.getenv("TECHELEVATE_PORTAL_URL", "https://training.alignedautomation.com")
 
     # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────
     # Org-level service credential — NOT per-user OAuth. The client id/secret are
@@ -476,6 +473,41 @@ class Config:
     @property
     def UDEMY_PORTAL_BASE(self) -> str:
         return f"https://{self.UDEMY_SUBDOMAIN}.udemy.com"
+
+    # Udemy seat ledger. The Reporting API can NOT reproduce Udemy's live seat count:
+    # org/subscription endpoints are blocked, pending invitations (which consume a
+    # seat) aren't readable, and the activity report's active flag != billing. So PMO
+    # reads these two numbers off the Udemy admin dashboard and sets them here; used
+    # is derived as purchased - available so the pills match Udemy exactly.
+    # Defaults from PMO 2026-06-29: 230 purchased, 1 available. AVAILABLE -1 = unknown.
+    UDEMY_LICENSE_TOTAL = int(os.getenv("UDEMY_LICENSE_TOTAL", "230"))
+    UDEMY_LICENSE_AVAILABLE = int(os.getenv("UDEMY_LICENSE_AVAILABLE", "1"))
+
+    # Seat-hygiene: a learner with no Udemy visit in this many days is "inactive"
+    # and surfaced to PMO/HR so they can manually deactivate the seat in Udemy
+    # admin (we don't auto-revoke — the actual deactivation lives in Udemy/Entra).
+    UDEMY_INACTIVE_DEFAULT_DAYS = int(os.getenv("UDEMY_INACTIVE_DEFAULT_DAYS", "30"))
+
+    # ── Udemy SCIM 2.0 provisioning (SEPARATE registered app) ─────────────────
+    # Distinct from the catalog/reporting Basic-auth credential above: SCIM is a
+    # different Udemy app with its own Bearer token + base URL (from Udemy's
+    # provisioning setup page). Drives real provision/deprovision/groups/license
+    # pools. Dormant until both are set — every SCIM call no-ops with "not_configured"
+    # so the app runs fine without it. Azure AD (or Custom/OneLogin/Okta) is the IdP.
+    UDEMY_SCIM_BASE_URL = os.getenv("UDEMY_SCIM_BASE_URL", "").rstrip("/")
+    UDEMY_SCIM_TOKEN    = os.getenv("UDEMY_SCIM_TOKEN", "")
+    UDEMY_SCIM_ENABLED  = os.getenv("UDEMY_SCIM_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+    @property
+    def UDEMY_ADMIN_USERS_URL(self) -> str:
+        """Deep-link to the Udemy Business admin 'Manage Users' list (search + the
+        three-dots → Deactivate menu live here). Used as the fallback when a learner's
+        numeric id is unknown. Must end with a trailing slash; per-user detail pages
+        are built as '<this>detail/<id>/'. Overridable via env if Udemy moves the path."""
+        return os.getenv(
+            "UDEMY_ADMIN_USERS_URL",
+            f"https://{self.UDEMY_SUBDOMAIN}.udemy.com/organization-manage-v2/users/",
+        )
 
     # ── ManageEngine Endpoint Central ─────────────────────────────────────────
     # Set to http://localhost:8091 to use the mock server during development.

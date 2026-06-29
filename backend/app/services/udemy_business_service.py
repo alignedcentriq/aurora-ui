@@ -307,6 +307,297 @@ def get_user_activity(*, page: int = 1, page_size: int = 100) -> dict:
     return _check(resp, "analytics/user-activity")
 
 
+# ── Inactive-seat detection (read-only) ───────────────────────────────────────
+# Paginate the user-activity report, derive each learner's idle days from
+# `last_date_visit`, and surface anyone past a threshold so PMO/HR can manually
+# deactivate the seat in Udemy admin. We do NOT revoke automatically — the actual
+# deactivation lives in Udemy (and ultimately Entra/SCIM). Read-only throughout.
+#
+# The report is ~860 learners (~9 pages of 100), so the full pull is cached for
+# _ACTIVITY_TTL; idle days are recomputed against "today" on every request from
+# the cached `last_date_visit`, so the threshold can change without a refetch.
+
+_activity_cache: list[dict] = []
+_activity_built_at: float = 0.0
+_activity_lock = threading.Lock()
+_ACTIVITY_TTL = 3600  # 1 hour
+
+
+def _parse_date(value) -> datetime.date | None:
+    """Parse 'YYYY-MM-DD' (or an ISO timestamp) to a date; None on blank/garbage."""
+    if not value:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return datetime.date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def _fetch_all_user_activity() -> list[dict]:
+    """Paginate the full user-activity report into normalized per-learner rows."""
+    rows: list[dict] = []
+    page = 1
+    with httpx.Client(timeout=40) as c:
+        while True:
+            resp = c.get(_org_url("/analytics/user-activity/"), auth=_auth(),
+                         params={"page": page, "page_size": 100})
+            data = _check(resp, f"user-activity p{page}")
+            results = data.get("results") or []
+            if not results:
+                break
+            for r in results:
+                first = (r.get("user_name") or "").strip()
+                last = (r.get("user_surname") or "").strip()
+                rows.append({
+                    "name": (f"{first} {last}").strip() or (r.get("user_email") or ""),
+                    "email": (r.get("user_email") or "").strip(),
+                    "role": r.get("user_role") or "",
+                    "joined_date": r.get("user_joined_date") or "",
+                    "last_date_visit": r.get("last_date_visit") or "",
+                    "is_deactivated": bool(r.get("user_is_deactivated")),
+                    "video_minutes": float(r.get("num_video_consumed_minutes") or 0),
+                    "web_visited_days": int(r.get("num_web_visited_days") or 0),
+                    "completed_courses": int(r.get("num_completed_courses") or 0),
+                })
+            if not data.get("next"):
+                break
+            page += 1
+    return rows
+
+
+def _ensure_activity_cache() -> list[dict]:
+    global _activity_cache, _activity_built_at
+    with _activity_lock:
+        fresh = _activity_cache and (time.time() - _activity_built_at) < _ACTIVITY_TTL
+        if fresh:
+            return _activity_cache
+    rows = _fetch_all_user_activity()
+    with _activity_lock:
+        _activity_cache = rows
+        _activity_built_at = time.time()
+    return rows
+
+
+# Email → {id, role, groups} from /users/list/ (the user-activity report omits the
+# numeric id and group membership). Cached alongside the activity pull so per-user
+# admin deep-links resolve and groups/roles can be shown.
+_user_dir_map: dict[str, dict] = {}
+_user_dir_built_at: float = 0.0
+
+
+def _fetch_user_directory() -> dict[str, dict]:
+    """Paginate /organizations/{org}/users/list/ into email→{id, role, groups}."""
+    mapping: dict[str, dict] = {}
+    page = 1
+    with httpx.Client(timeout=40) as c:
+        while True:
+            resp = c.get(_org_url("/users/list/"), auth=_auth(),
+                         params={"page": page, "page_size": 100})
+            data = _check(resp, f"users/list p{page}")
+            results = data.get("results") or []
+            if not results:
+                break
+            for r in results:
+                email = (r.get("email") or "").strip().lower()
+                uid = r.get("id")
+                if email and uid:
+                    mapping[email] = {
+                        "id": int(uid),
+                        "role": r.get("role") or "",
+                        "groups": [g for g in (r.get("groups") or []) if g],
+                    }
+            if not data.get("next"):
+                break
+            page += 1
+    return mapping
+
+
+def _ensure_user_directory() -> dict[str, dict]:
+    global _user_dir_map, _user_dir_built_at
+    with _activity_lock:
+        fresh = _user_dir_map and (time.time() - _user_dir_built_at) < _ACTIVITY_TTL
+        if fresh:
+            return _user_dir_map
+    try:
+        mapping = _fetch_user_directory()
+    except Exception as exc:  # non-fatal: links fall back to the list page, no groups
+        log.warning("[udemy] users/list directory fetch failed: %s", exc)
+        return dict(_user_dir_map)
+    with _activity_lock:
+        _user_dir_map = mapping
+        _user_dir_built_at = time.time()
+    return mapping
+
+
+# PMO-managed seat ledger, disk-persisted so it survives restarts and needs no env
+# edit. Env (UDEMY_LICENSE_TOTAL / _AVAILABLE) is only the initial seed until PMO
+# saves once; thereafter the file is authoritative.
+_LICENSE_CFG_PATH = os.path.join(os.path.dirname(__file__), "../data/udemy_license_config.json")
+_license_cfg_lock = threading.Lock()
+
+
+def get_license_config() -> dict:
+    """PMO-managed Udemy portal settings: {purchased, available, inactive_days,
+    updated_by, updated_at}. Reads the PMO-saved file; falls back to env seeds until
+    PMO sets them the first time."""
+    seed = {
+        "purchased": settings.UDEMY_LICENSE_TOTAL or None,
+        "available": (settings.UDEMY_LICENSE_AVAILABLE
+                      if settings.UDEMY_LICENSE_AVAILABLE is not None and settings.UDEMY_LICENSE_AVAILABLE >= 0
+                      else None),
+        "inactive_days": settings.UDEMY_INACTIVE_DEFAULT_DAYS,
+        "updated_by": None,
+        "updated_at": None,  # None signals "never set by PMO — still on env seed"
+    }
+    try:
+        if os.path.exists(_LICENSE_CFG_PATH):
+            with open(_LICENSE_CFG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "purchased": data.get("purchased"),
+                "available": data.get("available"),
+                # default threshold persists too; fall back to the env seed if absent
+                "inactive_days": data.get("inactive_days") or seed["inactive_days"],
+                "updated_by": data.get("updated_by"),
+                "updated_at": data.get("updated_at"),
+            }
+    except Exception as e:
+        log.warning("[udemy] license config read failed: %s", e)
+    return seed
+
+
+def get_inactive_default_days() -> int:
+    """The PMO-set org-default idle threshold (falls back to the env seed = 30)."""
+    try:
+        d = int(get_license_config().get("inactive_days") or settings.UDEMY_INACTIVE_DEFAULT_DAYS)
+        return d if d >= 1 else settings.UDEMY_INACTIVE_DEFAULT_DAYS
+    except (TypeError, ValueError):
+        return settings.UDEMY_INACTIVE_DEFAULT_DAYS
+
+
+def set_license_config(*, purchased, available, inactive_days=None, updated_by: str) -> dict:
+    """Persist PMO-set Udemy settings. None leaves seat counts cleared; inactive_days
+    falls back to the current/seed default when not provided."""
+    current = get_license_config()
+    days = inactive_days if inactive_days not in (None, "") else current.get("inactive_days")
+    cfg = {
+        "purchased": int(purchased) if purchased not in (None, "") else None,
+        "available": int(available) if available not in (None, "") else None,
+        "inactive_days": int(days) if days not in (None, "") else settings.UDEMY_INACTIVE_DEFAULT_DAYS,
+        "updated_by": updated_by or None,
+        "updated_at": datetime.datetime.utcnow().isoformat(),
+    }
+    with _license_cfg_lock:
+        os.makedirs(os.path.dirname(_LICENSE_CFG_PATH), exist_ok=True)
+        with open(_LICENSE_CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+    log.info("[udemy] settings updated by %s: purchased=%s available=%s inactive_days=%s",
+             updated_by, cfg["purchased"], cfg["available"], cfg["inactive_days"])
+    return cfg
+
+
+def get_license_summary() -> dict:
+    """Seat ledger + activity context.
+
+    The Reporting API can't reproduce Udemy's live seat count (pending invitations
+    consume a seat but aren't readable, and the activity report's active flag isn't
+    the billing figure), so ``purchased`` and ``available`` are PMO-set
+    (``UDEMY_LICENSE_TOTAL`` / ``UDEMY_LICENSE_AVAILABLE``) from the Udemy dashboard
+    and ``used`` is derived as purchased - available so the pills match Udemy. We
+    still surface activity-report context (active/deactivated) for transparency.
+    Read-only.
+    """
+    if not configured():
+        return {"error": "not_configured"}
+
+    rows = _ensure_activity_cache()
+    deactivated = sum(1 for r in rows if r["is_deactivated"])
+    active_in_report = len(rows) - deactivated
+
+    cfg = get_license_config()
+    purchased = cfg["purchased"]
+    available = cfg["available"]
+    used = (purchased - available) if (purchased is not None and available is not None) else None
+    utilization = round(used / purchased * 100, 1) if (purchased and used is not None) else None
+
+    return {
+        "purchased": purchased,              # PMO-managed contracted total
+        "available": available,              # PMO-managed from Udemy dashboard (incl. pending invites)
+        "used": used,                        # purchased - available (Udemy-accurate)
+        "utilization_pct": utilization,      # used / purchased %
+        "active_in_report": active_in_report,  # context: active learners in the activity report
+        "deactivated": deactivated,          # context: deactivated accounts in the report
+        "provisioned": len(_ensure_user_directory()) or len(rows),  # full roster (/users/list)
+        "inactive_days": cfg.get("inactive_days") or settings.UDEMY_INACTIVE_DEFAULT_DAYS,  # PMO default threshold
+        "updated_by": cfg["updated_by"],     # who last set the ledger (None = still on env seed)
+        "updated_at": cfg["updated_at"],
+    }
+
+
+def get_inactive_users(min_idle_days: int, *, include_deactivated: bool = False) -> dict:
+    """Learners with no Udemy visit in >= ``min_idle_days`` days. Read-only.
+
+    Returns {days, total_learners, count, results} where each result carries the
+    learner's last-active date, idle days, a `never_visited` flag, and a
+    `manage_url` deep-link to the Udemy admin Manage Users page so PMO can
+    deactivate the seat manually. Sorted longest-idle first.
+    """
+    if not configured():
+        return {"error": "not_configured"}
+
+    rows = _ensure_activity_cache()
+    directory = _ensure_user_directory()
+    today = datetime.date.today()
+    list_url = settings.UDEMY_ADMIN_USERS_URL  # ends with '/'
+    out: list[dict] = []
+
+    for r in rows:
+        if r["is_deactivated"] and not include_deactivated:
+            continue
+        last = _parse_date(r["last_date_visit"])
+        joined = _parse_date(r["joined_date"])
+        never = last is None
+        # Idle measured from the last visit; for a learner who never visited, from
+        # their join date (so a freshly-joined never-visitor isn't flagged yet).
+        ref = last or joined
+        if ref is None:
+            continue  # no dates at all → can't judge idleness, skip
+        idle_days = (today - ref).days
+        if idle_days < min_idle_days:
+            continue
+        dir_entry = directory.get((r["email"] or "").lower()) or {}
+        uid = dir_entry.get("id")
+        # Link straight to the learner's detail page (which has the Deactivate
+        # control); fall back to the searchable list if we couldn't resolve the id.
+        manage_url = f"{list_url}detail/{uid}/" if uid else list_url
+        out.append({
+            "name": r["name"],
+            "email": r["email"],
+            "role": dir_entry.get("role") or r["role"],
+            "groups": dir_entry.get("groups") or [],
+            "udemy_user_id": uid,
+            "last_active": last.isoformat() if last else None,
+            "joined_date": joined.isoformat() if joined else None,
+            "idle_days": idle_days,
+            "never_visited": never,
+            "video_minutes": round(r["video_minutes"], 1),
+            "completed_courses": r["completed_courses"],
+            "is_deactivated": r["is_deactivated"],
+            "manage_url": manage_url,
+        })
+
+    out.sort(key=lambda x: x["idle_days"], reverse=True)
+    return {
+        "days": min_idle_days,
+        "total_learners": len(rows),
+        "count": len(out),
+        "results": out,
+    }
+
+
 def get_user_course_activity(*, page: int = 1, page_size: int = 100) -> dict:
     """GET /organizations/{org}/analytics/user-course-activity/ — per-user,
     per-course breakdown: completion %, minutes consumed, completion date.
@@ -342,6 +633,7 @@ _sync_state: dict = {"at": None, "added": 0, "skipped": 0, "errors": 0}
 # ── Per-course org stats (cached aggregate of user-course-activity) ───────────
 # Aggregated once and cached for _ORG_STATS_TTL seconds so detail panels are fast.
 _org_stats_cache: dict = {}        # {course_id: {enrolled, completed, avg_completion_pct}}
+_insights_cache: dict = {}         # high-level org learning insights (same pagination pass)
 _org_stats_lock = threading.Lock()
 _org_stats_built_at: float = 0.0
 _ORG_STATS_TTL = 3600  # 1 hour
@@ -350,10 +642,15 @@ _ORG_STATS_TTL = 3600  # 1 hour
 def _build_org_stats() -> None:
     """Paginate all user-course-activity and aggregate per-course org stats.
     Runs in the calling thread (called lazily, max once per TTL)."""
-    global _org_stats_cache, _org_stats_built_at
+    global _org_stats_cache, _insights_cache, _org_stats_built_at
     if not configured():
         return
-    agg: dict[int, dict] = {}  # course_id → {enrolled, completions, total_pct}
+    agg: dict[int, dict] = {}  # course_id → {enrolled, completions, total_pct, title, category, minutes}
+    cat_agg: dict[str, dict] = {}  # category → {enrolled, completed, minutes}
+    learners: set = set()
+    total_enrollments = 0
+    total_completions = 0
+    total_minutes = 0.0
     page = 1
     try:
         while True:
@@ -370,21 +667,44 @@ def _build_org_stats() -> None:
                 if not cid:
                     continue
                 cid = int(cid)
-                pct = float(
-                    row.get("completion_percentage")
-                    or row.get("percent_completed")
-                    or row.get("progress_percent")
-                    or 0
-                )
+                # completion_ratio is 0..1 on this endpoint; older variants use 0..100.
+                ratio = row.get("completion_ratio")
+                if ratio is not None:
+                    pct = float(ratio) * 100 if float(ratio) <= 1 else float(ratio)
+                else:
+                    pct = float(row.get("completion_percentage")
+                                or row.get("percent_completed")
+                                or row.get("progress_percent") or 0)
                 completed = pct >= 100 or bool(
-                    row.get("completion_time") or row.get("completion_date") or row.get("completed_at")
+                    row.get("course_completion_date") or row.get("completion_time")
+                    or row.get("completion_date") or row.get("completed_at")
                 )
+                minutes = float(row.get("num_video_consumed_minutes") or 0)
+                category = (row.get("course_category") or "Uncategorized").strip() or "Uncategorized"
+
                 if cid not in agg:
-                    agg[cid] = {"enrolled": 0, "completed": 0, "total_pct": 0.0}
+                    agg[cid] = {"enrolled": 0, "completed": 0, "total_pct": 0.0,
+                                "title": row.get("course_title") or f"Course {cid}",
+                                "category": category, "minutes": 0.0}
                 agg[cid]["enrolled"] += 1
                 agg[cid]["total_pct"] += pct
+                agg[cid]["minutes"] += minutes
                 if completed:
                     agg[cid]["completed"] += 1
+
+                c = cat_agg.setdefault(category, {"enrolled": 0, "completed": 0, "minutes": 0.0})
+                c["enrolled"] += 1
+                c["minutes"] += minutes
+                if completed:
+                    c["completed"] += 1
+
+                email = (row.get("user_email") or "").strip().lower()
+                if email:
+                    learners.add(email)
+                total_enrollments += 1
+                total_minutes += minutes
+                if completed:
+                    total_completions += 1
             if not data.get("next"):
                 break
             page += 1
@@ -399,10 +719,58 @@ def _build_org_stats() -> None:
             "completed": v["completed"],
             "avg_completion_pct": round(v["total_pct"] / n, 1) if n else 0.0,
         }
+
+    # High-level insights derived from the same pass.
+    def _course_view(cid, v):
+        n = v["enrolled"]
+        return {
+            "course_id": cid,
+            "title": v["title"],
+            "category": v["category"],
+            "enrolled": n,
+            "completed": v["completed"],
+            "avg_completion_pct": round(v["total_pct"] / n, 1) if n else 0.0,
+            "completion_rate": round(v["completed"] / n * 100, 1) if n else 0.0,
+            "hours": round(v["minutes"] / 60, 1),
+        }
+    courses = [_course_view(cid, v) for cid, v in agg.items()]
+    top_enrolled = sorted(courses, key=lambda c: c["enrolled"], reverse=True)[:10]
+    top_completed = sorted(courses, key=lambda c: c["completed"], reverse=True)[:10]
+    # Low engagement: meaningfully enrolled but barely touched.
+    low_engagement = sorted(
+        [c for c in courses if c["enrolled"] >= 5 and c["avg_completion_pct"] < 10],
+        key=lambda c: c["enrolled"], reverse=True,
+    )[:10]
+    categories = sorted(
+        [{"category": k, "enrolled": v["enrolled"], "completed": v["completed"],
+          "hours": round(v["minutes"] / 60, 1),
+          "completion_rate": round(v["completed"] / v["enrolled"] * 100, 1) if v["enrolled"] else 0.0}
+         for k, v in cat_agg.items()],
+        key=lambda c: c["enrolled"], reverse=True,
+    )
+
+    insights = {
+        "totals": {
+            "learners_engaged": len(learners),
+            "courses_touched": len(agg),
+            "enrollments": total_enrollments,
+            "completions": total_completions,
+            "completion_rate": round(total_completions / total_enrollments * 100, 1) if total_enrollments else 0.0,
+            "hours_consumed": round(total_minutes / 60, 1),
+        },
+        "top_enrolled": top_enrolled,
+        "top_completed": top_completed,
+        "low_engagement": low_engagement,
+        "categories": categories,
+        "generated_at": datetime.datetime.utcnow().isoformat(),
+    }
+
     with _org_stats_lock:
         _org_stats_cache = result
+        _insights_cache = insights
         _org_stats_built_at = time.time()
-    log.info("[udemy-stats] org stats built: %d courses", len(result))
+    log.info("[udemy-stats] org stats built: %d courses, %d learners, %d enrollments",
+             len(result), len(learners), total_enrollments)
 
 
 def get_org_stats(course_id: int | None = None) -> dict:
@@ -419,6 +787,22 @@ def get_org_stats(course_id: int | None = None) -> dict:
     if course_id is not None:
         return cache.get(int(course_id), {})
     return cache
+
+
+def get_course_insights() -> dict:
+    """High-level org learning insights (totals, top/low courses, category mix).
+    Built from the same cached user-course-activity pass as org stats (rebuilds
+    synchronously if stale, max once/hr). Read-only."""
+    if not configured():
+        return {"error": "not_configured"}
+    with _org_stats_lock:
+        stale = (time.time() - _org_stats_built_at) > _ORG_STATS_TTL
+        cache = _insights_cache
+    if stale or not cache:
+        _build_org_stats()
+        with _org_stats_lock:
+            cache = _insights_cache
+    return cache or {}
 
 
 def get_course_with_org_stats(course_id: int) -> dict:

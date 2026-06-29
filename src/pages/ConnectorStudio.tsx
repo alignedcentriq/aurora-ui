@@ -11,6 +11,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Pencil,
   Trash2,
   Key,
@@ -324,9 +325,12 @@ export default function ConnectorStudio() {
   );
 
   return (
-    <div className="flex h-full min-h-[calc(100vh-64px)] bg-gray-50 dark:bg-gray-950">
+    <div className="flex h-full min-h-[calc(100dvh-64px)] bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
-      <aside className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col">
+      <aside className={cn(
+        "w-full md:w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col",
+        selected ? "hidden md:flex" : "flex"
+      )}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 border-b border-gray-200 dark:border-gray-800">
           <span className="font-semibold text-sm">Connectors</span>
           <div className="flex gap-1">
@@ -382,7 +386,10 @@ export default function ConnectorStudio() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className={cn(
+        "flex-1 overflow-y-auto p-4 sm:p-6",
+        selected ? "block" : "hidden md:block"
+      )}>
         {!selected ? (
           <div className="flex flex-col items-center justify-center h-96 text-center">
             <Globe className="h-12 w-12 text-gray-300 mb-4" />
@@ -402,21 +409,30 @@ export default function ConnectorStudio() {
         ) : (
           <div>
             {/* Header */}
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-xl font-semibold">{selected.name}</h1>
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-6 min-w-0">
+              <div className="min-w-0 w-full lg:w-auto">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="md:hidden h-8 w-8 shrink-0"
+                    onClick={() => setSelected(null)}
+                    title="Back to list"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </Button>
+                  <h1 className="text-xl font-semibold truncate">{selected.name}</h1>
                   {statusBadge(selected.status)}
-                  <span className="text-xs text-gray-400">v{selected.version}</span>
+                  <span className="text-xs text-gray-400 shrink-0">v{selected.version}</span>
                 </div>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-500 mt-1 break-words">
                   {selected.description || "No description"}
                 </p>
                 {selected.base_url && (
-                  <p className="text-xs font-mono text-gray-400 mt-1">{selected.base_url}</p>
+                  <p className="text-xs font-mono text-gray-400 mt-1 break-all">{selected.base_url}</p>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
                 <Button variant="outline" size="sm" onClick={() => setShowAuth(true)}>
                   <Key className="h-3.5 w-3.5 mr-1.5" /> Auth
                 </Button>
@@ -538,7 +554,7 @@ export default function ConnectorStudio() {
                                 {op.description}
                               </p>
                             )}
-                            <p className="font-mono text-xs text-gray-400">{op.path_template}</p>
+                             <p className="font-mono text-xs text-gray-400 break-all">{op.path_template}</p>
                             {op.params_schema && op.params_schema.length > 0 && (
                               <div>
                                 <p className="text-xs font-medium text-gray-500 mb-1">Parameters</p>
@@ -779,7 +795,7 @@ function CreateConnectorDialog({
           <DialogTitle>New Connector</DialogTitle>
           <DialogDescription>Create a connector to start importing operations.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
           <div>
             <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Slug *</label>
             <Input
@@ -893,7 +909,7 @@ function AuthDialog({
             Secrets are Fernet-encrypted at rest. Write-only — existing values are not shown.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
           <div>
             <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
               Auth Type
@@ -1161,7 +1177,7 @@ function AccessDialog({
             <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 max-h-[60dvh] overflow-y-auto pr-1">
             <div className="space-y-2">
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -1403,7 +1419,7 @@ function ImportSpecDialog({
             Upload a JSON or YAML OpenAPI 2/3 spec to extract operations automatically.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-[60dvh] overflow-y-auto pr-1">
           <div
             className="border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg p-8 text-center cursor-pointer hover:border-blue-400 transition-colors"
             onClick={() => document.getElementById("spec-file-input")?.click()}
@@ -1526,12 +1542,12 @@ function TestOpDialog({
         }
       }}
     >
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg sm:max-w-2xl lg:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Test: {op.name}</DialogTitle>
           <DialogDescription>{op.description || op.display_name}</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
           {op.params_schema && op.params_schema.length > 0 && (
             <div>
               <p className="text-xs font-medium text-gray-500 mb-1">Expected parameters</p>
@@ -1605,15 +1621,15 @@ function TestOpDialog({
                 )}
               </div>
               {!result.ok ? (
-                <pre className="text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
+                <pre className="text-xs font-mono whitespace-pre-wrap max-h-48 sm:max-h-80 overflow-y-auto">
                   {result.error}
                 </pre>
               ) : view === "json" ? (
-                <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
+                <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 sm:max-h-96 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
                   {prettyJson}
                 </pre>
               ) : (
-                <div className="max-h-64 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
+                <div className="max-h-64 sm:max-h-96 overflow-auto bg-white/60 dark:bg-black/20 rounded p-2">
                   <JsonView value={parsedData} />
                 </div>
               )}
@@ -1687,7 +1703,7 @@ function EditOpDialog({
         <DialogHeader>
           <DialogTitle>Edit: {op.name}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
           <div>
             <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
               Display Name

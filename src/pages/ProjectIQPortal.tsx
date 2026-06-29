@@ -32,14 +32,20 @@ import {
 } from "@/components/ui/sheet";
 import { motion } from "framer-motion";
 
-type Tab = "search" | "library";
+type Tab = "search" | "library" | "analytics";
 
+interface Health {
+  score: number;
+  level: "strong" | "moderate" | "thin";
+  flags: string[];
+}
 interface Capability {
   capability_name: string;
   category?: string | null;
   maturity_level?: string | null;
   confidence: string;
   evidence?: string | null;
+  source_quote?: string | null;
 }
 interface Integration {
   system_name: string;
@@ -47,6 +53,7 @@ interface Integration {
   complexity_level?: string | null;
   lessons_learned?: string | null;
   confidence: string;
+  source_quote?: string | null;
 }
 interface Lesson {
   category?: string | null;
@@ -55,6 +62,7 @@ interface Lesson {
   recommendation?: string | null;
   confidence: string;
   evidence?: string | null;
+  source_quote?: string | null;
 }
 interface Asset {
   asset_name: string;
@@ -64,6 +72,7 @@ interface Asset {
   reuse_readiness?: string | null;
   documentation_url?: string | null;
   confidence: string;
+  source_quote?: string | null;
 }
 interface Expert {
   person_name: string;
@@ -71,6 +80,19 @@ interface Expert {
   capability?: string | null;
   evidence_level: string;
   employee_id?: number | null;
+  source_quote?: string | null;
+}
+interface Analytics {
+  total_projects: number;
+  reviewed: number;
+  draft: number;
+  totals: { lessons: number; assets: number; experts: number };
+  health: Record<string, number>;
+  capabilities: { label: string; count: number }[];
+  technologies: { label: string; count: number }[];
+  integrations: { label: string; count: number }[];
+  industries: { label: string; count: number }[];
+  statuses: { label: string; count: number }[];
 }
 
 interface Profile {
@@ -94,6 +116,8 @@ interface Profile {
   reviewed_by?: string | null;
   reviewed_at?: string | null;
   source_doc_count: number;
+  query_count?: number;
+  health?: Health;
   similarity?: number;
   capabilities?: Capability[];
   integrations?: Integration[];
@@ -120,6 +144,31 @@ function ConfBadge({ value }: { value?: string }) {
     >
       {verified ? <ShieldCheck className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
       {verified ? "verified" : "inferred"}
+    </span>
+  );
+}
+
+function HealthBadge({ health }: { health?: Health }) {
+  if (!health) return null;
+  const map = {
+    strong: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+    moderate: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+    thin: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+  } as const;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider shadow-sm shrink-0 border",
+        map[health.level],
+      )}
+      title={
+        health.flags.length
+          ? `Completeness ${health.score}/100 — ${health.flags.join("; ")}`
+          : `Completeness ${health.score}/100`
+      }
+    >
+      <Activity className="w-3 h-3" />
+      {health.score}
     </span>
   );
 }
@@ -155,6 +204,8 @@ export function ProjectIQPortal() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rebuilding, setRebuilding] = useState(false);
+  const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   // search
   const [query, setQuery] = useState("");
@@ -195,6 +246,24 @@ export function ProjectIQPortal() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadProfiles();
   }, [loadProfiles]);
+
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      const resp = await fetch("/api/project-iq/analytics", { headers: authHeaders });
+      if (resp.ok) setAnalytics(await resp.json());
+    } catch {
+      /* ignore */
+    } finally {
+      setAnalyticsLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email, user?.role]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (tab === "analytics" && !analytics) loadAnalytics();
+  }, [tab, analytics, loadAnalytics]);
 
   useEffect(() => {
     if (selected) {
@@ -392,6 +461,7 @@ export function ProjectIQPortal() {
           [
             ["search", "Find Similar", Sparkles],
             ["library", "DNA Library", Layers],
+            ["analytics", "Portfolio Analytics", Activity],
           ] as const
         ).map(([id, label, Icon]) => {
           const active = tab === id;
@@ -530,6 +600,7 @@ export function ProjectIQPortal() {
                           </span>
                           <ReviewBadge status={p.review_status} />
                           <ConfBadge value={p.confidence} />
+                          <HealthBadge health={p.health} />
                         </div>
                         {p.client_industry && (
                           <span className="inline-block text-[10px] font-semibold text-sky-500 uppercase tracking-wider mt-1.5">
@@ -612,7 +683,10 @@ export function ProjectIQPortal() {
                     <span className="font-bold text-sm sm:text-base text-foreground group-hover:text-sky-500 transition-colors leading-tight tracking-tight line-clamp-1">
                       {p.name}
                     </span>
-                    <ReviewBadge status={p.review_status} />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <HealthBadge health={p.health} />
+                      <ReviewBadge status={p.review_status} />
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-semibold text-muted-foreground/75 uppercase tracking-wider">
@@ -674,6 +748,49 @@ export function ProjectIQPortal() {
         </div>
       )}
 
+      {/* ANALYTICS TAB */}
+      {tab === "analytics" && (
+        <div className="animate-in fade-in-50 duration-200 flex flex-col gap-5">
+          {analyticsLoading || !analytics ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-sky-500" />
+              <span className="text-xs text-muted-foreground font-semibold">
+                Aggregating portfolio DNA...
+              </span>
+            </div>
+          ) : (
+            <>
+              {/* Health distribution */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: "Strong DNA", value: analytics.health.strong || 0, cls: "text-emerald-500 bg-emerald-500/10" },
+                  { label: "Moderate DNA", value: analytics.health.moderate || 0, cls: "text-amber-500 bg-amber-500/10" },
+                  { label: "Thin DNA", value: analytics.health.thin || 0, cls: "text-red-500 bg-red-500/10" },
+                  { label: "Reviewed", value: analytics.reviewed, cls: "text-sky-500 bg-sky-500/10" },
+                ].map((m, i) => (
+                  <div key={i} className="p-3.5 rounded-2xl border border-border/60 bg-white/60 dark:bg-card/20 backdrop-blur-md flex items-center justify-between shadow-sm">
+                    <div>
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">{m.label}</span>
+                      <span className="text-2xl font-black text-foreground mt-1 block tracking-tight">{m.value}</span>
+                    </div>
+                    <div className={cn("p-2.5 rounded-xl", m.cls)}>
+                      <Activity className="w-5 h-5" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BarList title="Top Capabilities" icon={Layers} items={analytics.capabilities} />
+                <BarList title="Technology Stack" icon={Shield} items={analytics.technologies} />
+                <BarList title="Integrations" icon={Link2} items={analytics.integrations} />
+                <BarList title="Industries" icon={Activity} items={analytics.industries} />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* DETAIL DRAWER / SHEET */}
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto flex flex-col gap-5 p-5 sm:p-6 h-full border-l border-border/60 bg-popover/95 backdrop-blur-xl">
@@ -683,7 +800,21 @@ export function ProjectIQPortal() {
                 <div className="flex flex-wrap items-center gap-2">
                   <ReviewBadge status={selected.review_status} />
                   <ConfBadge value={selected.confidence} />
+                  <HealthBadge health={selected.health} />
                 </div>
+                {selected.health && selected.health.flags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {selected.health.flags.map((f, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md"
+                      >
+                        <AlertCircle className="w-3 h-3" />
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <SheetTitle className="text-lg sm:text-xl font-black text-foreground tracking-tight leading-snug mt-1">
                   {selected.name}
                 </SheetTitle>
@@ -1031,6 +1162,47 @@ export function ProjectIQPortal() {
   );
 }
 
+function BarList({
+  title,
+  icon: Icon,
+  items,
+}: {
+  title: string;
+  icon: typeof Layers;
+  items: { label: string; count: number }[];
+}) {
+  const max = items.reduce((m, it) => Math.max(m, it.count), 0) || 1;
+  return (
+    <div className="rounded-2xl border border-border/60 bg-white/60 dark:bg-card/20 backdrop-blur-md p-4 shadow-sm">
+      <h4 className="text-xs sm:text-sm font-bold text-foreground inline-flex items-center gap-1.5 border-b border-border/40 pb-2 mb-3 w-full">
+        <Icon className="w-4 h-4 text-sky-500" /> {title}
+      </h4>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-4 text-center">No data yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {items.slice(0, 12).map((it, i) => (
+            <li key={i} className="flex items-center gap-2">
+              <span className="text-xs text-foreground truncate w-1/2 shrink-0" title={it.label}>
+                {it.label}
+              </span>
+              <div className="flex-1 h-2.5 rounded-full bg-muted/50 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500"
+                  style={{ width: `${Math.max(6, (it.count / max) * 100)}%` }}
+                />
+              </div>
+              <span className="text-[11px] font-bold text-muted-foreground tabular-nums w-6 text-right">
+                {it.count}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-2 mt-1">
@@ -1060,14 +1232,23 @@ function ChildSection<T>({
         <Icon className="w-4 h-4 text-sky-500" /> {title}
       </h4>
       <ul className="flex flex-col gap-3">
-        {items.map((it, i) => (
-          <li
-            key={i}
-            className="text-sm rounded-2xl border border-border/60 bg-white/40 dark:bg-white/[0.01] p-3.5 flex shadow-sm relative overflow-hidden"
-          >
-            {render(it)}
-          </li>
-        ))}
+        {items.map((it, i) => {
+          const quote = (it as { source_quote?: string | null }).source_quote;
+          return (
+            <li
+              key={i}
+              className="text-sm rounded-2xl border border-border/60 bg-white/40 dark:bg-white/[0.01] p-3.5 flex flex-col gap-2 shadow-sm relative overflow-hidden"
+            >
+              {render(it)}
+              {quote && (
+                <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground bg-sky-500/[0.04] border-l-2 border-sky-500/30 pl-2 pr-2 py-1.5 rounded-r-lg italic">
+                  <FileText className="w-3 h-3 mt-0.5 shrink-0 text-sky-500" />
+                  <span className="leading-relaxed">&ldquo;{quote}&rdquo;</span>
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

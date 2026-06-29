@@ -24,38 +24,63 @@ DOMAIN_MANAGER_ROLES = {"hr", "it", "pmo", "admin", "super admin"}
 @dataclass
 class CurrentUser:
     email: str
-    role: str
+    role: str                                   # EFFECTIVE role (after any test impersonation)
     scopes: List[str] = field(default_factory=list)
+    real_role: Optional[str] = None             # true role; differs from `role` only while a
+                                                # Super Admin is test-impersonating another role
+
+    @property
+    def is_impersonating(self) -> bool:
+        return self.real_role is not None and self.real_role != self.role
 
 
 def get_current_user(
     x_user_email: Optional[str] = Header(None, alias="x-user-email"),
     x_user_role: Optional[str] = Header(None, alias="x-user-role"),
+    x_impersonate_role: Optional[str] = Header(None, alias="x-impersonate-role"),
     db: Session = Depends(get_db),
 ) -> CurrentUser:
     """
     Extract authenticated user from MSAL-populated request headers.
     DB role overrides (set by Super Admin) take precedence over Azure AD claims.
     Falls back to DEFAULT_USER_EMAIL in dev when headers are absent.
+
+    Test impersonation: a *real* Super Admin may set `x-impersonate-role` to act as any
+    role for testing. This is a non-destructive overlay — the Super Admin's grant is only
+    READ, never changed, so they can switch back at any time. It can never be used to
+    escalate: the overlay is applied only when the resolved real role is Super Admin.
     """
     email = (x_user_email or "").strip().lower() or settings.DEFAULT_USER_EMAIL
     if settings.ALLOWED_EMAILS and email not in settings.ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail="Access denied.")
 
-    # Check for a Super Admin-assigned role override in DB
+    # 1. Resolve the REAL role + scopes (DB override wins over the Azure AD header claim).
+    real_role = None
+    scopes: List[str] = []
     try:
         from app.models import UserRoleOverride
         override = db.query(UserRoleOverride).filter(UserRoleOverride.email == email).first()
         if override:
-            return CurrentUser(email=email, role=override.role, scopes=override.scopes or [])
+            real_role = override.role
+            scopes = override.scopes or []
     except Exception:
         pass
+    if real_role is None:
+        r = (x_user_role or "employee").strip().lower()
+        # Super Admin can NEVER be claimed via header — only a DB override grants it.
+        if r not in VALID_ROLES or r == "super admin":
+            r = "employee"
+        real_role = r
 
-    role = (x_user_role or "employee").strip().lower()
-    # Super Admin can NEVER be claimed via header — only a DB override grants it.
-    if role not in VALID_ROLES or role == "super admin":
-        role = "employee"
-    return CurrentUser(email=email, role=role)
+    # 2. Apply the test-impersonation overlay (real Super Admin only).
+    effective_role = real_role
+    imp = (x_impersonate_role or "").strip().lower()
+    if real_role == "super admin" and imp and imp in VALID_ROLES:
+        effective_role = imp
+        if imp != "super admin":
+            scopes = []  # test the target role cleanly, without the super-admin scopes
+
+    return CurrentUser(email=email, role=effective_role, scopes=scopes, real_role=real_role)
 
 
 def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
@@ -101,10 +126,28 @@ def require_pmo(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
 
 
 def require_functional_manager(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    """Allows functional managers only. Whole-hierarchy attendance reporting is restricted
-    to this role per product decision (2026-06-04)."""
-    if user.role != "functional manager":
+    """Allows functional managers + super admin. Restricted to onboarding/VDI/PMO features."""
+    if user.role not in {"functional manager", "super admin"}:
         raise HTTPException(status_code=403, detail="Functional Manager access required.")
+    return user
+
+
+def require_has_reports(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows any authenticated user who has at least one direct report.
+    Enables My Team for TLs / anyone with reportees, not just Functional Managers."""
+    if user.role == "super admin":
+        return user
+    from app.database import SessionLocal
+    from app.models import Employee
+    db = SessionLocal()
+    try:
+        mgr = db.query(Employee).filter(Employee.email == user.email).first()
+        if not mgr:
+            raise HTTPException(status_code=403, detail="No team found for your account.")
+        if db.query(Employee).filter(Employee.manager_id == mgr.id).first() is None:
+            raise HTTPException(status_code=403, detail="You have no direct reports.")
+    finally:
+        db.close()
     return user
 
 
