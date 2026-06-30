@@ -3,8 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
   Wrench,
-  Plane,
-  Wallet,
   BookOpen,
   MessageSquare,
   Sparkles,
@@ -17,6 +15,15 @@ import {
   Megaphone,
   FileText,
   FlaskConical,
+  Briefcase,
+  GraduationCap,
+  Store,
+  Boxes,
+  Mail,
+  FolderKanban,
+  Utensils,
+  Car,
+  Headset,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 
@@ -247,67 +254,104 @@ function Scene2() {
 /*  Scene 3 — Orbiting glass cards of connected systems                */
 /* ================================================================== */
 const SYSTEMS = [
-  { label: "HR Portal", Icon: Users, c: "var(--collaboration)" },
-  { label: "IT Service Desk", Icon: Wrench, c: "var(--connectivity)" },
-  { label: "Travel Requests", Icon: Plane, c: "var(--clarity)" },
-  { label: "Payroll", Icon: Wallet, c: "var(--accent-amber)" },
-  { label: "Knowledge Base", Icon: BookOpen, c: "var(--capacity)" },
-  { label: "Microsoft Teams", Icon: MessageSquare, c: "var(--connectivity)" },
   { label: "Alchemy", Icon: FlaskConical, c: "var(--clarity)" },
+  { label: "Zoho", Icon: Briefcase, c: "var(--collaboration)" },
+  { label: "TechElevate", Icon: GraduationCap, c: "var(--capacity)" },
+  { label: "Viva Engage", Icon: Users, c: "var(--connectivity)" },
+  { label: "Udemy", Icon: BookOpen, c: "var(--accent-amber)" },
+  { label: "AI Xchange", Icon: Store, c: "var(--clarity)" },
+  { label: "LAQSH", Icon: Boxes, c: "var(--capacity)" },
+  { label: "MS Teams", Icon: MessageSquare, c: "var(--connectivity)" },
+  { label: "Outlook", Icon: Mail, c: "var(--connectivity)" },
+  { label: "SharePoint", Icon: FolderKanban, c: "var(--clarity)" },
+  { label: "Food Complaint", Icon: Utensils, c: "var(--accent-amber)" },
+  { label: "Facility Complaint", Icon: Wrench, c: "var(--capacity)" },
+  { label: "Parking Tracker", Icon: Car, c: "var(--collaboration)" },
+  { label: "ManageEngine Helpdesk", Icon: Headset, c: "var(--connectivity)" },
 ];
 
+// Lay the tools out in a centered grid so every card is fully visible.
+const GRID_COLS = 5;
+const COL_W = 158;
+const ROW_H = 88;
+const GRID = (() => {
+  const rows = Math.ceil(SYSTEMS.length / GRID_COLS);
+  return SYSTEMS.map((s, i) => {
+    const row = Math.floor(i / GRID_COLS);
+    const itemsInRow = Math.min(GRID_COLS, SYSTEMS.length - row * GRID_COLS);
+    const col = i % GRID_COLS;
+    const x = (col - (itemsInRow - 1) / 2) * COL_W;
+    const y = (row - (rows - 1) / 2) * ROW_H;
+    return { ...s, x, y };
+  });
+})();
+
 function Scene3() {
-  const radius = 280;
+  const [merged, setMerged] = React.useState(false);
+
+  // Show every tool spread out first, then converge them into one core.
+  React.useEffect(() => {
+    const t = setTimeout(() => setMerged(true), 2200);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
-    <motion.div
-      {...sceneFade}
-      className="absolute inset-0 flex flex-col items-center justify-center"
-    >
+    <motion.div {...sceneFade} className="absolute inset-0 flex flex-col items-center justify-center">
       <ParticleField density={34} linkDist={100} speed={0.12} />
       <motion.p
         initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4, duration: 1 }}
-        className="absolute top-[16%] z-20 text-center text-[13px] font-medium uppercase tracking-[0.25em] text-white/45"
+        animate={{ opacity: merged ? 0 : 1 }}
+        transition={{ duration: 0.6 }}
+        className="absolute top-[13%] z-20 text-center text-[13px] font-medium uppercase tracking-[0.25em] text-white/45"
       >
-        One assistant across every tool
+        Every tool you use — in one app
       </motion.p>
 
-      <div className="relative z-10" style={{ perspective: "1100px" }}>
-        <motion.div
-          animate={{ rotateY: 360 }}
-          transition={{ duration: 26, repeat: Infinity, ease: "linear" }}
-          className="relative h-[220px] w-[220px]"
-          style={{ transformStyle: "preserve-3d" }}
-        >
-          {SYSTEMS.map((s, i) => {
-            const angle = (360 / SYSTEMS.length) * i;
-            return (
-              <motion.div
-                key={s.label}
-                initial={{ opacity: 0, scale: 0.6 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2 + i * 0.12, type: "spring", stiffness: 200, damping: 18 }}
-                className="absolute left-1/2 top-1/2 -ml-[80px] -mt-[44px] flex h-[88px] w-[160px] flex-col justify-between rounded-2xl border border-white/15 bg-white/[0.06] p-3 backdrop-blur-xl"
-                style={{
-                  transform: `rotateY(${angle}deg) translateZ(${radius}px)`,
-                  boxShadow: `0 12px 40px -10px color-mix(in oklab, ${s.c} 50%, transparent)`,
-                }}
-              >
-                <div
-                  className="flex h-8 w-8 items-center justify-center rounded-lg"
-                  style={{
-                    background: `color-mix(in oklab, ${s.c} 20%, transparent)`,
-                    color: s.c,
-                  }}
-                >
-                  <s.Icon className="h-4 w-4" />
-                </div>
-                <span className="text-[13px] font-semibold text-white">{s.label}</span>
-              </motion.div>
-            );
-          })}
-        </motion.div>
+      <div className="relative z-10 flex h-[300px] w-full items-center justify-center">
+        {GRID.map((s, i) => (
+          <motion.div
+            key={s.label}
+            initial={{ opacity: 0, scale: 0.7, x: s.x, y: s.y }}
+            animate={
+              merged
+                ? { opacity: 0, scale: 0, x: 0, y: 0 }
+                : { opacity: 1, scale: 1, x: s.x, y: s.y }
+            }
+            transition={
+              merged
+                ? { duration: 0.8, ease: [0.6, 0, 0.2, 1], delay: i * 0.02 }
+                : { delay: 0.1 + i * 0.05, type: "spring", stiffness: 220, damping: 20 }
+            }
+            className="absolute flex h-[64px] w-[140px] items-center gap-2.5 rounded-2xl border border-white/15 bg-white/[0.07] px-3 backdrop-blur-xl"
+            style={{ boxShadow: `0 12px 40px -12px color-mix(in oklab, ${s.c} 50%, transparent)` }}
+          >
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: `color-mix(in oklab, ${s.c} 20%, transparent)`, color: s.c }}
+            >
+              <s.Icon className="h-4 w-4" />
+            </div>
+            <span className="text-[12px] font-semibold leading-tight text-white">{s.label}</span>
+          </motion.div>
+        ))}
+
+        {/* The single core they merge into */}
+        <AnimatePresence>
+          {merged && (
+            <motion.div
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: [0, 1.18, 1], opacity: 1 }}
+              transition={{ duration: 1.1, times: [0, 0.7, 1], ease: "easeOut", delay: 0.3 }}
+              className="absolute flex h-28 w-28 items-center justify-center rounded-full"
+              style={{
+                background: "radial-gradient(circle at 35% 30%, #a5b4fc, var(--clarity) 55%, #4338ca)",
+                boxShadow: "0 0 90px 22px color-mix(in oklab, var(--clarity) 55%, transparent)",
+              }}
+            >
+              <Logo size="md" />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );
@@ -754,7 +798,7 @@ function Scene8({ onComplete, onReplay }: { onComplete: () => void; onReplay: ()
 /*  Orchestrator                                                       */
 /* ================================================================== */
 // scenes 0..7 auto-advance; final hero (8) holds
-const DURATIONS = [3600, 5000, 5000, 5400, 5800, 3400, 4000, 3600];
+const DURATIONS = [3600, 5000, 5400, 5800, 5800, 3400, 4000, 3600];
 
 interface IntroTourProps {
   onComplete: () => void;
@@ -779,11 +823,11 @@ export function IntroTour({ onComplete }: IntroTourProps) {
       case 1:
         return <Scene2 key="s2" />;
       case 2:
-        return <Scene3 key="s3" />;
-      case 3:
         return <Scene4 key="s4" />;
-      case 4:
+      case 3:
         return <SceneCapabilities key="s4b" />;
+      case 4:
+        return <Scene3 key="s3" />;
       case 5:
         return <Scene5 key="s5" />;
       case 6:
