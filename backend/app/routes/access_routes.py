@@ -190,6 +190,12 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
         "category": "mode",
         "actions": [{"id": "use", "label": "Use", "description": "Activate resource focus mode"}],
     },
+    "mode:me": {
+        "label": "My Workspace Mode",
+        "description": "Allows activating My Workspace focus mode — personal Microsoft 365 actions: send email, post to Teams/Viva Engage, create group chats.",
+        "category": "mode",
+        "actions": [{"id": "use", "label": "Use", "description": "Activate My Workspace focus mode"}],
+    },
 
     # ── Features (feature-level scopes with per-action granularity) ───────────
     "food_complaints": {
@@ -394,7 +400,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:admin_services", "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
         "portal:onboarding_tracker",
-        "mode:analytics",
+        "mode:analytics", "mode:me",
         "food_complaints", "reimbursements", "travel_management", "parking", "desk_keys",
         "bookshelf", "announcements", "email_automation", "people_directory",
         "prompt_config", "form_library", "manage_access",
@@ -404,7 +410,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:hr_portal", "portal:onboarding_tracker", "portal:te_lms",
         "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
-        "mode:analytics", "mode:training",
+        "mode:analytics", "mode:training", "mode:me",
         "leave_management", "document_generation", "skills_management",
         "people_directory", "email_automation", "prompt_config",
     ],
@@ -413,7 +419,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:it_portal", "portal:observability", "portal:llm_controls",
         "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
-        "mode:analytics",
+        "mode:analytics", "mode:me",
         "it_support", "observability", "llm_controls",
         "email_automation", "prompt_config",
     ],
@@ -423,14 +429,14 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:te_lms", "portal:udemy_business",
         "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
-        "mode:analytics", "mode:training", "mode:project", "mode:resource",
+        "mode:analytics", "mode:training", "mode:project", "mode:resource", "mode:me",
         "pmo_portal", "lms_manage", "people_directory", "email_automation", "prompt_config",
     ],
     "functional manager": [
         "portal:roi", "portal:analytics_studio", "portal:analytics_builder",
         "portal:manager_portal", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
-        "mode:analytics", "mode:resource",
+        "mode:analytics", "mode:resource", "mode:me",
         "attendance_reports", "people_directory", "email_automation",
     ],
     "employee": [
@@ -441,6 +447,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:cabin_directory",  # look up seating and cabin assignments
         "portal:people",           # search the employee directory
         "portal:onboarding_tracker",  # track own onboarding progress
+        "mode:me",                 # personal MS365 actions: email, Teams, Viva Engage, group chats
     ],
 }
 

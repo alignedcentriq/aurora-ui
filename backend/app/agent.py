@@ -168,8 +168,33 @@ class Focus(TypedDict, total=False):
 _MODE_HINTS: dict[str, str] = {
     "analytics": "\n\n[ACTIVE MODE: Analytics Builder] The user has activated Analytics Builder mode. Prioritise analytics tools, NL-to-data queries, ROI metrics, dashboards, and data exploration. Keep responses data-focused.",
     "training": "\n\n[ACTIVE MODE: Learning Advisor] The user has activated Learning Advisor mode. Prioritise course recommendations (Udemy, TechElevate), skill gap analysis, and learning plans.",
-    "project": "\n\n[ACTIVE MODE: Project IQ] The user has activated Project IQ mode. Prioritise project insights, similar project discovery, lessons learned, SME identification, and reusable assets.",
+    "project": (
+        "\n\n[ACTIVE MODE: Project IQ] The user is in Project IQ mode."
+        " OVERRIDES base Rule 2: do NOT call list_projects for every project question."
+        " STRICT ANSWER PRIORITY — follow this order for every question:\n"
+        "STEP 1 — use the specific Project IQ tool that matches:\n"
+        "  - Similarity ('have we done X before?', 'any prior project like Y?') → find_similar_projects\n"
+        "  - Lessons/risks ('what goes wrong in X?', 'common risks for Y') → project_lessons\n"
+        "  - Experts ('who has delivered X?', 'who has experience with Y?') → find_project_experts\n"
+        "  - Reusable assets ('any X component we can reuse?', 'existing Y module') → find_reusable_assets\n"
+        "  - Explicit list request ('list all projects', 'show projects') → list_projects\n"
+        "  - Named project status/details → get_project_status or get_project_achievements\n"
+        "STEP 2 — ONLY if no STEP 1 tool matches, fall back to search_project_corpus.\n"
+        "NEVER skip STEP 1 for questions that clearly match. NEVER answer from your own knowledge."
+    ),
     "resource": "\n\n[ACTIVE MODE: Resource Finder] The user has activated Resource Finder mode. Prioritise skill-to-availability matching, bench status, and staffing recommendations.",
+    "me": (
+        "\n\n[ACTIVE MODE: My Workspace] The user has activated My Workspace mode — their personal "
+        "Microsoft 365 delegated actions. Prioritise:\n"
+        "- Read: inbox (read_my_emails), calendar (read_my_calendar/search_calendar), Teams chats "
+        "(read_teams_messages), a Teams channel (read_channel_messages), their communities "
+        "(list_my_communities), a community's posts (read_community_posts), their Viva Engage feed "
+        "(read_yammer_feed), or search across all communities for a topic (search_communities).\n"
+        "- Write: send email (send_email_graph), post to a Teams channel (send_channel_message) or "
+        "Viva Engage community (post_to_community), send a Teams chat message (send_teams_message), "
+        "create a group chat (create_group_chat).\n"
+        "Act on the first clear request — don't redirect to the Outlook/Teams app."
+    ),
 }
 
 
@@ -2878,7 +2903,8 @@ def _leave_balance_strategy(ctx: RouteContext) -> Optional[Decision]:
 
 
 _MS365_ACTION_TYPES = frozenset({
-    "ms365_email", "ms365_channel_post", "ms365_teams_message", "ms365_community_post"
+    "ms365_email", "ms365_channel_post", "ms365_teams_message", "ms365_community_post",
+    "ms365_group_chat",
 })
 
 
@@ -3739,6 +3765,18 @@ def _ms365_confirmation_card(action_type: str, params: dict) -> str:
             f"Ready to post to the **{params.get('community_name')}** community on Viva Engage. "
             f"Confirm below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
         )
+    if action_type == "ms365_group_chat":
+        member_emails = params.get("member_emails", [])
+        card_payload = json.dumps({
+            "question": f"Create the group chat **'{params.get('topic', 'New Group Chat')}'**?",
+            "preview": f"{len(member_emails)} member(s): {', '.join(member_emails[:5])}",
+            "choices": [{"label": "Create", "value": "yes"}, {"label": "Cancel", "value": "cancel"}],
+        })
+        return (
+            f"Ready to create the group chat **'{params.get('topic', 'New Group Chat')}'** "
+            f"with {len(member_emails)} member(s). "
+            f"Confirm below.\n\n{QUICK_CHOICE_START}{card_payload}{QUICK_CHOICE_END}"
+        )
     # Fallback
     card_payload = json.dumps({
         "question": "Send this message?",
@@ -3777,6 +3815,10 @@ async def _execute_ms365_action(claimed: dict, graph_token: str, yammer_token: s
     if action_type == "ms365_community_post":
         from app.services import yammer_service as _ys
         return await _ys.post_to_community(yammer_token, int(params["group_id"]), params.get("message", ""))
+
+    if action_type == "ms365_group_chat":
+        from app.services import ms365_service as _ms
+        return await _ms.create_group_chat(graph_token, params.get("topic", "Group Chat"), params.get("member_emails", []))
 
     return {"success": False, "error": "unknown_action_type", "message": f"Unknown MS365 action type: {action_type}"}
 
@@ -4577,8 +4619,10 @@ async def ms365_agent_node(state: AgentState):
                     f"{pparams.get('channel_name', 'channel')}**"
                 ),
                 "ms365_community_post": f"post to the **{pparams.get('community_name', 'community')}** community",
+                "ms365_group_chat": f"group chat **'{pparams.get('topic', 'Group Chat')}'**",
             }.get(at, "message")
-            return {"messages": [AIMessage(content=f"Done — your {at_label} has been sent.")]}
+            verb = "created" if at == "ms365_group_chat" else "sent"
+            return {"messages": [AIMessage(content=f"Done — your {at_label} has been {verb}.")]}
         return {"messages": [AIMessage(content=(
             f"I couldn't send it: {result.get('message') or result.get('error') or 'unknown error'}. "
             f"Please try again."
@@ -4633,7 +4677,7 @@ async def ms365_agent_node(state: AgentState):
                 f"cite the author + web_url. If nothing relevant, say so plainly."
             )
 
-    feedback_ctx = _location_prefix(state) + (state.get("feedback_context") or "")
+    feedback_ctx = _location_prefix(state) + _get_mode_hint(state) + (state.get("feedback_context") or "")
     if pre_fetched:
         feedback_ctx = pre_fetched + "\n\n" + feedback_ctx
 

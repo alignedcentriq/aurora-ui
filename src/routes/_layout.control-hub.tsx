@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
+import { useAutomationDrawer } from "@/lib/automation-drawer-store";
 import { lazy, Suspense, useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -63,9 +64,6 @@ const ConnectorStudio = lazy(() => import("@/pages/ConnectorStudio"));
 const ObservabilityDashboard = lazy(() =>
   import("@/pages/ObservabilityDashboard").then((m) => ({ default: m.ObservabilityDashboard })),
 );
-const RoiDashboard = lazy(() =>
-  import("@/pages/RoiDashboard").then((m) => ({ default: m.RoiDashboard })),
-);
 const AnalyticsBuilder = lazy(() =>
   import("@/pages/AnalyticsBuilder").then((m) => ({ default: m.AnalyticsBuilder })),
 );
@@ -102,7 +100,6 @@ export const Route = createFileRoute("/_layout/control-hub")({
 
 type TabId =
   | "dashboard"
-  | "roi"
   | "analytics-builder"
   | "observability"
   | "llm-controls"
@@ -146,15 +143,6 @@ const TABS: TabItem[] = [
     show: (role) => role === "Admin",
     requireScope: "announcements",
     component: AdminDashboard,
-  },
-  {
-    id: "roi",
-    label: "Value Delivered",
-    category: "System & Ops",
-    icon: TrendingUp,
-    color: "#10B981",
-    show: (role) => role !== "Employee",
-    component: RoiDashboard,
   },
   {
     id: "analytics-builder",
@@ -349,7 +337,6 @@ const TAB_ALIASES: Record<string, TabId> = {
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   dashboard: "Broadcast alerts, policy changes, and official events to the workspace.",
-  roi: "See time saved, ticket deflection, and cost — the assistant's business value.",
   "analytics-builder": "Describe any chart in plain English, iterate, export — and save multi-chart dashboards.",
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
@@ -445,6 +432,7 @@ function ControlHubPage() {
   const { user } = useAuth();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  const { openDrawer: openAutomationDrawer } = useAutomationDrawer();
 
   const role = user?.role ?? "";
   const scopes = user?.scopes ?? [];
@@ -555,6 +543,22 @@ function ControlHubPage() {
                       <span className="truncate">{activeTab?.label}</span>
                     </span>
                   </div>
+
+                  {/* Portal-contextual Email Automation trigger */}
+                  {activeTabId !== "automation-hub" && (
+                    <button
+                      onClick={() =>
+                        openAutomationDrawer(
+                          activeTabId as string,
+                          activeTab?.label,
+                        )
+                      }
+                      className="flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors shrink-0"
+                    >
+                      <Zap className="h-3 w-3" />
+                      Automate
+                    </button>
+                  )}
                 </div>
 
                 {/* Viewport content */}

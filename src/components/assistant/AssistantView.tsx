@@ -772,6 +772,9 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       endTime = to24(parseInt(tm[4]), parseInt(tm[5] ?? "0"), p2);
     }
 
+    // If a time was parsed but no date keyword found, default to today
+    if (startTime && !date) date = localISO(0);
+
     // Room hint: words after "book"/"reserve" before a preposition/date word
     let roomHint: string | undefined;
     const rRe =
@@ -779,7 +782,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
     const rm = text.match(rRe);
     if (rm) roomHint = rm[1].trim();
 
-    // Title: after "title", "titled", "called"
+    // Title: explicit "titled"/"called" keyword takes priority
     let title: string | undefined;
     const titRe =
       /\b(?:title(?:d)?|called)\s+([^\n]+?)(?:\s+(?:no\s+attendees?|with(?:\s+no)?\s+attendees?|attendees?\s*(?:needed)?)\b.*)?$/i;
@@ -789,6 +792,25 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
         .trim()
         .replace(/\s+(?:no\s+attendees?|attendees?\s*(?:needed)?).*$/i, "")
         .trim();
+
+    // Fallback: extract purpose from "for [Purpose] from/at/between/on ..."
+    // e.g. "book salween room for Interview from 4 am to 4:30 am"
+    if (!title) {
+      const purposeRe =
+        /\bfor\s+([\w][\w\s]{0,40}?)\s+(?:from\b|at\b|between\b|on\b|tomorrow\b|today\b|\d)/i;
+      const pm2 = text.match(purposeRe);
+      if (pm2) {
+        const candidate = pm2[1].trim();
+        // Exclude generic room-type words that belong to the room hint
+        if (!/\b(?:room|conf|conference|cabin|hall)\b/i.test(candidate)) {
+          title = candidate;
+        }
+      }
+    }
+
+    // Default title to empty string (not undefined) so autoBookMode can trigger;
+    // the booking call will fall back to "Meeting" if the title is empty.
+    if (title === undefined) title = "";
 
     // Attendees: explicit "no attendees" → empty string
     let attendees: string | undefined;
@@ -871,15 +893,22 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       if (!text || !activeId) return;
 
       // ── Mode command detection ─────────────────────────────────────────────
+      // On an empty thread we skip the chat-turn confirmation entirely — the mode
+      // banner plus the empty-state heading/cards already say "mode on", and adding
+      // turns here would make the thread non-empty, hiding that empty-state UI before
+      // it ever renders. Mid-conversation switches still get an inline confirmation.
       const modeCmd = parseModeCommand(text);
+      const threadIsEmpty = activeThread.turns.length === 0;
       if (modeCmd === "exit") {
         if (activeMode) {
           changeModeWithAnimation(null);
-          addTurn(activeId, { role: "user", text });
-          addTurn(activeId, {
-            role: "ai",
-            text: `**${CHAT_MODES[activeMode].label}** mode off. Back to general assistant.`,
-          });
+          if (!threadIsEmpty) {
+            addTurn(activeId, { role: "user", text });
+            addTurn(activeId, {
+              role: "ai",
+              text: `**${CHAT_MODES[activeMode].label}** mode off. Back to general assistant.`,
+            });
+          }
         } else {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, { role: "ai", text: "No active mode to exit." });
@@ -890,11 +919,13 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       if (modeCmd) {
         const mode = CHAT_MODES[modeCmd];
         changeModeWithAnimation(modeCmd);
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.\n\nType \`/exit\` to return to general mode.`,
-        });
+        if (!threadIsEmpty) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.\n\nType \`/exit\` to return to general mode.`,
+          });
+        }
         setInput("");
         return;
       }
@@ -1157,6 +1188,10 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           text,
         ) ||
         /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(
+          text,
+        ) ||
+        // "book salween room for Interview from 4 am to 4:30 am"
+        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+for\s+\w[\w\s]{0,30}\s+from\s+\d{1,2}/i.test(
           text,
         );
       if (isRoomBooking) {
@@ -2251,29 +2286,61 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                         {activeMode ? CHAT_MODES[activeMode].description : portal.tagline}
                       </p>
 
-                      {chips.length > 0 && (
+                      {activeMode && CHAT_MODES[activeMode].cards ? (
                         <div className="flex flex-col gap-2 w-full max-w-xs">
-                          {chips.map((s) => (
+                          {CHAT_MODES[activeMode].cards!.map((c) => (
                             <button
-                              key={s}
-                              onClick={() => !busy && send(s)}
-                              className="group flex items-center gap-2.5 rounded-xl border bg-card/70 backdrop-blur-sm px-3.5 py-2.5 text-left text-[12.5px] font-medium text-muted-foreground shadow-sm transition-all hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              key={c.label}
+                              onClick={() => !busy && send(c.prompt)}
+                              className="group flex items-start gap-3 rounded-xl border bg-card/70 backdrop-blur-sm px-3.5 py-2.5 text-left shadow-sm transition-all hover:shadow-md hover:scale-[1.02]"
                               style={{
                                 borderColor: `color-mix(in oklab, ${portal.accent} 22%, var(--border))`,
                               }}
                             >
                               <span
-                                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
                                 style={{
                                   background: `color-mix(in oklab, ${portal.accent} 14%, transparent)`,
                                 }}
                               >
-                                <Sparkles className="h-2.5 w-2.5" style={{ color: portal.accent }} />
+                                <c.Icon className="h-3.5 w-3.5" style={{ color: portal.accent }} />
                               </span>
-                              {s}
+                              <span className="min-w-0">
+                                <span className="block text-[12.5px] font-semibold text-foreground">
+                                  {c.label}
+                                </span>
+                                <span className="block text-[11px] text-muted-foreground leading-snug">
+                                  {c.description}
+                                </span>
+                              </span>
                             </button>
                           ))}
                         </div>
+                      ) : (
+                        chips.length > 0 && (
+                          <div className="flex flex-col gap-2 w-full max-w-xs">
+                            {chips.map((s) => (
+                              <button
+                                key={s}
+                                onClick={() => !busy && send(s)}
+                                className="group flex items-center gap-2.5 rounded-xl border bg-card/70 backdrop-blur-sm px-3.5 py-2.5 text-left text-[12.5px] font-medium text-muted-foreground shadow-sm transition-all hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                                style={{
+                                  borderColor: `color-mix(in oklab, ${portal.accent} 22%, var(--border))`,
+                                }}
+                              >
+                                <span
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                                  style={{
+                                    background: `color-mix(in oklab, ${portal.accent} 14%, transparent)`,
+                                  }}
+                                >
+                                  <Sparkles className="h-2.5 w-2.5" style={{ color: portal.accent }} />
+                                </span>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        )
                       )}
                     </motion.section>
                   );
@@ -2361,7 +2428,30 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">
                         Try asking…
                       </p>
-                      {activeMode ? (
+                      {activeMode && CHAT_MODES[activeMode].cards ? (
+                        /* Mode-specific suggestion cards (icon + description) */
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl mx-auto">
+                          {CHAT_MODES[activeMode].cards!.map((c) => (
+                            <button
+                              key={c.label}
+                              onClick={() => !busy && send(c.prompt)}
+                              className="group flex items-start gap-3 rounded-xl border border-border/80 bg-card/70 backdrop-blur-sm px-3.5 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-md hover:scale-[1.02]"
+                            >
+                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/60 group-hover:bg-primary/10 transition-colors">
+                                <c.Icon className="h-4 w-4 text-primary" />
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-[12.5px] font-semibold text-foreground">
+                                  {c.label}
+                                </span>
+                                <span className="block text-[11px] text-muted-foreground leading-snug">
+                                  {c.description}
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : activeMode ? (
                         /* Mode-specific starters */
                         <div className="flex flex-wrap justify-center gap-2">
                           {CHAT_MODES[activeMode].starters.map((s) => {
@@ -2705,6 +2795,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                     t.interactive.data as import("@/components/analytics/ChartCanvas").ChartSpec
                                   }
                                   height={300}
+                                  showExport
                                 />
                               </div>
                             )}

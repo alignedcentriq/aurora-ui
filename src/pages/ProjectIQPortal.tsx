@@ -397,8 +397,7 @@ export function ProjectIQPortal() {
     }
   }, [selected]);
 
-  const onSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doSearch = async () => {
     if (!query.trim()) return;
     setSearching(true);
     setSearched(true);
@@ -416,6 +415,11 @@ export function ProjectIQPortal() {
     } finally {
       setSearching(false);
     }
+  };
+
+  const onSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    doSearch();
   };
 
   const openProfile = async (slug: string) => {
@@ -634,13 +638,23 @@ export function ProjectIQPortal() {
                 <textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (query.trim() && !searching) doSearch();
+                    }
+                  }}
                   placeholder="e.g. an e-commerce self-service portal with Next.js, Redis cart storage, Azure AD SSO and PayPal gateway integration..."
                   rows={2}
                   className="w-full resize-none rounded-xl border border-border bg-background/50 dark:bg-background/20 px-4 py-3 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 transition-all placeholder:text-muted-foreground/60 shadow-inner"
                 />
-                {query.trim().length > 0 && (
+                {query.trim().length > 0 ? (
                   <span className="absolute bottom-2 right-3 text-[10px] text-muted-foreground font-mono">
-                    {query.length} chars
+                    {query.length} chars · Enter to search
+                  </span>
+                ) : (
+                  <span className="absolute bottom-2 right-3 text-[10px] text-muted-foreground/50 font-mono">
+                    Enter to search · Shift+Enter for newline
                   </span>
                 )}
               </div>

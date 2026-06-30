@@ -17,6 +17,8 @@ import {
   Layers,
   AlertTriangle,
   HelpCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -240,6 +242,8 @@ export function PMOPortal() {
 function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [data, setData] = useState<SkillSupplyResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -257,6 +261,19 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
   useEffect(() => {
     Promise.resolve().then(() => fetch_());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rows = data?.rows ?? [];
+  const s = data?.summary ?? {};
+
+  const totalPages = Math.ceil(rows.length / pageSize);
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [rows.length, pageSize]);
 
   if (loading) {
     return (
@@ -278,9 +295,6 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
       </div>
     );
   }
-
-  const rows = data.rows ?? [];
-  const s = data.summary ?? {};
 
   // Custom styled cards for summary metrics
   const cards = [
@@ -416,7 +430,7 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
-                {rows.map((r) => {
+                {paginatedRows.map((r) => {
                   const actionClass =
                     ACTION_BADGE[r.action] ??
                     "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20";
@@ -544,7 +558,7 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                       {/* Rolling Off info list */}
                       <td className="py-4 px-6">
                         {r.rolling_off.length === 0 ? (
-                          <span className="text-muted-foreground/30 text-xs">—</span>
+                           <span className="text-muted-foreground/30 text-xs">—</span>
                         ) : (
                           <div className="group relative inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/15 cursor-pointer font-bold shadow-sm select-none">
                             <Calendar className="h-3 w-3 text-amber-500" />
@@ -584,6 +598,72 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {rows.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.1] dark:bg-zinc-900/[0.05]">
+              <div className="text-[11px] text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{Math.min(rows.length, (currentPage - 1) * pageSize + 1)}</span> to{" "}
+                <span className="font-semibold text-foreground">{Math.min(rows.length, currentPage * pageSize)}</span> of{" "}
+                <span className="font-semibold text-foreground">{rows.length}</span> entries
+              </div>
+              
+              <div className="flex items-center gap-4.5">
+                {/* Rows per page selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="text-xs bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-zinc-300"
+                  >
+                    {[5, 10, 20].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Page buttons */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        className={cn(
+                          "h-7 w-7 text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center border",
+                          isCurrent
+                            ? "bg-indigo-600 border-indigo-600 text-white shadow-sm shadow-indigo-500/25"
+                            : "bg-white dark:bg-zinc-900 border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50"
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -615,6 +695,7 @@ interface BenchSuggestion {
   recommended_training: string;
   teaches_skills: string[];
   demand_score: number;
+  recommendation_reason: string | null;
   suggested_due_date: string;
 }
 
@@ -631,6 +712,8 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [assigned, setAssigned] = useState<Set<string>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
 
   const rowKey = (r: BenchSuggestion) => r.employee_email || r.employee_name;
 
@@ -675,6 +758,19 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
     }
   };
 
+  const rows = data?.rows ?? [];
+  const s = data?.summary ?? { bench: 0, rolling_off: 0 };
+
+  const totalPages = Math.ceil(rows.length / pageSize);
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [rows.length, pageSize]);
+
   if (loading) {
     return (
       <div className="flex flex-col h-60 items-center justify-center gap-3">
@@ -685,9 +781,6 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
       </div>
     );
   }
-
-  const rows = data?.rows ?? [];
-  const s = data?.summary ?? { bench: 0, rolling_off: 0 };
 
   const cards = [
     {
@@ -785,7 +878,7 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                     Recommended Course
                   </th>
                   <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Teaches
+                    Skills to Gain
                   </th>
                   <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
                     Due By
@@ -796,7 +889,7 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
-                {rows.map((r) => {
+                {paginatedRows.map((r) => {
                   const initials = r.employee_name
                     .split(" ")
                     .map((w) => w[0])
@@ -838,9 +931,16 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                         </span>
                       </td>
                       <td className="py-4 px-6">
-                        <span className="font-semibold text-foreground">
-                          {r.recommended_training}
-                        </span>
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="font-semibold text-foreground leading-snug">
+                            {r.recommended_training}
+                          </span>
+                          {r.recommendation_reason && (
+                            <span className="text-[10px] text-muted-foreground/70 leading-snug max-w-[240px]">
+                              {r.recommendation_reason}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-4 px-6">
                         <div className="flex flex-wrap gap-1 max-w-[200px]">
@@ -884,6 +984,72 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {rows.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.1] dark:bg-zinc-900/[0.05]">
+              <div className="text-[11px] text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{Math.min(rows.length, (currentPage - 1) * pageSize + 1)}</span> to{" "}
+                <span className="font-semibold text-foreground">{Math.min(rows.length, currentPage * pageSize)}</span> of{" "}
+                <span className="font-semibold text-foreground">{rows.length}</span> entries
+              </div>
+              
+              <div className="flex items-center gap-4.5">
+                {/* Rows per page selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="text-xs bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-zinc-300"
+                  >
+                    {[5, 10, 20].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Page buttons */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        className={cn(
+                          "h-7 w-7 text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center border",
+                          isCurrent
+                            ? "bg-indigo-600 border-indigo-600 text-white shadow-sm shadow-indigo-500/25"
+                            : "bg-white dark:bg-zinc-900 border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50"
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -905,6 +1071,8 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
   const [filter, setFilter] = useState("Pending");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
 
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -926,6 +1094,16 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   useEffect(() => {
     Promise.resolve().then(() => fetch_());
   }, [fetch_]);
+
+  const totalPages = Math.ceil(items.length / pageSize);
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return items.slice(start, start + pageSize);
+  }, [items, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [items.length, pageSize]);
 
   const approve = async (id: number, platform: string) => {
     setActing(id);
@@ -1098,173 +1276,241 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {items.map((r, cardIdx) => {
-            const initials = r.employee_name
-              .split(" ")
-              .map((w) => w[0])
-              .join("")
-              .toUpperCase()
-              .slice(0, 2);
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {paginatedItems.map((r, cardIdx) => {
+              const initials = r.employee_name
+                .split(" ")
+                .map((w) => w[0])
+                .join("")
+                .toUpperCase()
+                .slice(0, 2);
 
-            return (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: cardIdx * 0.03, duration: 0.3 }}
-                key={r.id}
-                className="relative overflow-hidden rounded-2xl border bg-white/60 dark:bg-zinc-900/35 border-slate-200/60 dark:border-white/[0.04] p-5 flex flex-col justify-between hover:shadow-md hover:border-slate-300 dark:hover:border-white/[0.08] transition-all duration-300 backdrop-blur-sm group"
-              >
-                {/* Visual platform accent tag */}
-                <div
-                  className={cn(
-                    "absolute top-0 right-0 w-2 h-16 rounded-bl-lg pointer-events-none",
-                    r.platform?.toLowerCase() === "coursera" ? "bg-blue-500" : "bg-violet-500",
-                  )}
-                />
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: cardIdx * 0.03, duration: 0.3 }}
+                  key={r.id}
+                  className="relative overflow-hidden rounded-2xl border bg-white/60 dark:bg-zinc-900/35 border-slate-200/60 dark:border-white/[0.04] p-5 flex flex-col justify-between hover:shadow-md hover:border-slate-300 dark:hover:border-white/[0.08] transition-all duration-300 backdrop-blur-sm group"
+                >
+                  {/* Visual platform accent tag */}
+                  <div
+                    className={cn(
+                      "absolute top-0 right-0 w-2 h-16 rounded-bl-lg pointer-events-none",
+                      r.platform?.toLowerCase() === "coursera" ? "bg-blue-500" : "bg-violet-500",
+                    )}
+                  />
 
-                <div>
-                  {/* User profile row */}
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="inline-flex items-center justify-center h-8 w-8 rounded-full text-xs font-black text-white bg-gradient-to-br shadow-inner"
-                      style={{
-                        background:
-                          getAvatarGradient(r.employee_name) === "from-pink-500 to-violet-600"
-                            ? "linear-gradient(135deg, #ec4899, #8b5cf6)"
-                            : getAvatarGradient(r.employee_name) === "from-blue-500 to-cyan-500"
-                              ? "linear-gradient(135deg, #3b82f6, #06b6d4)"
-                              : getAvatarGradient(r.employee_name) ===
-                                  "from-emerald-500 to-teal-600"
-                                ? "linear-gradient(135deg, #10b981, #059669)"
+                  <div>
+                    {/* User profile row */}
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-full text-xs font-black text-white bg-gradient-to-br shadow-inner"
+                        style={{
+                          background:
+                            getAvatarGradient(r.employee_name) === "from-pink-500 to-violet-600"
+                              ? "linear-gradient(135deg, #ec4899, #8b5cf6)"
+                              : getAvatarGradient(r.employee_name) === "from-blue-500 to-cyan-500"
+                                ? "linear-gradient(135deg, #3b82f6, #06b6d4)"
                                 : getAvatarGradient(r.employee_name) ===
-                                    "from-amber-500 to-orange-600"
-                                  ? "linear-gradient(135deg, #f59e0b, #d97706)"
+                                    "from-emerald-500 to-teal-600"
+                                  ? "linear-gradient(135deg, #10b981, #059669)"
                                   : getAvatarGradient(r.employee_name) ===
-                                      "from-indigo-500 to-purple-600"
-                                    ? "linear-gradient(135deg, #6366f1, #a855f7)"
-                                    : "linear-gradient(135deg, #ec4899, #f43f5e)",
-                      }}
-                    >
-                      {initials}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-bold text-sm text-foreground truncate">
-                        {r.employee_name}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate">
-                        {r.employee_email}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Course specs */}
-                  <div className="mt-4">
-                    <div className="flex items-center gap-1.5 select-none">
-                      <span
-                        className={cn(
-                          "rounded-full px-2.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border",
-                          r.platform?.toLowerCase() === "coursera"
-                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                            : "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
-                        )}
-                      >
-                        {r.platform || "Udemy"}
-                      </span>
-                      <span className="text-[9px] text-muted-foreground/70 font-semibold font-mono">
-                        {r.created_at
-                          ? new Date(r.created_at).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })
-                          : "—"}
-                      </span>
-                    </div>
-
-                    <h3
-                      className="text-sm font-bold text-foreground mt-2.5 line-clamp-2 min-h-[38px] leading-snug group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors"
-                      title={r.course_name}
-                    >
-                      {r.course_name || "Untitled Learning Course"}
-                    </h3>
-                  </div>
-
-                  {/* Justification block */}
-                  <div className="mt-3.5 bg-slate-50/50 dark:bg-zinc-950/20 border border-slate-100 dark:border-zinc-800/40 rounded-xl p-3.5 relative">
-                    <div className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-wider mb-1 select-none">
-                      Rationale Justification
-                    </div>
-                    <p className="text-xs text-muted-foreground dark:text-zinc-400 italic line-clamp-3 leading-relaxed">
-                      "{r.justification || "No justification provided."}"
-                    </p>
-                  </div>
-                </div>
-
-                {/* Footer and Actions */}
-                <div>
-                  {r.status === "Pending" ? (
-                    <div className="mt-5 pt-4 border-t border-slate-200/50 dark:border-zinc-800/60 flex items-center gap-3">
-                      <button
-                        onClick={() => approve(r.id, r.platform)}
-                        disabled={acting === r.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs font-bold bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-all duration-200 disabled:opacity-50 active:scale-95 cursor-pointer shadow-sm shadow-emerald-500/5"
-                      >
-                        {acting === r.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Check className="h-3.5 w-3.5" />
-                        )}
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => {
-                          setRejectId(r.id);
-                          setRejectReason("");
-                          setRejectDialogOpen(true);
+                                      "from-amber-500 to-orange-600"
+                                    ? "linear-gradient(135deg, #f59e0b, #d97706)"
+                                    : getAvatarGradient(r.employee_name) ===
+                                        "from-indigo-500 to-purple-600"
+                                      ? "linear-gradient(135deg, #6366f1, #a855f7)"
+                                      : "linear-gradient(135deg, #ec4899, #f43f5e)",
                         }}
-                        disabled={acting === r.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs font-bold bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 text-rose-600 dark:text-rose-400 transition-all duration-200 disabled:opacity-50 active:scale-95 cursor-pointer shadow-sm shadow-rose-500/5"
                       >
-                        <X className="h-3.5 w-3.5" />
-                        Decline
-                      </button>
+                        {initials}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-sm text-foreground truncate">
+                          {r.employee_name}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate">
+                          {r.employee_email}
+                        </div>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="mt-5 pt-4 border-t border-slate-200/50 dark:border-zinc-800/60 text-xs">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-muted-foreground/60 text-[9px] font-bold uppercase tracking-wider mb-1.5 select-none">
-                        <span>Decision Registry</span>
+
+                    {/* Course specs */}
+                    <div className="mt-4">
+                      <div className="flex items-center gap-1.5 select-none">
                         <span
                           className={cn(
-                            "px-2 py-0.5 rounded-md text-[8px] font-extrabold uppercase border",
-                            STATUS_BADGE[r.status],
+                            "rounded-full px-2.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border",
+                            r.platform?.toLowerCase() === "coursera"
+                              ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                              : "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
                           )}
                         >
-                          {r.status}
+                          {r.platform || "Udemy"}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground/70 font-semibold font-mono">
+                          {r.created_at
+                            ? new Date(r.created_at).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })
+                            : "—"}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-foreground/80 font-semibold mb-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-                        <span>
-                          Reviewed by{" "}
-                          <span className="font-bold text-foreground">
-                            {r.decided_by || "System Admin"}
-                          </span>
-                        </span>
-                      </div>
-
-                      {r.decision_reason && (
-                        <p className="mt-1 text-[11px] text-muted-foreground bg-slate-50 dark:bg-zinc-950/20 p-2 rounded-lg border border-slate-100 dark:border-zinc-800/30 leading-snug">
-                          Reason: {r.decision_reason}
-                        </p>
-                      )}
+                      <h3
+                        className="text-sm font-bold text-foreground mt-2.5 line-clamp-2 min-h-[38px] leading-snug group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors"
+                        title={r.course_name}
+                      >
+                        {r.course_name || "Untitled Learning Course"}
+                      </h3>
                     </div>
-                  )}
+
+                    {/* Justification block */}
+                    <div className="mt-3.5 bg-slate-50/50 dark:bg-zinc-950/20 border border-slate-100 dark:border-zinc-800/40 rounded-xl p-3.5 relative">
+                      <div className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-wider mb-1 select-none">
+                        Rationale Justification
+                      </div>
+                      <p className="text-xs text-muted-foreground dark:text-zinc-400 italic line-clamp-3 leading-relaxed">
+                        "{r.justification || "No justification provided."}"
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Footer and Actions */}
+                  <div>
+                    {r.status === "Pending" ? (
+                      <div className="mt-5 pt-4 border-t border-slate-200/50 dark:border-zinc-800/60 flex items-center gap-3">
+                        <button
+                          onClick={() => approve(r.id, r.platform)}
+                          disabled={acting === r.id}
+                          className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs font-bold bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-all duration-200 disabled:opacity-50 active:scale-95 cursor-pointer shadow-sm shadow-emerald-500/5"
+                        >
+                          {acting === r.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRejectId(r.id);
+                            setRejectReason("");
+                            setRejectDialogOpen(true);
+                          }}
+                          disabled={acting === r.id}
+                          className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2 px-3 text-xs font-bold bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 text-rose-600 dark:text-rose-400 transition-all duration-200 disabled:opacity-50 active:scale-95 cursor-pointer shadow-sm shadow-rose-500/5"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          Decline
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-5 pt-4 border-t border-slate-200/50 dark:border-zinc-800/60 text-xs">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 text-muted-foreground/60 text-[9px] font-bold uppercase tracking-wider mb-1.5 select-none">
+                          <span>Decision Registry</span>
+                          <span
+                            className={cn(
+                              "px-2 py-0.5 rounded-md text-[8px] font-extrabold uppercase border",
+                              STATUS_BADGE[r.status],
+                            )}
+                          >
+                            {r.status}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-foreground/80 font-semibold mb-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                          <span>
+                            Reviewed by{" "}
+                            <span className="font-bold text-foreground">
+                              {r.decided_by || "System Admin"}
+                            </span>
+                          </span>
+                        </div>
+
+                        {r.decision_reason && (
+                          <p className="mt-1 text-[11px] text-muted-foreground bg-slate-50 dark:bg-zinc-950/20 p-2 rounded-lg border border-slate-100 dark:border-zinc-800/30 leading-snug">
+                            Reason: {r.decision_reason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+
+          {/* Pagination Controls */}
+          {items.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border border-slate-200/60 dark:border-white/[0.04] rounded-2xl bg-white/60 dark:bg-zinc-900/[0.05] backdrop-blur-sm">
+              <div className="text-[11px] text-muted-foreground">
+                Showing <span className="font-semibold text-foreground">{Math.min(items.length, (currentPage - 1) * pageSize + 1)}</span> to{" "}
+                <span className="font-semibold text-foreground">{Math.min(items.length, currentPage * pageSize)}</span> of{" "}
+                <span className="font-semibold text-foreground">{items.length}</span> entries
+              </div>
+              
+              <div className="flex items-center gap-4.5">
+                {/* Rows per page selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">Cards per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="text-xs bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-zinc-300"
+                  >
+                    {[3, 6, 9, 12].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              </motion.div>
-            );
-          })}
+
+                {/* Page buttons */}
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                    const isCurrent = p === currentPage;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        className={cn(
+                          "h-7 w-7 text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center border",
+                          isCurrent
+                            ? "bg-indigo-600 border-indigo-600 text-white shadow-sm shadow-indigo-500/25"
+                            : "bg-white dark:bg-zinc-900 border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50"
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-1.5 rounded-lg border border-slate-200/80 dark:border-zinc-800 text-muted-foreground hover:text-foreground hover:bg-slate-50 dark:hover:bg-zinc-800/50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-all cursor-pointer"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -29,13 +29,14 @@ Rules:
 7. CRITICAL: If a tool returns a tag like [DOWNLOAD_PDF:...], you MUST include it EXACTLY as-is in your response. NEVER change it to a markdown link or change the URL.
 8. For a PMO process / how-to / policy question ('how do I…', 'what is the process for…', onboarding, governance, change request), call 'search_pmo_docs' first and answer from the result. If it returns nothing, say the process document isn't available yet — do NOT answer from your own knowledge.
 9. For a staffing / resourcing question — finding people for a new or upcoming project ('I need 2 React devs with 3+ years', 'who is free for a new project?', 'find an AWS engineer who isn't fully allocated') — call 'match_resources'. Infer the skills, minimum experience, needed-by date, and headcount from the user's message; never invent any value they did not state. Present the returned candidates verbatim.
-11. For a learning / upskilling question — someone asking what to learn or which course to take for a skill ('recommend a course on React', 'what Udemy courses are there for AWS', 'I want to upskill in Power BI') — call 'search_udemy_courses' with the topic inferred from their message. Present the returned courses verbatim. If they then want a seat, call 'request_training_license'.
 10. For an organisation-wide skill-gap / capability / hiring question — NOT about one named project but about where the org is short on skills given who is available ('what skills are we short on?', 'what can't we staff?', 'where are our skill gaps?', 'should we hire or can we redeploy?', 'what should we train for?') — call 'analyze_skill_supply'. Present the result verbatim.
-12. Project IQ (delivery-knowledge reuse from past projects). Use ONLY these tools for the matching question, present the result verbatim, and NEVER add experience from your own knowledge:
+11. For a learning / upskilling question — someone asking what to learn or which course to take for a skill ('recommend a course on React', 'what Udemy courses are there for AWS', 'I want to upskill in Power BI') — call 'search_udemy_courses' with the topic inferred from their message. Present the returned courses verbatim. If they then want a seat, call 'request_training_license'.
+12. Project IQ (delivery-knowledge reuse from past projects). Present the result verbatim. NEVER add from your own knowledge:
     - 'have we done/built something like X before?', 'any prior project with Y?' → 'find_similar_projects'.
     - 'what usually goes wrong in X?', 'common risks/lessons with Y' → 'project_lessons'.
     - 'who has done X before?', 'who has delivered Y?' (proven past experience, NOT availability) → 'find_project_experts'. For who is FREE to staff a new project, still use 'match_resources'.
     - 'do we already have a Z component?', 'any reusable X we can reuse?' → 'find_reusable_assets'.
+    - For any other project question not covered by the specific tools above — call 'search_project_corpus'.
     These are internal-only — never draft client-facing proposals or case studies from them.
 13. Udemy Business seat administration (for HR/PMO/Admin):
     - 'who hasn't used Udemy / inactive Udemy users / idle seats / who can we remove' → 'udemy_inactive_seats' (infer the idle-day threshold; default 30).
@@ -45,6 +46,14 @@ Rules:
     - 'reactivate / restore Udemy access for <person>' → 'reactivate_udemy_user'.
     - 'add / provision / give Udemy access to <person>' → 'provision_udemy_user'.
     Present each tool's result verbatim. These tools enforce their own permissions; if one says it's restricted or not connected, relay that — don't work around it.
+14. TechElevate LMS — creating new in-house trainings:
+    - 'create a training on X', 'build a course for Y', 'add a new training called Z', 'make a DevOps course' → call 'create_te_training'. Infer topic and any description from the message. PMO/Admin only.
+15. TechElevate LMS — assigning trainings:
+    - 'assign X training to Y', 'enroll me in the DevOps course', 'book cloud fundamentals for John', 'assign Python to my team' → call 'assign_te_training'. Infer training_name and employee from the message. Use 'me' if the user wants it for themselves. PMO/Admin only.
+16. TechElevate LMS — completion tracking:
+    - 'who completed the security training?', 'show completions for Python', 'who passed the DevOps assessment?', 'training status for X' → call 'list_training_completions'. Infer training_name from the message.
+17. TechElevate LMS — MCQ generation:
+    - 'generate MCQ questions for X training', 'create quiz questions for the DevOps course', 'draft assessment questions grounded in the Udemy content', 'make questions for the Python training' → call 'generate_training_mcq'. Infer training_name and count (default 5). Questions are AI-drafted from the course's uploaded materials and Udemy/video links. PMO/Admin only.
 
 FOLLOW-UP FOCUS RULE:
 - When the user asks a specific follow-up ('who is the owner?', 'what is the completion %?', 'when is the next milestone?'), answer ONLY that single point from the prior tool result — do NOT re-list all project details.
@@ -531,6 +540,18 @@ def provision_udemy_user(email: str, given_name: str = "", family_name: str = ""
 
 
 @tool
+def search_project_corpus(query: str) -> str:
+    """Search the full project knowledge base — transcripts, project files, and delivery
+    documents from all past projects. Use for ANY project question not covered by the
+    specific Project IQ tools: e.g. 'what technologies have we used in healthcare projects?',
+    'summarise our delivery in fintech', 'what did we build for client X?', 'what does
+    project Y do?', 'how many projects use React?', 'tell me about our cloud work'.
+    query: a descriptive search query inferred from the user's message."""
+    from app.services.policy_service import PolicyService
+    return PolicyService.search_projects(query, limit=6)
+
+
+@tool
 def find_similar_projects(description: str) -> str:
     """Project IQ — find past projects similar to a described need ('have we done
     something like this before?', 'have we built an employee self-service portal with
@@ -574,8 +595,287 @@ def find_reusable_assets(need: str) -> str:
     return piq.render_reusable_assets(need)
 
 
+_TE_WRITE_ROLES = {"pmo", "admin", "super admin"}
+
+
+@tool
+def create_te_training(
+    topic: str,
+    description: str = "",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Create a new in-house TechElevate LMS training from a plain-English description.
+    The AI drafts the title, description, category, duration, pass %, skill tags, and
+    optional multi-level structure; the training is saved immediately. Call for 'create
+    a training on Azure DevOps', 'build a course for Python beginners', 'add a new
+    training called Cloud Fundamentals', 'make a compliance course'. PMO/Admin only.
+    topic: the training topic / working title inferred from the message.
+    description: any extra requirements or details stated by the user (leave blank if none)."""
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    if _caller_role(state) not in _TE_WRITE_ROLES:
+        return "Creating TechElevate trainings is restricted to PMO and Admin users."
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    if not te.local_enabled():
+        return "The TechElevate LMS isn't enabled right now (TECHELEVATE_LOCAL is off)."
+    from app.services import llm_controls_service as llm_controls
+    from app.services.llm_json import invoke_json
+    full_desc = f"{topic}: {description}" if description.strip() else topic
+    model = llm_controls.get_llm("general", default_timeout=60)
+    prompt = (
+        "You are a corporate training designer for an internal Learning Management System. "
+        "From the admin's description below, design a training course.\n\n"
+        f"Admin's description: {full_desc}\n\n"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+        '{"title": "Short Course Title", "description": "2-3 sentence overview.", '
+        '"category": "Technical|Governance & Compliance|Business", '
+        '"duration_minutes": 120, "pass_percentage": 60, '
+        '"skill_tags": ["Skill1", "Skill2"], '
+        '"multi_level": false, '
+        '"levels": [{"name": "Beginner", "duration_minutes": 60, "pass_percentage": 55, "description": "..."}, '
+        '{"name": "Intermediate", "duration_minutes": 60, "pass_percentage": 65, "description": "..."}, '
+        '{"name": "Advanced", "duration_minutes": 60, "pass_percentage": 70, "description": "..."}]}\n\n'
+        "Rules:\n"
+        "- title: concise, professional. 5-10 words max.\n"
+        "- category: pick the single best fit from the three options.\n"
+        "- duration_minutes: realistic total study time (30-480).\n"
+        "- pass_percentage: 50-80.\n"
+        "- skill_tags: 2-5 concrete skills the learner earns on completion.\n"
+        "- multi_level: true only if the topic naturally has a progression. Simple courses → false.\n"
+        "- levels: include ONLY when multi_level is true. 2-4 levels with ascending difficulty.\n"
+    )
+    draft = invoke_json(model, prompt, attempts=2)
+    if not draft:
+        return "Couldn't draft the training — the AI model didn't return usable content. Try rephrasing."
+    tags = draft.get("skill_tags") or []
+    if isinstance(tags, str):
+        tags = [s.strip() for s in tags.split(",") if s.strip()]
+    data = {
+        "title": str(draft.get("title") or topic).strip()[:150],
+        "description": str(draft.get("description") or "").strip()[:500],
+        "category": str(draft.get("category") or "Technical").strip(),
+        "duration_minutes": min(max(int(draft.get("duration_minutes") or 120), 15), 960),
+        "pass_percentage": min(max(int(draft.get("pass_percentage") or 60), 10), 100),
+        "skill_tags": tags[:8],
+        "levels": (
+            [
+                {
+                    "name": str(lv.get("name") or f"Level {i+1}").strip()[:60],
+                    "duration_minutes": min(max(int(lv.get("duration_minutes") or 60), 10), 480),
+                    "pass_percentage": min(max(int(lv.get("pass_percentage") or 60), 10), 100),
+                    "description": str(lv.get("description") or "").strip()[:300],
+                }
+                for i, lv in enumerate((draft.get("levels") or [])[:5])
+            ]
+            if draft.get("multi_level") and isinstance(draft.get("levels"), list)
+            else []
+        ),
+    }
+    if data["category"] not in ("Technical", "Governance & Compliance", "Business"):
+        data["category"] = "Technical"
+    db = SessionLocal()
+    try:
+        result = te.create_training(db, data, created_by=email)
+        lines = [
+            f"Training **{result['title']}** created. ✓",
+            f"Category: {result.get('category')} · Duration: {result.get('duration_minutes')} min · Pass: {result.get('pass_percentage')}%",
+        ]
+        if result.get("skill_tags"):
+            lines.append(f"Skills on completion: {', '.join(result['skill_tags'])}")
+        if result.get("levels"):
+            lvl_names = ", ".join(lv["name"] for lv in result["levels"])
+            lines.append(f"Levels: {lvl_names}")
+        lines.append(f"\nTraining ID: {result['id']}. Add materials and MCQ questions from the TechElevate LMS tab, then assign it to learners.")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Failed to create training: {exc}"
+    finally:
+        db.close()
+
+
+@tool
+def assign_te_training(
+    training_name: str,
+    employee: str = "me",
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Assign an in-house TechElevate training to an employee. Call for 'assign Python
+    training to John', 'enroll me in the DevOps course', 'book Cloud Fundamentals for
+    sarah@example.com', 'assign security training to the team'. PMO/Admin for others;
+    any user can self-enroll with employee='me'.
+    training_name: the training name inferred from the message.
+    employee: target employee's name or email. Use 'me' if the user wants it for themselves."""
+    caller_email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
+    import datetime
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    if not te.local_enabled():
+        return "The TechElevate LMS isn't enabled right now."
+    target_is_self = not employee or employee.strip().lower() in ("me", "myself", "i")
+    if not target_is_self and _caller_role(state) not in _TE_WRITE_ROLES:
+        return "Assigning trainings to others is restricted to PMO and Admin users."
+    db = SessionLocal()
+    try:
+        trainings = te.list_trainings(db, search=training_name)
+        if not trainings:
+            return (f"No training found matching '{training_name}'. "
+                    "Use 'recommend training' or 'show available trainings' to browse the catalog.")
+        t = trainings[0]
+        target_email = caller_email if target_is_self else None
+        if not target_email:
+            from app.models import Employee
+            emp_q = db.query(Employee).filter(
+                Employee.name.ilike(f"%{employee}%") | Employee.email.ilike(f"%{employee}%")
+            ).first()
+            if not emp_q:
+                return f"Couldn't find employee '{employee}'. Check the name or email and try again."
+            target_email = emp_q.email
+        emp_obj = te._resolve_employee(db, email=target_email)
+        if not emp_obj:
+            return f"No employee record found for '{target_email}'. Check the directory sync."
+        # Check for existing enrollment before assigning (assign_training is idempotent and
+        # returns the existing row rather than None when already enrolled).
+        from app.models import TeAssignment
+        already = db.query(TeAssignment).filter(
+            TeAssignment.training_id == t["id"],
+            TeAssignment.employee_id == emp_obj.id,
+        ).first()
+        if already:
+            return f"**{emp_obj.name}** is already enrolled in **{t['title']}** (status: {already.status}) — nothing to do."
+        a = te.assign_training(
+            db, training_id=t["id"], employee=emp_obj,
+            start_date=datetime.date.today(), assigned_by=caller_email,
+        )
+        if a is None:
+            return f"Could not assign the training — training or employee record missing."
+        db.commit()
+        who = "You are" if target_is_self else f"**{emp_obj.name}** is"
+        return (
+            f"Done — {who} enrolled in **{t['title']}**. ✓\n"
+            f"They can take the assessment from TechElevate LMS → My Learning tab "
+            f"to earn the course's verified skills: {', '.join(t.get('skill_tags') or [])}."
+        )
+    finally:
+        db.close()
+
+
+@tool
+def list_training_completions(training_name: str) -> str:
+    """Show enrollment and completion status for a TechElevate training — who completed,
+    who is in progress, who is pending, and scores. Call for 'who completed the security
+    training?', 'show completions for Python course', 'who passed the DevOps assessment?',
+    'training status for X', 'enrollment for the ML course'.
+    training_name: the training name inferred from the message."""
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    if not te.local_enabled():
+        return "The TechElevate LMS isn't enabled right now."
+    db = SessionLocal()
+    try:
+        trainings = te.list_trainings(db, search=training_name)
+        if not trainings:
+            return f"No training found matching '{training_name}'."
+        t = trainings[0]
+        assignments = te.list_assignments(db, training_id=t["id"], limit=100)
+        if not assignments:
+            return f"No one is enrolled in **{t['title']}** yet. Use 'assign' to enroll learners."
+        completed = [a for a in assignments if a["status"] == "Completed"]
+        in_progress = [a for a in assignments if a["status"] == "In Progress"]
+        pending = [a for a in assignments if a["status"] == "Assigned"]
+        failed = [a for a in assignments if a["status"] == "Failed"]
+        lines = [f"**{t['title']}** — {len(assignments)} enrolled:\n"]
+        if completed:
+            lines.append(f"Completed ({len(completed)}):")
+            for a in completed[:12]:
+                score = f" · {a['score']}%" if a.get("score") is not None else ""
+                lines.append(f"  - {a.get('employee_name') or a.get('employee_email', '?')}{score}")
+        if in_progress:
+            lines.append(f"\nIn Progress ({len(in_progress)}):")
+            for a in in_progress[:8]:
+                lines.append(f"  - {a.get('employee_name') or a.get('employee_email', '?')}")
+        if pending:
+            lines.append(f"\nPending ({len(pending)}):")
+            for a in pending[:8]:
+                lines.append(f"  - {a.get('employee_name') or a.get('employee_email', '?')}")
+        if failed:
+            lines.append(f"\nFailed ({len(failed)}):")
+            for a in failed[:8]:
+                lines.append(f"  - {a.get('employee_name') or a.get('employee_email', '?')}")
+        if len(assignments) > 28:
+            lines.append(f"\n…and more. See the full list in TechElevate LMS → Admin Panel.")
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+@tool
+def generate_training_mcq(
+    training_name: str,
+    count: int = 5,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """AI-generate MCQ (multiple-choice question) assessment questions for a TechElevate
+    training, grounded in its uploaded materials (PDFs, DOCX) and linked content (Udemy
+    courses, video links). Questions are generated AND saved to the training immediately.
+    Call for 'generate MCQ questions for the Python training', 'create quiz questions for
+    DevOps course', 'generate assessment questions based on the Udemy content',
+    'generate 10 questions for ML training'. PMO/Admin only.
+    training_name: inferred from the message.
+    count: number of questions to generate and save (default 5, max 10 via chat)."""
+    if _caller_role(state) not in _TE_WRITE_ROLES:
+        return "Generating MCQ questions is restricted to PMO and Admin users."
+    from app.database import SessionLocal
+    from app.services import techelevate_local_service as te
+    if not te.local_enabled():
+        return "The TechElevate LMS isn't enabled right now."
+    count = max(1, min(int(count or 5), 10))
+    db = SessionLocal()
+    try:
+        trainings = te.list_trainings(db, search=training_name)
+        if not trainings:
+            return (f"No training found matching '{training_name}'. "
+                    "Check the name or browse the TechElevate LMS catalog.")
+        t = trainings[0]
+        result = te.generate_questions(db, t["id"], count=count, difficulty="mixed")
+        if result.get("error") == "training_not_found":
+            return f"Training '{training_name}' not found."
+        if result.get("error"):
+            return ("Couldn't generate questions — the AI model didn't return usable content. "
+                    "Try again or add more content/materials to the course first.")
+        questions = result.get("questions") or []
+        if not questions:
+            return ("No questions were generated. Add Udemy course links, videos, or "
+                    "upload course materials in the LMS portal first, then try again.")
+
+        # Save the generated questions directly to the training.
+        saved = te.bulk_add_questions(db, t["id"], questions)
+
+        grounded = result.get("grounded")
+        source = "grounded in the course's materials" if grounded else "based on course topic/skills (add materials for richer grounding)"
+        lines = [
+            f"Done — {len(saved)} MCQ questions generated and saved to **{t['title']}** ({source}):\n"
+        ]
+        for i, q in enumerate(saved, 1):
+            lines.append(f"{i}. {q['question']}")
+            for k in sorted(q.get("options") or {}):
+                marker = " ✓" if k == q.get("correct_answer") else ""
+                lines.append(f"   {k}) {q['options'][k]}{marker}")
+            if q.get("explanation"):
+                lines.append(f"   _{q['explanation']}_")
+            lines.append("")
+        lines.append(
+            "Questions are now live on the training. "
+            "Learners who pass the assessment will earn the course's verified skills. "
+            "You can edit or delete individual questions in TechElevate LMS → open the course → Assessment tab."
+        )
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
 pmo_tools = [
     list_projects,
+    search_project_corpus,
     find_similar_projects,
     project_lessons,
     find_project_experts,
@@ -592,6 +892,10 @@ pmo_tools = [
     search_udemy_courses,
     recommend_training,
     get_my_trainings,
+    create_te_training,
+    assign_te_training,
+    list_training_completions,
+    generate_training_mcq,
     udemy_inactive_seats,
     udemy_seat_utilization,
     udemy_course_insights,
@@ -810,6 +1114,11 @@ _PASSTHROUGH_TOOLS = {
     # In-house training recommendations + personal training list are display-ready.
     "recommend_training",
     "get_my_trainings",
+    # TechElevate LMS write/query tools — results are display-ready.
+    "create_te_training",
+    "assign_te_training",
+    "list_training_completions",
+    "generate_training_mcq",
     # Udemy seat admin (reporting + SCIM) — all return display-ready confirmations/lists.
     "udemy_inactive_seats",
     "udemy_seat_utilization",

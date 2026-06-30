@@ -34,6 +34,46 @@ def _norm(s: Optional[str]) -> str:
     return (s or "").strip().lower()
 
 
+# Maps substrings found in a person's department/function → training category.
+# Used as a tiebreaker when the demand signal is 0 (sparse skill data) to ensure
+# bench employees in different functions get domain-relevant recommendations.
+_DEPT_CATEGORY: list[tuple[str, str]] = [
+    ("data",        "Technical"),
+    ("engineer",    "Technical"),
+    ("technolog",   "Technical"),
+    ("software",    "Technical"),
+    ("devops",      "Technical"),
+    ("infra",       "Technical"),
+    ("cloud",       "Technical"),
+    ("finance",     "Governance & Compliance"),
+    ("governance",  "Governance & Compliance"),
+    ("compliance",  "Governance & Compliance"),
+    ("audit",       "Governance & Compliance"),
+    ("risk",        "Governance & Compliance"),
+    ("legal",       "Governance & Compliance"),
+    # Default broad match — all customer/delivery/ops/HR/sales roles → Business
+    ("customer",    "Business"),
+    ("delivery",    "Business"),
+    ("operations",  "Business"),
+    ("operation",   "Business"),
+    ("sales",       "Business"),
+    ("hr",          "Business"),
+    ("people",      "Business"),
+    ("business",    "Business"),
+]
+
+
+def _dept_preferred_category(dept: Optional[str]) -> Optional[str]:
+    """Return the training category most relevant to the given department string."""
+    if not dept:
+        return None
+    dl = dept.lower()
+    for keyword, category in _DEPT_CATEGORY:
+        if keyword in dl:
+            return category
+    return None
+
+
 def _billable_skill_demand(db: Session) -> dict[str, int]:
     """skill(lower) → # of people on a BILLABLE project (latest snapshot) who hold it.
 
@@ -90,7 +130,7 @@ def suggestions(db: Session, limit: int = 25, today: Optional[datetime.date] = N
                 "summary": {"bench": 0, "rolling_off": 0}}
 
     demand = _billable_skill_demand(db)
-    trainings = db.query(TeTraining).all()
+    trainings = db.query(TeTraining).order_by(TeTraining.id).all()
 
     # Workforce directory (Zoho-sourced skills + layered identity), name-keyed —
     # independent of the sparse employees table.
@@ -102,25 +142,47 @@ def suggestions(db: Session, limit: int = 25, today: Optional[datetime.date] = N
     rows = []
     for name, v, rolling_off in candidates:
         person = people.get(name) or {}
+        dept = person.get("function") or v.get("function")
         have = {_norm(s) for s in skills_map.get(name, set())}
+        preferred_cat = _dept_preferred_category(dept)
 
         best = None
         for t in trainings:
-            new_skills = [s for s in (t.skill_tags or []) if _norm(s) not in have]
+            all_tags = t.skill_tags or []
+            new_skills = [s for s in all_tags if _norm(s) not in have]
             if not new_skills:
                 continue
-            score = max((demand.get(_norm(s), 0) for s in new_skills), default=0)
-            if best is None or score > best["score"]:
-                best = {"training": t, "new_skills": new_skills, "score": score}
+            # Sum demand across all new skills — rewards trainings covering more
+            # in-demand skills rather than just one high-value skill.
+            demand_sum = sum(demand.get(_norm(s), 0) for s in new_skills)
+            # Tiebreaker 1 — department-category affinity: when demand data is sparse
+            # (all scores 0), prefer courses in the employee's own functional domain
+            # (e.g. Customer Ops → Business courses, Data Services → Technical).
+            cat_match = 1 if (preferred_cat and t.category == preferred_cat) else 0
+            # Tiebreaker 2 — domain adjacency: course builds on skills the person
+            # already has (e.g. Python dev → ML-with-Python over Governance).
+            known_count = sum(1 for s in all_tags if _norm(s) in have)
+            adjacency = known_count / len(all_tags) if all_tags else 0
+            score_tuple = (demand_sum, cat_match, adjacency, len(new_skills))
+            if best is None or score_tuple > best["score_tuple"]:
+                best = {"training": t, "new_skills": new_skills, "score": demand_sum,
+                        "score_tuple": score_tuple}
         if not best:
             continue
 
         t = best["training"]
+        # Build a human-readable reason for why this course was picked for this person.
+        if best["score"] > 0:
+            top_skill = max(best["new_skills"], key=lambda s: demand.get(_norm(s), 0))
+            top_count = demand.get(_norm(top_skill), 0)
+            rec_reason = f"{top_count} billable staff hold '{top_skill}' — learning it improves deployability"
+        else:
+            rec_reason = f"Broadens your profile with {len(best['new_skills'])} skill(s) not yet in your verified set"
         rows.append({
             "employee_id": person.get("pk"),
             "employee_name": person.get("name") or name.title(),
             "employee_email": person.get("email"),
-            "department": person.get("function") or v.get("function"),
+            "department": dept,
             "free_pct": round(v["free"], 0),
             "reason": ("Rolling off soon" if rolling_off and not v["is_bench"] else "On bench"),
             "rolloff_date": v["earliest_free"].isoformat() if v["earliest_free"] else None,
@@ -129,6 +191,7 @@ def suggestions(db: Session, limit: int = 25, today: Optional[datetime.date] = N
             "recommended_training": t.title,
             "teaches_skills": best["new_skills"],
             "demand_score": best["score"],
+            "recommendation_reason": rec_reason,
             "suggested_due_date": _due_date(v["free"], today).isoformat(),
         })
 

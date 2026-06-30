@@ -15,7 +15,14 @@ from sqlalchemy.orm import Session
 from app.auth import CurrentUser, get_current_user
 from app.database import get_db
 from app.services import udemy_business_service as udemy
-from app.services import udemy_scim_service as scim
+from app.services import udemy_scim_service as _scim_real
+from app.services import udemy_scim_mock_service as _scim_mock
+
+# Use the mock service when real SCIM is not configured or not yet reachable.
+# Set UDEMY_SCIM_MOCK=false in .env (and restart) to switch to live SCIM.
+import os as _os
+_use_mock = _os.environ.get("UDEMY_SCIM_MOCK", "true").lower() in ("1", "true", "yes", "on")
+scim = _scim_mock if (_use_mock or not _scim_real.configured()) else _scim_real
 
 router = APIRouter(prefix="/api/portal/udemy", tags=["Udemy Business"])
 

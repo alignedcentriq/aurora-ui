@@ -349,7 +349,7 @@ function ResponsiveTable({
                 >
                   {cols.map((c) => {
                     const val = r[c];
-                    const pct = c.toLowerCase().includes("percent") || c.toLowerCase().includes("percentage") || c.toLowerCase().includes("ratio");
+                    const pct = c.toLowerCase().includes("percent") || c.toLowerCase().split(/[_-\\s]/).includes("ratio");
                     return (
                       <td key={c} className="px-5 py-3.5 whitespace-nowrap text-sm font-medium text-slate-700 dark:text-zinc-300">
                         {pct && val != null ? (
@@ -418,7 +418,7 @@ function ResponsiveTable({
                 if (k === titleKey || k === subtitleKey) return null;
                 const val = row[k];
                 const label = k.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-                const pct = k.toLowerCase().includes("percent") || k.toLowerCase().includes("percentage") || k.toLowerCase().includes("ratio");
+                const pct = k.toLowerCase().includes("percent") || k.toLowerCase().split(/[_-\\s]/).includes("ratio");
 
                 return (
                   <div key={k} className="flex flex-col gap-0.5 min-w-0">

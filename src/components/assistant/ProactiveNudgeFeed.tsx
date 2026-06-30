@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Bell, X, CalendarClock, AlarmClock, ExternalLink, Send, Loader2 } from "lucide-react";
+import { Bell, X, CalendarClock, AlarmClock, ExternalLink, Send, Loader2, Mail, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/lib/auth-store";
@@ -23,6 +23,8 @@ interface Nudge {
 const TYPE_ICON: Record<string, typeof Bell> = {
   leave_expiring: CalendarClock,
   approval_stale: AlarmClock,
+  new_mail: Mail,
+  new_community_post: MessageSquare,
 };
 
 const ACTION_LABEL: Record<string, string> = {

@@ -244,6 +244,42 @@ async def fetch_my_emails(token: str, top: int = 15) -> dict:
         return _error(f"Failed to fetch emails: {e}")
 
 
+async def fetch_unread_since(token: str, since_iso: str, top: int = 10) -> dict:
+    """Fetch unread inbox emails received at/after ``since_iso`` (UTC ISO datetime).
+
+    Used by the proactive nudge scanner to surface "new mail" notifications without
+    re-flagging mail the user has already seen in a prior scan window.
+    """
+    url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
+    params = {
+        "$top": str(min(top, 25)),
+        "$select": "id,subject,from,receivedDateTime",
+        "$orderby": "receivedDateTime desc",
+        "$filter": f"isRead eq false and receivedDateTime ge {since_iso}",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url, headers=_headers(token), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        emails = []
+        for m in data.get("value", []):
+            sender = m.get("from", {}).get("emailAddress", {})
+            emails.append({
+                "id": m.get("id"),
+                "subject": m.get("subject", "(no subject)"),
+                "from_name": sender.get("name", ""),
+                "received": m.get("receivedDateTime", ""),
+            })
+        return {"success": True, "count": len(emails), "emails": emails}
+
+    except httpx.HTTPStatusError as e:
+        return _error(f"Graph API error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to fetch unread mail: {e}")
+
+
 # -- Send Email ---------------------------------------------------------------
 
 async def send_email(
@@ -758,6 +794,47 @@ async def send_teams_message(token: str, chat_id: str, content: str) -> dict:
         return _error(f"Teams send error: {e.response.text[:300]}", e.response.status_code)
     except Exception as e:
         return _error(f"Failed to send Teams message: {e}")
+
+
+async def create_group_chat(token: str, topic: str, member_emails: list[str]) -> dict:
+    """Create a group chat in Microsoft Teams with the given members.
+
+    The calling user is added as the owner automatically by Graph.
+    member_emails: list of member UPNs / email addresses.
+    """
+    url = f"{GRAPH_BASE}/chats"
+    # The caller is implicitly the owner via the delegated token; Graph still requires
+    # the owner to appear in the members array with roles=["owner"].
+    members: list[dict] = [
+        {
+            "@odata.type": "#microsoft.graph.aadUserConversationMember",
+            "roles": ["owner"],
+            "user@odata.bind": "https://graph.microsoft.com/v1.0/me",
+        }
+    ]
+    for email in member_emails:
+        members.append({
+            "@odata.type": "#microsoft.graph.aadUserConversationMember",
+            "roles": [],
+            "user@odata.bind": f"https://graph.microsoft.com/v1.0/users/{email.strip()}",
+        })
+
+    payload = {"chatType": "group", "topic": topic, "members": members}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(url, headers=_headers(token), json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "success": True,
+            "chat_id": data.get("id"),
+            "topic": topic,
+            "member_count": len(member_emails),
+        }
+    except httpx.HTTPStatusError as e:
+        return _error(f"Group chat creation failed: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to create group chat: {e}")
 
 
 async def find_chat_by_participant(token: str, person: str) -> dict | None:
