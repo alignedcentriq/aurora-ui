@@ -120,3 +120,45 @@ async def experts(skills: str, user: CurrentUser = Depends(require_non_employee)
 @router.get("/assets")
 async def assets(need: str, user: CurrentUser = Depends(require_non_employee)):
     return {"need": need, "assets": piq.find_reusable_assets(need)}
+
+
+# ── Phase 2 endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/recurring-risks")
+async def recurring_risks(
+    min_projects: int = 2,
+    user: CurrentUser = Depends(require_non_employee),
+):
+    """Cross-project lessons / risks that recur in ≥ min_projects — delivery watch-list."""
+    return {"risks": piq.recurring_risks(min_projects=min_projects)}
+
+
+@router.get("/available-experts")
+async def available_experts(
+    skills: str,
+    user: CurrentUser = Depends(require_non_employee),
+):
+    """Experts in *skills* cross-referenced with current allocation availability."""
+    return {"skills": skills, "experts": piq.find_available_experts(skills)}
+
+
+class KickoffBriefRequest(BaseModel):
+    description: str
+
+
+@router.post("/kickoff-brief")
+async def kickoff_brief(
+    req: KickoffBriefRequest,
+    user: CurrentUser = Depends(require_non_employee),
+):
+    """Generate a delivery kickoff brief from similar past project DNA."""
+    return piq.generate_kickoff_brief(req.description)
+
+
+@router.get("/training-recs")
+async def training_recs(
+    slug: str,
+    user: CurrentUser = Depends(require_non_employee),
+):
+    """Map lessons from a project's DNA to Udemy course recommendations."""
+    return piq.lessons_to_training(slug)

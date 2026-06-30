@@ -457,7 +457,19 @@ def get_profile(slug: str) -> dict | None:
     db = SessionLocal()
     try:
         p = db.query(ProjectProfile).filter(ProjectProfile.project_slug == slug).first()
-        return _profile_to_dict(p, with_quotes=True) if p else None
+        if not p:
+            return None
+        d = _profile_to_dict(p, with_quotes=True)
+        d["dna_summary"] = p.dna_summary or ""
+        # Include source document titles for the "Sources" drill-down.
+        rows = (
+            db.query(Policy.title, Policy.source_key)
+            .filter(Policy.source_key.like(f"{_KEY_PREFIX}{slug}/%"))
+            .order_by(Policy.title)
+            .all()
+        )
+        d["source_docs"] = [{"title": t, "source_key": sk} for t, sk in rows]
+        return d
     finally:
         db.close()
 
@@ -937,3 +949,340 @@ def record_queries(slugs: list[str]) -> None:
         db.rollback()
     finally:
         db.close()
+
+
+# ── Phase 2: Recurring-risk radar ────────────────────────────────────────────
+
+def recurring_risks(min_projects: int = 2, limit: int = 30) -> list[dict]:
+    """Cross-project lessons that appear in ≥ min_projects — the "watch list" for
+    delivery teams.  Groups by category first, then de-duplicates within category
+    by fuzzy keyword overlap so the same lesson phrased differently isn't split."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ProjectLesson, ProjectProfile.name, ProjectProfile.project_slug)
+            .join(ProjectProfile, ProjectLesson.profile_id == ProjectProfile.id)
+            .all()
+        )
+    finally:
+        db.close()
+
+    # bucket: (category, frozenset-of-key-tokens) → list of (lesson, recommendation, project_name, slug)
+    from collections import defaultdict
+    buckets: dict[tuple, list] = defaultdict(list)
+    for lesson, pname, pslug in rows:
+        cat = (lesson.category or "General").strip()
+        toks = frozenset(
+            w for w in re.findall(r"[a-z]{4,}", (lesson.lesson or "").lower())
+            if w not in _STOP
+        )
+        # Match to nearest existing bucket (≥40% token overlap) or start a new one.
+        matched = None
+        for key in buckets:
+            kcat, ktoks = key
+            if kcat != cat or not ktoks:
+                continue
+            overlap = len(toks & ktoks) / max(len(toks | ktoks), 1)
+            if overlap >= 0.40:
+                matched = key
+                break
+        key = matched or (cat, toks)
+        buckets[key].append({
+            "lesson": lesson.lesson,
+            "recommendation": lesson.recommendation,
+            "impact_level": lesson.impact_level,
+            "confidence": lesson.confidence,
+            "project": pname,
+            "slug": pslug,
+        })
+
+    risks = []
+    for (cat, _), entries in buckets.items():
+        projects = list({e["slug"]: e["project"] for e in entries}.items())
+        if len(projects) < min_projects:
+            continue
+        # Representative lesson = longest text (usually the most complete phrasing).
+        rep = max(entries, key=lambda e: len(e.get("lesson") or ""))
+        rec = next((e["recommendation"] for e in entries if e.get("recommendation")), None)
+        has_high = any(str(e.get("impact_level") or "").lower() == "high" for e in entries)
+        risks.append({
+            "category": cat,
+            "lesson": rep["lesson"],
+            "recommendation": rec,
+            "impact_level": "high" if has_high else rep.get("impact_level"),
+            "recurrence": len(projects),
+            "projects": [{"slug": s, "name": n} for s, n in projects],
+        })
+
+    risks.sort(key=lambda r: (-r["recurrence"], r["category"]))
+    return risks[:limit]
+
+
+# ── Phase 2: Experience × Availability staffing ───────────────────────────────
+
+def _latest_allocation_snapshot() -> "datetime.date | None":
+    db = SessionLocal()
+    try:
+        row = db.execute(
+            __import__("sqlalchemy").text(
+                "SELECT MAX(allocation_date) FROM enterprise_ai.employee_allocations"
+            )
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        db.close()
+
+
+def find_available_experts(skills: str, limit: int = 12) -> list[dict]:
+    """People with evidence-backed experience in *skills* who appear available
+    (< 80% allocated) in the latest snapshot.
+
+    Joins ProjectExpertise (delivery experience) with the employee_allocations
+    monthly snapshot to surface 'has done it AND has capacity'.
+    """
+    from sqlalchemy import or_
+
+    # 1. Gather expertise-matched people from DNA.
+    experts = find_experts(skills, limit=50)  # broader initial pull
+    if not experts:
+        return []
+
+    names = [e["person_name"] for e in experts]
+
+    # 2. Latest allocation snapshot date.
+    snap = _latest_allocation_snapshot()
+    if not snap:
+        # No allocation data — return expertise results without availability.
+        return [
+            {**e, "availability": "unknown", "utilization_pct": None, "current_projects": []}
+            for e in experts[:limit]
+        ]
+
+    db = SessionLocal()
+    try:
+        # 3. Sum efforts for each person on the latest snapshot that are ongoing.
+        rows = db.execute(
+            __import__("sqlalchemy").text("""
+                SELECT employee_name,
+                       SUM(efforts_percent) AS total_pct,
+                       array_agg(DISTINCT project_name) AS projects
+                FROM enterprise_ai.employee_allocations
+                WHERE allocation_date = :snap
+                  AND project_status NOT LIKE '%Completed%'
+                  AND employee_name = ANY(:names)
+                GROUP BY employee_name
+            """),
+            {"snap": snap, "names": names},
+        ).fetchall()
+    finally:
+        db.close()
+
+    util: dict[str, dict] = {}
+    for emp_name, total_pct, projs in rows:
+        util[emp_name] = {
+            "utilization_pct": round(float(total_pct or 0), 1),
+            "current_projects": [p for p in (projs or []) if p],
+        }
+
+    results = []
+    for e in experts:
+        u = util.get(e["person_name"], {})
+        pct = u.get("utilization_pct")
+        if pct is None:
+            avail = "likely available"  # not in latest snapshot → bench
+        elif pct >= 100:
+            avail = "fully allocated"
+        elif pct >= 80:
+            avail = "mostly allocated"
+        elif pct >= 40:
+            avail = "partially available"
+        else:
+            avail = "available"
+        results.append({
+            **e,
+            "availability": avail,
+            "utilization_pct": pct,
+            "current_projects": u.get("current_projects", []),
+        })
+
+    # Sort: available first, then partially, then mostly, then full.
+    _rank = {"available": 0, "likely available": 1, "partially available": 2,
+             "mostly allocated": 3, "fully allocated": 4}
+    results.sort(key=lambda r: (_rank.get(r["availability"], 5), -r.get("project_count", 0)))
+    return results[:limit]
+
+
+# ── Phase 2: Kickoff brief generator ─────────────────────────────────────────
+
+_BRIEF_PROMPT = """You are a senior delivery principal. Using ONLY the past-project summaries below, generate a concise kickoff brief for a NEW project with the description provided.
+
+The brief must contain exactly these sections:
+1. Objectives & Scope (2–3 sentences)
+2. Recommended Tech Stack (bullet list, drawn from comparable past projects)
+3. Suggested Team Structure (bullet list of roles + rough headcount)
+4. Key Risks to Watch (bullet list, sourced from past lessons)
+5. Reusable Assets / Accelerators (bullet list from past projects, if any)
+6. Comparable Past Projects (1-line each with similarity note)
+
+Rules:
+- Draw ONLY from the context below. Do NOT invent technologies, numbers, or project names.
+- Be concise. Each section ≤ 5 bullet points or 3 sentences.
+- Return plain markdown — no JSON, no code fences.
+"""
+
+
+def generate_kickoff_brief(description: str) -> dict:
+    """Generate a structured kickoff brief for a new project from similar past projects."""
+    if not description or not description.strip():
+        return {"status": "error", "reason": "description is required"}
+
+    similar = find_similar_projects(description, limit=4)
+    if not similar:
+        return {
+            "status": "no_data",
+            "brief": (
+                "No comparable past projects found in Project IQ yet. "
+                "Once the project corpus is fully ingested, I can generate a richer brief."
+            ),
+            "sources": [],
+        }
+
+    # Build a compact context from the top matches.
+    ctx_parts = []
+    for p in similar:
+        bits = [f"**{p['name']}** (similarity {int((p.get('similarity') or 0) * 100)}%)"]
+        if p.get("solution_summary"):
+            bits.append(p["solution_summary"])
+        if p.get("technology_stack"):
+            bits.append("Tech: " + ", ".join(p["technology_stack"][:6]))
+        if p.get("team_size"):
+            bits.append(f"Team: {p['team_size']}")
+        lessons = [l["lesson"] for l in (p.get("lessons") or [])[:3]]
+        if lessons:
+            bits.append("Lessons: " + "; ".join(lessons))
+        assets = [a["asset_name"] for a in (p.get("reusable_assets") or [])[:3]]
+        if assets:
+            bits.append("Assets: " + ", ".join(assets))
+        ctx_parts.append("\n".join(bits))
+
+    context = "\n\n---\n\n".join(ctx_parts)
+    prompt = (
+        f"{_BRIEF_PROMPT}\n\nNEW PROJECT DESCRIPTION:\n{description.strip()}\n\n"
+        f"PAST PROJECT CONTEXT:\n{context}\n\nBRIEF:"
+    )
+
+    try:
+        from app.services import llm_controls_service as llm_controls
+        model = llm_controls.get_llm("service", default_timeout=120)
+        resp = model.invoke(prompt)
+        brief_text = (resp.content or "").strip() or _template_brief(description, similar)
+    except Exception:
+        brief_text = _template_brief(description, similar)
+
+    return {
+        "status": "ok",
+        "brief": brief_text,
+        "sources": [
+            {"slug": p["slug"], "name": p["name"],
+             "similarity": round(p.get("similarity") or 0, 3)}
+            for p in similar
+        ],
+    }
+
+
+def _template_brief(description: str, similar: list[dict]) -> str:
+    """Template-based brief when the LLM is unavailable."""
+    techs: list[str] = []
+    lessons: list[str] = []
+    assets: list[str] = []
+    for p in similar:
+        techs += (p.get("technology_stack") or [])[:4]
+        lessons += [l["lesson"] for l in (p.get("lessons") or [])[:2]]
+        assets += [a["asset_name"] for a in (p.get("reusable_assets") or [])[:2]]
+    seen = set()
+    techs = [t for t in techs if not (t in seen or seen.add(t))][:8]
+    seen = set()
+    lessons = [l for l in lessons if not (l in seen or seen.add(l))][:5]
+    seen = set()
+    assets = [a for a in assets if not (a in seen or seen.add(a))][:5]
+
+    parts = [f"## Kickoff Brief\n\n**New project:** {description}\n"]
+    if techs:
+        parts.append("### Recommended Tech Stack\n" + "\n".join(f"- {t}" for t in techs))
+    if lessons:
+        parts.append("### Key Risks to Watch\n" + "\n".join(f"- {l}" for l in lessons))
+    if assets:
+        parts.append("### Reusable Assets\n" + "\n".join(f"- {a}" for a in assets))
+    refs = "\n".join(
+        f"- **{p['name']}** — {int((p.get('similarity') or 0)*100)}% match"
+        for p in similar
+    )
+    parts.append(f"### Comparable Past Projects\n{refs}")
+    return "\n\n".join(parts)
+
+
+# ── Phase 2: Lesson → Training recommendations ────────────────────────────────
+
+def lessons_to_training(slug: str, max_courses_per_area: int = 3) -> dict:
+    """Map project lessons to Udemy course recommendations for upskilling.
+
+    For each unique capability/category from this project's lessons, searches the
+    Udemy Business catalog and returns top matching courses.  Falls back gracefully
+    if the Udemy connector is not configured."""
+    profile = get_profile(slug)
+    if not profile:
+        return {"status": "no_profile", "slug": slug, "areas": []}
+
+    lessons = profile.get("lessons") or []
+    caps = profile.get("capabilities") or []
+
+    # Build a set of skill areas from lessons + capabilities.
+    areas: dict[str, list[str]] = {}  # area label → search terms
+    for l in lessons:
+        cat = (l.get("category") or "").strip()
+        if cat and cat.lower() not in ("general", ""):
+            areas.setdefault(cat, []).append(l.get("lesson", "")[:60])
+    for c in caps:
+        name = (c.get("capability_name") or "").strip()
+        if name:
+            areas.setdefault(name, [])
+
+    if not areas:
+        return {"status": "no_areas", "slug": slug, "areas": []}
+
+    try:
+        from app.services import udemy_business_service as udemy
+        if not udemy.configured():
+            return {"status": "udemy_unavailable", "slug": slug, "areas": []}
+    except ImportError:
+        return {"status": "udemy_unavailable", "slug": slug, "areas": []}
+
+    result_areas = []
+    for area, lesson_texts in list(areas.items())[:8]:  # cap at 8 areas
+        query = area + (f" {lesson_texts[0]}" if lesson_texts else "")
+        try:
+            result = udemy.search_courses(query, page_size=max_courses_per_area)
+            courses = result.get("results", [])
+        except Exception:
+            courses = []
+        if courses:
+            result_areas.append({
+                "area": area,
+                "courses": [
+                    {
+                        "title": c.get("title", ""),
+                        "url": c.get("url", ""),
+                        "headline": c.get("headline", ""),
+                        "rating": c.get("avg_rating"),
+                        "num_subscribers": c.get("num_subscribers"),
+                    }
+                    for c in courses
+                ],
+            })
+
+    return {
+        "status": "ok",
+        "slug": slug,
+        "project_name": profile.get("name", slug),
+        "areas": result_areas,
+    }

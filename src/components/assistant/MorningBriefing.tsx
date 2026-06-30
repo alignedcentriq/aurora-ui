@@ -46,11 +46,11 @@ interface Briefing {
 }
 
 const SEVERITY_CONFIG: Record<string, { icon: typeof AlertCircle; color: string; bg: string; border: string }> = {
-  high: { icon: AlertCircle, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-  warning: { icon: AlertTriangle, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  medium: { icon: AlertTriangle, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-  info: { icon: Info, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-  low: { icon: Info, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+  high: { icon: AlertCircle, color: "text-rose-600 dark:text-rose-400", bg: "bg-rose-50 dark:bg-rose-500/10", border: "border-rose-100 dark:border-rose-500/20" },
+  warning: { icon: AlertTriangle, color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-500/10", border: "border-amber-100 dark:border-amber-500/20" },
+  medium: { icon: AlertTriangle, color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-500/10", border: "border-amber-100 dark:border-amber-500/20" },
+  info: { icon: Info, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-500/10", border: "border-blue-100 dark:border-blue-500/20" },
+  low: { icon: Info, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-500/10", border: "border-blue-100 dark:border-blue-500/20" },
 };
 
 /** Hide the briefing for the rest of the calendar day once dismissed. */
@@ -100,20 +100,21 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
   return (
     <Dialog open={!dismissed} onOpenChange={(open) => { if (!open) dismiss(); }}>
       <DialogContent className="sm:max-w-2xl p-0 border-none bg-transparent shadow-none [&>button]:hidden">
-        <div className="relative w-full rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/[0.1] via-background/95 to-primary/[0.02] p-5 md:p-6 shadow-2xl backdrop-blur-xl overflow-hidden group">
+        <div className="relative w-full rounded-3xl border border-border/80 dark:border-zinc-800/80 bg-gradient-to-br from-amber-500/[0.05] via-background to-indigo-500/[0.03] dark:from-amber-500/[0.02] dark:via-zinc-950 dark:to-indigo-500/[0.02] p-5 md:p-6 shadow-2xl backdrop-blur-xl overflow-hidden group">
           {/* Subtle background glow */}
-          <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-primary/10 blur-3xl pointer-events-none group-hover:bg-primary/15 transition-all duration-500" />
+          <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-amber-500/10 dark:bg-amber-500/5 blur-3xl pointer-events-none group-hover:bg-amber-500/15 transition-all duration-500" />
+          <div className="absolute -left-20 -bottom-20 h-40 w-40 rounded-full bg-indigo-500/10 dark:bg-indigo-500/5 blur-3xl pointer-events-none group-hover:bg-indigo-500/15 transition-all duration-500" />
           
           {/* Header */}
           <div className="flex items-center gap-3.5 mb-5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/15 text-primary shadow-inner border border-primary/20">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500/20 to-orange-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 shadow-sm">
               <Sunrise className="h-5 w-5 animate-pulse" />
             </span>
             <div className="min-w-0 flex-1">
               <h3 className="text-base font-bold tracking-tight text-foreground truncate">
                 {briefing.greeting}
               </h3>
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 font-medium">
+              <p className="flex items-center gap-1.5 text-xs text-amber-600/90 dark:text-amber-400/80 mt-0.5 font-medium">
                 <CalendarDays className="h-3.5 w-3.5" />
                 {briefing.date_label}
               </p>
@@ -141,7 +142,7 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
                     <button
                       key={item.id ?? idx}
                       onClick={() => onAction(item.title)}
-                      className={`group flex items-start gap-3.5 rounded-2xl border ${sev.border} bg-card/40 px-4 py-3 text-left transition-all duration-300 hover:bg-primary/[0.04] hover:-translate-y-0.5 hover:shadow-md`}
+                      className={`group flex items-start gap-3.5 rounded-2xl border ${sev.border} bg-white/60 dark:bg-zinc-900/60 px-4 py-3 text-left transition-all duration-300 hover:bg-white/95 dark:hover:bg-zinc-900/95 hover:-translate-y-0.5 hover:shadow-md hover:border-primary/20`}
                     >
                       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${sev.bg} ${sev.color} border border-transparent group-hover:border-current/10`}>
                         <SevIcon className="h-4.5 w-4.5" />
@@ -167,10 +168,10 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
           )}
 
           {/* Leave balance + highlights row */}
-          <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-border/40">
+          <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-border/40">
             {briefing.leave_balance && (
               <span
-                className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.08] px-3.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow-sm"
+                className="inline-flex items-center gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3.5 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 shadow-sm"
                 title={briefing.leave_balance.items
                   .map((b) => `${b.type}: ${b.balance}`)
                   .join(" · ")}
@@ -182,7 +183,7 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
             {briefing.highlights.map((h) => (
               <span
                 key={h.label}
-                className="inline-flex items-center gap-2 rounded-2xl border border-border/80 bg-card/60 px-3.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm"
+                className="inline-flex items-center gap-2 rounded-2xl border border-border/80 bg-white/70 dark:bg-zinc-900/70 px-3.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm"
               >
                 <span className="font-bold text-foreground">{h.value}</span>
                 {h.label}

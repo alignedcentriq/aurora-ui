@@ -13,7 +13,6 @@ import {
   Boxes,
   CheckCircle2,
   AlertCircle,
-  X,
   ShieldCheck,
   FileText,
   ArrowRight,
@@ -21,6 +20,13 @@ import {
   Shield,
   ExternalLink,
   Activity,
+  Zap,
+  BookOpen,
+  TrendingUp,
+  UserCheck,
+  GraduationCap,
+  Database,
+  Hash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -32,7 +38,7 @@ import {
 } from "@/components/ui/sheet";
 import { motion } from "framer-motion";
 
-type Tab = "search" | "library" | "analytics";
+type Tab = "search" | "library" | "analytics" | "risks";
 
 interface Health {
   score: number;
@@ -95,6 +101,52 @@ interface Analytics {
   statuses: { label: string; count: number }[];
 }
 
+interface Risk {
+  category: string;
+  lesson: string;
+  recommendation?: string | null;
+  impact_level?: string | null;
+  recurrence: number;
+  projects: { slug: string; name: string }[];
+}
+
+interface AvailableExpert {
+  person_name: string;
+  projects: string[];
+  project_count: number;
+  capabilities: string[];
+  roles: string[];
+  evidence_level: string;
+  availability: string;
+  utilization_pct: number | null;
+  current_projects: string[];
+}
+
+interface UdemyCourse {
+  title: string;
+  url: string;
+  headline: string;
+  rating?: number | null;
+  num_subscribers?: number | null;
+}
+
+interface TrainingArea {
+  area: string;
+  courses: UdemyCourse[];
+}
+
+interface TrainingRecs {
+  status: string;
+  slug: string;
+  project_name: string;
+  areas: TrainingArea[];
+}
+
+interface SourceDoc {
+  title: string;
+  source_key: string;
+}
+
 interface Profile {
   id: number;
   slug: string;
@@ -117,6 +169,9 @@ interface Profile {
   reviewed_at?: string | null;
   source_doc_count: number;
   query_count?: number;
+  updated_at?: string | null;
+  dna_summary?: string | null;
+  source_docs?: SourceDoc[];
   health?: Health;
   similarity?: number;
   capabilities?: Capability[];
@@ -215,7 +270,24 @@ export function ProjectIQPortal() {
 
   // detail drawer
   const [selected, setSelected] = useState<Profile | null>(null);
-  const [drawerTab, setDrawerTab] = useState<"overview" | "tech" | "evidence">("overview");
+  const [drawerTab, setDrawerTab] = useState<"overview" | "tech" | "evidence" | "training" | "sources">("overview");
+
+  // Phase 2: Risk radar
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [risksLoading, setRisksLoading] = useState(false);
+
+  // Phase 2: Available experts (in search)
+  const [availExperts, setAvailExperts] = useState<AvailableExpert[]>([]);
+  const [availExpertsLoading, setAvailExpertsLoading] = useState(false);
+  const [availExpertsQuery, setAvailExpertsQuery] = useState("");
+
+  // Phase 2: Kickoff brief
+  const [brief, setBrief] = useState<{ status: string; brief: string; sources: { slug: string; name: string; similarity: number }[] } | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+
+  // Phase 2: Training recs
+  const [trainingRecs, setTrainingRecs] = useState<TrainingRecs | null>(null);
+  const [trainingLoading, setTrainingLoading] = useState(false);
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -265,10 +337,63 @@ export function ProjectIQPortal() {
     if (tab === "analytics" && !analytics) loadAnalytics();
   }, [tab, analytics, loadAnalytics]);
 
+  const loadRisks = useCallback(async () => {
+    setRisksLoading(true);
+    try {
+      const resp = await fetch("/api/project-iq/recurring-risks?min_projects=2", { headers: authHeaders });
+      if (resp.ok) setRisks((await resp.json()).risks || []);
+    } catch { /* ignore */ }
+    finally { setRisksLoading(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email, user?.role]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (tab === "risks" && risks.length === 0) loadRisks();
+  }, [tab, risks.length, loadRisks]);
+
+  const searchAvailExperts = async (skills: string) => {
+    if (!skills.trim()) return;
+    setAvailExpertsLoading(true);
+    setAvailExpertsQuery(skills);
+    try {
+      const resp = await fetch(`/api/project-iq/available-experts?skills=${encodeURIComponent(skills)}`, { headers: authHeaders });
+      if (resp.ok) setAvailExperts((await resp.json()).experts || []);
+    } catch { setAvailExperts([]); }
+    finally { setAvailExpertsLoading(false); }
+  };
+
+  const generateBrief = async () => {
+    if (!query.trim() || results.length === 0) return;
+    setBriefLoading(true);
+    setBrief(null);
+    try {
+      const resp = await fetch("/api/project-iq/kickoff-brief", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ description: query.trim() }),
+      });
+      if (resp.ok) setBrief(await resp.json());
+    } catch { /* ignore */ }
+    finally { setBriefLoading(false); }
+  };
+
+  const loadTrainingRecs = async (slug: string) => {
+    setTrainingLoading(true);
+    setTrainingRecs(null);
+    try {
+      const resp = await fetch(`/api/project-iq/training-recs?slug=${encodeURIComponent(slug)}`, { headers: authHeaders });
+      if (resp.ok) setTrainingRecs(await resp.json());
+    } catch { /* ignore */ }
+    finally { setTrainingLoading(false); }
+  };
+
   useEffect(() => {
     if (selected) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDrawerTab("overview");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTrainingRecs(null);
     }
   }, [selected]);
 
@@ -277,6 +402,7 @@ export function ProjectIQPortal() {
     if (!query.trim()) return;
     setSearching(true);
     setSearched(true);
+    setBrief(null);
     try {
       const resp = await fetch("/api/project-iq/search", {
         method: "POST",
@@ -462,6 +588,7 @@ export function ProjectIQPortal() {
             ["search", "Find Similar", Sparkles],
             ["library", "DNA Library", Layers],
             ["analytics", "Portfolio Analytics", Activity],
+            ["risks", "Risk Radar", Zap],
           ] as const
         ).map(([id, label, Icon]) => {
           const active = tab === id;
@@ -580,9 +707,19 @@ export function ProjectIQPortal() {
 
             {!searching && results.length > 0 && (
               <>
-                <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 px-1">
-                  Matched DNA Profiles ({results.length})
-                </h3>
+                <div className="flex items-center justify-between px-1">
+                  <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Matched DNA Profiles ({results.length})
+                  </h3>
+                  <button
+                    onClick={generateBrief}
+                    disabled={briefLoading}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-xs font-semibold hover:shadow-lg hover:shadow-purple-500/20 active:scale-95 transition-all disabled:opacity-60 cursor-pointer shadow-sm"
+                  >
+                    {briefLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    Generate Kickoff Brief
+                  </button>
+                </div>
                 <div className="flex flex-col gap-3">
                   {results.map((p) => (
                     <button
@@ -590,9 +727,7 @@ export function ProjectIQPortal() {
                       onClick={() => openProfile(p.slug)}
                       className="text-left rounded-2xl border border-border bg-gradient-to-br from-white to-slate-50/50 dark:from-card/40 dark:to-card/20 p-5 hover:border-sky-500/40 hover:shadow-lg hover:shadow-sky-500/5 active:scale-[0.99] transition-all cursor-pointer relative overflow-hidden group flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                     >
-                      {/* Left glow line */}
                       <div className="absolute top-0 bottom-0 left-0 w-1 bg-gradient-to-b from-sky-400 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center flex-wrap gap-2">
                           <span className="font-bold text-sm sm:text-base text-foreground tracking-tight group-hover:text-sky-500 transition-colors leading-tight">
@@ -614,22 +749,15 @@ export function ProjectIQPortal() {
                         )}
                         <div className="flex flex-wrap gap-1.5 mt-3">
                           {(p.capabilities || []).slice(0, 4).map((c, i) => (
-                            <span
-                              key={i}
-                              className="px-2 py-0.5 rounded-lg bg-muted text-[10px] font-semibold border border-border/40 text-muted-foreground"
-                            >
+                            <span key={i} className="px-2 py-0.5 rounded-lg bg-muted text-[10px] font-semibold border border-border/40 text-muted-foreground">
                               {c.capability_name}
                             </span>
                           ))}
                         </div>
                       </div>
-
-                      {/* Match display */}
                       {typeof p.similarity === "number" && (
                         <div className="flex flex-row sm:flex-col items-center justify-between sm:justify-center border-t sm:border-t-0 sm:border-l border-border/60 pt-3 sm:pt-0 sm:pl-6 shrink-0 sm:text-center gap-1">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                            Match Match
-                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Match</span>
                           <span className="text-lg sm:text-2xl font-black text-sky-500 tracking-tight">
                             {Math.round(p.similarity * 100)}%
                           </span>
@@ -637,6 +765,70 @@ export function ProjectIQPortal() {
                       )}
                     </button>
                   ))}
+                </div>
+
+                {/* Kickoff Brief output */}
+                {(briefLoading || brief) && (
+                  <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-5 flex flex-col gap-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-violet-500 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" /> Kickoff Brief
+                    </h4>
+                    {briefLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
+                        Generating brief from past project DNA...
+                      </div>
+                    ) : brief?.brief ? (
+                      <div className="prose prose-sm dark:prose-invert max-w-none text-xs sm:text-sm whitespace-pre-wrap leading-relaxed text-foreground">
+                        {brief.brief}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Available Experts for this query */}
+                <div className="rounded-2xl border border-border/60 bg-white/50 dark:bg-card/10 p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <UserCheck className="w-4 h-4 text-emerald-500" /> Available Experts
+                    </h4>
+                    <button
+                      onClick={() => searchAvailExperts(query)}
+                      disabled={availExpertsLoading}
+                      className="text-[11px] px-2.5 py-1 rounded-lg border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors font-semibold cursor-pointer disabled:opacity-60"
+                    >
+                      {availExpertsLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Find"}
+                    </button>
+                  </div>
+                  {availExperts.length > 0 && availExpertsQuery === query && (
+                    <div className="flex flex-col gap-2">
+                      {availExperts.slice(0, 6).map((e, i) => {
+                        const avail = e.availability;
+                        const cls = avail === "available" || avail === "likely available"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                          : avail === "partially available"
+                          ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                          : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-border/50 bg-white/40 dark:bg-white/[0.02]">
+                            <div className="min-w-0">
+                              <span className="text-xs font-bold text-foreground block">{e.person_name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {e.projects.slice(0, 2).join(", ")}
+                                {e.project_count > 2 ? ` +${e.project_count - 2} more` : ""}
+                              </span>
+                            </div>
+                            <span className={cn("text-[10px] px-2 py-0.5 rounded-lg border font-bold uppercase tracking-wider shrink-0", cls)}>
+                              {e.utilization_pct !== null ? `${e.utilization_pct}%` : ""} {avail}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!availExpertsLoading && availExperts.length === 0 && availExpertsQuery === query && (
+                    <p className="text-xs text-muted-foreground">No matching experts found.</p>
+                  )}
                 </div>
               </>
             )}
@@ -791,6 +983,87 @@ export function ProjectIQPortal() {
         </div>
       )}
 
+      {/* RISK RADAR TAB */}
+      {tab === "risks" && (
+        <div className="animate-in fade-in-50 duration-200 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-500" /> Recurring Risk Radar
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Lessons and risks that appear across 2+ projects — the delivery watch-list.
+              </p>
+            </div>
+            <button onClick={loadRisks} disabled={risksLoading} className="text-xs px-3 py-1.5 rounded-xl border border-border hover:bg-muted transition-colors cursor-pointer disabled:opacity-60 flex items-center gap-1">
+              <RefreshCw className={cn("w-3 h-3", risksLoading && "animate-spin")} /> Refresh
+            </button>
+          </div>
+          {risksLoading ? (
+            <div className="flex items-center justify-center py-16 gap-3">
+              <Loader2 className="w-7 h-7 animate-spin text-amber-500" />
+              <span className="text-xs text-muted-foreground font-semibold">Scanning cross-project lessons...</span>
+            </div>
+          ) : risks.length === 0 ? (
+            <div className="text-center py-14 rounded-2xl border border-dashed border-border bg-background/20">
+              <Zap className="w-8 h-8 text-amber-400 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-foreground">No recurring risks detected yet</p>
+              <p className="text-xs text-muted-foreground mt-1">Build DNA for more projects to surface cross-project patterns.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {risks.map((r, i) => {
+                const isHigh = (r.impact_level || "").toLowerCase() === "high";
+                return (
+                  <div key={i} className={cn(
+                    "rounded-2xl border p-4 flex flex-col gap-2.5 shadow-sm",
+                    isHigh ? "border-red-500/20 bg-red-500/[0.03]" : "border-amber-500/20 bg-amber-500/[0.03]"
+                  )}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={cn(
+                          "text-[10px] px-2 py-0.5 rounded-lg font-bold uppercase tracking-wider border",
+                          isHigh ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
+                            : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                        )}>
+                          {r.impact_level || "Medium"} Impact
+                        </span>
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border border-border/50 px-2 py-0.5 rounded-lg bg-background/50">
+                          {r.category}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 bg-background/50 border border-border/40 px-2.5 py-1 rounded-xl">
+                        <TrendingUp className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-xs font-black text-foreground tabular-nums">{r.recurrence}</span>
+                        <span className="text-[10px] text-muted-foreground">projects</span>
+                      </div>
+                    </div>
+                    <p className="text-xs sm:text-sm font-semibold text-foreground leading-relaxed">{r.lesson}</p>
+                    {r.recommendation && (
+                      <div className="text-xs text-foreground bg-emerald-500/5 border-l-2 border-emerald-500/40 px-3 py-2 rounded-r-xl font-medium leading-relaxed">
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold text-[10px] uppercase tracking-wider block mb-0.5">Recommendation</span>
+                        {r.recommendation}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {r.projects.map((p) => (
+                        <button
+                          key={p.slug}
+                          onClick={() => openProfile(p.slug)}
+                          className="text-[10px] px-2 py-0.5 rounded-lg border border-sky-500/20 bg-sky-500/5 text-sky-600 dark:text-sky-400 font-semibold hover:bg-sky-500/10 transition-colors cursor-pointer"
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* DETAIL DRAWER / SHEET */}
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto flex flex-col gap-5 p-5 sm:p-6 h-full border-l border-border/60 bg-popover/95 backdrop-blur-xl">
@@ -876,17 +1149,24 @@ export function ProjectIQPortal() {
               </div>
 
               {/* Custom Drawer Tabs Switcher */}
-              <div className="flex gap-1 border-b border-border/40 shrink-0">
+              <div className="flex gap-1 border-b border-border/40 shrink-0 flex-wrap">
                 {(
                   [
-                    ["overview", "Overview Context", FileText],
-                    ["tech", "Architecture & Tech", Shield],
+                    ["overview", "Overview", FileText],
+                    ["tech", "Tech & Arch", Shield],
                     ["evidence", "Assets & Experts", Boxes],
+                    ["training", "Training Recs", GraduationCap],
+                    ["sources", "Sources", Database],
                   ] as const
                 ).map(([id, label, Icon]) => (
                   <button
                     key={id}
-                    onClick={() => setDrawerTab(id)}
+                    onClick={() => {
+                      setDrawerTab(id);
+                      if (id === "training" && selected && !trainingRecs && !trainingLoading) {
+                        loadTrainingRecs(selected.slug);
+                      }
+                    }}
                     className={cn(
                       "flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors cursor-pointer",
                       drawerTab === id
@@ -1142,6 +1422,172 @@ export function ProjectIQPortal() {
                         </div>
                       )}
                     />
+                  </div>
+                )}
+
+                {drawerTab === "sources" && (
+                  <div className="flex flex-col gap-5 animate-in fade-in-30 duration-200">
+
+                    {/* Extraction metadata */}
+                    <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl border border-border/50 bg-muted/20">
+                      {[
+                        { label: "Source Documents", value: selected.source_doc_count, icon: FileText },
+                        { label: "Times Queried", value: selected.query_count ?? 0, icon: Hash },
+                        {
+                          label: "Confidence",
+                          value: selected.confidence === "verified" ? "Verified" : "Inferred",
+                          icon: ShieldCheck,
+                        },
+                        {
+                          label: "Last Rebuilt",
+                          value: selected.updated_at
+                            ? new Date(selected.updated_at).toLocaleDateString()
+                            : "Unknown",
+                          icon: RefreshCw,
+                        },
+                      ].map((m, i) => (
+                        <div key={i} className="flex items-center gap-2.5">
+                          <div className="p-1.5 rounded-lg bg-background/60 border border-border/40 text-muted-foreground/70">
+                            <m.icon className="w-3.5 h-3.5" />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                              {m.label}
+                            </span>
+                            <span className="text-xs font-bold text-foreground block mt-0.5">
+                              {m.value}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* DNA Narrative */}
+                    {selected.dna_summary && (
+                      <div className="flex flex-col gap-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <Brain className="w-3.5 h-3.5 text-sky-500" /> DNA Narrative
+                        </h4>
+                        <p className="text-[11px] sm:text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap p-4 rounded-xl border border-border/50 bg-sky-500/[0.03]">
+                          {selected.dna_summary}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Source document list */}
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-sky-500" /> Ingested Source Documents
+                        {selected.source_docs && selected.source_docs.length > 0 && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-bold">
+                            {selected.source_docs.length}
+                          </span>
+                        )}
+                      </h4>
+                      {(!selected.source_docs || selected.source_docs.length === 0) ? (
+                        <p className="text-xs text-muted-foreground py-4 text-center">
+                          No source documents found in the ingested corpus.
+                        </p>
+                      ) : (
+                        <ul className="flex flex-col gap-1.5">
+                          {selected.source_docs.map((doc, i) => {
+                            const parts = doc.source_key.split("/");
+                            const docType = parts.length >= 3 ? parts.slice(2).join("/") : doc.source_key;
+                            return (
+                              <li
+                                key={i}
+                                className="flex items-start gap-2.5 p-2.5 rounded-xl border border-border/40 bg-white/30 dark:bg-white/[0.01] hover:bg-sky-500/5 hover:border-sky-500/20 transition-colors"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
+                                <div className="min-w-0 flex-1">
+                                  <span className="text-xs font-semibold text-foreground block leading-snug truncate">
+                                    {doc.title}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground font-mono truncate block mt-0.5">
+                                    {docType}
+                                  </span>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {drawerTab === "training" && (
+                  <div className="flex flex-col gap-4 animate-in fade-in-30 duration-200">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <GraduationCap className="w-4 h-4 text-purple-500" /> Lesson-to-Training Recommendations
+                      </h4>
+                      <button
+                        onClick={() => selected && loadTrainingRecs(selected.slug)}
+                        disabled={trainingLoading}
+                        className="text-[11px] px-2.5 py-1 rounded-lg border border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 transition-colors font-semibold cursor-pointer disabled:opacity-60"
+                      >
+                        {trainingLoading ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "Refresh"}
+                      </button>
+                    </div>
+
+                    {trainingLoading && (
+                      <div className="flex items-center gap-2 py-8 justify-center text-xs text-muted-foreground">
+                        <Loader2 className="w-5 h-5 animate-spin text-purple-500" />
+                        Searching Udemy catalog for each skill area...
+                      </div>
+                    )}
+
+                    {!trainingLoading && trainingRecs?.status === "udemy_unavailable" && (
+                      <div className="text-xs text-muted-foreground bg-muted/20 border border-border/40 p-4 rounded-xl">
+                        Udemy Business is not connected. Configure credentials in backend/.env to enable course recommendations.
+                      </div>
+                    )}
+
+                    {!trainingLoading && trainingRecs?.areas && trainingRecs.areas.length === 0 && (
+                      <div className="text-xs text-muted-foreground py-6 text-center">
+                        No skill areas extracted from this project's lessons yet.
+                      </div>
+                    )}
+
+                    {!trainingLoading && (trainingRecs?.areas || []).map((area, i) => (
+                      <div key={i} className="flex flex-col gap-2">
+                        <h5 className="text-[11px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <BookOpen className="w-3.5 h-3.5" /> {area.area}
+                        </h5>
+                        <div className="flex flex-col gap-2">
+                          {area.courses.map((c, j) => (
+                            <a
+                              key={j}
+                              href={c.url || "#"}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex flex-col gap-1 p-3 rounded-xl border border-border/50 bg-white/40 dark:bg-white/[0.02] hover:border-purple-500/30 hover:bg-purple-500/5 transition-colors group"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-xs font-semibold text-foreground group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors leading-snug">
+                                  {c.title}
+                                </span>
+                                <ExternalLink className="w-3 h-3 text-muted-foreground/60 shrink-0 mt-0.5" />
+                              </div>
+                              {c.headline && (
+                                <p className="text-[10px] text-muted-foreground line-clamp-2 leading-relaxed">{c.headline}</p>
+                              )}
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {c.rating && (
+                                  <span className="text-[10px] font-semibold text-amber-500">★ {c.rating.toFixed(1)}</span>
+                                )}
+                                {c.num_subscribers && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {c.num_subscribers.toLocaleString()} students
+                                  </span>
+                                )}
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
