@@ -57,12 +57,16 @@ _TRANSCRIPT_EXTS = ("vtt", "srt")
 #
 #   Individual Project Data/<Project>/...   → one project per <Project> subfolder
 #   Transcripts & Summary/<file>            → one project per summary document
-#   Newsletters / Policy / Flash Review …   → NOT projects, skipped entirely
+#   Flash Review Transcripts/...             → aggregate: all files → single slug
+#   Newsletters / Policy / unknown           → NOT projects, skipped entirely
 #
 # Everything else (loose files, unknown folders) is skipped so non-project content
 # never becomes a bogus "project".
 _FOLDER_AS_PROJECT = "individual project data"   # subfolder = project
 _DOC_AS_PROJECT = "transcripts & summary"        # each file = project
+_AGGREGATE_AS_PROJECT = "flash review transcripts"  # all files → one slug
+_AGGREGATE_SLUG = "FlashReviews"
+_AGGREGATE_NAME = "Flash Reviews"
 
 
 def _route_file(rel_path: str) -> tuple[str, str] | None:
@@ -78,7 +82,9 @@ def _route_file(rel_path: str) -> tuple[str, str] | None:
     if top == _DOC_AS_PROJECT:
         stem = segs[-1].rsplit(".", 1)[0].strip()
         return (_project_slug(stem), stem)
-    return None  # Newsletters, Policy, Flash Review Transcripts, unknown → skip
+    if top == _AGGREGATE_AS_PROJECT:
+        return (_AGGREGATE_SLUG, _AGGREGATE_NAME)
+    return None  # Newsletters, Policy, unknown → skip
 
 
 def _key_builder(filename: str, rel_path: str) -> str | None:
@@ -187,10 +193,9 @@ def _prune_deleted_projects(live_slugs: set[str]) -> dict:
 def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]:
     """List only the project-bearing sub-trees and route every file to a project.
 
-    Only recurses into the two relevant top-level folders — Individual Project Data
-    and Transcripts & Summary — skipping Flash Review Transcripts, Newsletters,
-    Policy, and any other non-project folders entirely. This keeps the tree-walk
-    fast and avoids partial-listing failures in the large excluded folders.
+    Only recurses into the relevant top-level folders — Individual Project Data,
+    Transcripts & Summary, and Flash Review Transcripts — skipping Newsletters,
+    Policy, and any other non-project folders entirely.
 
     Returns ``(slug -> display name, all_listed_items)``. The raw listing is
     returned so the caller can hand it straight to the sync worker instead of
@@ -226,7 +231,16 @@ def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]
                     continue
                 it["relative_path"] = f"{folder_name}/{it['name']}"
                 all_items.append(it)
-        # else: Flash Review Transcripts, Newsletters, Policy, unknown → skip entirely
+
+        elif top_lower == _AGGREGATE_AS_PROJECT:
+            # Recurse into Flash Review Transcripts — all files → single aggregate slug.
+            folder_path = f"{root}/{folder_name}"
+            sub_items = sp_client.list_files_recursive(drive_id, folder_path)
+            for it in sub_items:
+                rel = it.get("relative_path", it.get("name", ""))
+                it["relative_path"] = f"{folder_name}/{rel}"
+            all_items.extend(sub_items)
+        # else: Newsletters, Policy, unknown → skip entirely
 
     for it in all_items:
         name = it.get("name", "")

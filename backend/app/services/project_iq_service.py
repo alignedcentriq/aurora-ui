@@ -64,7 +64,7 @@ def list_project_slugs() -> dict[str, str]:
     return out
 
 
-def _gather_project_text(slug: str, char_budget: int = 24000) -> tuple[str, int]:
+def _gather_project_text(slug: str, char_budget: int = 9000) -> tuple[str, int]:
     """Concatenate all chunk text for one project (budgeted), grouped by file.
 
     Returns ``(text, distinct_doc_count)``."""

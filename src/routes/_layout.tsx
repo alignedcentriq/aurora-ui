@@ -480,7 +480,8 @@ function LayoutComponent() {
   const showCopilot =
     location.pathname !== "/" &&
     location.pathname !== "/settings" &&
-    !location.pathname.startsWith("/documents");
+    !location.pathname.startsWith("/documents") &&
+    !(location.pathname.startsWith("/control-hub") && (location.search as Record<string, string>)?.tab === "project-iq");
 
   return (
     <div className="flex h-screen h-[100dvh] w-full bg-background overflow-hidden flex-row">
@@ -511,11 +512,11 @@ function LayoutComponent() {
 
         {/* Navigation List */}
         <nav
-          className="flex-1 py-3 px-3 overflow-y-auto overflow-x-hidden no-scrollbar flex flex-col"
+          className="flex-1 py-3 px-3 overflow-hidden flex flex-col min-h-0"
           onMouseLeave={() => setHoveredPath(null)}
         >
           {/* Main Links */}
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 shrink-0">
             {navItems
               .filter((n) => n.show)
               .map((item) => {
@@ -589,10 +590,10 @@ function LayoutComponent() {
               })}
           </div>
 
-          {/* Recent Conversations — flows directly under nav items */}
+          {/* Recent Conversations — only this section scrolls */}
           {!sidebarCollapsed && (
-            <div className="mt-3 pt-3 border-t border-blue-950/60">
-              <div className="flex items-center justify-between px-2 mb-1.5">
+            <div className="mt-3 pt-3 border-t border-blue-950/60 flex-1 flex flex-col min-h-0">
+              <div className="flex items-center justify-between px-2 mb-1.5 shrink-0">
                 <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-500">
                   Recent Chats
                 </span>
@@ -611,7 +612,7 @@ function LayoutComponent() {
                 </button>
               </div>
 
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 overflow-y-auto no-scrollbar">
                 {Object.keys(threads).length === 0 ? (
                   <div className="text-[10px] text-zinc-600 italic px-2 py-1.5">
                     No conversations yet
@@ -658,31 +659,29 @@ function LayoutComponent() {
             </div>
           )}
 
-          {/* Push collapse button to bottom */}
-          <div className="flex-1" />
-
-          {/* Collapse/Expand Toggle */}
-          <div className="pt-2 mt-2 border-t border-blue-950/60">
-            <button
-              onClick={toggleSidebar}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
-                sidebarCollapsed ? "justify-center" : "justify-start",
-                "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
-              )}
-              title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="h-4 w-4 shrink-0" />
-              ) : (
-                <>
-                  <ChevronLeft className="h-4 w-4 shrink-0" />
-                  <span>Collapse Sidebar</span>
-                </>
-              )}
-            </button>
-          </div>
         </nav>
+
+        {/* Collapse/Expand Toggle — outside scrollable nav so it's always visible */}
+        <div className="px-3 py-2 border-t border-blue-950/60 shrink-0">
+          <button
+            onClick={toggleSidebar}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
+              sidebarCollapsed ? "justify-center" : "justify-start",
+              "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
+            )}
+            title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            {sidebarCollapsed ? (
+              <ChevronRight className="h-4 w-4 shrink-0" />
+            ) : (
+              <>
+                <ChevronLeft className="h-4 w-4 shrink-0" />
+                <span>Collapse Sidebar</span>
+              </>
+            )}
+          </button>
+        </div>
 
         {/* Sidebar Footer */}
         <div className="mt-auto p-3 border-t border-blue-950/60 flex flex-col gap-2 shrink-0">
