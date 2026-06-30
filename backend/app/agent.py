@@ -195,6 +195,8 @@ class AgentState(TypedDict):
     user_location: Optional[str]       # detected from M365 profile (officeLocation / city)
     portal_context: Optional[dict]     # {page, active_filters} — what portal the user is on
     active_mode: Optional[str]         # "analytics" | "training" | "project" | "resource"
+    focus_mode_fallback_attempted: bool  # True once a focus-mode fallback fires in this turn; reset each turn
+    focus_fallback_pending: bool         # transient routing signal: re-run intent_router without active_mode
 
 
 # Pending IT email drafts are now persisted via PendingActionService (durable, survives
@@ -2664,7 +2666,37 @@ def state_tracker(state: AgentState) -> dict:
     msgs = state.get("messages", [])
     turn = sum(1 for m in msgs if isinstance(m, HumanMessage))
     focus = _extract_focus(_last_ai_message(msgs), state.get("domain"), turn)
-    return {"focus": focus} if focus else {}
+    result: dict = {"focus": focus} if focus else {}
+
+    # Focus-mode fallback: if the user is in a pinned focus mode but this turn's agent
+    # hit the retrieval veto (nothing in its corpus), clear the mode and re-route so the
+    # correct domain agent can answer instead.  Only fires once per turn (loop guard).
+    active_mode = state.get("active_mode")
+    if active_mode and not state.get("focus_mode_fallback_attempted"):
+        last_human_idx = max(
+            (i for i, m in enumerate(msgs) if isinstance(m, HumanMessage)),
+            default=-1,
+        )
+        turn_msgs = msgs[last_human_idx + 1:] if last_human_idx >= 0 else []
+        try:
+            from app.services.policy_service import RETRIEVAL_VETO_SENTINEL
+            veto_hit = any(
+                isinstance(m, ToolMessage) and RETRIEVAL_VETO_SENTINEL in (m.content or "")
+                for m in turn_msgs
+            )
+        except Exception:
+            veto_hit = False
+        if veto_hit:
+            log.info(
+                "[state_tracker] focus-mode fallback: active_mode=%r had a retrieval veto — "
+                "clearing mode and re-routing to intent_router",
+                active_mode,
+            )
+            result["active_mode"] = None
+            result["focus_mode_fallback_attempted"] = True
+            result["focus_fallback_pending"] = True
+
+    return result
 
 
 # ── History-aware follow-up resolution (coreference / query rewriting) ─────────
@@ -2700,18 +2732,20 @@ async def followup_resolver(state: AgentState) -> dict:
     only when) the latest message is an anaphoric follow-up; the router and feedback_lookup
     then prefer the resolved text. Fail-soft: any error or implausible rewrite returns {}
     so the raw message is used unchanged."""
+    # Reset per-turn fallback flags at the start of every new human message.
+    _turn_reset: dict = {"focus_mode_fallback_attempted": False, "focus_fallback_pending": False}
     msgs = state.get("messages", [])
     last_human = next((m.content for m in reversed(msgs) if isinstance(m, HumanMessage)), "")
     last_ai = _last_ai_message(msgs)
     if not isinstance(last_human, str) or not _needs_followup_resolution(last_human, last_ai):
-        return {}
+        return _turn_reset
     # Fast path (Phase 1): resolve the pronoun against the tracked focus with zero LLM.
     # Only falls through to the LLM rewrite when there's no usable/recent focus.
     current_turn = sum(1 for m in msgs if isinstance(m, HumanMessage))
     local = _resolve_anaphora_locally(last_human, state.get("focus"), current_turn)
     if local:
         log.info("[followup_resolver] resolved locally (no LLM) %r -> %r", last_human, local)
-        return {"resolved_query": local}
+        return {**_turn_reset, "resolved_query": local}
     prev_human = next(
         (m.content for m in reversed(msgs)
          if isinstance(m, HumanMessage) and m.content != last_human),
@@ -2740,11 +2774,11 @@ async def followup_resolver(state: AgentState) -> dict:
         )
         rewritten = (resp.content or "").strip().strip('"').strip()
     except Exception:
-        return {}
+        return _turn_reset
     if rewritten and rewritten.lower() != last_human.strip().lower() and len(rewritten) <= 400:
         log.info("[followup_resolver] resolved %r -> %r", last_human, rewritten)
-        return {"resolved_query": rewritten}
-    return {}
+        return {**_turn_reset, "resolved_query": rewritten}
+    return _turn_reset
 
 
 # ── Routing clarification gate (wrong-answer prevention) ──────────────────────
@@ -5069,6 +5103,15 @@ def route_to_agent(state: AgentState):
     if domain == "hr": return "hr_agent"
     return "general_agent"
 
+def route_after_state_tracker(state: AgentState) -> str:
+    """After state_tracker runs, check whether a focus-mode fallback was triggered.
+    If so, re-run intent_router without the locked active_mode so the correct domain
+    agent can answer.  Otherwise end the turn normally."""
+    if state.get("focus_fallback_pending"):
+        return "intent_router"
+    return END
+
+
 def should_continue_hr(state: AgentState):
     last_message = state["messages"][-1]
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
@@ -5158,7 +5201,7 @@ workflow.add_edge("deeplink_agent", "state_tracker")
 workflow.add_edge("ms365_agent", "state_tracker")
 workflow.add_edge("doc_agent", "state_tracker")
 workflow.add_edge("connector_agent", "state_tracker")
-workflow.add_edge("state_tracker", END)
+workflow.add_conditional_edges("state_tracker", route_after_state_tracker)
 workflow.add_edge("dynamic_form_agent", END)
 workflow.add_edge("form_fill_agent", END)
 workflow.add_edge("form_builder_agent", END)

@@ -1,11 +1,15 @@
 import { createFileRoute, Outlet, useNavigate, Link, useLocation } from "@tanstack/react-router";
 import { Logo } from "@/components/Logo";
 import { CopilotSidebar } from "@/components/assistant/CopilotSidebar";
+import { RoleSwitcher } from "@/components/RoleSwitcher";
 import { BrandName } from "@/components/BrandName";
 import {
   MessageSquare,
   Settings,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
   Users,
   LogOut,
   Shield,
@@ -21,6 +25,7 @@ import {
   Moon,
   PlayCircle,
   Rocket,
+  UserCog,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -58,6 +63,7 @@ const NAV_COLORS: Record<string, string> = {
   "/documents": "var(--connectivity)",
   "/directory": "var(--connectivity)",
   "/my-requests": "var(--collaboration)",
+  "/team": "var(--collaboration)",
   "/control-hub": "var(--clarity)",
   "/settings": "var(--capacity)",
 };
@@ -280,6 +286,42 @@ function LayoutComponent() {
   const [clocksOverlayOpen, setClocksOverlayOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [userWantsCollapsed, setUserWantsCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Close mobile drawer when route changes
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Auto-collapse / restore left sidebar based on right Copilot sidebar state
+  useEffect(() => {
+    if (copilotOpen) {
+      setSidebarCollapsed(true);
+    } else {
+      setSidebarCollapsed(userWantsCollapsed);
+    }
+  }, [copilotOpen, userWantsCollapsed]);
+
+  const toggleSidebar = () => {
+    const newState = !sidebarCollapsed;
+    setSidebarCollapsed(newState);
+    setUserWantsCollapsed(newState);
+  };
+
+  const getPageTitle = (path: string) => {
+    if (path === "/") return "Chat Hub";
+    if (path.startsWith("/onboarding")) return "Onboarding Portal";
+    if (path.startsWith("/documents")) return "Document Center";
+    if (path.startsWith("/directory")) return "Employee Directory";
+    if (path.startsWith("/my-requests")) return "My Requests";
+    if (path.startsWith("/team")) return "Team Manager";
+    if (path.startsWith("/control-hub")) return "Control Hub";
+    if (path.startsWith("/settings")) return "Settings";
+    return "Workspace";
+  };
+
   useEffect(() => {
     if (
       location.pathname === "/" ||
@@ -292,6 +334,17 @@ function LayoutComponent() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [hasTeam, setHasTeam] = useState(false);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    fetch("/api/portal/manager/has-team", {
+      headers: { "x-user-email": user.email, "x-user-role": (user.role ?? "").toLowerCase() },
+    })
+      .then((r) => r.json())
+      .then((d) => setHasTeam(!!d?.has_team))
+      .catch(() => {});
+  }, [user?.email, user?.role]);
 
   const profileDropdownRef = useRef<HTMLDivElement>(null);
   const [avatarError, setAvatarError] = useState(false);
@@ -392,6 +445,7 @@ function LayoutComponent() {
     { to: "/documents", icon: FileText, label: "Documents", show: true },
     { to: "/directory", icon: Users, label: "Directory", show: true },
     { to: "/my-requests", icon: ClipboardCheck, label: "My Requests", show: true },
+    { to: "/team", icon: UserCog, label: "My Team", show: hasTeam },
     {
       to: "/control-hub",
       icon: Shield,
@@ -426,15 +480,21 @@ function LayoutComponent() {
   const showCopilot =
     location.pathname !== "/" &&
     location.pathname !== "/settings" &&
-    !location.pathname.startsWith("/documents");
+    !location.pathname.startsWith("/documents") &&
+    !(location.pathname.startsWith("/control-hub") && (location.search as Record<string, string>)?.tab === "project-iq");
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden flex-col">
-      {/* --- PREMIUM TOP HEADER --- */}
-      <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-30 shrink-0 select-none">
-        {/* Left Side: Brand Logo + Brand Name */}
-        <div className="flex items-center gap-3">
-          <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity">
+    <div className="flex h-screen h-[100dvh] w-full bg-background overflow-hidden flex-row">
+      {/* --- DESKTOP LEFT SIDEBAR --- */}
+      <aside
+        className={cn(
+          "hidden lg:flex flex-col h-full bg-[#090f21] border-r border-blue-950/60 backdrop-blur-xl shrink-0 transition-all duration-300 relative select-none z-30",
+          sidebarCollapsed ? "w-[78px]" : "w-[260px]"
+        )}
+      >
+        {/* Brand Header */}
+        <div className="flex items-center px-4 py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5">
+          <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity overflow-hidden">
             <div className="relative shrink-0 flex items-center justify-center">
               <Logo size="sm" />
               <motion.div
@@ -444,16 +504,19 @@ function LayoutComponent() {
                 transition={{ duration: 3, repeat: Infinity }}
               />
             </div>
-            <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
+            {!sidebarCollapsed && (
+              <BrandName className="text-sm font-bold tracking-tight text-white whitespace-nowrap" withAI={true} />
+            )}
           </Link>
         </div>
 
-        {/* Center: always-visible nav */}
-        <div className="flex min-w-0 items-center justify-center">
-          <nav
-            className="hidden lg:flex items-center gap-0.5 rounded-2xl border border-border/50 bg-muted/30 backdrop-blur-sm p-1 relative"
-            onMouseLeave={() => setHoveredPath(null)}
-          >
+        {/* Navigation List */}
+        <nav
+          className="flex-1 py-3 px-3 overflow-hidden flex flex-col min-h-0"
+          onMouseLeave={() => setHoveredPath(null)}
+        >
+          {/* Main Links */}
+          <div className="space-y-0.5 shrink-0">
             {navItems
               .filter((n) => n.show)
               .map((item) => {
@@ -466,18 +529,23 @@ function LayoutComponent() {
                     to={item.to}
                     onMouseEnter={() => setHoveredPath(item.to)}
                     className={cn(
-                      "relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap z-10",
+                      "relative flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap z-10",
+                      sidebarCollapsed ? "justify-center" : "justify-start",
                       active
-                        ? "text-foreground font-bold"
-                        : "text-muted-foreground hover:text-foreground",
+                        ? "font-bold text-white"
+                        : "text-zinc-400 hover:text-white",
                     )}
+                    style={{
+                      color: active ? accentColor : undefined,
+                    }}
+                    title={sidebarCollapsed ? item.label : undefined}
                   >
                     {active && (
                       <motion.div
-                        layoutId="desktop-nav-active-pill"
+                        layoutId="desktop-sidebar-active-pill"
                         className="absolute inset-0 rounded-xl -z-10"
                         style={{
-                          background: `color-mix(in oklab, ${accentColor} 14%, var(--background))`,
+                          background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
                           boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
                         }}
                         transition={{ type: "spring", stiffness: 380, damping: 30 }}
@@ -485,16 +553,16 @@ function LayoutComponent() {
                     )}
                     {active && (
                       <motion.div
-                        layoutId="header-nav-active-dot"
-                        className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 h-0.5 w-4 rounded-full"
-                        style={{ background: accentColor }}
+                        layoutId="desktop-sidebar-active-stripe"
+                        className="absolute left-0 top-2.5 bottom-2.5 w-0.75 rounded-r-full"
+                        style={{ background: accentColor, boxShadow: `0 0 8px ${accentColor}` }}
                         transition={{ type: "spring", stiffness: 400, damping: 28 }}
                       />
                     )}
                     {hoveredPath === item.to && !active && (
                       <motion.div
-                        layoutId="desktop-nav-hover-pill"
-                        className="absolute inset-0 rounded-xl bg-muted/60 -z-20"
+                        layoutId="desktop-sidebar-hover-pill"
+                        className="absolute inset-0 rounded-xl bg-zinc-800/40 -z-20"
                         transition={{ type: "spring", stiffness: 350, damping: 28 }}
                       />
                     )}
@@ -510,161 +578,235 @@ function LayoutComponent() {
                       className="shrink-0 flex items-center justify-center"
                     >
                       <Icon
-                        className="h-3.5 w-3.5"
+                        className="h-4.5 w-4.5"
                         style={{ color: active ? accentColor : "inherit" }}
                       />
                     </motion.div>
-                    <span className="hidden xl:inline">{item.label}</span>
+                    {!sidebarCollapsed && (
+                      <span className="transition-opacity duration-300">{item.label}</span>
+                    )}
                   </Link>
                 );
               })}
-          </nav>
-        </div>
-
-        {/* Right Side: Theme, Announcement, History drawer toggle, User profile role switcher */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* Notifications / Announcements banner inside Header */}
-          <div className="hidden xl:block">
-            <AnnouncementBanner variant="topbar" />
           </div>
 
-          {/* Watch intro tour */}
-          <button
-            onClick={openIntro}
-            className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
-            title="Watch intro tour"
-          >
-            <PlayCircle className="h-4 w-4 text-primary" />
-          </button>
+          {/* Recent Conversations — only this section scrolls */}
+          {!sidebarCollapsed && (
+            <div className="mt-3 pt-3 border-t border-blue-950/60 flex-1 flex flex-col min-h-0">
+              <div className="flex items-center justify-between px-2 mb-1.5 shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-500">
+                  Recent Chats
+                </span>
+                <button
+                  onClick={() => {
+                    const newId = createThread();
+                    setActiveId(newId);
+                    if (location.pathname !== "/") {
+                      navigate({ to: "/" });
+                    }
+                  }}
+                  className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 hover:bg-primary/20 hover:text-primary transition-all cursor-pointer"
+                  title="New Conversation"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              </div>
 
-          {/* Office Clocks */}
-          <button
-            onClick={() => setClocksOverlayOpen(true)}
-            className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
-            title="Office Clocks"
-          >
-            <Globe className="h-4 w-4 text-primary" />
-          </button>
+              <div className="space-y-0.5 overflow-y-auto no-scrollbar">
+                {Object.keys(threads).length === 0 ? (
+                  <div className="text-[10px] text-zinc-600 italic px-2 py-1.5">
+                    No conversations yet
+                  </div>
+                ) : (
+                  Object.values(threads)
+                    .filter((t) => t.turns.length > 0)
+                    .sort((a, b) => b.updatedAt - a.updatedAt)
+                    .slice(0, 8)
+                    .map((t) => {
+                      const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
+                      const chatTitle = firstUserMsg
+                        ? firstUserMsg.length > 32 ? firstUserMsg.slice(0, 32) + "…" : firstUserMsg
+                        : "New conversation";
+                      const isActiveChat = activeId === t.id && location.pathname === "/";
+                      return (
+                        <div
+                          key={t.id}
+                          className={cn(
+                            "group relative flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
+                            isActiveChat
+                              ? "bg-primary/12 text-white"
+                              : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200"
+                          )}
+                          onClick={() => {
+                            setActiveId(t.id);
+                            if (location.pathname !== "/") navigate({ to: "/" });
+                          }}
+                        >
+                          <MessageSquare className={cn("h-3 w-3 shrink-0", isActiveChat ? "text-primary" : "text-zinc-600")} />
+                          <span className="truncate flex-1 text-[11px] font-medium pr-4">{chatTitle}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                            className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          )}
 
-          {/* Proactive nudges (system-initiated feed) */}
-          <ProactiveNudgeFeed />
+        </nav>
 
-          {/* Theme Toggle */}
+        {/* Collapse/Expand Toggle — outside scrollable nav so it's always visible */}
+        <div className="px-3 py-2 border-t border-blue-950/60 shrink-0">
           <button
-            onClick={handleThemeToggle}
-            className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
-            title="Toggle Theme"
-          >
-            {activeTheme === "dark" ? (
-              <Sun className="h-4 w-4 text-amber-400" />
-            ) : (
-              <Moon className="h-4 w-4 text-indigo-400" />
-            )}
-          </button>
-
-          {/* History Toggle */}
-          <button
-            onClick={() => setHistoryDrawerOpen(!historyDrawerOpen)}
+            onClick={toggleSidebar}
             className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer shadow-sm",
-              historyDrawerOpen
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground",
+              "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
+              sidebarCollapsed ? "justify-center" : "justify-start",
+              "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
             )}
-            title="Recent Chats"
+            title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
-            <MessageSquare className="h-4 w-4" />
+            {sidebarCollapsed ? (
+              <ChevronRight className="h-4 w-4 shrink-0" />
+            ) : (
+              <>
+                <ChevronLeft className="h-4 w-4 shrink-0" />
+                <span>Collapse Sidebar</span>
+              </>
+            )}
           </button>
+        </div>
 
-          {/* Profile Switcher Dropdown */}
+        {/* Sidebar Footer */}
+        <div className="mt-auto p-3 border-t border-blue-950/60 flex flex-col gap-2 shrink-0">
+          {/* Utilities row when expanded */}
+          {!sidebarCollapsed && (
+            <div className="flex items-center justify-around py-1 bg-[#0c1630]/40 rounded-xl border border-blue-950/40">
+              <button
+                onClick={openIntro}
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                title="Watch intro tour"
+              >
+                <PlayCircle className="h-4 w-4 text-primary" />
+              </button>
+
+              <button
+                onClick={() => setClocksOverlayOpen(true)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                title="Office Clocks"
+              >
+                <Globe className="h-4 w-4 text-primary" />
+              </button>
+
+              <button
+                onClick={handleThemeToggle}
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                title="Toggle Theme"
+              >
+                {activeTheme === "dark" ? (
+                  <Sun className="h-4 w-4 text-amber-400" />
+                ) : (
+                  <Moon className="h-4 w-4 text-indigo-400" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Utilities column when collapsed */}
+          {sidebarCollapsed && (
+            <div className="flex flex-col items-center gap-1.5 pb-1">
+              <button
+                onClick={openIntro}
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                title="Watch intro tour"
+              >
+                <PlayCircle className="h-4 w-4 text-primary" />
+              </button>
+              <button
+                onClick={() => setClocksOverlayOpen(true)}
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
+                title="Office Clocks"
+              >
+                <Globe className="h-4 w-4 text-primary" />
+              </button>
+              <button
+                onClick={handleThemeToggle}
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                title="Toggle Theme"
+              >
+                {activeTheme === "dark" ? (
+                  <Sun className="h-4 w-4 text-amber-400" />
+                ) : (
+                  <Moon className="h-4 w-4 text-indigo-400" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Profile Switcher Dropdown inside Sidebar */}
           <div className="relative" ref={profileDropdownRef}>
             <button
               onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-              className="flex items-center gap-2 rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 p-1 pr-2 text-xs font-medium text-foreground transition-all shrink-0 cursor-pointer shadow-sm"
+              className={cn(
+                "flex w-full items-center rounded-xl border border-blue-950 bg-[#0c1630]/35 hover:bg-[#0c1630]/60 p-1.5 transition-all text-xs font-medium text-white cursor-pointer shadow-sm",
+                sidebarCollapsed ? "justify-center pr-1.5" : "justify-between pr-3"
+              )}
             >
-              {avatarEl}
-              <ChevronDown
-                className={cn(
-                  "h-3 w-3 opacity-55 transition-transform duration-200",
-                  profileDropdownOpen && "rotate-180",
+              <div className="flex items-center gap-2 min-w-0">
+                {avatarEl}
+                {!sidebarCollapsed && (
+                  <div className="text-left min-w-0">
+                    <div className="font-bold text-white truncate max-w-[120px]">{user.name}</div>
+                    <div className="text-[10px] text-zinc-400 truncate max-w-[120px]">{user.role}</div>
+                  </div>
                 )}
-              />
+              </div>
+              {!sidebarCollapsed && (
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 text-zinc-400 opacity-55 transition-transform duration-200 shrink-0",
+                    profileDropdownOpen && "rotate-180"
+                  )}
+                />
+              )}
             </button>
 
             <AnimatePresence>
               {profileDropdownOpen && (
                 <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute right-0 mt-2 w-54 z-50 rounded-2xl border border-border/60 bg-popover/95 backdrop-blur-xl p-2 shadow-2xl"
-                  style={{ minWidth: "210px" }}
+                  exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                  transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-full left-0 mb-2 z-[100] rounded-xl border border-zinc-700/60 bg-[#0d1628] p-1.5 shadow-2xl"
+                  style={{ minWidth: "220px", width: "220px" }}
                 >
-                  <div className="px-3 py-1.5 border-b border-border/40 mb-1.5 flex flex-col">
-                    <span className="text-xs font-bold text-foreground truncate">{user.name}</span>
-                    <span className="text-[10px] text-muted-foreground truncate font-medium">
-                      {user.role}
-                    </span>
-                  </div>
-
-                  {/* Mobile-only quick actions — these live as top-bar buttons on ≥sm screens */}
-                  <div className="sm:hidden border-b border-border/40 mb-1.5 pb-1.5">
-                    <div className="px-3 py-1 flex items-center gap-1.5 mb-1">
-                      <Sparkles className="h-3 w-3 text-primary" />
-                      <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground/60">
-                        Quick Actions
-                      </span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <button
-                        onClick={() => {
-                          handleThemeToggle();
-                          setProfileDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
-                      >
-                        {activeTheme === "dark" ? (
-                          <Sun className="h-3.5 w-3.5 text-amber-400" />
-                        ) : (
-                          <Moon className="h-3.5 w-3.5 text-indigo-400" />
-                        )}
-                        <span className="flex-1 truncate">
-                          {activeTheme === "dark" ? "Light mode" : "Dark mode"}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setClocksOverlayOpen(true);
-                          setProfileDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
-                      >
-                        <Globe className="h-3.5 w-3.5 text-primary" />
-                        <span className="flex-1 truncate">Office Clocks</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          openIntro();
-                          setProfileDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-foreground/75 hover:bg-muted/65 hover:text-foreground transition-all text-left"
-                      >
-                        <PlayCircle className="h-3.5 w-3.5 text-primary" />
-                        <span className="flex-1 truncate">Watch intro tour</span>
-                      </button>
+                  {/* User identity header */}
+                  <div className="px-2.5 py-2 mb-1 flex items-center gap-2.5">
+                    <div className="shrink-0">{avatarEl}</div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-white truncate">{user.name}</div>
+                      <div className="text-[10px] text-zinc-400 truncate">{user.role}</div>
                     </div>
                   </div>
 
-                  <div className="border-t border-border/40 mt-1.5 pt-1.5">
+                  <RoleSwitcher />
+
+                  <div className="border-t border-zinc-700/50 mt-1.5 pt-1.5">
                     <button
                       onClick={() => {
                         logout();
                         setProfileDropdownOpen(false);
                       }}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-xs text-rose-500 hover:bg-rose-500/10 transition-all text-left font-medium"
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all text-left cursor-pointer"
                     >
-                      <LogOut className="h-3.5 w-3.5" />
+                      <LogOut className="h-3.5 w-3.5 shrink-0" />
                       <span>Sign Out</span>
                     </button>
                   </div>
@@ -673,214 +815,201 @@ function LayoutComponent() {
             </AnimatePresence>
           </div>
         </div>
-      </header>
+      </aside>
 
-      {/* --- MAIN WORKSPACE --- */}
-      <main
-        className={cn(
-          "flex-1 w-full min-h-0 relative z-0 pb-20 lg:pb-0 overflow-hidden transition-all duration-300",
-          showCopilot && copilotOpen && "lg:pr-[480px]",
-        )}
-      >
-        <Outlet />
-      </main>
-
-      {/* --- RECENT CHATS DRAWER --- */}
+      {/* --- MOBILE LEFT DRAWER --- */}
       <AnimatePresence>
-        {historyDrawerOpen && (
+        {mobileMenuOpen && (
           <>
+            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 0.4 }}
               exit={{ opacity: 0 }}
-              onClick={() => setHistoryDrawerOpen(false)}
-              className="fixed inset-0 bg-black z-40 backdrop-blur-xs"
+              onClick={() => setMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/60 z-40 backdrop-blur-xs lg:hidden"
             />
+            {/* Drawer Panel */}
             <motion.div
-              initial={{ x: "100%" }}
+              initial={{ x: "-100%" }}
               animate={{ x: 0 }}
-              exit={{ x: "100%" }}
+              exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="fixed inset-y-0 right-0 w-80 bg-background/95 backdrop-blur-xl border-l border-border/80 shadow-2xl z-50 flex flex-col p-4 pt-6"
+              className="fixed inset-y-0 left-0 w-72 bg-[#090f21] border-r border-blue-950/60 shadow-2xl z-50 flex flex-col p-4 pt-6 lg:hidden select-none"
             >
-              <div className="flex items-center justify-between mb-4 mt-1">
-                <h3 className="text-xs font-bold text-foreground flex items-center gap-2 uppercase tracking-wider text-muted-foreground/80">
-                  <MessageSquare className="h-4 w-4 text-primary" />
-                  <span>Recent Conversations</span>
-                </h3>
+              {/* Drawer Header */}
+              <div className="flex items-center justify-between mb-6 px-2 shrink-0">
+                <Link to="/" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
+                  <Logo size="sm" />
+                  <BrandName className="text-sm font-bold tracking-tight text-white" withAI={true} />
+                </Link>
                 <button
-                  onClick={() => setHistoryDrawerOpen(false)}
-                  className="p-1.5 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-1.5 rounded-xl text-zinc-400 hover:bg-zinc-800/40 hover:text-white transition-all cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <button
-                onClick={() => {
-                  createThread();
-                  setHistoryDrawerOpen(false);
-                }}
-                className="mb-4 flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold transition-all cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                <span>New Conversation</span>
-              </button>
-
-              <div className="relative flex items-center mb-4">
-                <Search className="absolute left-3 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Search chats..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-muted/40 border border-border/50 hover:border-primary/20 focus:border-primary/40 focus:bg-background text-xs text-foreground placeholder:text-muted-foreground/60 rounded-xl pl-9 pr-8 py-2 focus:outline-none transition-all"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="absolute right-2.5 p-1 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 transition-all cursor-pointer"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
+              {/* Navigation Items */}
+              <div className="flex-1 space-y-1.5 overflow-y-auto px-1 no-scrollbar">
+                {navItems
+                  .filter((n) => n.show)
+                  .map((item) => {
+                    const Icon = item.icon;
+                    const active = isActive(item.to);
+                    const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={cn(
+                          "relative flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer z-10",
+                          active
+                            ? "font-bold"
+                            : "text-zinc-400 hover:text-white hover:bg-zinc-800/20",
+                        )}
+                        style={{
+                          color: active ? accentColor : undefined,
+                        }}
+                      >
+                        {active && (
+                          <motion.div
+                            layoutId="mobile-drawer-active-pill"
+                            className="absolute inset-0 rounded-xl -z-10"
+                            style={{
+                              background: `color-mix(in oklab, ${accentColor} 14%, transparent)`,
+                              boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 20%, transparent)`,
+                            }}
+                          />
+                        )}
+                        <Icon
+                          className="h-4.5 w-4.5"
+                          style={{ color: active ? accentColor : "inherit" }}
+                        />
+                        <span>{item.label}</span>
+                      </Link>
+                    );
+                  })}
               </div>
 
-              <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 pr-0.5">
-                {(() => {
-                  const filteredThreads = Object.values(threads)
-                    .filter((t) => {
-                      if (t.turns.length === 0) return false;
-                      if (!searchQuery) return true;
-                      const query = searchQuery.toLowerCase();
-                      return t.turns.some((turn) => turn.text.toLowerCase().includes(query));
-                    })
-                    .sort((a, b) => b.updatedAt - a.updatedAt);
+              {/* Drawer Footer Actions */}
+              <div className="border-t border-blue-950/60 pt-4 mt-4 space-y-3 px-2 shrink-0">
+                {/* Utilities */}
+                <div className="flex items-center justify-around py-1.5 bg-[#0c1630]/40 rounded-xl border border-blue-950/40">
+                  <button
+                    onClick={() => {
+                      openIntro();
+                      setMobileMenuOpen(false);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
+                    title="Watch intro tour"
+                  >
+                    <PlayCircle className="h-4.5 w-4.5 text-primary" />
+                  </button>
 
-                  if (filteredThreads.length === 0) {
-                    return (
-                      <div className="text-center py-8 text-xs text-muted-foreground/65">
-                        {searchQuery ? "No matching chats found" : "No recent chats"}
-                      </div>
-                    );
-                  }
+                  <button
+                    onClick={() => {
+                      setClocksOverlayOpen(true);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
+                    title="Office Clocks"
+                  >
+                    <Globe className="h-4.5 w-4.5 text-primary" />
+                  </button>
 
-                  return filteredThreads.map((thread) => {
-                    const active = activeId === thread.id;
-                    const title = thread.turns[0]?.text || "New Chat";
-                    return (
-                      <div
-                        key={thread.id}
-                        onClick={() => {
-                          setActiveId(thread.id);
-                          setHistoryDrawerOpen(false);
-                        }}
-                        className={cn(
-                          "group flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-medium cursor-pointer transition-all border border-transparent",
-                          active
-                            ? "bg-primary/10 text-primary font-semibold border-primary/20"
-                            : "text-foreground/75 hover:bg-muted/40 hover:text-foreground",
-                        )}
-                      >
-                        <MessageSquare
-                          className={cn(
-                            "h-3.5 w-3.5 shrink-0",
-                            active ? "text-primary" : "text-muted-foreground/70",
-                          )}
-                        />
-                        <span className="truncate flex-1 text-left">{title}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(thread.id);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-muted-foreground hover:bg-rose-500/10 hover:text-rose-500 transition-all shrink-0 cursor-pointer"
-                          title="Delete conversation"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    );
-                  });
-                })()}
+                  <button
+                    onClick={handleThemeToggle}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
+                    title="Toggle Theme"
+                  >
+                    {activeTheme === "dark" ? (
+                      <Sun className="h-4.5 w-4.5 text-amber-400" />
+                    ) : (
+                      <Moon className="h-4.5 w-4.5 text-indigo-400" />
+                    )}
+                  </button>
+                </div>
+
+                {/* User card / switcher */}
+                <div className="flex items-center gap-3 p-2 bg-[#0c1630]/35 rounded-2xl border border-blue-950">
+                  <div className="shrink-0">{avatarEl}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-white truncate">{user.name}</div>
+                    <div className="text-[9px] text-zinc-400 truncate">{user.role}</div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      logout();
+                      setMobileMenuOpen(false);
+                    }}
+                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer shrink-0"
+                    title="Sign Out"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
-      {/* --- BOTTOM FLOATING NAVIGATION DOCK (MOBILE) --- */}
-      <div
-        className="flex lg:hidden fixed bottom-0 inset-x-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border/60 justify-around py-1.5 px-1 select-none"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 6px)" }}
-        onMouseLeave={() => setHoveredPath(null)}
-      >
-        {navItems
-          .filter((n) => n.show)
-          .map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.to);
-            const accentColor = NAV_COLORS[item.to] || "var(--clarity)";
 
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                title={item.label}
-                onMouseEnter={() => setHoveredPath(item.to)}
-                className={cn(
-                  "group relative flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all duration-200 cursor-pointer min-w-[44px] flex-1 max-w-[80px] z-10",
-                  active
-                    ? "text-foreground font-bold"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {active && (
-                  <motion.div
-                    layoutId="mobile-nav-active-pill"
-                    className="absolute inset-0 rounded-xl -z-10"
-                    style={{
-                      background: `color-mix(in oklab, ${accentColor} 12%, transparent)`,
-                      boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${accentColor} 15%, transparent)`,
-                    }}
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
-                {active && (
-                  <motion.div
-                    layoutId="dock-active-dot-mobile"
-                    className="absolute -top-1 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full"
-                    style={{
-                      background: accentColor,
-                      boxShadow: `0 0 8px ${accentColor}`,
-                    }}
-                    transition={{ type: "spring", stiffness: 300, damping: 20 }}
-                  />
-                )}
-                {hoveredPath === item.to && !active && (
-                  <motion.div
-                    layoutId="mobile-nav-hover-pill"
-                    className="absolute inset-0 rounded-xl bg-muted/40 -z-20"
-                    transition={{ type: "spring", stiffness: 350, damping: 28 }}
-                  />
-                )}
-                <motion.div
-                  whileHover={{ scale: 1.15 }}
-                  animate={active ? { scale: 1.05 } : { scale: 1 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 10 }}
-                  className="shrink-0 flex items-center justify-center"
-                >
-                  <Icon
-                    className="h-[18px] w-[18px]"
-                    style={{ color: active ? accentColor : "inherit" }}
-                  />
-                </motion.div>
-                <span className="mt-0.5 text-[9px] truncate max-w-[60px] leading-tight text-center">
-                  {item.label}
-                </span>
+      {/* --- RIGHT SIDE CONTENT AREA --- */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
+        {/* --- PREMIUM WORKSPACE HEADER --- */}
+        <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-20 shrink-0 select-none">
+          {/* Left Side: Mobile Hamburger OR Page Title on desktop */}
+          <div className="flex items-center gap-3">
+            {/* Hamburger Button (Mobile Only) */}
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+              title="Open Navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+
+            {/* Page Title (Desktop Only) / Logo + Brand (Mobile Only) */}
+            <div className="flex items-center gap-2">
+              <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
+                {getPageTitle(location.pathname)}
+              </span>
+
+              {/* Logo + Brand (Mobile Only) */}
+              <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
+                <Logo size="sm" />
+                <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
               </Link>
-            );
-          })}
+            </div>
+          </div>
+
+          {/* Right Side Utilities */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Announcement Banner (Desktop Only) */}
+            <div className="hidden xl:block">
+              <AnnouncementBanner variant="topbar" />
+            </div>
+
+            {/* Proactive Nudges Feed */}
+            <ProactiveNudgeFeed />
+
+
+          </div>
+        </header>
+
+        {/* --- MAIN WORKSPACE --- */}
+        <main
+          className={cn(
+            "flex-1 w-full min-h-0 relative z-0 overflow-hidden transition-all duration-300",
+            showCopilot && copilotOpen && "lg:pr-[480px]",
+          )}
+        >
+          <Outlet />
+        </main>
       </div>
 
       {/* --- PARALLAX TIME ORBIT OVERLAY --- */}

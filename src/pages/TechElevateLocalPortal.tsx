@@ -125,6 +125,7 @@ export function TechElevateLocalPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("trainings");
   const [canManage, setCanManage] = useState(false);
+  const [canViewAdmin, setCanViewAdmin] = useState(false);
   const [portalUrl, setPortalUrl] = useState<string>("");
 
   const authHeaders = useMemo(
@@ -141,9 +142,10 @@ export function TechElevateLocalPortal() {
       .then((r) => r.json())
       .then((s) => {
         setCanManage(!!s.can_manage);
+        setCanViewAdmin(!!s.can_view_admin || !!s.can_manage);
         setPortalUrl(s.portal_url || "");
       })
-      .catch(() => setCanManage(false));
+      .catch(() => { setCanManage(false); setCanViewAdmin(false); });
   }, [authHeaders]);
 
   const tabs: { id: Tab; label: string; subLabel: string; icon: typeof BookOpen; show: boolean }[] =
@@ -154,7 +156,7 @@ export function TechElevateLocalPortal() {
         label: "Admin",
         subLabel: "Panel",
         icon: ClipboardList,
-        show: canManage,
+        show: canViewAdmin,
       },
       { id: "groups", label: "Groups", subLabel: "Cohorts", icon: Users, show: canManage },
       { id: "mine", label: "My Learning", subLabel: "Plan", icon: UserCircle, show: true },
@@ -262,7 +264,7 @@ export function TechElevateLocalPortal() {
             {tab === "trainings" && (
               <TrainingsTab authHeaders={authHeaders} canManage={canManage} />
             )}
-            {tab === "assignments" && canManage && <AssignmentsTab authHeaders={authHeaders} />}
+            {tab === "assignments" && canViewAdmin && <AssignmentsTab authHeaders={authHeaders} canManage={canManage} />}
             {tab === "groups" && canManage && <GroupsTab authHeaders={authHeaders} />}
             {tab === "mine" && <MyLearningTab authHeaders={authHeaders} portalUrl={portalUrl} />}
           </motion.div>
@@ -496,6 +498,9 @@ function TrainingDetailModal({
   const [view, setView] = useState<"about" | "materials" | "questions" | "enrolled">("about");
   // Which section the admin editors target: -1 = course-level (single), else index into detail.levels.
   const [manageLevel, setManageLevel] = useState(-1);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showAssign, setShowAssign] = useState(false);
 
   const load = useCallback(() => {
     Promise.all([
@@ -580,12 +585,80 @@ function TrainingDetailModal({
       </div>
     ) : null;
 
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Delete failed.");
+      onChanged();
+      onClose();
+    } catch {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
+
   return (
     <Modal title={detail?.title || "Training"} onClose={onClose} wide>
       {loading ? (
         <Spinner label="Loading course…" />
       ) : (
         <div className="flex flex-col gap-4">
+          {/* Admin actions */}
+          {canManage && (
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowAssign(true)}
+                className="px-3 py-1.5 text-[11px] font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-xs transition-all inline-flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" /> Assign to Employees
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                disabled={deleting}
+                className="px-3 py-1.5 text-[11px] font-bold rounded-xl border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/5 transition-all inline-flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete Course
+              </button>
+            </div>
+          )}
+
+          {/* Delete confirmation dialog */}
+          {confirmDelete && (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 dark:bg-red-500/[0.07] p-4 flex flex-col gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-red-500/10 text-red-500 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-800 dark:text-zinc-200">Delete this course?</p>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 leading-relaxed">
+                    This will permanently remove <span className="font-bold">"{detail?.title}"</span> along with all its materials, assessment questions, and enrollment records. This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 cursor-pointer transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 text-xs font-bold rounded-xl bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/25 inline-flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Yes, Delete
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100/80 dark:bg-zinc-900/60 border border-slate-200/60 dark:border-zinc-800/80 overflow-x-auto no-scrollbar">
             {tabs.map((t) => (
               <button
@@ -723,7 +796,171 @@ function TrainingDetailModal({
           )}
         </div>
       )}
+
+      {showAssign && detail && (
+        <AssignTrainingFromDetailModal
+          authHeaders={authHeaders}
+          training={detail}
+          onClose={() => setShowAssign(false)}
+          onSaved={() => {
+            setShowAssign(false);
+            load();
+          }}
+        />
+      )}
     </Modal>
+  );
+}
+
+function AssignTrainingFromDetailModal({
+  authHeaders,
+  training,
+  onClose,
+  onSaved,
+}: {
+  authHeaders: Record<string, string>;
+  training: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [selected, setSelected] = useState<Record<number, any>>({});
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      fetch(`/api/portal/te-local/employees?search=${encodeURIComponent(search)}`, { headers: authHeaders })
+        .then((r) => r.json())
+        .then((d) => setResults(d.results || []))
+        .catch(() => setResults([]));
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [search, authHeaders]);
+
+  const toggle = (emp: any) => {
+    setSelected((prev) => {
+      const next = { ...prev };
+      if (next[emp.employee_id]) delete next[emp.employee_id];
+      else next[emp.employee_id] = emp;
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    const emails = Object.values(selected).map((e: any) => e.email).filter(Boolean);
+    if (emails.length === 0) {
+      setErr("Select at least one employee.");
+      return;
+    }
+    setSaving(true);
+    setErr("");
+    try {
+      const resp = await fetch("/api/portal/te-local/assignments", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ training_id: training.id, employees: emails }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Failed.");
+      onSaved();
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedCount = Object.keys(selected).length;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl border border-slate-200/60 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between shrink-0 p-5 border-b border-slate-100 dark:border-zinc-800/50">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+            Assign: {training.title}
+          </h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-3">
+          <Field label={`Select employees (${selectedCount} selected)`}>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                className={cn(inputCls, "pl-9")}
+                placeholder="Search by name, email, department…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          </Field>
+
+          {selectedCount > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.values(selected).map((e: any) => (
+                <span key={e.employee_id} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 inline-flex items-center gap-1">
+                  {e.name}
+                  <button onClick={() => toggle(e)} className="hover:text-red-500">
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200/60 dark:border-zinc-800/80 divide-y divide-slate-100 dark:divide-zinc-800/60">
+            {results.length === 0 ? (
+              <p className="text-[11px] text-slate-400 dark:text-zinc-500 text-center py-4">No employees found.</p>
+            ) : (
+              results.map((e) => {
+                const on = !!selected[e.employee_id];
+                return (
+                  <button
+                    key={e.employee_id}
+                    onClick={() => toggle(e)}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
+                      on ? "bg-indigo-500/5" : "hover:bg-slate-50 dark:hover:bg-zinc-800/40",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-700 dark:text-zinc-300 truncate">{e.name}</p>
+                      <p className="text-[10px] text-slate-400 dark:text-zinc-500 truncate">
+                        {e.code} · {e.department || "—"}
+                      </p>
+                    </div>
+                    <div className={cn("w-4 h-4 rounded border flex items-center justify-center shrink-0", on ? "bg-indigo-500 border-indigo-500" : "border-slate-300 dark:border-zinc-700")}>
+                      {on && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {err && <p className="text-xs font-bold text-red-500">{err}</p>}
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-zinc-900">
+            <button onClick={onClose} className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 cursor-pointer">
+              Cancel
+            </button>
+            <button onClick={submit} disabled={saving || selectedCount === 0} className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-md disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Assign ({selectedCount})
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -776,6 +1013,51 @@ function CreateTrainingModal({
   const [activeLevel, setActiveLevel] = useState(0);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+
+  // AI draft state
+  const [aiDesc, setAiDesc] = useState("");
+  const [drafting, setDrafting] = useState(false);
+
+  const draftWithAi = async () => {
+    const desc = aiDesc.trim();
+    if (!desc) return;
+    setDrafting(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/portal/te-local/trainings/generate", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ description: desc }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Couldn't draft the course");
+      setForm({
+        title: data.title || "",
+        description: data.description || "",
+        category: data.category || "Technical",
+        duration_minutes: data.duration_minutes || 120,
+        pass_percentage: data.pass_percentage || 60,
+        skills: (data.skill_tags || []).join(", "),
+      });
+      if (data.multi_level && data.levels?.length) {
+        setMultiLevel(true);
+        setLevels(
+          data.levels.map((lv: any) => ({
+            name: lv.name || "",
+            duration_minutes: lv.duration_minutes || 60,
+            pass_percentage: lv.pass_percentage || 60,
+            description: lv.description || "",
+          })),
+        );
+      } else {
+        setMultiLevel(false);
+      }
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setDrafting(false);
+    }
+  };
 
   const STEPS = ["Basics", "Curriculum", "Assessment", "Done"];
 
@@ -889,6 +1171,43 @@ function CreateTrainingModal({
       {/* Step 1 — Basics */}
       {step === 1 && (
         <div className="flex flex-col gap-3">
+          {/* AI draft box */}
+          {trainingId == null && (
+            <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.04] dark:bg-violet-500/[0.06] p-3">
+              <label className="flex items-center gap-1.5 text-[12px] font-semibold text-violet-600 dark:text-violet-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                Describe it, let AI draft it
+              </label>
+              <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-0.5">
+                Describe the training in a sentence — AI fills in the title, description, skills, duration, and levels for you to review.
+              </p>
+              <div className="flex items-start gap-2 mt-2">
+                <textarea
+                  value={aiDesc}
+                  onChange={(e) => setAiDesc(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !drafting && aiDesc.trim()) {
+                      e.preventDefault();
+                      draftWithAi();
+                    }
+                  }}
+                  placeholder='e.g. "Azure DevOps fundamentals for new joiners — beginner to intermediate, should cover CI/CD pipelines and repos"'
+                  disabled={drafting}
+                  className={cn(inputCls, "flex-1 min-h-[48px] max-h-[100px] resize-y")}
+                />
+                <button
+                  type="button"
+                  onClick={draftWithAi}
+                  disabled={drafting || !aiDesc.trim()}
+                  className="shrink-0 px-3 py-2 text-[11px] font-bold rounded-xl bg-violet-600 hover:bg-violet-500 text-white shadow-md shadow-violet-600/20 transition-all cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {drafting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {drafting ? "Drafting…" : "Draft"}
+                </button>
+              </div>
+            </div>
+          )}
+
           <Field label="Title *">
             <input className={inputCls} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </Field>
@@ -1912,7 +2231,7 @@ function AssessmentEditor({
 
 // ── Assignments (admin) ──────────────────────────────────────────────────────
 
-function AssignmentsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string, string>; canManage: boolean }) {
   const [rows, setRows] = useState<Assignment[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [trainings, setTrainings] = useState<Training[]>([]);
@@ -1985,14 +2304,16 @@ function AssignmentsTab({ authHeaders }: { authHeaders: Record<string, string> }
         </div>
       )}
 
-      <div className="flex justify-end">
-        <button
-          onClick={() => setAssigning(true)}
-          className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/25 transition-all duration-200 hover:scale-[1.02] active:scale-95 inline-flex items-center gap-2 cursor-pointer"
-        >
-          <Plus className="w-4 h-4" /> Assign Course
-        </button>
-      </div>
+      {canManage && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setAssigning(true)}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/25 transition-all duration-200 hover:scale-[1.02] active:scale-95 inline-flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" /> Assign Course
+          </button>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-200/50 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 shadow-xs backdrop-blur-md overflow-hidden">
         <div className="overflow-x-auto">

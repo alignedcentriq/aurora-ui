@@ -27,8 +27,10 @@ from app.services import techelevate_local_service as te
 
 router = APIRouter(prefix="/api/portal/te-local", tags=["TechElevate (Local)"])
 
-# Roles allowed to author trainings, assign, and move assignment status.
+# Roles allowed to view admin panel (assignments, groups, enrollments).
 _ADMIN_ROLES = {"hr", "pmo", "admin", "super admin", "functional manager"}
+# Roles allowed to create/delete trainings, assign courses, and manage content.
+_LMS_WRITE_ROLES = {"pmo", "super admin"}
 
 # Uploaded course documents live here and are served back via the /uploads static mount.
 _TE_UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads", "te_local")
@@ -46,14 +48,29 @@ def _guard_admin(user: CurrentUser):
         raise HTTPException(status_code=403, detail="This action is restricted to HR / PMO / Admin / Managers.")
 
 
+def _can_manage_lms(user: CurrentUser) -> bool:
+    """PMO, Super Admin, or users with explicit lms_manage capability."""
+    role = (user.role or "").lower()
+    if role in _LMS_WRITE_ROLES:
+        return True
+    extras = getattr(user, "extra_capabilities", None) or []
+    return "lms_manage" in extras
+
+
+def _guard_lms_write(user: CurrentUser):
+    if not _can_manage_lms(user):
+        raise HTTPException(status_code=403, detail="Only PMO, Super Admin, or users with LMS management privileges can perform this action.")
+
+
 # ── Status ─────────────────────────────────────────────────────────────────────
 
 @router.get("/status")
 async def status(user: CurrentUser = Depends(get_current_user)):
     return {
         "local_enabled": te.local_enabled(),
-        "can_manage": (user.role or "").lower() in _ADMIN_ROLES,
-        "portal_url": settings.TECHELEVATE_PORTAL_URL,
+        "can_manage": _can_manage_lms(user),
+        "can_view_admin": (user.role or "").lower() in _ADMIN_ROLES,
+        "portal_url": getattr(settings, "TECHELEVATE_PORTAL_URL", ""),
     }
 
 
@@ -85,11 +102,93 @@ async def get_training(training_id: int, db: Session = Depends(get_db),
     return t
 
 
+@router.post("/trainings/generate")
+async def generate_training_draft(payload: dict = Body(...),
+                                  user: CurrentUser = Depends(get_current_user)):
+    """LLM-draft a training course (title, description, category, duration, pass %,
+    skill tags, and optionally multi-level structure) from a plain-English description.
+
+    Returns a DRAFT only — nothing is persisted. The admin reviews it in the wizard
+    and saves through the normal POST create endpoint.
+    """
+    _guard_enabled()
+    _guard_lms_write(user)
+
+    description = (payload.get("description") or "").strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="Describe the training you want to create (a sentence is enough).")
+
+    from app.services import llm_controls_service as llm_controls
+    from app.services.llm_json import invoke_json
+
+    model = llm_controls.get_llm("general", default_timeout=60)
+    prompt = (
+        "You are a corporate training designer for an internal Learning Management System. "
+        "From the admin's description below, design a training course.\n\n"
+        f"Admin's description: {description}\n\n"
+        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
+        '{"title": "Short Course Title", "description": "2-3 sentence overview of what learners will gain.", '
+        '"category": "Technical|Governance & Compliance|Business", '
+        '"duration_minutes": 120, "pass_percentage": 60, '
+        '"skill_tags": ["Skill1", "Skill2"], '
+        '"multi_level": false, '
+        '"levels": [{"name": "Beginner", "duration_minutes": 60, "pass_percentage": 55, "description": "what this level covers"}, '
+        '{"name": "Intermediate", "duration_minutes": 60, "pass_percentage": 65, "description": "..."}, '
+        '{"name": "Advanced", "duration_minutes": 60, "pass_percentage": 75, "description": "..."}]}\n\n'
+        "Rules:\n"
+        "- title: concise, professional. 5-10 words max.\n"
+        "- description: employee-facing, factual, no marketing fluff.\n"
+        "- category: pick the single best fit from the three options.\n"
+        "- duration_minutes: total estimated study time, realistic for the topic (30-480).\n"
+        "- pass_percentage: 50-80, harder topics can be lower.\n"
+        "- skill_tags: 2-5 specific, concrete skills the learner earns on completion. "
+        "Use proper casing (e.g. 'Python', 'Cloud Security', 'Data Analysis').\n"
+        "- multi_level: true only if the topic naturally has a progression (beginner→advanced). "
+        "Simple compliance or awareness courses should be single-level (false).\n"
+        "- levels: include ONLY when multi_level is true. 2-4 levels with ascending difficulty. "
+        "Each level has its own duration and pass percentage.\n"
+    )
+    draft = invoke_json(model, prompt, attempts=2)
+    if draft is None:
+        raise HTTPException(status_code=502, detail="Couldn't draft the course — the model didn't return usable JSON. Try again or rephrase.")
+
+    tags = draft.get("skill_tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    result: dict = {
+        "title": str(draft.get("title") or "").strip()[:150],
+        "description": str(draft.get("description") or "").strip()[:500],
+        "category": str(draft.get("category") or "Technical").strip(),
+        "duration_minutes": min(max(int(draft.get("duration_minutes") or 120), 15), 960),
+        "pass_percentage": min(max(int(draft.get("pass_percentage") or 60), 10), 100),
+        "skill_tags": tags[:8],
+        "multi_level": bool(draft.get("multi_level")),
+    }
+    if result["category"] not in ("Technical", "Governance & Compliance", "Business"):
+        result["category"] = "Technical"
+
+    if result["multi_level"] and isinstance(draft.get("levels"), list):
+        result["levels"] = [
+            {
+                "name": str(lv.get("name") or f"Level {i+1}").strip()[:60],
+                "duration_minutes": min(max(int(lv.get("duration_minutes") or 60), 10), 480),
+                "pass_percentage": min(max(int(lv.get("pass_percentage") or 60), 10), 100),
+                "description": str(lv.get("description") or "").strip()[:300],
+            }
+            for i, lv in enumerate(draft["levels"][:5])
+        ]
+    else:
+        result["levels"] = []
+
+    return result
+
+
 @router.post("/trainings")
 async def create_training(payload: dict = Body(...), db: Session = Depends(get_db),
                           user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not (payload.get("title") or "").strip():
         raise HTTPException(status_code=422, detail="title is required.")
     return te.create_training(db, payload, created_by=user.email)
@@ -99,7 +198,7 @@ async def create_training(payload: dict = Body(...), db: Session = Depends(get_d
 async def delete_training(training_id: int, db: Session = Depends(get_db),
                           user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not te.delete_training(db, training_id):
         raise HTTPException(status_code=404, detail="Training not found.")
     return {"deleted": True}
@@ -109,9 +208,9 @@ async def delete_training(training_id: int, db: Session = Depends(get_db),
 async def list_questions(training_id: int, manage: bool = Query(False),
                          db: Session = Depends(get_db),
                          user: CurrentUser = Depends(get_current_user)):
-    """MCQ questions. Answers are hidden unless an admin passes manage=true."""
+    """MCQ questions. Answers are hidden unless an LMS manager passes manage=true."""
     _guard_enabled()
-    reveal = bool(manage) and (user.role or "").lower() in _ADMIN_ROLES
+    reveal = bool(manage) and _can_manage_lms(user)
     return {"results": te.list_questions(db, training_id, reveal=reveal)}
 
 
@@ -120,7 +219,7 @@ async def add_question(training_id: int, payload: dict = Body(...), db: Session 
                        user: CurrentUser = Depends(get_current_user)):
     """Add an MCQ question to a training."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not (payload.get("question") or "").strip():
         raise HTTPException(status_code=422, detail="question is required.")
     out = te.add_question(db, training_id, payload)
@@ -133,7 +232,7 @@ async def add_question(training_id: int, payload: dict = Body(...), db: Session 
 async def delete_question(question_id: int, db: Session = Depends(get_db),
                           user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not te.delete_question(db, question_id):
         raise HTTPException(status_code=404, detail="Question not found.")
     return {"deleted": True}
@@ -148,7 +247,7 @@ async def generate_questions(training_id: int, payload: dict = Body(...), db: Se
     bulk endpoint. (The actual exam is sat on the real TechElevate portal; this only authors it.)
     """
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     out = te.generate_questions(
         db, training_id,
         level_id=payload.get("level_id"),
@@ -168,7 +267,7 @@ async def bulk_add_questions(training_id: int, payload: dict = Body(...), db: Se
                              user: CurrentUser = Depends(get_current_user)):
     """Persist a reviewed batch of MCQs (typically AI-drafted then edited by the admin)."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     items = payload.get("questions") or []
     if not items:
         raise HTTPException(status_code=422, detail="questions[] is required.")
@@ -190,7 +289,7 @@ async def add_content(training_id: int, payload: dict = Body(...), db: Session =
                       user: CurrentUser = Depends(get_current_user)):
     """Attach a link / Udemy course / video material (by URL) to a course or one of its levels."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not (payload.get("title") or payload.get("url")):
         raise HTTPException(status_code=422, detail="A title or url is required.")
     out = te.add_content(db, training_id, payload)
@@ -212,7 +311,7 @@ async def upload_content_document(
     """Upload a course document (PDF/DOCX/PPTX/…). Saves the file, serves it via /uploads, and
     attaches it as a 'document' material. Its text is later extracted to ground AI question drafts."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not te.get_training(db, training_id):
         raise HTTPException(status_code=404, detail="Training not found.")
 
@@ -246,7 +345,7 @@ async def upload_content_document(
 async def delete_content(content_id: int, db: Session = Depends(get_db),
                          user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not te.delete_content(db, content_id):
         raise HTTPException(status_code=404, detail="Content not found.")
     return {"deleted": True}
@@ -266,7 +365,7 @@ async def training_enrollments(training_id: int, db: Session = Depends(get_db),
 async def search_employees(search: Optional[str] = Query(None), db: Session = Depends(get_db),
                            user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     return {"results": te.search_employees(db, search)}
 
 
@@ -275,7 +374,7 @@ async def search_employees(search: Optional[str] = Query(None), db: Session = De
 @router.get("/groups")
 async def list_groups(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     return {"results": te.list_groups(db), "stats": te.group_stats(db)}
 
 
@@ -283,7 +382,7 @@ async def list_groups(db: Session = Depends(get_db), user: CurrentUser = Depends
 async def create_group(payload: dict = Body(...), db: Session = Depends(get_db),
                        user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not (payload.get("name") or "").strip():
         raise HTTPException(status_code=422, detail="name is required.")
     return te.create_group(db, payload, created_by=user.email)
@@ -293,7 +392,7 @@ async def create_group(payload: dict = Body(...), db: Session = Depends(get_db),
 async def delete_group(group_id: int, db: Session = Depends(get_db),
                        user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     if not te.delete_group(db, group_id):
         raise HTTPException(status_code=404, detail="Group not found.")
     return {"deleted": True}
@@ -304,7 +403,7 @@ async def assign_group(group_id: int, payload: dict = Body(...), db: Session = D
                        user: CurrentUser = Depends(get_current_user)):
     """Assign a training to every member of a group."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     training_id = payload.get("training_id")
     if not training_id:
         raise HTTPException(status_code=422, detail="training_id is required.")
@@ -346,7 +445,7 @@ async def assign_training(payload: dict = Body(...), db: Session = Depends(get_d
                           user: CurrentUser = Depends(get_current_user)):
     """Assign a training to one or more employees (by id or email)."""
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     training_id = payload.get("training_id")
     targets = payload.get("employees") or []
     if not training_id or not targets:
@@ -391,7 +490,7 @@ async def evaluate(assignment_id: int, payload: dict = Body(...), db: Session = 
 async def set_status(assignment_id: int, payload: dict = Body(...), db: Session = Depends(get_db),
                      user: CurrentUser = Depends(get_current_user)):
     _guard_enabled()
-    _guard_admin(user)
+    _guard_lms_write(user)
     new_status = payload.get("status")
     if new_status not in {"Assigned", "In Progress", "Completed", "Failed"}:
         raise HTTPException(status_code=422, detail="Invalid status.")

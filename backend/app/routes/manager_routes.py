@@ -1,17 +1,18 @@
 """
 Manager Portal routes — My Team page.
 
-All endpoints are gated to Functional Managers (require_functional_manager). The acting
-manager is always taken from the authenticated user's email; a manager can only see/manage
-their own hierarchy and their own records.
+Most endpoints use require_has_reports (any user who has at least one direct report).
+Onboarding (background-check / drug-test / client onboarding) and PMO Requests (VDI
+provision / revoke) are restricted to Functional Managers only.
 
 Sections:
+  /has-team             — lightweight check: does the caller have any reports? (no gate)
   /attendance*          — whole-hierarchy attendance report + email automation
   /team                 — list team members (for dropdowns & overview)
   /team/allocations     — project allocations for all team members
   /team/skills          — skill sets for all team members
-  /onboarding           — initiate & list client-side onboarding requests
-  /pmo-requests         — VDI provision / revoke requests to PMO
+  /onboarding           — initiate & list client-side onboarding requests  [FM only]
+  /pmo-requests         — VDI provision / revoke requests to PMO           [FM only]
 """
 
 import datetime
@@ -20,7 +21,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.auth import CurrentUser, require_functional_manager
+from app.auth import CurrentUser, get_current_user, require_functional_manager, require_has_reports
 from app.database import SessionLocal
 from app.models import Employee, EmployeeAllocation, EmployeeSkill, OnboardingRequest, PMOTeamRequest
 from app.services import attendance_schedule_service, attendance_service
@@ -76,11 +77,28 @@ def _pmo_req_dict(r: PMOTeamRequest) -> dict:
 
 # ── Live whole-hierarchy attendance report ────────────────────────────────────
 
+@router.get("/has-team")
+def has_team(user: CurrentUser = Depends(get_current_user)):
+    """Returns {has_team: bool} — used by the frontend to decide whether to show the My Team nav."""
+    from app.database import SessionLocal
+    from app.models import Employee
+    if user.role == "super admin":
+        return {"has_team": True}
+    db = SessionLocal()
+    try:
+        mgr = db.query(Employee).filter(Employee.email == user.email).first()
+        if not mgr:
+            return {"has_team": False}
+        return {"has_team": db.query(Employee).filter(Employee.manager_id == mgr.id).first() is not None}
+    finally:
+        db.close()
+
+
 @router.get("/attendance")
 def get_team_attendance(
     month: Optional[str] = "",
     year: Optional[str] = "",
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     report = attendance_service.team_report(user.email, month or "", year or "")
     if not report.get("success"):
@@ -97,7 +115,7 @@ class EmailNowRequest(BaseModel):
 @router.post("/attendance/email")
 def email_team_attendance(
     body: EmailNowRequest,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     result = attendance_schedule_service.send_report_now(
         user.email,
@@ -125,14 +143,14 @@ class ScheduleBody(BaseModel):
 
 
 @router.get("/attendance/schedules")
-def list_schedules(user: CurrentUser = Depends(require_functional_manager)):
+def list_schedules(user: CurrentUser = Depends(require_has_reports)):
     return attendance_schedule_service.list_for_manager(user.email)
 
 
 @router.post("/attendance/schedules")
 def create_schedule(
     body: ScheduleBody,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     result = attendance_schedule_service.create(user.email, body.model_dump())
     if not result.get("success"):
@@ -144,7 +162,7 @@ def create_schedule(
 def update_schedule(
     schedule_id: int,
     body: dict,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     result = attendance_schedule_service.update(user.email, schedule_id, body)
     if not result.get("success"):
@@ -155,7 +173,7 @@ def update_schedule(
 @router.delete("/attendance/schedules/{schedule_id}")
 def delete_schedule(
     schedule_id: int,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     result = attendance_schedule_service.delete(user.email, schedule_id)
     if not result.get("success"):
@@ -168,7 +186,7 @@ def delete_schedule(
 @router.get("/users/search")
 def search_users(
     q: str = "",
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     """Search employees by name or email — for the attendance schedule recipient picker."""
     from sqlalchemy import or_
@@ -198,7 +216,7 @@ def search_users(
 # ── Team roster ───────────────────────────────────────────────────────────────
 
 @router.get("/team")
-def get_team(user: CurrentUser = Depends(require_functional_manager)):
+def get_team(user: CurrentUser = Depends(require_has_reports)):
     """Flat list of all employees in the manager's hierarchy (for dropdowns)."""
     manager, team = _get_team(user.email)
     if not manager:
@@ -218,7 +236,7 @@ def get_team(user: CurrentUser = Depends(require_functional_manager)):
 # ── Project allocations ───────────────────────────────────────────────────────
 
 @router.get("/team/allocations")
-def get_team_allocations(user: CurrentUser = Depends(require_functional_manager)):
+def get_team_allocations(user: CurrentUser = Depends(require_has_reports)):
     """All active project allocations for the manager's whole hierarchy."""
     manager, team = _get_team(user.email)
     if not manager or not team:
@@ -261,7 +279,7 @@ def get_team_allocations(user: CurrentUser = Depends(require_functional_manager)
 # ── Skills ────────────────────────────────────────────────────────────────────
 
 @router.get("/team/skills")
-def get_team_skills(user: CurrentUser = Depends(require_functional_manager)):
+def get_team_skills(user: CurrentUser = Depends(require_has_reports)):
     """Skill sets for all employees in the manager's hierarchy."""
     manager, team = _get_team(user.email)
     if not manager or not team:
@@ -298,7 +316,7 @@ def get_team_skills(user: CurrentUser = Depends(require_functional_manager)):
 # ── Team readiness + weekly digest (deterministic SQL; no LLM) ────────────────
 
 @router.get("/team/digest")
-def get_team_digest(user: CurrentUser = Depends(require_functional_manager)):
+def get_team_digest(user: CurrentUser = Depends(require_has_reports)):
     """Weekly operational brief: rolloffs, bench, overdue/soon training, and
     allocation-vs-training conflicts across the manager's hierarchy."""
     manager, team = _get_team(user.email)
@@ -320,7 +338,7 @@ class ReadinessBody(BaseModel):
 @router.post("/team/readiness")
 def post_team_readiness(
     body: ReadinessBody,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_has_reports),
 ):
     """For required skills, classify each report ready / one-course-away / gap."""
     manager, team = _get_team(user.email)

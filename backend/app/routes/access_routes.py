@@ -265,6 +265,17 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
             {"id": "write", "label": "Write", "description": "Create and edit form templates"},
         ],
     },
+    "lms_manage": {
+        "label": "LMS Administration",
+        "description": "Allows creating, editing, and deleting trainings, managing assessments, and assigning courses to employees in TechElevate LMS.",
+        "category": "feature",
+        "actions": [
+            {"id": "read",   "label": "View",   "description": "View training admin panel and assignments"},
+            {"id": "write",  "label": "Create/Edit", "description": "Create and edit trainings, questions, and materials"},
+            {"id": "delete", "label": "Delete",  "description": "Delete trainings and their content"},
+            {"id": "assign", "label": "Assign",  "description": "Assign trainings to employees and groups"},
+        ],
+    },
     "manage_access": {
         "label": "Manage Admin Access",
         "description": "Allows granting or revoking Admin roles for other users (delegated Super Admin action).",
@@ -413,7 +424,7 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:automation_hub", "portal:people", "portal:config",
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
         "mode:analytics", "mode:training", "mode:project", "mode:resource",
-        "pmo_portal", "people_directory", "email_automation", "prompt_config",
+        "pmo_portal", "lms_manage", "people_directory", "email_automation", "prompt_config",
     ],
     "functional manager": [
         "portal:roi", "portal:analytics_studio", "portal:analytics_builder",
@@ -511,22 +522,32 @@ class UpdateRolePayload(BaseModel):
 
 @router.get("/me")
 def get_my_access(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Return current user's effective role, scopes, extra_capabilities, and role capability list."""
+    """Return current user's EFFECTIVE role, scopes, extra_capabilities, and role capability list.
+
+    `real_role` and `impersonating` let the UI keep showing the Super Admin role-switcher even
+    while a Super Admin is test-acting as another role. Capabilities reflect the EFFECTIVE role
+    so the app genuinely behaves as the role being tested.
+    """
+    impersonating = user.role if user.is_impersonating else None
     override = db.query(UserRoleOverride).filter(UserRoleOverride.email == user.email).first()
-    if override:
-        role_caps = _role_capabilities(override.role, db)
+    role_caps = _role_capabilities(user.role, db)
+    # While impersonating, present the target role cleanly (no super-admin extras/scopes).
+    if override and not impersonating:
         return {
             "has_override": True,
-            "role": override.role,
+            "role": user.role,
+            "real_role": user.real_role,
+            "impersonating": None,
             "scopes": override.scopes or [],
             "extra_capabilities": override.extra_capabilities or [],
             "role_capabilities": role_caps,
         }
-    role_caps = _role_capabilities(user.role, db)
     return {
-        "has_override": False,
+        "has_override": bool(override),
         "role": user.role,
-        "scopes": [],
+        "real_role": user.real_role or user.role,
+        "impersonating": impersonating,
+        "scopes": user.scopes or [],
         "extra_capabilities": [],
         "role_capabilities": role_caps,
     }

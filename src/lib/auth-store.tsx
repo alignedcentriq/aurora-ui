@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { cleanUrlParams } from "./utils";
+import "./impersonation"; // installs the x-impersonate-role fetch patch on import
 
 // Fast wrapper for fetch timeout
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 2000) => {
@@ -60,7 +61,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: Role;
+  role: Role; // EFFECTIVE role (the impersonated role while a Super Admin is testing)
+  realRole?: Role; // true role; only differs from `role` while a Super Admin is test-impersonating
   scopes: string[]; // Feature-level scopes for scoped Admin; [] = full role access
   avatarUrl?: string;
   team?: TeamMember[];
@@ -119,6 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Role is always determined by the backend — DB override takes precedence over any local claim.
         let effectiveRole: Role = "Employee";
+        let realRole: Role = "Employee";
         let scopes: string[] = [];
         try {
           const accessRes = await fetchWithTimeout(
@@ -136,6 +139,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
               scopes = accessData.scopes || [];
             }
+            // real_role lets the Super Admin role-switcher stay visible while impersonating.
+            realRole = ROLE_MAP[(accessData.real_role || accessData.role || "").toLowerCase()] ?? effectiveRole;
           }
         } catch {
           // ignore — effectiveRole stays Employee; user will see reduced access until next reload
@@ -165,6 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: displayName,
           email: mockEmail,
           role: effectiveRole,
+          realRole,
           scopes,
           avatarUrl: prev?.avatarUrl || cachedMockAvatar,
           team: [
@@ -217,6 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Fetch effective role + scopes from backend (DB override wins over MSAL claim).
           let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
+          let realRole: Role = effectiveRole;
           let scopes: string[] = [];
           try {
             const accessRes = await fetchWithTimeout(
@@ -232,6 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 effectiveRole = ROLE_MAP[accessData.role.toLowerCase()] ?? effectiveRole;
                 scopes = accessData.scopes || [];
               }
+              realRole = ROLE_MAP[(accessData.real_role || accessData.role || "").toLowerCase()] ?? effectiveRole;
             }
           } catch {
             // Fall through with MSAL role
@@ -252,6 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             name: account.name || account.username || "User",
             email,
             role: effectiveRole,
+            realRole,
             scopes,
             avatarUrl: prev?.avatarUrl || cachedAvatar,
             team: [

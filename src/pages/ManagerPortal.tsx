@@ -31,6 +31,7 @@ import {
   Building2,
   ZoomIn,
   Star,
+  CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -45,6 +46,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { format } from "date-fns";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -145,18 +162,8 @@ interface PMOReq {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
 ];
 const DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -189,6 +196,7 @@ function describeCadence(s: Schedule): string {
 
 type TabId =
   | "attendance"
+  | "email-automation"
   | "allocations"
   | "readiness"
   | "skills"
@@ -196,13 +204,14 @@ type TabId =
   | "pmo-requests"
   | "appreciations";
 
-const TABS: { id: TabId; label: string; icon: typeof Users }[] = [
+const BASE_TABS: { id: TabId; label: string; icon: typeof Users; fmOnly?: boolean }[] = [
   { id: "attendance", label: "Attendance", icon: CalendarClock },
+  { id: "email-automation", label: "Email Automation", icon: Mail },
   { id: "allocations", label: "Allocations", icon: Briefcase },
   { id: "readiness", label: "Readiness", icon: Gauge },
   { id: "skills", label: "Skills", icon: Wrench },
-  { id: "onboarding", label: "Onboarding", icon: ClipboardList },
-  { id: "pmo-requests", label: "PMO Requests", icon: Server },
+  { id: "onboarding", label: "Onboarding", icon: ClipboardList, fmOnly: true },
+  { id: "pmo-requests", label: "PMO Requests", icon: Server, fmOnly: true },
   { id: "appreciations", label: "Appreciations", icon: Trophy },
 ];
 
@@ -217,13 +226,20 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function ManagerPortal() {
   const { user } = useAuth();
+  const isFM = user?.role === "Functional Manager" || user?.role === "Super Admin";
   const auth = useMemo(
     () => ({ "x-user-email": user?.email ?? "", "x-user-role": (user?.role ?? "").toLowerCase() }),
     [user?.email, user?.role],
   );
 
+  const TABS = BASE_TABS.filter((t) => !t.fmOnly || isFM);
+
   const [activeTab, setActiveTab] = useState<TabId>("attendance");
   const [team, setTeam] = useState<TeamMember[]>([]);
+
+  useEffect(() => {
+    if (!TABS.find((t) => t.id === activeTab)) setActiveTab("attendance");
+  }, [isFM]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch("/api/portal/manager/team", { headers: auth })
@@ -233,55 +249,77 @@ export function ManagerPortal() {
   }, [auth]);
 
   return (
-    <div className="h-full overflow-y-auto w-full px-6 py-8 bg-gradient-to-b from-background via-background to-muted/20">
+    <div className="h-full overflow-y-auto w-full px-4 sm:px-6 py-6 sm:py-8 bg-gradient-to-b from-background via-background to-muted/20">
       {/* Header */}
-      <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border/60">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
-            <UserCog className="h-7 w-7 text-[var(--collaboration)] animate-pulse" />
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
+            <UserCog className="h-6 w-6 sm:h-7 sm:w-7 text-[var(--collaboration)] animate-pulse" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">My Team</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Manage hierarchy allocations, track readiness, skills, and appreciations.
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Team</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+              {isFM
+                ? "Manage hierarchy allocations, track readiness, onboarding, and team operations."
+                : "View your team's attendance, allocations, readiness, and skills."}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="mb-6 flex gap-1.5 overflow-x-auto no-scrollbar rounded-2xl border border-border/80 bg-muted/40 p-1.5 backdrop-blur-sm max-w-fit">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const isActive = activeTab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              className={cn(
-                "flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200",
-                isActive
-                  ? "bg-background text-foreground shadow-sm scale-102 border border-border/50"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-              )}
-            >
-              <Icon className={cn("h-4 w-4 transition-transform duration-200", isActive && "scale-110 text-primary")} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)}>
+        <div className="relative mb-6">
+          <div className="overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="inline-flex h-auto w-max gap-1 rounded-2xl border border-border/60 bg-muted/40 p-1.5 backdrop-blur-sm">
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <TabsTrigger
+                    key={t.id}
+                    value={t.id}
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50 data-[state=inactive]:text-muted-foreground"
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span className="whitespace-nowrap hidden sm:inline">{t.label}</span>
+                    <span className="whitespace-nowrap sm:hidden">{t.label.split(" ")[0]}</span>
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </div>
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent sm:hidden" />
+        </div>
 
-      {/* Tab content */}
-      <div className="space-y-6">
-        {activeTab === "attendance" && <AttendanceTab auth={auth} />}
-        {activeTab === "allocations" && <AllocationsTab auth={auth} />}
-        {activeTab === "readiness" && <ReadinessTab auth={auth} />}
-        {activeTab === "skills" && <SkillsTab auth={auth} />}
-        {activeTab === "onboarding" && <OnboardingTab auth={auth} team={team} />}
-        {activeTab === "pmo-requests" && <PMORequestsTab auth={auth} team={team} />}
-        {activeTab === "appreciations" && <AppreciationsTab auth={auth} team={team} />}
-      </div>
+        <TabsContent value="attendance">
+          <AttendanceTab auth={auth} />
+        </TabsContent>
+        <TabsContent value="email-automation">
+          <EmailAutomationTab auth={auth} />
+        </TabsContent>
+        <TabsContent value="allocations">
+          <AllocationsTab auth={auth} />
+        </TabsContent>
+        <TabsContent value="readiness">
+          <ReadinessTab auth={auth} />
+        </TabsContent>
+        <TabsContent value="skills">
+          <SkillsTab auth={auth} />
+        </TabsContent>
+        {isFM && (
+          <TabsContent value="onboarding">
+            <OnboardingTab auth={auth} team={team} />
+          </TabsContent>
+        )}
+        {isFM && (
+          <TabsContent value="pmo-requests">
+            <PMORequestsTab auth={auth} team={team} />
+          </TabsContent>
+        )}
+        <TabsContent value="appreciations">
+          <AppreciationsTab auth={auth} team={team} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -290,11 +328,20 @@ export function ManagerPortal() {
 
 function AttendanceTab({ auth }: { auth: Record<string, string> }) {
   const now = new Date();
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const month = selectedDate.getMonth() + 1;
+  const year = selectedDate.getFullYear();
   const [report, setReport] = useState<TeamReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailing, setEmailing] = useState(false);
+
+  const handleDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setSelectedDate(new Date(date.getFullYear(), date.getMonth(), 1));
+      setCalendarOpen(false);
+    }
+  };
 
   const loadReport = useCallback(async () => {
     setLoading(true);
@@ -346,30 +393,12 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
   const downloadCsv = () => {
     if (!report?.success || !report.members) return;
     const head = [
-      "Employee",
-      "Email",
-      "Department",
-      "Designation",
-      "Reports To",
-      "Present",
-      "Absent",
-      "WFH",
-      "Late",
-      "Half-day",
+      "Employee", "Email", "Department", "Designation", "Reports To",
+      "Present", "Absent", "WFH", "Late", "Half-day",
     ];
     const rows = report.members.map((m) =>
-      [
-        m.employee,
-        m.email,
-        m.department,
-        m.designation,
-        m.reports_to,
-        m.present,
-        m.absent,
-        m.wfh,
-        m.late,
-        m.half_day,
-      ]
+      [m.employee, m.email, m.department, m.designation, m.reports_to,
+       m.present, m.absent, m.wfh, m.late, m.half_day]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(","),
     );
@@ -391,73 +420,59 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
   const totals = report?.totals;
 
   return (
-    <div className="space-y-8">
-      {/* Email automations at top */}
-      <SchedulesSection auth={auth} />
-
+    <div className="space-y-6">
       {/* Controls bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border/60 bg-card/40 px-5 py-4 backdrop-blur-sm shadow-sm">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <select
-            value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            {MONTHS.map((m, i) => (
-              <option key={m} value={i + 1}>{m}</option>
-            ))}
-          </select>
-          <select
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            {[year - 1, year, year + 1]
-              .filter((v, i, a) => a.indexOf(v) === i)
-              .map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-          </select>
-          <button
-            onClick={loadReport}
-            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-3 py-2.5 text-sm font-medium hover:bg-muted hover:shadow-sm transition-all"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={downloadCsv}
-            disabled={!report?.success}
-            className="flex items-center gap-1.5 rounded-xl border border-border bg-background/80 px-4 py-2.5 text-sm font-semibold hover:bg-muted hover:shadow-sm transition-all disabled:opacity-40"
-          >
-            <Download className="h-3.5 w-3.5" /> CSV
-          </button>
-          <button
-            onClick={emailNow}
-            disabled={!report?.success || emailing}
-            className="flex items-center gap-2 rounded-xl bg-[var(--collaboration)] px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 hover:shadow-lg transition-all disabled:opacity-40 whitespace-nowrap shadow-md"
-          >
-            {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-            Email Report
-          </button>
-        </div>
-      </div>
+      <Card>
+        <CardContent className="p-3 sm:p-5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2 min-w-[160px] justify-start font-medium">
+                  <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                  {format(selectedDate, "MMMM yyyy")}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={handleDateSelect}
+                  defaultMonth={selectedDate}
+                  captionLayout="dropdown"
+                  fromYear={year - 3}
+                  toYear={year + 1}
+                />
+              </PopoverContent>
+            </Popover>
+            <Button variant="outline" size="sm" onClick={loadReport} className="px-2.5">
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" size="sm" onClick={downloadCsv} disabled={!report?.success} className="px-2.5 sm:px-3">
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">CSV</span>
+            </Button>
+            <Button size="sm" onClick={emailNow} disabled={!report?.success || emailing}>
+              {emailing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">Email Report</span>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm font-medium">Loading attendance data…</p>
-        </div>
+        <LoadingState label="Loading attendance data…" />
       ) : !report?.success ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-5 py-4 text-sm text-amber-600 dark:text-amber-400">
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
-          <p className="leading-relaxed">{report?.message || "No employees report up to you."}</p>
-        </div>
+        <Card className="border-amber-500/20 bg-amber-500/5">
+          <CardContent className="flex items-start gap-3 p-4 sm:p-5 text-sm text-amber-600 dark:text-amber-400">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <p className="leading-relaxed">{report?.message || "No employees report up to you."}</p>
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3 lg:grid-cols-6">
             {[
               { label: "Team Size", value: report.headcount, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
               { label: "Present", value: totals!.present, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
@@ -468,72 +483,67 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
             ].map((c) => (
               <div key={c.label} className={`rounded-2xl border ${c.border} ${c.bg} px-4 py-4 backdrop-blur-sm hover:shadow-md transition-all duration-200 group`}>
                 <p className={`text-[10.5px] font-bold uppercase tracking-[0.1em] ${c.color} mb-2`}>{c.label}</p>
-                <p className="text-3xl font-extrabold text-foreground group-hover:scale-105 transition-transform origin-left">{c.value}</p>
+                <p className="text-2xl sm:text-3xl font-extrabold text-foreground group-hover:scale-105 transition-transform origin-left">{c.value}</p>
               </div>
             ))}
           </div>
 
           {/* Attendance table */}
-          <div className="overflow-x-auto rounded-2xl border border-border/60 shadow-sm">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border/60 bg-muted/60 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-                  <th className="px-5 py-3.5">Employee</th>
-                  <th className="px-5 py-3.5">Department</th>
-                  <th className="px-5 py-3.5">Reports To</th>
-                  <th className="px-5 py-3.5 text-center">Present</th>
-                  <th className="px-5 py-3.5 text-center">Absent</th>
-                  <th className="px-5 py-3.5 text-center">WFH</th>
-                  <th className="px-5 py-3.5 text-center">Late</th>
-                  <th className="px-5 py-3.5 text-center">Half-day</th>
-                </tr>
-              </thead>
-              <tbody>
+          <Card>
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/60 text-[11px] font-bold uppercase tracking-[0.1em]">
+                  <TableHead className="px-4 py-3">Employee</TableHead>
+                  <TableHead className="px-4 py-3 hidden md:table-cell">Department</TableHead>
+                  <TableHead className="px-4 py-3 hidden lg:table-cell">Reports To</TableHead>
+                  <TableHead className="px-4 py-3 text-center">Present</TableHead>
+                  <TableHead className="px-4 py-3 text-center">Absent</TableHead>
+                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">WFH</TableHead>
+                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">Late</TableHead>
+                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">Half-day</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {report.members!.map((m, i) => (
-                  <tr
-                    key={m.email || i}
-                    className={cn(
-                      "border-t border-border/40 transition-colors hover:bg-primary/[0.03]",
-                      i % 2 ? "bg-muted/10" : "bg-background/60"
-                    )}
-                  >
-                    <td className="px-5 py-3.5">
+                  <TableRow key={m.email || i} className={i % 2 ? "bg-muted/10" : "bg-background/60"}>
+                    <TableCell className="px-4 py-3">
                       <div className="font-semibold text-foreground">{m.employee}</div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">{m.designation}</div>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex items-center rounded-lg bg-muted/60 px-2.5 py-1 text-xs font-medium text-muted-foreground">{m.department}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-sm text-muted-foreground">{m.reports_to}</td>
-                    <td className="px-5 py-3.5 text-center">
+                      <div className="text-[11px] text-muted-foreground mt-0.5 md:hidden">{m.department}</div>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 hidden md:table-cell">
+                      <Badge variant="secondary" className="text-xs font-medium">{m.department}</Badge>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-muted-foreground hidden lg:table-cell">{m.reports_to}</TableCell>
+                    <TableCell className="px-4 py-3 text-center">
                       <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{m.present}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-center">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center">
                       <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-rose-500/10 text-sm font-bold text-rose-600">{m.absent}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-center">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
                       <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sm font-bold text-sky-600">{m.wfh}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-center">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
                       <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-sm font-bold text-amber-600">{m.late}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-center">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
                       <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-orange-500/10 text-sm font-bold text-orange-600">{m.half_day}</span>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </Card>
         </>
       )}
     </div>
   );
 }
 
-// ── Schedules section (used inside Attendance tab) ────────────────────────────
+// ── Email Automation tab ─────────────────────────────────────────────────────
 
-function SchedulesSection({ auth }: { auth: Record<string, string> }) {
+function EmailAutomationTab({ auth }: { auth: Record<string, string> }) {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -574,99 +584,97 @@ function SchedulesSection({ auth }: { auth: Record<string, string> }) {
   };
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card/40 backdrop-blur-sm p-5 shadow-sm">
-      <div className="mb-4 flex flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--collaboration)]/10 border border-[var(--collaboration)]/20">
-            <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
-          </span>
-          <div>
-            <h2 className="text-sm font-bold text-foreground">Email Automations</h2>
-            <p className="text-[11px] text-muted-foreground">Auto-schedule attendance reports to your inbox</p>
-          </div>
-        </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-xl border border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 px-3.5 py-2 text-xs font-bold text-[var(--collaboration)] hover:bg-[var(--collaboration)]/10 transition-all shrink-0"
-        >
-          <Plus className="h-3.5 w-3.5" /> New Automation
-        </button>
-      </div>
-      {showForm && (
-        <div className="mb-4">
-          <ScheduleForm
-            auth={auth}
-            onCreated={() => { setShowForm(false); load(); }}
-          />
-        </div>
-      )}
-      {loading ? (
-        <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading automations…
-        </div>
-      ) : schedules.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-8 text-center">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-            <CalendarClock className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-medium text-muted-foreground">No automations yet</p>
-          <p className="text-xs text-muted-foreground/70">Add one to get attendance reports emailed on a schedule.</p>
-        </div>
-      ) : (
-        <div className="space-y-2.5">
-          {schedules.map((s) => (
-            <div
-              key={s.id}
-              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-border/50 bg-background/60 px-5 py-3.5 hover:shadow-sm transition-all"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-foreground">{describeCadence(s)}</span>
-                  {!s.active && (
-                    <span className="rounded-full border border-border bg-muted/60 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                      Paused
-                    </span>
-                  )}
-                  {s.period_mode === "prev_period" && (
-                    <span className="rounded-full border border-[var(--collaboration)]/25 bg-[var(--collaboration)]/8 px-2.5 py-0.5 text-[10px] font-bold text-[var(--collaboration)]">
-                      Prev. period
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
-                  <span className="flex items-center gap-1.5">
-                    <Clock className="h-3 w-3" /> Next: {fmtDateTime(s.next_run)}
-                  </span>
-                  <span>To: {s.recipients.length ? s.recipients.join(", ") : "you"}</span>
-                  {s.last_status && (
-                    <span>Last: {s.last_status} ({fmtDateTime(s.last_run)})</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  onClick={() => toggle(s)}
-                  title={s.active ? "Pause" : "Resume"}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all",
-                    s.active
-                      ? "border-border bg-background hover:bg-muted"
-                      : "border-emerald-500/30 bg-emerald-500/8 text-emerald-600 hover:bg-emerald-500/15",
-                  )}
-                >
-                  <Power className="h-3.5 w-3.5" /> {s.active ? "Pause" : "Resume"}
-                </button>
-                <button
-                  onClick={() => remove(s)}
-                  className="flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs font-bold text-destructive hover:bg-destructive/10 transition-all"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="p-4 sm:p-5 pb-0 sm:pb-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--collaboration)]/10 border border-[var(--collaboration)]/20">
+                <Mail className="h-4.5 w-4.5 text-[var(--collaboration)]" />
+              </span>
+              <div>
+                <CardTitle className="text-sm">Email Automations</CardTitle>
+                <CardDescription className="mt-0.5">Auto-schedule attendance reports to your inbox</CardDescription>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowForm((v) => !v)}
+              className="border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 text-[var(--collaboration)] hover:bg-[var(--collaboration)]/10 w-full sm:w-auto"
+            >
+              <Plus className="h-3.5 w-3.5" /> New Automation
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 sm:p-5">
+          {showForm && (
+            <div className="mb-4">
+              <ScheduleForm
+                auth={auth}
+                onCreated={() => { setShowForm(false); load(); }}
+              />
+            </div>
+          )}
+          {loading ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading automations…
+            </div>
+          ) : schedules.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <CalendarClock className="h-5 w-5" />
+              </span>
+              <p className="text-sm font-medium text-muted-foreground">No automations yet</p>
+              <p className="text-xs text-muted-foreground/70">Add one to get attendance reports emailed on a schedule.</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {schedules.map((s) => (
+                <Card key={s.id} className="shadow-none">
+                  <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-foreground text-sm">{describeCadence(s)}</span>
+                        {!s.active && <Badge variant="secondary">Paused</Badge>}
+                        {s.period_mode === "prev_period" && (
+                          <Badge className="bg-[var(--collaboration)]/8 text-[var(--collaboration)] border-[var(--collaboration)]/25">Prev. period</Badge>
+                        )}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <Clock className="h-3 w-3" /> Next: {fmtDateTime(s.next_run)}
+                        </span>
+                        <span>To: {s.recipients.length ? s.recipients.join(", ") : "you"}</span>
+                        {s.last_status && (
+                          <span>Last: {s.last_status} ({fmtDateTime(s.last_run)})</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggle(s)}
+                        className={cn(
+                          s.active
+                            ? ""
+                            : "border-emerald-500/30 bg-emerald-500/8 text-emerald-600 hover:bg-emerald-500/15",
+                        )}
+                      >
+                        <Power className="h-3.5 w-3.5" /> {s.active ? "Pause" : "Resume"}
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => remove(s)} className="px-2.5">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -686,7 +694,6 @@ function ScheduleForm({
   const [periodMode, setPeriodMode] = useState("prev_period");
   const [saving, setSaving] = useState(false);
 
-  // Recipient picker state
   const [recipients, setRecipients] = useState<{ name: string; email: string }[]>([]);
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientResults, setRecipientResults] = useState<{ name: string; email: string }[]>([]);
@@ -751,158 +758,147 @@ function ScheduleForm({
   };
 
   return (
-    <div className="mb-3 grid gap-3 rounded-2xl border border-border bg-card/50 p-4 sm:grid-cols-2">
-      <label className="text-xs font-medium text-muted-foreground">
-        Frequency
-        <select
-          value={frequency}
-          onChange={(e) => setFrequency(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-        >
-          <option value="daily">Daily (weekdays)</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
-      <div className="text-xs font-medium text-muted-foreground">
-        Send time
-        <div className="mt-1 flex gap-1.5">
-          <select
-            value={hour}
-            onChange={(e) => setHour(Number(e.target.value))}
-            className="flex-1 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
-          >
-            {Array.from({ length: 24 }, (_, h) => (
-              <option key={h} value={h}>
-                {h % 12 || 12} {h >= 12 ? "PM" : "AM"}
-              </option>
-            ))}
-          </select>
-          <select
-            value={minute}
-            onChange={(e) => setMinute(Number(e.target.value))}
-            className="w-20 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
-          >
-            {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
-              <option key={m} value={m}>
-                {m.toString().padStart(2, "0")}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      {(frequency === "weekly" || frequency === "custom") && (
+    <Card className="shadow-none">
+      <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
         <label className="text-xs font-medium text-muted-foreground">
-          Day of week
+          Frequency
           <select
-            value={dayOfWeek}
-            onChange={(e) => setDayOfWeek(Number(e.target.value))}
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
             className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
           >
-            {DOW.map((d, i) => (
-              <option key={d} value={i}>
-                {d}
-              </option>
-            ))}
+            <option value="daily">Daily (weekdays)</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="custom">Custom</option>
           </select>
         </label>
-      )}
-      {(frequency === "monthly" || frequency === "custom") && (
-        <label className="text-xs font-medium text-muted-foreground">
-          Day of month (1–28)
-          <input
-            type="number"
-            min={1}
-            max={28}
-            value={dayOfMonth}
-            onChange={(e) => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-          />
-        </label>
-      )}
-      <label className="text-xs font-medium text-muted-foreground">
-        Report period
-        <select
-          value={periodMode}
-          onChange={(e) => setPeriodMode(e.target.value)}
-          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-        >
-          <option value="prev_period">Previous month</option>
-          <option value="current">Current month-to-date</option>
-        </select>
-      </label>
-
-      {/* Recipient picker */}
-      <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
-        Recipients
-        <div className="mt-1 relative">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-            <input
-              value={recipientSearch}
-              onChange={(e) => handleRecipientSearch(e.target.value)}
-              onFocus={() => recipientSearch.length >= 2 && setShowRecipientDrop(true)}
-              onBlur={() => setTimeout(() => setShowRecipientDrop(false), 150)}
-              placeholder="Search people by name or email… (blank = send to yourself)"
-              className="w-full pl-7 pr-3 rounded-xl border border-border bg-background py-2 text-sm text-foreground"
-            />
+        <div className="text-xs font-medium text-muted-foreground">
+          Send time
+          <div className="mt-1 flex gap-1.5">
+            <select
+              value={hour}
+              onChange={(e) => setHour(Number(e.target.value))}
+              className="flex-1 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {h % 12 || 12} {h >= 12 ? "PM" : "AM"}
+                </option>
+              ))}
+            </select>
+            <select
+              value={minute}
+              onChange={(e) => setMinute(Number(e.target.value))}
+              className="w-20 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
+            >
+              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                <option key={m} value={m}>
+                  {m.toString().padStart(2, "0")}
+                </option>
+              ))}
+            </select>
           </div>
-          {showRecipientDrop && recipientResults.length > 0 && (
-            <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-border rounded-xl shadow-lg w-full max-h-44 overflow-y-auto">
-              {recipientResults.map((u) => (
-                <button
-                  key={u.email}
-                  type="button"
-                  onMouseDown={() => addRecipient(u)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left"
-                >
-                  <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{u.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
-                  </div>
-                </button>
+        </div>
+        {(frequency === "weekly" || frequency === "custom") && (
+          <label className="text-xs font-medium text-muted-foreground">
+            Day of week
+            <select
+              value={dayOfWeek}
+              onChange={(e) => setDayOfWeek(Number(e.target.value))}
+              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+            >
+              {DOW.map((d, i) => (
+                <option key={d} value={i}>{d}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {(frequency === "monthly" || frequency === "custom") && (
+          <label className="text-xs font-medium text-muted-foreground">
+            Day of month (1–28)
+            <input
+              type="number"
+              min={1}
+              max={28}
+              value={dayOfMonth}
+              onChange={(e) => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))}
+              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+            />
+          </label>
+        )}
+        <label className="text-xs font-medium text-muted-foreground">
+          Report period
+          <select
+            value={periodMode}
+            onChange={(e) => setPeriodMode(e.target.value)}
+            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+          >
+            <option value="prev_period">Previous month</option>
+            <option value="current">Current month-to-date</option>
+          </select>
+        </label>
+
+        {/* Recipient picker */}
+        <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
+          Recipients
+          <div className="mt-1 relative">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                value={recipientSearch}
+                onChange={(e) => handleRecipientSearch(e.target.value)}
+                onFocus={() => recipientSearch.length >= 2 && setShowRecipientDrop(true)}
+                onBlur={() => setTimeout(() => setShowRecipientDrop(false), 150)}
+                placeholder="Search people by name or email… (blank = send to yourself)"
+                className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm text-foreground"
+              />
+            </div>
+            {showRecipientDrop && recipientResults.length > 0 && (
+              <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-border rounded-xl shadow-lg w-full max-h-44 overflow-y-auto">
+                {recipientResults.map((u) => (
+                  <button
+                    key={u.email}
+                    type="button"
+                    onMouseDown={() => addRecipient(u)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left"
+                  >
+                    <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{u.name}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {recipients.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {recipients.map((r) => (
+                <Badge key={r.email} variant="secondary" className="gap-1 pr-1">
+                  {r.name}
+                  <button
+                    type="button"
+                    onClick={() => removeRecipient(r.email)}
+                    className="text-muted-foreground hover:text-destructive ml-0.5"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
               ))}
             </div>
           )}
         </div>
-        {recipients.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {recipients.map((r) => (
-              <span
-                key={r.email}
-                className="flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px]"
-              >
-                {r.name}
-                <button
-                  type="button"
-                  onClick={() => removeRecipient(r.email)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <div className="sm:col-span-2">
-        <button
-          onClick={submit}
-          disabled={saving}
-          className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          )}
-          Save automation
-        </button>
-      </div>
-    </div>
+        <div className="sm:col-span-2">
+          <Button size="sm" onClick={submit} disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            Save automation
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -937,7 +933,6 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
     return rows;
   }, [allocations, filter, showActive]);
 
-  // Group by employee
   const grouped = useMemo(() => {
     const map = new Map<string, Allocation[]>();
     for (const a of filtered) {
@@ -950,22 +945,25 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
   if (loading) return <LoadingState label="Loading allocations…" />;
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by employee, project or client…"
-          className="flex-1 min-w-[200px] rounded-xl border border-border bg-background px-3 py-2 text-sm"
-        />
-        <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter…"
+            className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm"
+          />
+        </div>
+        <label className="flex items-center gap-1.5 text-xs sm:text-sm text-muted-foreground cursor-pointer select-none whitespace-nowrap">
           <input
             type="checkbox"
             checked={showActive}
             onChange={(e) => setShowActive(e.target.checked)}
             className="rounded"
           />
-          Active only
+          Active
         </label>
       </div>
       {grouped.size === 0 ? (
@@ -974,56 +972,55 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
         <div className="space-y-4">
           {[...grouped.entries()].map(([name, rows]) => (
             <ExpandableGroup key={name} title={name} count={rows.length}>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-2 font-semibold">Project</th>
-                      <th className="px-3 py-2 font-semibold">Client</th>
-                      <th className="px-3 py-2 font-semibold">Status</th>
-                      <th className="px-3 py-2 text-center font-semibold">Effort %</th>
-                      <th className="px-3 py-2 text-center font-semibold">Billable %</th>
-                      <th className="px-3 py-2 font-semibold">End Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((a) => (
-                      <tr key={a.id} className="border-t border-border">
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-foreground">{a.project_name}</div>
-                          {a.sub_project && (
-                            <div className="text-[11px] text-muted-foreground">{a.sub_project}</div>
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/40 text-[11px] uppercase tracking-wide">
+                    <TableHead className="px-3 py-2 font-semibold">Project</TableHead>
+                    <TableHead className="px-3 py-2 font-semibold hidden sm:table-cell">Client</TableHead>
+                    <TableHead className="px-3 py-2 font-semibold">Status</TableHead>
+                    <TableHead className="px-3 py-2 text-center font-semibold hidden sm:table-cell">Effort %</TableHead>
+                    <TableHead className="px-3 py-2 text-center font-semibold hidden md:table-cell">Billable %</TableHead>
+                    <TableHead className="px-3 py-2 font-semibold hidden md:table-cell">End Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell className="px-3 py-2">
+                        <div className="font-medium text-foreground">{a.project_name}</div>
+                        {a.sub_project && (
+                          <div className="text-[11px] text-muted-foreground">{a.sub_project}</div>
+                        )}
+                        <div className="text-[11px] text-muted-foreground sm:hidden">{a.client_master || "—"}</div>
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-muted-foreground hidden sm:table-cell">
+                        {a.client_master || "—"}
+                      </TableCell>
+                      <TableCell className="px-3 py-2">
+                        <Badge
+                          variant={a.completion_status === "Active" ? "default" : "secondary"}
+                          className={cn(
+                            a.completion_status === "Active"
+                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                              : "",
                           )}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {a.client_master || "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={cn(
-                              "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                              a.completion_status === "Active"
-                                ? "bg-emerald-500/10 text-emerald-600"
-                                : "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            {a.completion_status}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          {a.efforts_percent != null ? `${a.efforts_percent}%` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          {a.billability_percent != null ? `${a.billability_percent}%` : "—"}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground text-sm">
-                          {fmtDate(a.expected_end_date)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        >
+                          {a.completion_status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-center hidden sm:table-cell">
+                        {a.efforts_percent != null ? `${a.efforts_percent}%` : "—"}
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-center hidden md:table-cell">
+                        {a.billability_percent != null ? `${a.billability_percent}%` : "—"}
+                      </TableCell>
+                      <TableCell className="px-3 py-2 text-muted-foreground text-sm hidden md:table-cell">
+                        {fmtDate(a.expected_end_date)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </ExpandableGroup>
           ))}
         </div>
@@ -1070,13 +1067,14 @@ function SkillsTab({ auth }: { auth: Record<string, string> }) {
   if (loading) return <LoadingState label="Loading skills…" />;
 
   return (
-    <div>
-      <div className="mb-4">
+    <div className="space-y-4">
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by name, skill or certification…"
-          className="w-full max-w-sm rounded-xl border border-border bg-background px-3 py-2 text-sm"
+          placeholder="Filter by name, skill…"
+          className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm"
         />
       </div>
       {grouped.size === 0 ? (
@@ -1085,32 +1083,28 @@ function SkillsTab({ auth }: { auth: Record<string, string> }) {
         <div className="space-y-4">
           {[...grouped.entries()].map(([name, rows]) => (
             <ExpandableGroup key={name} title={name} count={rows.length} unit="skill">
-              <div className="flex flex-wrap gap-2 px-3 pb-3">
+              <div className="flex flex-wrap gap-1.5 px-3 pb-3">
                 {rows.map((s, i) => (
-                  <div
+                  <span
                     key={i}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm",
+                      "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium normal-case tracking-normal",
                       s.is_primary
-                        ? "border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 text-[var(--collaboration)]"
+                        ? "border-[var(--collaboration)]/30 bg-[var(--collaboration)]/8 text-[var(--collaboration)]"
                         : "border-border bg-card/50 text-foreground",
                     )}
                   >
-                    <span className="font-medium">{s.skill}</span>
+                    {s.skill}
                     {s.is_primary && (
-                      <span className="text-[10px] font-semibold uppercase opacity-70">
-                        Primary
-                      </span>
+                      <span className="text-[9px] font-bold uppercase opacity-60">Primary</span>
                     )}
                     {s.years_experience != null && (
-                      <span className="text-[11px] text-muted-foreground">
-                        {s.years_experience}y
-                      </span>
+                      <span className="text-[10px] text-muted-foreground">{s.years_experience}y</span>
                     )}
                     {s.certification && (
-                      <span className="text-[11px] text-muted-foreground">· {s.certification}</span>
+                      <span className="text-[10px] text-muted-foreground">· {s.certification}</span>
                     )}
-                  </div>
+                  </span>
                 ))}
               </div>
             </ExpandableGroup>
@@ -1163,17 +1157,14 @@ function OnboardingTab({ auth, team }: { auth: Record<string, string>; team: Tea
     })[k] ?? k;
 
   return (
-    <div>
-      <div className="mb-4 flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           Initiate client-side onboarding for team members. Email notification is sent to PMO.
         </p>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
-        >
+        <Button size="sm" onClick={() => setShowForm((v) => !v)} className="w-full sm:w-auto">
           <Plus className="h-3.5 w-3.5" /> New Request
-        </button>
+        </Button>
       </div>
 
       {showForm && (
@@ -1198,61 +1189,51 @@ function OnboardingTab({ auth, team }: { auth: Record<string, string>; team: Tea
               .filter(([, v]) => v)
               .map(([k]) => stepLabel(k));
             return (
-              <div key={r.id} className="rounded-2xl border border-border bg-card/50 px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-foreground">{r.employee_name}</span>
-                      <span className="text-[11px] text-muted-foreground">{r.ref_id}</span>
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground",
-                        )}
-                      >
-                        {r.status}
-                      </span>
-                    </div>
-                    {r.employee_email && (
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        {r.employee_email}
-                      </div>
-                    )}
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {activeSteps.map((s) => (
-                        <span
-                          key={s}
-                          className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground"
+              <Card key={r.id}>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-foreground">{r.employee_name}</span>
+                        <span className="text-[11px] text-muted-foreground">{r.ref_id}</span>
+                        <Badge
+                          className={cn(STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground")}
                         >
-                          {s}
-                        </span>
-                      ))}
-                      {r.client_name && (
-                        <span className="rounded-full border border-[var(--collaboration)]/30 bg-[var(--collaboration)]/5 px-2 py-0.5 text-[11px] text-[var(--collaboration)]">
-                          Client: {r.client_name}
-                        </span>
+                          {r.status}
+                        </Badge>
+                      </div>
+                      {r.employee_email && (
+                        <div className="text-[11px] text-muted-foreground mt-0.5">{r.employee_email}</div>
                       )}
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {activeSteps.map((s) => (
+                          <Badge key={s} variant="secondary">{s}</Badge>
+                        ))}
+                        {r.client_name && (
+                          <Badge className="bg-[var(--collaboration)]/5 text-[var(--collaboration)] border-[var(--collaboration)]/30">
+                            Client: {r.client_name}
+                          </Badge>
+                        )}
+                      </div>
+                      {r.notes && (
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">{r.notes}</p>
+                      )}
+                      <p className="mt-1 text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</p>
                     </div>
-                    {r.notes && (
-                      <p className="mt-1.5 text-[11px] text-muted-foreground">{r.notes}</p>
-                    )}
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      {fmtDate(r.created_at)}
-                    </p>
+                    <div className="shrink-0">
+                      <select
+                        value={r.status}
+                        onChange={(e) => updateStatus(r.id, e.target.value)}
+                        className="rounded-xl border border-border bg-background px-2 py-1 text-xs"
+                      >
+                        <option>Pending</option>
+                        <option>In Progress</option>
+                        <option>Completed</option>
+                      </select>
+                    </div>
                   </div>
-                  <div className="shrink-0">
-                    <select
-                      value={r.status}
-                      onChange={(e) => updateStatus(r.id, e.target.value)}
-                      className="rounded-xl border border-border bg-background px-2 py-1 text-xs"
-                    >
-                      <option>Pending</option>
-                      <option>In Progress</option>
-                      <option>Completed</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             );
           })}
         </div>
@@ -1331,122 +1312,99 @@ function OnboardingForm({
   };
 
   return (
-    <div className="mb-4 rounded-2xl border border-border bg-card/50 p-4 space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-medium text-muted-foreground">
-          Team member
-          <select
-            value={employeeName}
-            onChange={(e) => handleTeamSelect(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="">— Select or type below —</option>
-            {team.map((m) => (
-              <option key={m.id} value={m.name}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            Employee email
-            {emailAutoFilled && (
-              <span className="text-[10px] font-semibold text-[var(--collaboration)]">
-                auto-filled
-              </span>
-            )}
-          </span>
-          <input
-            value={employeeEmail}
-            onChange={(e) => {
-              setEmployeeEmail(e.target.value);
-              setEmailAutoFilled(false);
-            }}
-            placeholder="employee@company.com"
-            className={cn(
-              "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
-              emailAutoFilled
-                ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
-                : "border-border bg-background",
-            )}
-          />
-        </label>
-        {!team.length && (
-          <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
-            Employee name (manual entry)
-            <input
+    <Card>
+      <CardContent className="p-4 space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-muted-foreground">
+            Team member
+            <select
               value={employeeName}
-              onChange={(e) => setEmployeeName(e.target.value)}
-              placeholder="Full name"
+              onChange={(e) => handleTeamSelect(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">— Select or type below —</option>
+              {team.map((m) => (
+                <option key={m.id} value={m.name}>{m.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              Employee email
+              {emailAutoFilled && (
+                <span className="text-[10px] font-semibold text-[var(--collaboration)]">auto-filled</span>
+              )}
+            </span>
+            <input
+              value={employeeEmail}
+              onChange={(e) => { setEmployeeEmail(e.target.value); setEmailAutoFilled(false); }}
+              placeholder="employee@company.com"
+              className={cn(
+                "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
+                emailAutoFilled
+                  ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
+                  : "border-border bg-background",
+              )}
+            />
+          </label>
+          {!team.length && (
+            <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
+              Employee name (manual entry)
+              <input
+                value={employeeName}
+                onChange={(e) => setEmployeeName(e.target.value)}
+                placeholder="Full name"
+                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+          )}
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Onboarding steps required</p>
+          <div className="flex flex-wrap gap-3">
+            {[
+              { key: "drug", label: "Drug Test", val: drugTest, set: setDrugTest },
+              { key: "bg", label: "Background Verification", val: bgCheck, set: setBgCheck },
+              { key: "client", label: "Client-Side Onboarding", val: clientOnboarding, set: setClientOnboarding },
+            ].map(({ key, label, val, set }) => (
+              <label key={key} className="flex items-center gap-2 cursor-pointer select-none text-sm">
+                <input type="checkbox" checked={val} onChange={(e) => set(e.target.checked)} className="rounded" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {clientOnboarding && (
+          <label className="text-xs font-medium text-muted-foreground">
+            Client name
+            <input
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="e.g. Accenture, TCS"
               className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
             />
           </label>
         )}
-      </div>
 
-      <div>
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Onboarding steps required</p>
-        <div className="flex flex-wrap gap-3">
-          {[
-            { key: "drug", label: "Drug Test", val: drugTest, set: setDrugTest },
-            { key: "bg", label: "Background Verification", val: bgCheck, set: setBgCheck },
-            {
-              key: "client",
-              label: "Client-Side Onboarding",
-              val: clientOnboarding,
-              set: setClientOnboarding,
-            },
-          ].map(({ key, label, val, set }) => (
-            <label key={key} className="flex items-center gap-2 cursor-pointer select-none text-sm">
-              <input
-                type="checkbox"
-                checked={val}
-                onChange={(e) => set(e.target.checked)}
-                className="rounded"
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {clientOnboarding && (
         <label className="text-xs font-medium text-muted-foreground">
-          Client name
-          <input
-            value={clientName}
-            onChange={(e) => setClientName(e.target.value)}
-            placeholder="e.g. Accenture, TCS"
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+          Notes (optional)
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            placeholder="Any additional context for PMO team…"
+            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
           />
         </label>
-      )}
 
-      <label className="text-xs font-medium text-muted-foreground">
-        Notes (optional)
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={2}
-          placeholder="Any additional context for PMO team…"
-          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
-        />
-      </label>
-
-      <button
-        onClick={submit}
-        disabled={saving}
-        className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
-      >
-        {saving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <CheckCircle2 className="h-3.5 w-3.5" />
-        )}
-        Submit onboarding request
-      </button>
-    </div>
+        <Button size="sm" onClick={submit} disabled={saving}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          Submit onboarding request
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1476,33 +1434,29 @@ function PMORequestsTab({ auth, team }: { auth: Record<string, string>; team: Te
   }, [load]);
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <p className="flex-1 text-sm text-muted-foreground">
           Submit VDI or access requests to PMO. Email notification is sent automatically.
         </p>
-        <button
-          onClick={() => setShowForm(showForm === "vdi_provision" ? null : "vdi_provision")}
-          className={cn(
-            "flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-            showForm === "vdi_provision"
-              ? "border-[var(--collaboration)] bg-[var(--collaboration)]/10 text-[var(--collaboration)]"
-              : "border-border bg-background hover:bg-muted",
-          )}
-        >
-          <Server className="h-3.5 w-3.5" /> Request VDI
-        </button>
-        <button
-          onClick={() => setShowForm(showForm === "vdi_revoke" ? null : "vdi_revoke")}
-          className={cn(
-            "flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
-            showForm === "vdi_revoke"
-              ? "border-destructive bg-destructive/10 text-destructive"
-              : "border-border bg-background hover:bg-muted",
-          )}
-        >
-          <ShieldX className="h-3.5 w-3.5" /> Revoke Access
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant={showForm === "vdi_provision" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowForm(showForm === "vdi_provision" ? null : "vdi_provision")}
+            className="w-full sm:w-auto"
+          >
+            <Server className="h-3.5 w-3.5" /> Request VDI
+          </Button>
+          <Button
+            variant={showForm === "vdi_revoke" ? "destructive" : "outline"}
+            size="sm"
+            onClick={() => setShowForm(showForm === "vdi_revoke" ? null : "vdi_revoke")}
+            className="w-full sm:w-auto"
+          >
+            <ShieldX className="h-3.5 w-3.5" /> Revoke Access
+          </Button>
+        </div>
       </div>
 
       {showForm && (
@@ -1524,46 +1478,43 @@ function PMORequestsTab({ auth, team }: { auth: Record<string, string>; team: Te
       ) : (
         <div className="space-y-3">
           {requests.map((r) => (
-            <div key={r.id} className="rounded-2xl border border-border bg-card/50 px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                        r.request_type === "vdi_provision"
-                          ? "bg-blue-500/10 text-blue-600"
-                          : "bg-red-500/10 text-red-600",
-                      )}
-                    >
-                      {r.request_type === "vdi_provision" ? (
-                        <Server className="h-3 w-3" />
-                      ) : (
-                        <ShieldX className="h-3 w-3" />
-                      )}
-                      {r.request_type_label}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">{r.ref_id}</span>
+            <Card key={r.id}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge
+                        className={cn(
+                          "gap-1",
+                          r.request_type === "vdi_provision"
+                            ? "bg-blue-500/10 text-blue-600 border-blue-500/20"
+                            : "bg-red-500/10 text-red-600 border-red-500/20",
+                        )}
+                      >
+                        {r.request_type === "vdi_provision" ? (
+                          <Server className="h-3 w-3" />
+                        ) : (
+                          <ShieldX className="h-3 w-3" />
+                        )}
+                        {r.request_type_label}
+                      </Badge>
+                      <span className="text-[11px] text-muted-foreground">{r.ref_id}</span>
+                    </div>
+                    <div className="mt-1 font-semibold text-foreground">{r.employee_name}</div>
+                    {r.employee_email && (
+                      <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
+                    )}
+                    {r.details && (
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">{r.details}</p>
+                    )}
+                    <p className="mt-1 text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</p>
                   </div>
-                  <div className="mt-1 font-semibold text-foreground">{r.employee_name}</div>
-                  {r.employee_email && (
-                    <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
-                  )}
-                  {r.details && (
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">{r.details}</p>
-                  )}
-                  <p className="mt-1 text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</p>
+                  <Badge className={cn(STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground")}>
+                    {r.status}
+                  </Badge>
                 </div>
-                <span
-                  className={cn(
-                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                    STATUS_COLORS[r.status] ?? "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {r.status}
-                </span>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}
@@ -1634,92 +1585,75 @@ function PMORequestForm({
   const isRevoke = requestType === "vdi_revoke";
 
   return (
-    <div
-      className={cn(
-        "mb-4 rounded-2xl border p-4 space-y-3",
-        isRevoke ? "border-destructive/30 bg-destructive/5" : "border-blue-500/30 bg-blue-500/5",
-      )}
-    >
-      <p className="text-sm font-semibold">
-        {isRevoke ? "Revoke VDI / Access" : "Request VDI Provision"}
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <Card className={isRevoke ? "border-destructive/30 bg-destructive/5" : "border-blue-500/30 bg-blue-500/5"}>
+      <CardContent className="p-4 space-y-3">
+        <p className="text-sm font-semibold">
+          {isRevoke ? "Revoke VDI / Access" : "Request VDI Provision"}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-muted-foreground">
+            Team member
+            <select
+              value={employeeName}
+              onChange={(e) => handleTeamSelect(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">— Select —</option>
+              {team.map((m) => (
+                <option key={m.id} value={m.name}>{m.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              Employee email
+              {emailAutoFilled && (
+                <span className="text-[10px] font-semibold text-[var(--collaboration)]">auto-filled</span>
+              )}
+            </span>
+            <input
+              value={employeeEmail}
+              onChange={(e) => { setEmployeeEmail(e.target.value); setEmailAutoFilled(false); }}
+              placeholder="employee@company.com"
+              className={cn(
+                "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
+                emailAutoFilled
+                  ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
+                  : "border-border bg-background",
+              )}
+            />
+          </label>
+        </div>
         <label className="text-xs font-medium text-muted-foreground">
-          Team member
-          <select
-            value={employeeName}
-            onChange={(e) => handleTeamSelect(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="">— Select —</option>
-            {team.map((m) => (
-              <option key={m.id} value={m.name}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            Employee email
-            {emailAutoFilled && (
-              <span className="text-[10px] font-semibold text-[var(--collaboration)]">
-                auto-filled
-              </span>
-            )}
-          </span>
-          <input
-            value={employeeEmail}
-            onChange={(e) => {
-              setEmployeeEmail(e.target.value);
-              setEmailAutoFilled(false);
-            }}
-            placeholder="employee@company.com"
-            className={cn(
-              "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
-              emailAutoFilled
-                ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
-                : "border-border bg-background",
-            )}
+          Details / reason
+          <textarea
+            value={details}
+            onChange={(e) => setDetails(e.target.value)}
+            rows={2}
+            placeholder={
+              isRevoke
+                ? "Reason for revocation, systems to revoke…"
+                : "VDI specs, project context, urgency…"
+            }
+            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
           />
         </label>
-      </div>
-      <label className="text-xs font-medium text-muted-foreground">
-        Details / reason
-        <textarea
-          value={details}
-          onChange={(e) => setDetails(e.target.value)}
-          rows={2}
-          placeholder={
-            isRevoke
-              ? "Reason for revocation, systems to revoke…"
-              : "VDI specs, project context, urgency…"
-          }
-          className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
-        />
-      </label>
-      <button
-        onClick={submit}
-        disabled={saving}
-        className={cn(
-          "flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50",
-          isRevoke ? "bg-destructive" : "bg-[var(--collaboration)]",
-        )}
-      >
-        {saving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <CheckCircle2 className="h-3.5 w-3.5" />
-        )}
-        Submit to PMO
-      </button>
-    </div>
+        <Button
+          size="sm"
+          variant={isRevoke ? "destructive" : "default"}
+          onClick={submit}
+          disabled={saving}
+        >
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          Submit to PMO
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
+// ── Readiness tab ──────────────────────────────────────────────────────────────
 
-// ── Readiness tab (weekly digest + project readiness checker) ──────────────────
 interface DigestItem {
   name: string;
   date?: string;
@@ -1819,126 +1753,125 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
             ({digest?.team_size ?? 0} in hierarchy)
           </span>
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {sections.map((s) => {
             const items = (digest?.[s.key] as DigestItem[]) ?? [];
             const Icon = s.icon;
             return (
-              <div
-                key={s.key}
-                className="rounded-2xl border border-border bg-muted/20 p-4"
-              >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
-                  <span className={cn("text-xs font-bold flex items-center gap-1.5", s.tone)}>
-                    <Icon className="h-3.5 w-3.5" />
-                    {s.label}
-                  </span>
-                  <span className="text-sm font-black text-foreground">{items.length}</span>
-                </div>
-                {items.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/70">Nothing this week.</p>
-                ) : (
-                  <ul className="space-y-1">
-                    {items.slice(0, 6).map((it, i) => (
-                      <li key={i} className="text-xs text-foreground/90 flex justify-between gap-2">
-                        <span className="truncate">{it.name}</span>
-                        <span className="text-muted-foreground/70 whitespace-nowrap font-mono text-[10px]">
-                          {it.date || it.due || (it.free != null ? `${it.free}% free` : "") || (it.load != null ? `${it.load}% load` : "")}
-                          {it.training ? ` · ${it.training}` : ""}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <Card key={s.key} className="shadow-none">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className={cn("text-xs font-bold flex items-center gap-1.5", s.tone)}>
+                      <Icon className="h-3.5 w-3.5" />
+                      {s.label}
+                    </span>
+                    <span className="text-sm font-black text-foreground">{items.length}</span>
+                  </div>
+                  {items.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/70">Nothing this week.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {items.slice(0, 6).map((it, i) => (
+                        <li key={i} className="text-xs text-foreground/90 flex justify-between gap-2">
+                          <span className="truncate">{it.name}</span>
+                          <span className="text-muted-foreground/70 whitespace-nowrap font-mono text-[10px]">
+                            {it.date || it.due || (it.free != null ? `${it.free}% free` : "") || (it.load != null ? `${it.load}% load` : "")}
+                            {it.training ? ` · ${it.training}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
             );
           })}
         </div>
       </div>
 
       {/* Project readiness checker */}
-      <div className="rounded-2xl border border-border bg-muted/20 p-4">
-        <h2 className="mb-1 text-sm font-bold text-foreground flex items-center gap-2">
-          <GraduationCap className="h-4 w-4 text-[var(--collaboration)]" />
-          Team Readiness for a Project
-        </h2>
-        <p className="text-xs text-muted-foreground mb-3">
-          Enter the skills an upcoming project needs — see who's ready, who's one course away, and
-          who's a gap.
-        </p>
-        <div className="flex gap-2">
-          <input
-            value={skills}
-            onChange={(e) => setSkills(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && check()}
-            placeholder="e.g. React, Node, AWS"
-            className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-          />
-          <button
-            onClick={check}
-            disabled={checking || !skills.trim()}
-            className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
-            Check
-          </button>
-        </div>
-
-        {result && result.ok && (
-          <div className="mt-4">
-            <div className="flex gap-2 mb-3 text-xs font-semibold">
-              <span className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                Ready {result.summary?.ready ?? 0}
-              </span>
-              <span className="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                One course away {result.summary?.one_course_away ?? 0}
-              </span>
-              <span className="px-2 py-1 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                Gap {result.summary?.gap ?? 0}
-              </span>
-            </div>
-            <div className="space-y-1.5">
-              {(result.rows ?? []).map((r) => (
-                <div
-                  key={r.name}
-                  className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-3 rounded-xl border border-border bg-background px-3 py-2 text-xs"
-                >
-                  <div className="min-w-0">
-                    <span className="font-semibold text-foreground">{r.name}</span>
-                    <span className="text-muted-foreground/70 ml-2">{r.free_pct}% free</span>
-                    {r.suggested_course && (
-                      <span className="text-amber-600 dark:text-amber-400 ml-2">
-                        → {r.suggested_course}
-                      </span>
-                    )}
-                    {r.missing_skills.length > 0 && (
-                      <span className="text-muted-foreground/60 ml-2">
-                        missing: {r.missing_skills.join(", ")}
-                      </span>
-                    )}
-                  </div>
-                  <span
-                    className={cn(
-                      "shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold",
-                      READINESS_BADGE[r.status],
-                    )}
-                  >
-                    {READINESS_LABEL[r.status]}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {result && !result.ok && (
-          <p className="mt-3 text-xs text-rose-600 dark:text-rose-400">
-            {result.message || "Couldn't compute readiness."}
+      <Card>
+        <CardContent className="p-4">
+          <h2 className="mb-1 text-sm font-bold text-foreground flex items-center gap-2">
+            <GraduationCap className="h-4 w-4 text-[var(--collaboration)]" />
+            Team Readiness for a Project
+          </h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Enter the skills an upcoming project needs — see who's ready, who's one course away, and
+            who's a gap.
           </p>
-        )}
-      </div>
+          <div className="flex gap-2">
+            <input
+              value={skills}
+              onChange={(e) => setSkills(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && check()}
+              placeholder="e.g. React, Node, AWS"
+              className="flex-1 min-w-0 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <Button
+              size="sm"
+              onClick={check}
+              disabled={checking || !skills.trim()}
+              className="shrink-0"
+            >
+              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+              <span className="hidden sm:inline">Check</span>
+            </Button>
+          </div>
+
+          {result && result.ok && (
+            <div className="mt-4">
+              <div className="flex flex-wrap gap-2 mb-3">
+                <Badge className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                  Ready {result.summary?.ready ?? 0}
+                </Badge>
+                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                  One course away {result.summary?.one_course_away ?? 0}
+                </Badge>
+                <Badge className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
+                  Gap {result.summary?.gap ?? 0}
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                {(result.rows ?? []).map((r) => (
+                  <div
+                    key={r.name}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-semibold text-foreground">{r.name}</span>
+                      <span className="text-muted-foreground/70 ml-2">{r.free_pct}% free</span>
+                      {r.suggested_course && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-2">
+                          → {r.suggested_course}
+                        </span>
+                      )}
+                      {r.missing_skills.length > 0 && (
+                        <span className="text-muted-foreground/60 ml-2">
+                          missing: {r.missing_skills.join(", ")}
+                        </span>
+                      )}
+                    </div>
+                    <Badge className={cn("shrink-0", READINESS_BADGE[r.status])}>
+                      {READINESS_LABEL[r.status]}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {result && !result.ok && (
+            <p className="mt-3 text-xs text-rose-600 dark:text-rose-400">
+              {result.message || "Couldn't compute readiness."}
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function LoadingState({ label }: { label: string }) {
   return (
@@ -1965,17 +1898,16 @@ function ExpandableGroup({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <div className="rounded-2xl border border-border bg-card/50 overflow-hidden">
+    <Card className="overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 text-left hover:bg-muted/30 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-foreground">{title}</span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
-            {count} {unit}
-            {count !== 1 ? "s" : ""}
-          </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-foreground truncate">{title}</span>
+          <Badge variant="secondary" className="shrink-0">
+            {count} {unit}{count !== 1 ? "s" : ""}
+          </Badge>
         </div>
         {open ? (
           <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -1984,7 +1916,7 @@ function ExpandableGroup({
         )}
       </button>
       {open && children}
-    </div>
+    </Card>
   );
 }
 
@@ -2011,7 +1943,6 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [appreciationToDelete, setAppreciationToDelete] = useState<number | null>(null);
 
-  // Form state
   const [fEmployeeEmail, setFEmployeeEmail] = useState("");
   const [fEmployeeName, setFEmployeeName] = useState("");
   const [fTitle, setFTitle] = useState("");
@@ -2078,7 +2009,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
         body: fd,
       });
       if (!res.ok) throw new Error(await res.text());
-      flyBanner("Appreciation added! 🏆");
+      flyBanner("Appreciation added!");
       setShowForm(false);
       setFEmployeeEmail("");
       setFEmployeeName("");
@@ -2101,16 +2032,15 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
     toast.success("Deleted.");
   };
 
-  // Group by employee
   const grouped = list.reduce<Record<string, AppreciationRow[]>>((acc, r) => {
     (acc[r.employee_email] = acc[r.employee_email] || []).push(r);
     return acc;
   }, {});
 
   return (
-    <div>
+    <div className="space-y-5">
       {/* Header */}
-      <div className="mb-5 flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-foreground">Client Appreciations</p>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -2118,151 +2048,141 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
             appear in their People Directory profile.
           </p>
         </div>
-        <button
+        <Button
+          size="sm"
           onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors"
+          className="bg-amber-500 hover:bg-amber-600 border-amber-500 w-full sm:w-auto"
         >
           <Plus className="h-3.5 w-3.5" /> Add Appreciation
-        </button>
+        </Button>
       </div>
 
       {/* Add Form */}
       {showForm && (
-        <div className="mb-6 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-5 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <p className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Trophy className="h-4 w-4 text-amber-500" /> New Appreciation
-            </p>
-            <button onClick={() => setShowForm(false)} className="rounded-lg p-1 hover:bg-muted/50">
-              <X className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
+        <Card className="border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5">
+          <CardContent className="p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-amber-500" /> New Appreciation
+              </p>
+              <Button variant="ghost" size="icon" onClick={() => setShowForm(false)} className="h-7 w-7">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              Employee Email *
-              <div className="relative mt-1">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                Employee Email *
+                <div className="relative mt-1">
+                  <input
+                    value={fEmployeeEmail}
+                    onChange={(e) => { setFEmployeeEmail(e.target.value); autoFillFromTeam(e.target.value); }}
+                    placeholder="employee@company.com"
+                    list="appreciation-team-emails"
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  />
+                  <datalist id="appreciation-team-emails">
+                    {team.map((m) => (
+                      <option key={m.id} value={m.email} label={m.name} />
+                    ))}
+                  </datalist>
+                </div>
+              </label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Employee Name *
                 <input
-                  value={fEmployeeEmail}
-                  onChange={(e) => {
-                    setFEmployeeEmail(e.target.value);
-                    autoFillFromTeam(e.target.value);
-                  }}
-                  placeholder="employee@company.com"
-                  list="appreciation-team-emails"
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  value={fEmployeeName}
+                  onChange={(e) => setFEmployeeName(e.target.value)}
+                  placeholder="Full name"
+                  className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
                 />
-                <datalist id="appreciation-team-emails">
-                  {team.map((m) => (
-                    <option key={m.id} value={m.email} label={m.name} />
-                  ))}
-                </datalist>
-              </div>
-            </label>
+              </label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Appreciation Title *
+                <input
+                  value={fTitle}
+                  onChange={(e) => setFTitle(e.target.value)}
+                  placeholder="e.g. Outstanding delivery on Q2 release"
+                  className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                />
+              </label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Client Name
+                <div className="relative mt-1 flex items-center">
+                  <Building2 className="absolute left-3 h-3.5 w-3.5 text-muted-foreground/50" />
+                  <input
+                    value={fClientName}
+                    onChange={(e) => setFClientName(e.target.value)}
+                    placeholder="e.g. Eli Lilly, Dell, Worley"
+                    className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-2 text-sm text-foreground"
+                  />
+                </div>
+              </label>
+            </div>
+
             <label className="text-xs font-medium text-muted-foreground">
-              Employee Name *
-              <input
-                value={fEmployeeName}
-                onChange={(e) => setFEmployeeName(e.target.value)}
-                placeholder="Full name"
-                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              Description / Context
+              <textarea
+                value={fDescription}
+                onChange={(e) => setFDescription(e.target.value)}
+                rows={3}
+                placeholder="Paste the appreciation email content or add context about the recognition…"
+                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
               />
             </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Appreciation Title *
-              <input
-                value={fTitle}
-                onChange={(e) => setFTitle(e.target.value)}
-                placeholder="e.g. Outstanding delivery on Q2 release"
-                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-              />
-            </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Client Name
-              <div className="relative mt-1 flex items-center">
-                <Building2 className="absolute left-3 h-3.5 w-3.5 text-muted-foreground/50" />
-                <input
-                  value={fClientName}
-                  onChange={(e) => setFClientName(e.target.value)}
-                  placeholder="e.g. Eli Lilly, Dell, Worley"
-                  className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-2 text-sm text-foreground"
-                />
-              </div>
-            </label>
-          </div>
 
-          <label className="text-xs font-medium text-muted-foreground">
-            Description / Context
-            <textarea
-              value={fDescription}
-              onChange={(e) => setFDescription(e.target.value)}
-              rows={3}
-              placeholder="Paste the appreciation email content or add context about the recognition…"
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
-            />
-          </label>
-
-          {/* Screenshot Upload */}
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2">
-              Screenshot of Email (optional)
-            </p>
-            {fPreview ? (
-              <div className="relative inline-block">
-                <img
-                  src={fPreview}
-                  alt="Preview"
-                  className="h-32 rounded-xl border border-border object-cover"
-                />
-                <button
-                  onClick={() => {
-                    setFFile(null);
-                    setFPreview(null);
-                    if (fileRef.current) fileRef.current.value = "";
-                  }}
-                  className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 text-white shadow"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="flex items-center gap-2 rounded-xl border-2 border-dashed border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/5 px-4 py-3 text-sm text-amber-700 dark:text-amber-400 hover:border-amber-400 transition-colors"
-              >
-                <Upload className="h-4 w-4" /> Upload screenshot (JPG, PNG, max 10 MB)
-              </button>
-            )}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={pickFile}
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              onClick={() => setShowForm(false)}
-              className="rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={submit}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {saving ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {/* Screenshot Upload */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-2">
+                Screenshot of Email (optional)
+              </p>
+              {fPreview ? (
+                <div className="relative inline-block">
+                  <img
+                    src={fPreview}
+                    alt="Preview"
+                    className="h-32 rounded-xl border border-border object-cover"
+                  />
+                  <button
+                    onClick={() => { setFFile(null); setFPreview(null); if (fileRef.current) fileRef.current.value = ""; }}
+                    className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 text-white shadow"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
               ) : (
-                <Trophy className="h-3.5 w-3.5" />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="flex items-center gap-2 rounded-xl border-2 border-dashed border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/5 px-4 py-3 text-sm text-amber-700 dark:text-amber-400 hover:border-amber-400 transition-colors"
+                >
+                  <Upload className="h-4 w-4" /> Upload screenshot (JPG, PNG, max 10 MB)
+                </button>
               )}
-              Save Appreciation
-            </button>
-          </div>
-        </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={pickFile}
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setShowForm(false)} className="w-full sm:w-auto">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={submit}
+                disabled={saving}
+                className="bg-amber-500 hover:bg-amber-600 border-amber-500 w-full sm:w-auto"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trophy className="h-3.5 w-3.5" />}
+                Save Appreciation
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* List */}
@@ -2279,10 +2199,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
       ) : (
         <div className="space-y-4">
           {Object.entries(grouped).map(([email, rows]) => (
-            <div
-              key={email}
-              className="rounded-2xl border border-border bg-card/50 overflow-hidden"
-            >
+            <Card key={email} className="overflow-hidden">
               <div className="flex items-center gap-3 border-b border-border px-4 py-3 bg-muted/20">
                 <div className="h-8 w-8 rounded-full bg-amber-500/10 text-amber-600 flex items-center justify-center text-[13px] font-bold">
                   {(rows[0].employee_name || "?")
@@ -2292,26 +2209,25 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
                     .slice(0, 2)
                     .toUpperCase()}
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">{rows[0].employee_name}</p>
-                  <p className="text-xs text-muted-foreground">{email}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground truncate">{rows[0].employee_name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{email}</p>
                 </div>
-                <span className="ml-auto flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-full px-2.5 py-0.5">
-                  <Trophy className="h-3 w-3" /> {rows.length} appreciation
-                  {rows.length > 1 ? "s" : ""}
-                </span>
+                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 gap-1 shrink-0">
+                  <Trophy className="h-3 w-3" /> {rows.length} appreciation{rows.length > 1 ? "s" : ""}
+                </Badge>
               </div>
               <div className="divide-y divide-border">
                 {rows.map((r) => (
-                  <div key={r.id} className="flex items-start gap-4 px-4 py-4">
+                  <div key={r.id} className="flex items-start gap-3 sm:gap-4 px-4 py-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-foreground">{r.title}</p>
                         {r.client_name && (
-                          <span className="flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5">
+                          <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20 gap-1">
                             <Building2 className="h-2.5 w-2.5" />
                             {r.client_name}
-                          </span>
+                          </Badge>
                         )}
                       </div>
                       {r.description && (
@@ -2342,18 +2258,20 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
                           </div>
                         </button>
                       )}
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => setAppreciationToDelete(r.id)}
-                        className="rounded-lg p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                         title="Delete"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
@@ -2371,10 +2289,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
               className="max-h-[85vh] max-w-full rounded-xl shadow-2xl object-contain"
             />
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setLightboxSrc(null);
-              }}
+              onClick={(e) => { e.stopPropagation(); setLightboxSrc(null); }}
               className="absolute top-2 right-2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70"
             >
               <X className="h-4 w-4" />

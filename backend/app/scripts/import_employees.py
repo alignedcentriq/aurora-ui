@@ -296,17 +296,14 @@ def import_from_dataframe(df: pd.DataFrame, db: Session) -> dict:
 
     db.commit()
 
-    # ── Second pass: resolve manager_id references ──
-    profiles = db.query(EmployeeZohoProfile).filter(
-        EmployeeZohoProfile.reporting_manager.isnot(None)
-    ).all()
-    for profile in profiles:
-        emp = db.query(Employee).filter(Employee.id == profile.employee_id).first()
-        if emp and not emp.manager_id:
-            mgr_id = _find_manager(db, profile.reporting_manager)
-            if mgr_id and mgr_id != emp.id:
-                emp.manager_id = mgr_id
-    db.commit()
+    # ── Second pass: wire manager_id via the shared rewire utility ──
+    # This covers both live-Zoho-email (most reliable) and name-based fallback.
+    try:
+        from app.services.manager_service import rewire_manager_hierarchy
+        wire = rewire_manager_hierarchy()
+        stats["manager_linked"] = wire.get("linked_from_zoho_email", 0) + wire.get("linked_from_zoho_name", 0)
+    except Exception as _e:
+        stats["manager_wire_error"] = str(_e)
 
     return stats
 

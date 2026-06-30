@@ -55,7 +55,24 @@ async def search(req: SearchRequest, user: CurrentUser = Depends(require_non_emp
     hits = piq.find_similar_projects(
         req.description, limit=max(1, min(req.limit, 10)), reviewed_only=req.reviewed_only,
     )
+    piq.record_queries([h.get("slug") for h in hits])  # triage signal: what people actually look for
     return {"query": req.description, "results": hits}
+
+
+@router.get("/analytics")
+async def analytics(user: CurrentUser = Depends(require_non_employee)):
+    """Portfolio rollups: capability/tech/integration frequency, industry & health mix."""
+    return piq.portfolio_analytics()
+
+
+@router.post("/link-evidence")
+async def link_evidence(
+    background_tasks: BackgroundTasks,
+    user: CurrentUser = Depends(require_pmo),
+):
+    """(Re)link every DNA fact to its source chunk for drill-through (PMO/admin)."""
+    background_tasks.add_task(piq.link_all_evidence)
+    return {"status": "started"}
 
 
 @router.post("/profiles/{slug}/rebuild")

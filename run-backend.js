@@ -40,6 +40,29 @@ const infraComposeFile = "docker-compose.infra.yml";
 const localInfraHost = "127.0.0.1";
 let wslKeepAliveProcess = null;
 
+const LOCK_FILE = path.join(repoRoot, ".backend.pid");
+
+const acquireLock = () => {
+  if (fs.existsSync(LOCK_FILE)) {
+    const oldPid = parseInt(fs.readFileSync(LOCK_FILE, "utf8").trim(), 10);
+    if (oldPid && oldPid !== process.pid) {
+      try {
+        process.kill(oldPid, 0); // throws if not running
+        console.log(`--- Stopping previous run-backend.js instance (PID ${oldPid}) ---`);
+        if (isWindows) {
+          try { execFileSync("taskkill", ["/PID", String(oldPid), "/F", "/T"], { stdio: "ignore" }); } catch {}
+        } else {
+          try { process.kill(oldPid, "SIGTERM"); } catch {}
+        }
+      } catch {
+        // Stale lock — process already gone
+      }
+    }
+  }
+  fs.writeFileSync(LOCK_FILE, String(process.pid));
+  process.on("exit", () => { try { fs.unlinkSync(LOCK_FILE); } catch {} });
+};
+
 const infraPorts = [
   { name: "Postgres", port: 5433, required: true },
   { name: "Redis", port: 6380, required: true },
@@ -177,7 +200,9 @@ const runDockerCompose = async () => {
   } catch (err) {
     console.log("--- Ensuring Docker service is running in WSL ---");
     try {
-      await runCommand("wsl", ["sudo", "service", "docker", "start"], { stdio: "ignore" });
+      // Run as root rather than `sudo` — non-interactive sudo would hang on the
+      // password prompt (stdio is ignored), so the service never starts.
+      await runCommand("wsl", ["-u", "root", "service", "docker", "start"], { stdio: "ignore" });
     } catch (sudoErr) {
       console.warn(
         "Failed to start Docker service in WSL via sudo. Assuming it's already running or manual start is needed.",
@@ -375,7 +400,7 @@ const runUvicornWithRestart = async (uvicornPath) => {
  * Used for mock_zoho_server (8090) and mock_manage_engine_server (8091).
  */
 const startMockServer = (uvicornPath, appModule, port, label) => {
-  const args = [appModule, "--host", "0.0.0.0", "--port", String(port)];
+  const args = [appModule, "--host", "0.0.0.0", "--port", String(port), "--loop", "asyncio"];
   const env = { ...process.env, LANGFUSE_OTEL: "false" };
 
   const launch = () => {
@@ -385,9 +410,11 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
     const child = spawn(uvicornPath, args, {
       cwd: backendDir,
       env,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
+    child.stdout.on("data", (d) => process.stdout.write(`[${label}] ${d}`));
+    child.stderr.on("data", (d) => process.stderr.write(`[${label}] ${d}`));
     spawnedChildren.push(child);
     child.on("error", (err) => {
       const idx = spawnedChildren.indexOf(child);
@@ -411,6 +438,8 @@ const startMockServer = (uvicornPath, appModule, port, label) => {
 };
 
 const startBackend = async () => {
+  acquireLock();
+
   if (!isWindows) {
     throw new Error(
       `This local startup script is configured for Windows + WSL Docker only. Detected: ${platform}`,

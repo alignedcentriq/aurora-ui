@@ -46,7 +46,10 @@ export function CopilotSidebar({ isOpen, setIsOpen }: CopilotSidebarProps) {
   // Portal the sidebar is currently opened on — drives the themed header label/accent.
   // For Control Hub, also factor in the active tab (from ?tab=xxx search param) so each
   // tab gets its own theme, starters, and placeholder copy.
-  const portal = getPortalCopilot(location.pathname, location.search);
+  const portal = getPortalCopilot(
+    location.pathname,
+    location.search.tab ? `tab=${location.search.tab}` : "",
+  );
   const PortalIcon = portal.Icon;
 
   // Enriched context string passed to AssistantView and used for per-tab thread isolation.

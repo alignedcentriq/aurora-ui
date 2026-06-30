@@ -177,7 +177,7 @@ export function AnnouncementBanner({ variant = "sidebar" }: { variant?: "sidebar
               : "hover:bg-white/[0.08] ml-auto text-[var(--sidebar-foreground)]",
           )}
         >
-          <Bell className="h-4 w-4" />
+          <Megaphone className="h-4 w-4" />
           {unreadCount > 0 && (
             <span className="absolute right-1.5 top-1.5 flex h-2 w-2 rounded-full bg-rose-500">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75"></span>

@@ -35,7 +35,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 // Shape returned by GET /api/employees/directory (Zoho HR profile ⋈ Employee).
@@ -58,6 +57,14 @@ interface DirEmployee {
   // Absent (undefined) → not yet synced; the profile lazy-loads it on open.
   skills?: DirSkill[];
   projects?: DirProject[];
+  // Project allocations (employee_allocations) — distinct project names + clients the
+  // person was staffed on. Broad coverage; powers the grid's project search/filter.
+  allocation_projects?: string[];
+  allocation_clients?: string[];
+  // Current availability from the latest allocation snapshot.
+  allocated_percent?: number;
+  availability_percent?: number;
+  available?: boolean;
 }
 
 // Alchemy-sourced profile enrichment (skills + projects).
@@ -205,10 +212,25 @@ function EmployeeCard({
           <p className="text-[12px] font-bold text-slate-500 dark:text-slate-400 mt-0.5 truncate">
             {emp.designation || "—"}
           </p>
-          <div className="mt-1">
+          <div className="mt-1 flex flex-wrap items-center gap-1">
             <span className="inline-flex text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-100/80 dark:bg-white/5 text-slate-500 dark:text-slate-400 border border-slate-200/40 dark:border-white/[0.03] truncate max-w-full">
               {emp.department}
             </span>
+            {emp.available && (
+              <span
+                title={
+                  emp.availability_percent != null
+                    ? `${emp.availability_percent}% free capacity`
+                    : "Currently available"
+                }
+                className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
+                {emp.availability_percent != null && emp.availability_percent > 0
+                  ? `${emp.availability_percent}% free`
+                  : "Available"}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -245,9 +267,13 @@ function EmployeeCard({
   );
 }
 
-function SkillPill({ s }: { s: DirSkill }) {
+function SkillPill({ s, onClick }: { s: DirSkill; onClick?: () => void }) {
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-slate-200/80 dark:border-white/[0.08] bg-slate-50/70 dark:bg-white/[0.03] px-2.5 py-1.5">
+    <button
+      type="button"
+      onClick={onClick}
+      title={`About ${s.skill} & who else has it`}
+      className="flex items-center gap-1.5 rounded-lg border border-slate-200/80 dark:border-white/[0.08] bg-slate-50/70 dark:bg-white/[0.03] px-2.5 py-1.5 text-left cursor-pointer transition-colors hover:border-[#1f86e0]/60 hover:bg-[#1f86e0]/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f86e0]/40">
       {s.primary_skill && (
         <Star
           className="h-3.5 w-3.5 text-amber-500 fill-amber-400 shrink-0"
@@ -285,16 +311,20 @@ function SkillPill({ s }: { s: DirSkill }) {
         ) : (
           <BadgeCheck className="h-3.5 w-3.5 text-sky-500 shrink-0" aria-label="Certified" />
         ))}
-    </div>
+    </button>
   );
 }
 
-function ProjectRow({ p }: { p: DirProject }) {
+function ProjectRow({ p, onClick }: { p: DirProject; onClick?: () => void }) {
   const years = [p.start_date, p.end_date].map((d) => (d ? d.slice(0, 4) : "")).filter(Boolean);
   const period = years.length === 2 ? `${years[0]} – ${years[1]}` : years[0] || "";
   const done = p.status.toLowerCase() === "completed";
   return (
-    <div className="rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-white/[0.02] px-3 py-2.5">
+    <button
+      type="button"
+      onClick={onClick}
+      title={`About ${p.name} & the team`}
+      className="w-full text-left rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-white/[0.02] px-3 py-2.5 cursor-pointer transition-colors hover:border-[#1f86e0]/60 hover:bg-[#1f86e0]/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f86e0]/40">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[13px] font-bold text-slate-800 dark:text-white leading-snug">
           {p.name || "—"}
@@ -320,12 +350,345 @@ function ProjectRow({ p }: { p: DirProject }) {
           {[period, p.manager && `PM: ${p.manager}`].filter(Boolean).join("  ·  ")}
         </p>
       )}
-    </div>
+    </button>
   );
 }
 
-function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void }) {
+// Compact clickable row for a peer / team member inside a detail popup. Opens that
+// person's profile when they're in the directory roster (no-op otherwise).
+function PersonRow({
+  name,
+  code,
+  meta,
+  onOpen,
+}: {
+  name: string;
+  code: string;
+  meta?: string;
+  onOpen?: (code: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => code && onOpen?.(code)}
+      className="flex w-full items-center gap-2.5 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-white/[0.02] px-2.5 py-2 text-left transition-colors hover:border-[#1f86e0]/60 hover:bg-[#1f86e0]/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f86e0]/40"
+    >
+      <Avatar email="" name={name} className="h-8 w-8 rounded-full" textClassName="text-[11px]" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12.5px] font-bold text-slate-800 dark:text-slate-100">{name}</p>
+        {meta && (
+          <p className="truncate text-[10.5px] font-semibold text-slate-400 dark:text-slate-500">
+            {meta}
+          </p>
+        )}
+      </div>
+    </button>
+  );
+}
+
+interface SkillDetailResp {
+  available: boolean;
+  skill_name: string;
+  description?: string;
+  image_url?: string;
+  category?: string;
+  total_employees?: number;
+  certified_count?: number;
+  instructor_count?: number;
+  expert_count?: number;
+  peers?: { employee_id: string; name: string; competency: string; experience: string; last_used: string }[];
+}
+
+// Click-through popup for a skill pill: what the skill is (Alchemy catalog), this
+// person's own proficiency, and everyone else in the org who has it.
+function SkillDetailDialog({
+  skill,
+  personName,
+  currentCode,
+  onClose,
+  onOpenPerson,
+}: {
+  skill: DirSkill;
+  personName: string;
+  currentCode: string;
+  onClose: () => void;
+  onOpenPerson?: (code: string) => void;
+}) {
   const { user } = useAuth();
+  const [data, setData] = useState<SkillDetailResp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const headers: Record<string, string> = {};
+    if (user?.email) headers["x-user-email"] = user.email;
+    if (user?.role) headers["x-user-role"] = user.role.toLowerCase();
+    fetch(`/api/employees/skill-detail?name=${encodeURIComponent(skill.skill)}`, { headers })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d) => !cancelled && (setData(d), setLoading(false)))
+      .catch(() => !cancelled && (setData({ available: false, skill_name: skill.skill }), setLoading(false)));
+    return () => {
+      cancelled = true;
+    };
+  }, [skill.skill, user?.email, user?.role]);
+
+  const peers = (data?.peers ?? []).filter((p) => p.employee_id !== currentCode);
+  const userFacts = [
+    skill.competency,
+    skill.years_experience && skill.years_experience !== "0.00"
+      ? `${parseFloat(skill.years_experience)} yrs`
+      : "",
+    skill.certified ? "Certified" : "",
+    skill.instructor ? "Instructor" : "",
+    skill.primary_interest ? "Primary interest" : "",
+    skill.last_used ? `Last used ${skill.last_used}` : "",
+  ].filter(Boolean);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-full max-w-md p-0 overflow-hidden gap-0 max-h-[90vh] flex flex-col">
+        <DialogHeader className="shrink-0 space-y-0 border-b border-slate-100 dark:border-white/[0.06] px-5 py-4">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-[16px] font-black text-[#0f2a4a] dark:text-white">
+            <Sparkles className="h-4 w-4 text-[#1f86e0] shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words">{data?.skill_name || skill.skill}</span>
+          </DialogTitle>
+          {(data?.category || skill.category) && (
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              {data?.category || skill.category}
+            </p>
+          )}
+        </DialogHeader>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+          {/* This person's proficiency */}
+          <div>
+            <h4 className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+              {personName.split(" ")[0]}’s proficiency
+            </h4>
+            {userFacts.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {userFacts.map((f) => (
+                  <Badge key={f} variant="secondary" className="text-[11px]">
+                    {f}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-slate-400">No proficiency details on record.</p>
+            )}
+          </div>
+
+          {/* What the skill is */}
+          <div>
+            <h4 className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1.5">
+              About this skill
+            </h4>
+            {loading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+            ) : data?.description ? (
+              <p className="text-[12.5px] leading-relaxed text-slate-600 dark:text-slate-300">
+                {data.description}
+              </p>
+            ) : (
+              <p className="text-[12px] text-slate-400">No description available.</p>
+            )}
+          </div>
+
+          {/* Peers */}
+          <div>
+            <h4 className="flex items-center gap-1.5 text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+              <Users className="h-3.5 w-3.5 text-[#1f86e0]" /> Others with this skill
+              {!loading && (
+                <span className="font-bold normal-case tracking-normal text-slate-400">
+                  ({data?.total_employees ?? peers.length})
+                </span>
+              )}
+            </h4>
+            {loading ? (
+              <Skeleton className="h-10 w-full" />
+            ) : peers.length ? (
+              <div className="flex flex-col gap-1.5">
+                {peers.map((p) => (
+                  <PersonRow
+                    key={p.employee_id}
+                    name={p.name}
+                    code={p.employee_id}
+                    meta={[p.competency, p.experience && `${parseFloat(p.experience)} yrs`]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    onOpen={(c) => {
+                      onClose();
+                      onOpenPerson?.(c);
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-slate-400">No one else has this skill on record.</p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface ProjectDetailResp {
+  available: boolean;
+  project_name: string;
+  client?: string;
+  status?: string;
+  lead?: string;
+  delivery_manager?: string;
+  project_type?: string;
+  member_count?: number;
+  members?: {
+    employee_id: string;
+    name: string;
+    efforts: number | null;
+    billability: number | null;
+    done: boolean;
+    role?: string;
+  }[];
+}
+
+// Click-through popup for a project row: project overview + the team that worked on
+// it (from allocation records), each member clickable to their profile.
+function ProjectDetailDialog({
+  project,
+  currentCode,
+  onClose,
+  onOpenPerson,
+}: {
+  project: DirProject;
+  currentCode: string;
+  onClose: () => void;
+  onOpenPerson?: (code: string) => void;
+}) {
+  const { user } = useAuth();
+  const [data, setData] = useState<ProjectDetailResp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const headers: Record<string, string> = {};
+    if (user?.email) headers["x-user-email"] = user.email;
+    if (user?.role) headers["x-user-role"] = user.role.toLowerCase();
+    fetch(`/api/employees/project-detail?name=${encodeURIComponent(project.name)}`, { headers })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d) => !cancelled && (setData(d), setLoading(false)))
+      .catch(() => !cancelled && (setData({ available: false, project_name: project.name }), setLoading(false)));
+    return () => {
+      cancelled = true;
+    };
+  }, [project.name, user?.email, user?.role]);
+
+  const members = (data?.members ?? []).filter((m) => m.employee_id !== currentCode);
+  const facts = [
+    ["Client", data?.client || project.client],
+    ["Status", data?.status || project.status],
+    ["Project Lead", data?.lead],
+    ["Delivery Manager", data?.delivery_manager || project.manager],
+    ["Type", data?.project_type],
+    ["Role (this person)", project.role],
+  ].filter(([, v]) => v) as [string, string][];
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-full max-w-md p-0 overflow-hidden gap-0 max-h-[90vh] flex flex-col">
+        <DialogHeader className="shrink-0 space-y-0 border-b border-slate-100 dark:border-white/[0.06] px-5 py-4">
+          <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-black text-[#0f2a4a] dark:text-white leading-snug">
+            <Briefcase className="h-4 w-4 text-[#1f86e0] shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words">{project.name}</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Overview */}
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+            {facts.map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-[9.5px] font-extrabold uppercase tracking-wider text-slate-400">
+                  {label}
+                </dt>
+                <dd className="text-[12.5px] font-semibold text-slate-700 dark:text-slate-200 break-words">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {project.skills_used && (
+            <div>
+              <h4 className="text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1.5">
+                Skills used
+              </h4>
+              <p className="text-[12px] text-slate-600 dark:text-slate-300">{project.skills_used}</p>
+            </div>
+          )}
+
+          {/* Team */}
+          <div>
+            <h4 className="flex items-center gap-1.5 text-[10.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+              <Users className="h-3.5 w-3.5 text-[#1f86e0]" /> Team members
+              {!loading && data?.available && (
+                <span className="font-bold normal-case tracking-normal text-slate-400">
+                  ({(data?.member_count ?? members.length)})
+                </span>
+              )}
+            </h4>
+            {loading ? (
+              <Skeleton className="h-10 w-full" />
+            ) : members.length ? (
+              <div className="flex flex-col gap-1.5">
+                {members.map((m) => (
+                  <PersonRow
+                    key={m.employee_id}
+                    name={m.name || m.employee_id}
+                    code={m.employee_id}
+                    meta={[
+                      m.role,
+                      m.billability != null ? `${m.billability}% billable` : null,
+                      m.billability != null ? (m.done ? "Completed" : "Active") : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    onOpen={(c) => {
+                      onClose();
+                      onOpenPerson?.(c);
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-slate-400">
+                No other team members found in allocation records.
+              </p>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProfileModal({
+  emp,
+  onClose,
+  onOpenPerson,
+}: {
+  emp: DirEmployee;
+  onClose: () => void;
+  onOpenPerson?: (code: string) => void;
+}) {
+  const { user } = useAuth();
+  // Skill / project click-through popups (rendered above this modal).
+  const [skillDetail, setSkillDetail] = useState<DirSkill | null>(null);
+  const [projectDetail, setProjectDetail] = useState<DirProject | null>(null);
   // Bundled with the directory payload → render instantly, no fetch.
   const bundled = emp.skills !== undefined || emp.projects !== undefined;
   const [enrich, setEnrich] = useState<{
@@ -391,6 +754,7 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
     ["City", emp.city],
   ];
   return (
+    <>
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="w-full max-w-md p-0 overflow-hidden gap-0 max-h-[95vh] sm:max-h-[90vh] flex flex-col">
         {/* Navy/Gradient header with centred avatar */}
@@ -413,7 +777,7 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
         </div>
 
         {/* Detail rows */}
-        <ScrollArea className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="px-4 py-3.5 sm:px-6 sm:py-4">
             <dl className="divide-y divide-slate-100 dark:divide-white/[0.04]">
               {rows.map(([label, value]) => (
@@ -458,7 +822,11 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
                     </h3>
                     <div className="flex flex-wrap gap-1.5">
                       {enrich.skills.map((s) => (
-                        <SkillPill key={`${s.skill}-${s.category}`} s={s} />
+                        <SkillPill
+                          key={`${s.skill}-${s.category}`}
+                          s={s}
+                          onClick={() => setSkillDetail(s)}
+                        />
                       ))}
                     </div>
                   </div>
@@ -474,7 +842,11 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
                     </h3>
                     <div className="flex flex-col gap-2">
                       {enrich.projects.map((p, i) => (
-                        <ProjectRow key={`${p.name}-${i}`} p={p} />
+                        <ProjectRow
+                          key={`${p.name}-${i}`}
+                          p={p}
+                          onClick={() => setProjectDetail(p)}
+                        />
                       ))}
                     </div>
                   </div>
@@ -488,7 +860,7 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
               </>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Footer actions */}
         <DialogFooter className="border-t border-slate-100 dark:border-white/[0.08] px-4 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50/50 dark:bg-zinc-950/20 shrink-0">
@@ -504,6 +876,25 @@ function ProfileModal({ emp, onClose }: { emp: DirEmployee; onClose: () => void 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {skillDetail && (
+      <SkillDetailDialog
+        skill={skillDetail}
+        personName={emp.name}
+        currentCode={emp.employee_code}
+        onClose={() => setSkillDetail(null)}
+        onOpenPerson={onOpenPerson}
+      />
+    )}
+    {projectDetail && (
+      <ProjectDetailDialog
+        project={projectDetail}
+        currentCode={emp.employee_code}
+        onClose={() => setProjectDetail(null)}
+        onOpenPerson={onOpenPerson}
+      />
+    )}
+    </>
   );
 }
 
@@ -557,7 +948,7 @@ function OrgChartModal({
         </DialogHeader>
 
         {/* Body */}
-        <ScrollArea className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="px-4 py-3 sm:px-5 sm:py-4 space-y-3">
             {/* Reports to (immediate manager) */}
             {manager && (
@@ -662,7 +1053,7 @@ function OrgChartModal({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Footer */}
         <DialogFooter className="border-t border-slate-200/60 dark:border-white/[0.08] px-4 py-2.5 sm:px-5 sm:py-3 bg-white/70 dark:bg-zinc-950/20 shrink-0">
@@ -722,11 +1113,18 @@ export function EmployeeDirectory() {
   const [certifiedOnly, setCertifiedOnly] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
   const [usedWithinMonths, setUsedWithinMonths] = useState<number | null>(null);
+  // Allocation-aware availability filter (current free capacity from the latest snapshot).
+  const [availableOnly, setAvailableOnly] = useState(false);
   const [selected, setSelected] = useState<DirEmployee | null>(null);
   const [orgChartFor, setOrgChartFor] = useState<DirEmployee | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const enrichFilterActive =
-    !!skillFilter || minYears !== null || certifiedOnly || !!projectFilter || usedWithinMonths !== null;
+    !!skillFilter ||
+    minYears !== null ||
+    certifiedOnly ||
+    !!projectFilter ||
+    usedWithinMonths !== null ||
+    availableOnly;
   const activeFilterCount = useMemo(
     () =>
       (dept ? 1 : 0) +
@@ -735,8 +1133,9 @@ export function EmployeeDirectory() {
       (minYears !== null ? 1 : 0) +
       (certifiedOnly ? 1 : 0) +
       (projectFilter ? 1 : 0) +
-      (usedWithinMonths !== null ? 1 : 0),
-    [dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths],
+      (usedWithinMonths !== null ? 1 : 0) +
+      (availableOnly ? 1 : 0),
+    [dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -817,27 +1216,34 @@ export function EmployeeDirectory() {
         });
         if (!ok) return false;
       }
-      // Project filter matches a project name or its skills-used string.
+      // Project filter (partial match): allocations the person was staffed on
+      // (project name or client), plus the Alchemy profile projects + skills-used.
       if (projectQ) {
-        const projects = e.projects ?? [];
-        const ok = projects.some(
-          (p) =>
-            p.name.toLowerCase().includes(projectQ) ||
-            (p.skills_used || "").toLowerCase().includes(projectQ),
-        );
+        const ok =
+          (e.allocation_projects ?? []).some((p) => p.toLowerCase().includes(projectQ)) ||
+          (e.allocation_clients ?? []).some((c) => c.toLowerCase().includes(projectQ)) ||
+          (e.projects ?? []).some(
+            (p) =>
+              p.name.toLowerCase().includes(projectQ) ||
+              (p.skills_used || "").toLowerCase().includes(projectQ),
+          );
         if (!ok) return false;
       }
+      // Availability (allocation-aware): only people with current free capacity, from
+      // the latest allocation snapshot bundled in the payload.
+      if (availableOnly && !e.available) return false;
       if (!q) return true;
       return e.name.toLowerCase().includes(q) || handle(e.email).toLowerCase().includes(q);
     });
-  }, [all, query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths]);
+  }, [all, query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths]);
+  }, [query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly]);
 
   // Sidebar copilot → directory filter. Applies the parsed skill / certification / experience /
-  // recency / project filters to the grid when the assistant handles a "filter resources…" query.
+  // recency / project / availability filters to the grid when the assistant handles a
+  // "filter resources…" query.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail =
@@ -848,6 +1254,7 @@ export function EmployeeDirectory() {
             certified?: boolean;
             project?: string;
             usedWithinMonths?: number;
+            available?: boolean;
           }>
         ).detail || {};
       setSkillFilter(detail.skill ?? "");
@@ -855,6 +1262,7 @@ export function EmployeeDirectory() {
       setCertifiedOnly(!!detail.certified);
       setProjectFilter(detail.project ?? "");
       setUsedWithinMonths(detail.usedWithinMonths ?? null);
+      setAvailableOnly(!!detail.available);
       // Manual dept/designation/name search is left as-is so the two compose.
     };
     window.addEventListener("centriq:directory-filter", handler as EventListener);
@@ -958,6 +1366,7 @@ export function EmployeeDirectory() {
                     setCertifiedOnly(false);
                     setProjectFilter("");
                     setUsedWithinMonths(null);
+                    setAvailableOnly(false);
                   }}
                   className="flex items-center justify-center rounded-xl border border-rose-200 dark:border-rose-950 bg-rose-50/50 dark:bg-rose-950/20 px-3 h-[38px] text-[13px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-100/50 transition-all cursor-pointer shadow-sm shrink-0"
                 >
@@ -1038,6 +1447,19 @@ export function EmployeeDirectory() {
                   </button>
                 </span>
               )}
+              {availableOnly && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-1 text-[12px] font-bold text-teal-600 dark:text-teal-400">
+                  <Users className="h-3.5 w-3.5" />
+                  Available now
+                  <button
+                    onClick={() => setAvailableOnly(false)}
+                    className="ml-0.5 rounded-full hover:bg-teal-500/20 p-0.5 transition-colors"
+                    title="Remove availability filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               <button
                 onClick={() => {
                   setSkillFilter("");
@@ -1045,6 +1467,7 @@ export function EmployeeDirectory() {
                   setCertifiedOnly(false);
                   setProjectFilter("");
                   setUsedWithinMonths(null);
+                  setAvailableOnly(false);
                 }}
                 className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline"
               >
@@ -1151,7 +1574,16 @@ export function EmployeeDirectory() {
       )}
 
       {/* Rendered last so a profile opened from the org chart's "Details" layers on top. */}
-      {selected && <ProfileModal emp={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ProfileModal
+          emp={selected}
+          onClose={() => setSelected(null)}
+          onOpenPerson={(code) => {
+            const next = (all ?? []).find((e) => e.employee_code === code);
+            if (next) setSelected(next);
+          }}
+        />
+      )}
     </div>
   );
 }

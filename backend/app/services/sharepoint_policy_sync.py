@@ -182,6 +182,8 @@ def _sync_files_into_policies(
     cache_domains: list,
     exclude_segments: tuple = (),
     title_builder=None,
+    key_builder=None,
+    prelisted_items=None,
 ) -> dict:
     """
     Generic SharePoint-folder → Policy-table sync.
@@ -197,7 +199,14 @@ def _sync_files_into_policies(
     so different folders never collide. `categorizer(filename)`
     returns the Policy.category for each file.
 
-    Returns: {"new": int, "updated": int, "skipped": int, "deleted": int, "errors": list}
+    `key_builder(filename, rel_path)` optionally overrides the source_key per file
+    (return a full source_key, or None/"" to skip that file). When given, the
+    stale-deletion scope still uses `key_prefix`, so pass a `key_prefix` that
+    encloses every key the builder can emit (e.g. "sp:PROJECT/") and run this as a
+    single pass over the whole tree so removed_keys stays correct.
+
+    Returns: {"new": int, "updated": int, "skipped": int, "deleted": int,
+              "errors": list, "changed_keys": list[str]}
     """
     from app.services.policy_service import (
         PolicyService, _chunk_text_sentences,
@@ -217,13 +226,16 @@ def _sync_files_into_policies(
         logger.error(msg)
         return {"new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": [msg]}
 
-    # ── List files recursively ────────────────────────────────────────────
-    try:
-        items = sp_client.list_files_recursive(drive_id, full_path)
-    except Exception as e:
-        msg = f"Failed listing folder '{full_path}': {e}"
-        logger.error(msg)
-        return {"new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": [msg]}
+    # ── List files recursively (or reuse a caller-provided listing) ────────
+    if prelisted_items is not None:
+        items = prelisted_items
+    else:
+        try:
+            items = sp_client.list_files_recursive(drive_id, full_path)
+        except Exception as e:
+            msg = f"Failed listing folder '{full_path}': {e}"
+            logger.error(msg)
+            return {"new": 0, "updated": 0, "skipped": 0, "deleted": 0, "errors": [msg]}
 
     # Filter to the requested extensions, skipping any file whose relative path
     # contains an excluded path segment (e.g. raw "Transcript" subfolders).
@@ -250,12 +262,18 @@ def _sync_files_into_policies(
         existing = {r.source_key: (r.id, r.source_etag) for r in rows}
 
         seen_keys = set()
+        changed_keys = []
 
         for item in valid_items:
             rel_path = item.get("relative_path", item["name"])
-            sp_k     = f"{key_prefix}{rel_path}"
-            ctag     = item.get("cTag") or item.get("eTag") or ""
             filename = item["name"]
+            if key_builder is not None:
+                sp_k = key_builder(filename, rel_path)
+                if not sp_k:
+                    continue  # routed as non-project / excluded — leave out of seen_keys
+            else:
+                sp_k = f"{key_prefix}{rel_path}"
+            ctag     = item.get("cTag") or item.get("eTag") or ""
             ext      = item["_ext"]
             file_id  = item["id"]
             seen_keys.add(sp_k)
@@ -326,26 +344,61 @@ def _sync_files_into_policies(
                 }
 
             # ── Chunk & embed ─────────────────────────────────────────────
-            PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+            try:
+                PolicyService._chunk_and_embed(policy, db, chunk_images=chunk_images)
+            except Exception as embed_err:
+                logger.warning(
+                    f"  [EMBED] Embedding failed for {filename}: {embed_err} "
+                    "— chunks saved without vectors (backfill later)"
+                )
 
             action = "NEW" if is_new else "UPDATED"
             img_count = len(raw_images) if raw_images else 0
             logger.info(f"  [{action}] {title} [{len(content)} chars, {img_count} imgs]")
+            changed_keys.append(sp_k)
             if is_new:
                 new += 1
             else:
                 updated += 1
 
+            # Commit per file — keeps lock windows tiny and makes partial syncs
+            # durable/resumable. If the commit fails (e.g. SSL connection drop on
+            # the remote DB), recover the session so the next file can proceed.
+            try:
+                db.commit()
+            except Exception as commit_err:
+                logger.error(f"  [DB] Commit failed for {filename}: {commit_err} — recovering session")
+                errors.append(f"DB commit failed ({filename}): {commit_err}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.close()
+                except Exception:
+                    pass
+                db = SessionLocal()
+                changed_keys.pop()
+                if is_new:
+                    new -= 1
+                else:
+                    updated -= 1
+
         # ── Delete policies whose file was removed from SharePoint ────────
-        removed_keys = set(existing.keys()) - seen_keys
-        if removed_keys:
-            db.query(Policy).filter(Policy.source_key.in_(removed_keys)).delete(
+        # Batch in groups of 20 with a commit per batch so we never hold a
+        # long lock that would race against concurrent syncs or embed workers.
+        removed_keys = list(set(existing.keys()) - seen_keys)
+        deleted = 0
+        _BATCH = 20
+        for i in range(0, len(removed_keys), _BATCH):
+            batch = removed_keys[i : i + _BATCH]
+            db.query(Policy).filter(Policy.source_key.in_(batch)).delete(
                 synchronize_session="fetch"
             )
-            deleted = len(removed_keys)
+            db.commit()
+            deleted += len(batch)
+        if deleted:
             logger.info(f"  [DELETED] {deleted} policies removed (source files gone)")
-
-        db.commit()
     except Exception as e:
         db.rollback()
         errors.append(str(e))
@@ -367,8 +420,9 @@ def _sync_files_into_policies(
             logger.warning(f"  [CACHE] invalidation skipped for '{label}': {e}")
 
     result = {"new": new, "updated": updated, "skipped": skipped,
-              "deleted": deleted, "errors": errors}
-    logger.info(f"[SP sync] '{label}': {result}")
+              "deleted": deleted, "errors": errors, "changed_keys": changed_keys}
+    logger.info(f"[SP sync] '{label}': new={new} updated={updated} "
+                f"skipped={skipped} deleted={deleted} errors={len(errors)}")
     return result
 
 

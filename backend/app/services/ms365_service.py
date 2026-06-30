@@ -1192,6 +1192,16 @@ async def run_sync_background(limit: int = 0) -> None:
             extra = await resolve_missing_managers()
             if extra:
                 _sync_status["synced"] += extra
+            # Wire employees.manager_id from Zoho reporting hierarchy.
+            try:
+                from app.services.manager_service import rewire_manager_hierarchy
+                wire_result = rewire_manager_hierarchy()
+                _sync_status["manager_hierarchy_wired"] = (
+                    wire_result.get("linked_from_zoho_email", 0)
+                    + wire_result.get("linked_from_zoho_name", 0)
+                )
+            except Exception as _we:
+                _sync_status["manager_hierarchy_error"] = str(_we)
         else:
             _sync_status["error"] = result.get("error", "sync failed")
     except Exception as e:

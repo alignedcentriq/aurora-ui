@@ -50,12 +50,6 @@ const LeadershipPortal = lazy(() =>
 const AutomationHub = lazy(() =>
   import("@/pages/AutomationHub").then((m) => ({ default: m.AutomationHub })),
 );
-const ManagerPortal = lazy(() =>
-  import("@/pages/ManagerPortal").then((m) => ({ default: m.ManagerPortal })),
-);
-const PeoplePage = lazy(() =>
-  import("@/pages/PeoplePage").then((m) => ({ default: m.PeoplePage })),
-);
 const ConfigPage = lazy(() =>
   import("@/pages/ConfigPage").then((m) => ({ default: m.ConfigPage })),
 );
@@ -71,9 +65,6 @@ const ObservabilityDashboard = lazy(() =>
 );
 const RoiDashboard = lazy(() =>
   import("@/pages/RoiDashboard").then((m) => ({ default: m.RoiDashboard })),
-);
-const AnalyticsStudio = lazy(() =>
-  import("@/pages/AnalyticsStudio").then((m) => ({ default: m.AnalyticsStudio })),
 );
 const AnalyticsBuilder = lazy(() =>
   import("@/pages/AnalyticsBuilder").then((m) => ({ default: m.AnalyticsBuilder })),
@@ -112,7 +103,6 @@ export const Route = createFileRoute("/_layout/control-hub")({
 type TabId =
   | "dashboard"
   | "roi"
-  | "analytics-studio"
   | "analytics-builder"
   | "observability"
   | "llm-controls"
@@ -126,8 +116,6 @@ type TabId =
   | "project-iq"
   | "te-lms"
   | "udemy-business"
-  | "manager-portal"
-  | "people"
   | "config"
   | "url-library"
   | "form-library"
@@ -169,20 +157,11 @@ const TABS: TabItem[] = [
     component: RoiDashboard,
   },
   {
-    id: "analytics-studio",
+    id: "analytics-builder",
     label: "Analytics Studio",
     category: "System & Ops",
     icon: LayoutDashboard,
     color: "#6366F1",
-    show: (role) => role !== "Employee",
-    component: AnalyticsStudio,
-  },
-  {
-    id: "analytics-builder",
-    label: "Chart Builder AI",
-    category: "System & Ops",
-    icon: Brain,
-    color: "#8B5CF6",
     show: (role) => role !== "Employee",
     component: AnalyticsBuilder,
   },
@@ -312,27 +291,7 @@ const TABS: TabItem[] = [
     show: () => true,
     component: UdemyBusinessPortal,
   },
-  {
-    id: "manager-portal",
-    label: "My Team",
-    category: "Management Portals",
-    icon: UserCog,
-    color: "#16A34A",
-    show: (role) => role === "Functional Manager" || role === "Super Admin",
-    requireScope: "attendance_reports",
-    component: ManagerPortal,
-  },
   // ASSETS & CONFIG
-  {
-    id: "people",
-    label: "People Directory",
-    category: "Assets & Config",
-    icon: Users,
-    color: "#00a29a",
-    show: (role) => ["HR", "PMO", "Admin", "Functional Manager"].includes(role),
-    requireScope: "people_directory",
-    component: PeoplePage,
-  },
   {
     id: "config",
     label: "AI Prompt Config",
@@ -382,11 +341,16 @@ const TABS: TabItem[] = [
   },
 ];
 
+// Legacy tab ids → current tab id. Keeps old deep-links working after a tab is
+// renamed or merged. analytics-studio was consolidated into analytics-builder.
+const TAB_ALIASES: Record<string, TabId> = {
+  "analytics-studio": "analytics-builder",
+};
+
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   dashboard: "Broadcast alerts, policy changes, and official events to the workspace.",
   roi: "See time saved, ticket deflection, and cost — the assistant's business value.",
-  "analytics-studio": "Build charts in plain English or dropdowns, then save dashboards.",
-  "analytics-builder": "AI chart builder — describe any visualization in natural language, iterate, export.",
+  "analytics-builder": "Describe any chart in plain English, iterate, export — and save multi-chart dashboards.",
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
@@ -401,8 +365,6 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
     "Org-wide workforce intelligence: capability heat map, pipeline readiness, SPOF risk, and bench cost.",
   "project-iq":
     "Reuse delivery knowledge: find similar past projects, lessons, experts, and reusable assets.",
-  "manager-portal": "Review attendance check-ins, hierarchy status, and shift reports.",
-  people: "Browse team directories, organization hierarchy, and contact cards.",
   config: "Customize base templates, instructions, and system guardrails.",
   "cabin-directory": "Map of facility office spaces, meeting rooms, and cabins.",
   "url-library": "Curated catalog of workspace tools and deep-linked applications.",
@@ -504,10 +466,10 @@ function ControlHubPage() {
   }, [role, fullAccess, scopes.join(",")]);
 
   const activeTabId = useMemo<TabId | "overview">(() => {
-    const requestedTab = search.tab as TabId | "overview";
-    if (requestedTab === "overview") return "overview";
-    if (requestedTab && allowedTabs.some((t) => t.id === requestedTab)) {
-      return requestedTab;
+    const requested = (TAB_ALIASES[search.tab ?? ""] ?? search.tab) as TabId | "overview";
+    if (requested === "overview") return "overview";
+    if (requested && allowedTabs.some((t) => t.id === requested)) {
+      return requested;
     }
     return "overview";
   }, [search.tab, allowedTabs]);
@@ -517,6 +479,15 @@ function ControlHubPage() {
       search: (prev: { tab?: string }) => ({ ...prev, tab: tabId }),
     });
   };
+
+  // Rewrite legacy tab deep-links (e.g. the retired analytics-studio) to their
+  // current id so the URL reflects the resolved tab.
+  useEffect(() => {
+    if (search.tab && TAB_ALIASES[search.tab]) {
+      handleTabChange(TAB_ALIASES[search.tab] as TabId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.tab]);
 
   useEffect(() => {
     if (activeTabId !== "overview" && !allowedTabs.some((t) => t.id === activeTabId)) {

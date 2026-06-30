@@ -289,7 +289,7 @@ export const useChatStore = create<ChatState>()(
           activeId: state.activeId,
           threads: Object.fromEntries(
             Object.entries(state.threads)
-              .filter(([_, thread]) => !thread.isPrivate && thread.updatedAt >= cutoff)
+              .filter(([_, thread]) => !thread.isPrivate && thread.updatedAt >= cutoff && thread.turns.length > 0)
               .map(([id, thread]) => [
                 id,
                 {
@@ -307,7 +307,7 @@ export const useChatStore = create<ChatState>()(
           // Evict threads older than 30 days on every page load.
           const cutoff = Date.now() - RETENTION_MS;
           state.threads = Object.fromEntries(
-            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff),
+            Object.entries(state.threads).filter(([_, t]) => t.updatedAt >= cutoff && t.turns.length > 0),
           );
           if (state.activeId && !state.threads[state.activeId]) {
             state.activeId = null;

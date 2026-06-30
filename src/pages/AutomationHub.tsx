@@ -266,7 +266,7 @@ function CoOwnerModal({
         exit={{ scale: 0.95, y: 8 }}
         className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-md w-full mx-4"
       >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
             <UserCheck className="h-4 w-4 text-primary" />
             <h3 className="font-semibold text-foreground text-sm">Manage Co-owners</h3>
@@ -1238,7 +1238,7 @@ export function AutomationHub() {
               transition={{ duration: 0.15 }}
               className="mb-6 rounded-2xl border border-border bg-card shadow-sm p-5"
             >
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+              <div className="flex items-center justify-between gap-4 mb-4">
                 <h2 className="font-semibold text-sm text-foreground">
                   {editingRule ? "Edit Automation" : "New Automation"}
                 </h2>

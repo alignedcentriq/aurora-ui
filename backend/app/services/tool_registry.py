@@ -52,6 +52,13 @@ _STATIC_REGISTRY: dict[str, ResponseMode] = {
     "get_employee_availability":    "passthrough",
     # Live Udemy Business catalog results — formatted with course links, no re-read
     "search_udemy_courses":         "passthrough",
+    # Udemy seat administration — reporting lists + SCIM action confirmations, display-ready
+    "udemy_inactive_seats":         "passthrough",
+    "udemy_seat_utilization":       "passthrough",
+    "udemy_course_insights":        "passthrough",
+    "deactivate_udemy_user":        "passthrough",
+    "reactivate_udemy_user":        "passthrough",
+    "provision_udemy_user":         "passthrough",
     # Local TechElevate LMS — display-ready training recommendations + personal list
     "recommend_training":           "passthrough",
     "get_my_trainings":             "passthrough",

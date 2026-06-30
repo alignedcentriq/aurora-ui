@@ -168,34 +168,13 @@ const CONFIGS: Record<string, PortalCopilotConfig> = {
     ],
   },
 
-  "control-hub/analytics-studio": {
-    key: "control-hub/analytics-studio",
+  "control-hub/analytics-builder": {
+    key: "control-hub/analytics-builder",
     label: "Analytics Studio",
     Icon: LayoutDashboard,
     accent: "#6366F1",
-    heading: "Build and query analytics",
-    tagline: "Ask in plain English or use dropdowns — I'll build the chart and save the dashboard.",
-    starters: [
-      "Show attendance trends for last quarter",
-      "Which teams have the highest leave rate?",
-      "Compare onboarding completion across batches",
-      "Show headcount by department",
-    ],
-    placeholders: [
-      "Show attendance trends for last quarter",
-      "Leave rate by team",
-      "Onboarding completion by batch",
-      "Headcount by department",
-    ],
-  },
-
-  "control-hub/analytics-builder": {
-    key: "control-hub/analytics-builder",
-    label: "Chart Builder AI",
-    Icon: Brain,
-    accent: "#8B5CF6",
     heading: "Describe a chart, I'll build it",
-    tagline: "Describe any visualization in natural language — iterate, refine, and export it.",
+    tagline: "Describe any visualization in plain English — iterate, export, and save it to a dashboard.",
     starters: [
       "Create a bar chart of leave by department",
       "Build a pie chart of IT tickets by category",
