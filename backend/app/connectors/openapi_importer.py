@@ -178,7 +178,7 @@ async def enrich_with_llm(ops: list[dict], connector_name: str) -> list[dict]:
         from app.services.llm_controls_service import get_llm
         from app.config import settings
 
-        llm = get_llm(settings.ROUTER_MODEL_NAME, streaming=False)
+        llm = get_llm(settings.ROUTER_MODEL_NAME)
 
         enriched = []
         for op in ops:

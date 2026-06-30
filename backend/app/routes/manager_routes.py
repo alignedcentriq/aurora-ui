@@ -352,6 +352,79 @@ def post_team_readiness(
         db.close()
 
 
+class AssignTrainingBody(BaseModel):
+    employee_id: Optional[int] = None
+    email: Optional[str] = None
+    training_id: int
+    due_date: Optional[str] = None
+
+
+@router.post("/team/readiness/assign")
+def assign_team_readiness_training(
+    body: AssignTrainingBody,
+    user: CurrentUser = Depends(require_has_reports),
+):
+    """Manager-approved enrollment for one team readiness suggestion."""
+    db = SessionLocal()
+    try:
+        from app.services import techelevate_local_service as te
+        emp = te._resolve_employee(db, employee_id=body.employee_id, email=body.email)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        due = None
+        if body.due_date:
+            try:
+                due = datetime.datetime.fromisoformat(body.due_date).date()
+            except ValueError:
+                due = None
+
+        a = te.assign_training(
+            db, training_id=body.training_id, employee=emp,
+            due_date=due, assigned_by=user.email
+        )
+        if not a:
+            raise HTTPException(status_code=400, detail="Could not assign training")
+        return {"ok": True, "message": "Training assigned successfully"}
+    finally:
+        db.close()
+
+
+class RequestUdemyBody(BaseModel):
+    employee_id: Optional[int] = None
+    email: Optional[str] = None
+    course_name: str
+    skill: str
+
+
+@router.post("/team/readiness/request-udemy")
+def request_team_readiness_udemy(
+    body: RequestUdemyBody,
+    user: CurrentUser = Depends(require_has_reports),
+):
+    """Manager-approved Udemy license request for a missing skill."""
+    from app.services.udemy_service import UdemyService
+    db = SessionLocal()
+    try:
+        from app.services import techelevate_local_service as te
+        emp = te._resolve_employee(db, employee_id=body.employee_id, email=body.email)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+            
+        justification = f"Manager requested training for missing skill: {body.skill}"
+        msg = UdemyService.request_license(
+            email=emp.email,
+            justification=justification,
+            course_name=body.course_name,
+            platform="Udemy"
+        )
+        return {"ok": True, "message": msg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 # ── Onboarding requests ───────────────────────────────────────────────────────
 
 class OnboardingBody(BaseModel):

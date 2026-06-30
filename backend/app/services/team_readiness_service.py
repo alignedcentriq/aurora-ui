@@ -99,22 +99,32 @@ def readiness_for_project(db: Session, team: list[Employee], skills: str,
         if not missing:
             status = "ready"
             course = None
+            course_id = None
         elif len(missing) == 1:
             status = "one_course_away"
             recs = te.recommend_for_skill(db, missing[0], limit=1)
             course = recs[0]["title"] if recs else None
+            course_id = recs[0]["id"] if recs else None
         else:
             status = "gap"
-            course = None
+            if missing:
+                recs = te.recommend_for_skill(db, missing[0], limit=1)
+                course = recs[0]["title"] if recs else None
+                course_id = recs[0]["id"] if recs else None
+            else:
+                course = None
+                course_id = None
 
         rows.append({
             "name": e.name,
             "email": e.email,
+            "employee_id": e.id,
             "matched_skills": matched,
             "missing_skills": missing,
             "free_pct": free,
             "status": status,
             "suggested_course": course,
+            "suggested_course_id": course_id,
         })
 
     order = {"ready": 0, "one_course_away": 1, "gap": 2}

@@ -24,7 +24,7 @@ from typing import Optional, TypedDict
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models import ProactiveNudge, Employee, Leave, LeaveType, LeaveBalance
+from app.models import ProactiveNudge, Employee, Leave, LeaveType, LeaveBalance, ConnectedAccount
 
 log = logging.getLogger("aurora-logger")
 
@@ -291,6 +291,101 @@ def detect_bench_reports(db, today: Optional[datetime.date] = None) -> list[Nudg
     return specs
 
 
+def detect_new_mail(user_email: str, graph_token: str, window_minutes: int) -> list[NudgeSpec]:
+    """Bundle unread mail received in the last scan window into one nudge.
+
+    Bucketed by scan run (not per-message) so an inbox with many unread emails
+    doesn't flood the feed with one entry each — mirrors detect_bench_reports'
+    bucketed-dedup style. Requires a connected Microsoft account (graph_token).
+    """
+    import asyncio
+    from app.services import ms365_service
+
+    since = (_now() - datetime.timedelta(minutes=window_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        result = asyncio.run(ms365_service.fetch_unread_since(graph_token, since, top=10))
+    except Exception as exc:
+        log.warning("[nudge] new-mail fetch failed for %s: %s", user_email, exc)
+        return []
+    if not result.get("success") or not result.get("emails"):
+        return []
+
+    emails = result["emails"]
+    count = len(emails)
+    bucket = _now().strftime("%Y-%m-%dT%H:%M")  # minute-precision scan-run bucket
+    first = emails[0]
+    plural = "s" if count != 1 else ""
+    title = f"{count} new unread email{plural}" if count > 1 else f"New email: {first.get('subject', '(no subject)')}"
+    body = (
+        f"From {first.get('from_name') or 'someone'}: \"{first.get('subject', '(no subject)')}\""
+        + (f" — and {count - 1} more." if count > 1 else ".")
+    )
+    return [NudgeSpec(
+        user_email=user_email,
+        nudge_type="new_mail",
+        dedup_key=f"new_mail:{user_email}:{bucket}",
+        title=title,
+        body=body,
+        severity="info",
+        entity_type="email",
+        entity_id=first.get("id"),
+    )]
+
+
+def detect_new_community_posts(user_email: str, yammer_token: str, window_minutes: int) -> list[NudgeSpec]:
+    """Bundle new Viva Engage (Teams community) feed posts since the last scan into one nudge.
+
+    Same bucketed-dedup approach as detect_new_mail — one notification per scan run
+    covering everything new, not one row per post.
+    """
+    import asyncio
+    from app.services import yammer_service
+
+    try:
+        result = asyncio.run(yammer_service.fetch_my_feed(yammer_token, top=20))
+    except Exception as exc:
+        log.warning("[nudge] community-post fetch failed for %s: %s", user_email, exc)
+        return []
+    if not result.get("success") or not result.get("messages"):
+        return []
+
+    cutoff = _now() - datetime.timedelta(minutes=window_minutes)
+    fresh = [m for m in result["messages"] if _parse_yammer_time(m.get("created_at")) and _parse_yammer_time(m.get("created_at")) >= cutoff]
+    if not fresh:
+        return []
+
+    count = len(fresh)
+    bucket = _now().strftime("%Y-%m-%dT%H:%M")
+    first = fresh[0]
+    plural = "s" if count != 1 else ""
+    title = f"{count} new community post{plural}" if count > 1 else f"New post in {first.get('group_name') or 'a community'}"
+    body = (
+        f"{first.get('sender_name') or 'Someone'} posted in {first.get('group_name') or 'a community'}: "
+        f"\"{(first.get('text') or '')[:120]}\""
+        + (f" — and {count - 1} more." if count > 1 else "")
+    )
+    return [NudgeSpec(
+        user_email=user_email,
+        nudge_type="new_community_post",
+        dedup_key=f"new_community_post:{user_email}:{bucket}",
+        title=title,
+        body=body,
+        severity="info",
+        entity_type="community_post",
+        entity_id=str(first.get("id") or ""),
+    )]
+
+
+def _parse_yammer_time(raw: Optional[str]) -> Optional[datetime.datetime]:
+    """Yammer's created_at looks like '2026/06/30 12:34:56 +0000'."""
+    if not raw:
+        return None
+    try:
+        return datetime.datetime.strptime(raw.split(" +")[0], "%Y/%m/%d %H:%M:%S")
+    except Exception:
+        return None
+
+
 def _resolve_manager_email(db, emp: Employee) -> Optional[str]:
     """Best-effort manager lookup. Returns None instead of raising (HRService's
     fallback touches settings.HR_EMAIL which may be unset)."""
@@ -388,6 +483,41 @@ def run_due() -> int:
         except Exception as exc:
             db.rollback()
             log.warning("[nudge] bench-reports detector failed: %s", exc)
+
+        # New mail / new community posts: only for users with a connected Microsoft
+        # account (no point hitting Graph/Yammer for accounts that aren't linked).
+        # Window padded past the scan interval so a slow tick can't drop an email.
+        window_minutes = settings.NUDGE_SCAN_INTERVAL_MIN + 5
+        accounts = (
+            db.query(ConnectedAccount)
+            .filter(ConnectedAccount.provider == "microsoft", ConnectedAccount.status == "active")
+            .all()
+        )
+        for acc in accounts:
+            if not acc.user_email:
+                continue
+            try:
+                import asyncio
+                from app.services import oauth_service
+                graph_token = asyncio.run(oauth_service.get_valid_token(acc.user_email, "microsoft"))
+                if graph_token:
+                    for spec in detect_new_mail(acc.user_email, graph_token, window_minutes):
+                        if upsert(db, spec) == "created":
+                            created += 1
+            except Exception as exc:
+                db.rollback()
+                log.warning("[nudge] new-mail detector failed for %s: %s", acc.user_email, exc)
+            try:
+                import asyncio
+                from app.services import oauth_service
+                yammer_token = asyncio.run(oauth_service.get_yammer_token(acc.user_email))
+                if yammer_token:
+                    for spec in detect_new_community_posts(acc.user_email, yammer_token, window_minutes):
+                        if upsert(db, spec) == "created":
+                            created += 1
+            except Exception as exc:
+                db.rollback()
+                log.warning("[nudge] community-post detector failed for %s: %s", acc.user_email, exc)
 
         # Expiring leaves: per active employee.
         employees = db.query(Employee).filter(Employee.email.isnot(None)).all()

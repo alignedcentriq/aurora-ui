@@ -147,27 +147,6 @@ const CONFIGS: Record<string, PortalCopilotConfig> = {
     ],
   },
 
-  "control-hub/roi": {
-    key: "control-hub/roi",
-    label: "Value Delivered",
-    Icon: TrendingUp,
-    accent: "#10B981",
-    heading: "Measure the AI's business value",
-    tagline: "Time saved, ticket deflection, cost — see exactly what the assistant delivers.",
-    starters: [
-      "How many hours has the assistant saved this month?",
-      "What's our ticket deflection rate?",
-      "Break down cost savings by department",
-      "Which teams use the assistant most?",
-    ],
-    placeholders: [
-      "Hours saved this month?",
-      "Show ticket deflection by category",
-      "Cost savings breakdown by department",
-      "Top feature by adoption rate",
-    ],
-  },
-
   "control-hub/analytics-builder": {
     key: "control-hub/analytics-builder",
     label: "Analytics Studio",
@@ -425,19 +404,19 @@ const CONFIGS: Record<string, PortalCopilotConfig> = {
     label: "TechElevate LMS",
     Icon: GraduationCap,
     accent: "#7C3AED",
-    heading: "Assign and track trainings",
-    tagline: "Browse in-house courses, assign them to your team, and track verified skill completion.",
+    heading: "Assign, create and track trainings",
+    tagline: "Create in-house courses, assign them to your team, generate MCQ assessments, and track verified skill completion.",
     starters: [
-      "Show available trainings for Python",
-      "Assign cloud fundamentals to my team",
+      "Create a training on Azure DevOps for new joiners",
+      "Assign Python training to me",
+      "Generate 5 MCQ questions for the DevOps course",
       "Who has completed the security training?",
-      "Recommend a training for a Java developer",
     ],
     placeholders: [
-      "Available Python trainings",
-      "Assign cloud fundamentals to team",
-      "Security training completion",
-      "Recommend training for Java developer",
+      "Create a training on Azure DevOps",
+      "Assign Python training to me",
+      "Generate MCQ questions for DevOps course",
+      "Security training completion status",
     ],
   },
 

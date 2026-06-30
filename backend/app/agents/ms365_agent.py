@@ -542,6 +542,55 @@ async def post_to_community(
 
 
 @tool
+async def create_group_chat(
+    topic: str,
+    members: str,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Stage a new Teams group chat for user confirmation.
+    topic: a short name / subject for the chat.
+    members: comma-separated names or email addresses of people to add (at least 2).
+    Always confirm topic and members with the user before calling."""
+    token = (state or {}).get("graph_token")
+    if not token:
+        return _NOT_CONNECTED
+    raw_members = [m.strip() for m in members.split(",") if m.strip()]
+    if len(raw_members) < 2:
+        return json.dumps({"success": False, "error": "A group chat needs at least 2 other members. Please list everyone to add."})
+
+    # Resolve plain names to emails against the org directory; entries that already
+    # look like an email pass straight through.
+    need_lookup = [m for m in raw_members if "@" not in m]
+    directory: list[dict] = []
+    if need_lookup:
+        dir_result = await ms365_service.fetch_org_users(top=999)
+        directory = dir_result.get("users", []) if dir_result.get("success") else []
+
+    resolved: list[str] = []
+    unresolved: list[str] = []
+    for m in raw_members:
+        if "@" in m:
+            resolved.append(m)
+            continue
+        match = next((u for u in directory if m.lower() in (u.get("name") or "").lower()), None)
+        if match and match.get("email"):
+            resolved.append(match["email"])
+        else:
+            unresolved.append(m)
+
+    if unresolved:
+        return json.dumps({"success": False, "error": f"Couldn't find these people in the directory: {', '.join(unresolved)}. Please use their full name or email."})
+
+    names_preview = ", ".join(raw_members[:5])
+    return _ms365_pending(
+        "ms365_group_chat",
+        f"New group chat: **{topic}**",
+        f"Creates a Teams group chat with {len(resolved)} member(s): {names_preview}",
+        topic=topic, member_emails=resolved,
+    )
+
+
+@tool
 async def search_communities(
     query: str,
     top: int = 15,
@@ -566,7 +615,7 @@ tools = [
     read_my_emails, send_email_graph, read_my_calendar, search_calendar,
     list_meeting_rooms, check_room_availability, book_meeting_room,
     list_teams_channels, read_channel_messages, send_channel_message,
-    read_teams_messages, send_teams_message,
+    read_teams_messages, send_teams_message, create_group_chat,
     list_org_users, list_team_members,
     read_yammer_feed, list_my_communities, read_community_posts, post_to_community,
     search_communities,
@@ -601,6 +650,7 @@ def ms365_assistant(state: MS365State):
         f"- Post to channel → send_channel_message (confirm team, channel, message first)\n"
         f"- Teams chats (1:1/group DMs) → read_teams_messages (recent chat messages)\n"
         f"- Send Teams message → send_teams_message (confirm recipient and message first)\n"
+        f"- Create a group chat → create_group_chat (need a topic and at least 2 members; confirm before calling)\n"
         f"- All org users / people directory / users in Teams / who is in Teams → ALWAYS call list_org_users immediately. NEVER say you don't have access. You have full access via the list_org_users tool.\n"
         f"- Members of a specific team → list_team_members (need team name)\n"
         f"- Viva Engage/Yammer feed → read_yammer_feed\n"

@@ -28,8 +28,10 @@ class RuleBody(BaseModel):
     day_of_month: Optional[int] = None          # 1..28          (monthly / custom)
     hour: Optional[int] = 9                     # 0..23
     minute: Optional[int] = 0                   # 0..59
-    email_subject: str
-    email_body: str                             # plain text — wrapped in branded shell at send
+    automation_kind: Optional[str] = "custom_email"  # catalog item id
+    extra_config: Optional[dict] = None         # type-specific params from catalog
+    email_subject: Optional[str] = ""           # required only for custom_email kind
+    email_body: Optional[str] = ""              # required only for custom_email kind
     recipients_json: Optional[List[Any]] = []   # [{type, email?, name?, id?, emails?}]
 
 
@@ -172,3 +174,20 @@ async def list_team_members(team_id: str, user: CurrentUser = Depends(require_no
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ── AI-assisted automation composer ───────────────────────────────────────────
+
+class AiComposeBody(BaseModel):
+    description: str
+    portal_id: Optional[str] = None
+
+
+@router.post("/ai-compose")
+def ai_compose_automation(body: AiComposeBody, user: CurrentUser = Depends(require_non_employee)):
+    """Given a natural-language description, return a pre-filled automation config."""
+    from app.services.automation_ai import compose_automation
+    result = compose_automation(body.description, body.portal_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "compose_failed"))
+    return result

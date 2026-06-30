@@ -117,8 +117,18 @@ class GraphClient:
 
         items = []
         while url:
-            response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
-            response.raise_for_status()
+            for attempt in range(3):
+                try:
+                    response = requests.get(url, headers=self._headers(), timeout=self.API_TIMEOUT)
+                    if response.status_code == 429:
+                        time.sleep(int(response.headers.get("Retry-After", 5)))
+                        continue
+                    response.raise_for_status()
+                    break
+                except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError):
+                    if attempt == 2:
+                        raise
+                    time.sleep(3 * (attempt + 1))
             data = response.json()
             items.extend(data.get("value", []))
             url = data.get("@odata.nextLink")  # follow pagination

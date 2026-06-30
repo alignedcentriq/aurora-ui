@@ -45,7 +45,7 @@ async def seed_router_examples(
         from app.services.semantic_router_service import SemanticRouterService
         from app.config import settings
 
-        llm = get_llm(settings.ROUTER_MODEL_NAME, streaming=False)
+        llm = get_llm(settings.ROUTER_MODEL_NAME)
 
         for op in ops:
             if not op.get("enabled", True):

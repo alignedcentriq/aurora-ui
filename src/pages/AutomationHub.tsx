@@ -11,19 +11,63 @@ import {
   Trash2,
   Edit2,
   Send,
-  ChevronDown,
-  ChevronUp,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
   X,
   Search,
   UserPlus,
   Eye,
   UserCheck,
+  ArrowLeft,
+  Settings2,
+  FileText,
+  Bell,
+  BookOpen,
+  TriangleAlert,
+  Sparkles,
+  Check,
+  AlertCircle,
+  Wand2,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
 } from "lucide-react";
+import {
+  AUTOMATION_CATALOG,
+  getCatalogItem,
+  getCatalogForPortal,
+  CATEGORY_ORDER,
+  CATEGORY_META,
+  type CatalogItem,
+} from "@/lib/automation-catalog";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+
+// shadcn components
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,6 +92,8 @@ interface AutomationRule {
   minute: number;
   email_subject: string;
   email_body: string;
+  automation_kind: string;
+  extra_config: Record<string, any>;
   recipients_json: Recipient[];
   co_owners_json: string[];
   is_active: boolean;
@@ -72,27 +118,36 @@ interface RuleFormState {
   day_of_month: number | null;
   hour: number;
   minute: number;
+  automation_kind: string;
+  extra_config: Record<string, any>;
   email_subject: string;
   email_body: string;
   recipients_json: Recipient[];
 }
 
-const BLANK_FORM: RuleFormState = {
-  name: "",
-  description: "",
-  frequency: "daily",
-  day_of_week: null,
-  day_of_month: null,
-  hour: 9,
-  minute: 0,
-  email_subject: "",
-  email_body: "",
-  recipients_json: [],
-};
-
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
 const NON_EMPLOYEE_ROLES = ["hr", "admin", "it", "pmo", "functional manager", "super admin"];
+
+function blankFormFromKind(item: CatalogItem): RuleFormState {
+  const extra: Record<string, any> = {};
+  for (const p of item.params) {
+    if (p.default !== undefined) extra[p.key] = p.default;
+  }
+  return {
+    name: item.label,
+    description: item.description,
+    frequency: item.defaultFrequency,
+    day_of_week: item.defaultDayOfWeek ?? null,
+    day_of_month: item.defaultDayOfMonth ?? null,
+    hour: item.defaultHour,
+    minute: 0,
+    automation_kind: item.id,
+    extra_config: extra,
+    email_subject: item.defaultSubject,
+    email_body: "",
+    recipients_json: [],
+  };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -101,14 +156,11 @@ function describeCadence(rule: AutomationRule): string {
   const m = (rule.minute ?? 0).toString().padStart(2, "0");
   const t = `${h}:${m}`;
   if (rule.frequency === "daily") return `Every weekday at ${t}`;
-  if (rule.frequency === "weekly") {
-    const day = DAY_NAMES[rule.day_of_week ?? 0];
-    return `Every ${day} at ${t}`;
-  }
+  if (rule.frequency === "weekly") return `Every ${DAY_NAMES[rule.day_of_week ?? 0]} at ${t}`;
   if (rule.frequency === "monthly") {
     const dom = rule.day_of_month ?? 1;
-    const suffix = dom === 1 ? "st" : dom === 2 ? "nd" : dom === 3 ? "rd" : "th";
-    return `${dom}${suffix} of every month at ${t}`;
+    const s = dom === 1 ? "st" : dom === 2 ? "nd" : dom === 3 ? "rd" : "th";
+    return `${dom}${s} of month at ${t}`;
   }
   return `Custom at ${t}`;
 }
@@ -116,25 +168,25 @@ function describeCadence(rule: AutomationRule): string {
 function formatDt(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
 }
 
 function recipientCount(r: Recipient[]): number {
-  return r.reduce((n, x) => {
-    if (x.type === "individual") return n + 1;
-    return n + (x.emails?.length ?? 1);
-  }, 0);
+  return r.reduce((n, x) => (x.type === "individual" ? n + 1 : n + (x.emails?.length ?? 1)), 0);
 }
 
 function canCreate(role: string): boolean {
   return NON_EMPLOYEE_ROLES.includes(role.toLowerCase());
 }
 
-// ── API helpers ───────────────────────────────────────────────────────────────
+const CATEGORY_ICONS: Record<string, React.FC<any>> = {
+  Report: FileText,
+  Reminder: Bell,
+  Digest: BookOpen,
+  Alert: TriangleAlert,
+  Custom: Settings2,
+};
 
 async function apiFetch(url: string, email: string, role: string, opts?: RequestInit) {
   return fetch(url, {
@@ -147,40 +199,29 @@ async function apiFetch(url: string, email: string, role: string, opts?: Request
     },
   });
 }
-import { StatusBadge } from "@/components/ui/StatusBadge";
 
 // ── Recipient Pill ────────────────────────────────────────────────────────────
 
 function RecipientPill({ r, onRemove }: { r: Recipient; onRemove?: () => void }) {
-  const label =
-    r.type === "individual"
-      ? r.name || r.email || ""
-      : `${r.name} (${r.emails?.length ?? 0} members)`;
-  const color =
-    r.type === "individual"
-      ? "bg-blue-50 border-blue-200 text-blue-700"
-      : "bg-purple-50 border-purple-200 text-purple-700";
+  const label = r.type === "individual"
+    ? r.name || r.email || ""
+    : `${r.name} (${r.emails?.length ?? 0} members)`;
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 text-xs font-medium border rounded-full px-2 py-0.5",
-        color,
-      )}
-    >
+    <Badge variant="secondary" className="flex items-center gap-1 pr-1 text-xs font-normal">
       {r.type === "individual" ? <Mail className="h-3 w-3" /> : <Users className="h-3 w-3" />}
-      {label}
+      <span className="max-w-[160px] truncate">{label}</span>
       {onRemove && (
-        <button type="button" onClick={onRemove} className="ml-0.5 hover:opacity-70">
-          <X className="h-3 w-3" />
+        <button type="button" onClick={onRemove} className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5">
+          <X className="h-2.5 w-2.5" />
         </button>
       )}
-    </span>
+    </Badge>
   );
 }
 
-// ── Co-Owner Modal ─────────────────────────────────────────────────────────────
+// ── Co-Owner Dialog ────────────────────────────────────────────────────────────
 
-function CoOwnerModal({
+function CoOwnerDialog({
   rule,
   userEmail,
   userRole,
@@ -198,176 +239,527 @@ function CoOwnerModal({
   const [error, setError] = useState("");
 
   async function addCoOwner() {
-    const email = input.trim().toLowerCase();
-    if (!email) return;
-    if ((rule.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email)) {
-      setError("Already a co-owner.");
-      return;
+    const addr = input.trim().toLowerCase();
+    if (!addr) return;
+    if ((rule.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(addr)) {
+      setError("Already a co-owner."); return;
     }
-    setSaving(true);
-    setError("");
+    setSaving(true); setError("");
     try {
-      const res = await apiFetch(
-        `/api/automation/rules/${rule.id}/co-owners`,
-        userEmail,
-        userRole,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ action: "add", email }),
-        },
-      );
+      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
+        method: "PATCH", body: JSON.stringify({ action: "add", email: addr }),
+      });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Failed to add co-owner");
-      onUpdated(data);
-      setInput("");
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+      if (!res.ok) throw new Error(data.detail || "Failed");
+      onUpdated(data); setInput("");
+    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
   }
 
-  async function removeCoOwner(email: string) {
-    setSaving(true);
-    setError("");
+  async function removeCoOwner(addr: string) {
+    setSaving(true); setError("");
     try {
-      const res = await apiFetch(
-        `/api/automation/rules/${rule.id}/co-owners`,
-        userEmail,
-        userRole,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ action: "remove", email }),
-        },
-      );
+      const res = await apiFetch(`/api/automation/rules/${rule.id}/co-owners`, userEmail, userRole, {
+        method: "PATCH", body: JSON.stringify({ action: "remove", email: addr }),
+      });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Failed to remove co-owner");
+      if (!res.ok) throw new Error(data.detail || "Failed");
       onUpdated(data);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
+    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <motion.div
-        initial={{ scale: 0.95, y: 8 }}
-        animate={{ scale: 1, y: 0 }}
-        exit={{ scale: 0.95, y: 8 }}
-        className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-md w-full mx-4"
-      >
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-2">
-            <UserCheck className="h-4 w-4 text-primary" />
-            <h3 className="font-semibold text-foreground text-sm">Manage Co-owners</h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <p className="text-xs text-muted-foreground mb-4">
-          Co-owners can view this automation. Only the creator and Super Admins can edit or delete
-          it.
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            <UserCheck className="h-4 w-4 text-primary" /> Manage Co-owners
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Co-owners can view this automation. Only the creator and Super Admins can edit or delete it.
         </p>
-
-        {/* Add new co-owner */}
-        <div className="flex gap-2 mb-4">
-          <input
-            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+        <div className="flex gap-2">
+          <Input
+            className="h-9 text-sm"
             placeholder="Enter email address"
             value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              setError("");
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addCoOwner();
-              }
-            }}
+            onChange={(e) => { setInput(e.target.value); setError(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCoOwner(); } }}
           />
-          <button
-            type="button"
-            onClick={addCoOwner}
-            disabled={saving || !input.trim()}
-            className="px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
-          >
-            <UserPlus className="h-3.5 w-3.5" /> Add
-          </button>
+          <Button size="sm" variant="outline" onClick={addCoOwner} disabled={saving || !input.trim()}>
+            <UserPlus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
         </div>
-
-        {error && (
-          <div className="mb-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
-            {error}
-          </div>
-        )}
-
-        {/* Current co-owners list */}
+        {error && <p className="text-xs text-destructive">{error}</p>}
         {(rule.co_owners_json ?? []).length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-4">No co-owners yet.</p>
         ) : (
-          <ul className="space-y-1.5 max-h-48 overflow-y-auto">
-            {(rule.co_owners_json ?? []).map((email) => (
-              <li
-                key={email}
-                className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-lg border border-border bg-muted/20 px-3 py-2"
-              >
-                <div className="flex items-center gap-2">
-                  <UserCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
-                  <span className="text-sm truncate">{email}</span>
+          <ScrollArea className="max-h-48">
+            <div className="space-y-1.5">
+              {(rule.co_owners_json ?? []).map((addr) => (
+                <div key={addr} className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <UserCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                    <span className="text-sm truncate">{addr}</span>
+                  </div>
+                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removeCoOwner(addr)} disabled={saving}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <button
-                  onClick={() => removeCoOwner(email)}
-                  disabled={saving}
-                  className="text-muted-foreground hover:text-red-600 transition-colors disabled:opacity-50"
-                  title="Remove co-owner"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          </ScrollArea>
         )}
-
-        <div className="flex justify-end mt-4">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors"
-          >
-            Done
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-// ── Rule Form (create + edit) ─────────────────────────────────────────────────
+// ── AI Composer ───────────────────────────────────────────────────────────────
 
-function RuleForm({
+interface AiComposeResult {
+  automation_kind: string;
+  name: string;
+  description: string;
+  frequency: string;
+  day_of_week: number | null;
+  day_of_month: number | null;
+  hour: number;
+  minute: number;
+  extra_config: Record<string, any>;
+  email_subject: string;
+  email_body: string;
+  confidence: "high" | "medium" | "low";
+  reasoning: string;
+}
+
+function AiComposer({
+  portalId,
+  userEmail,
+  userRole,
+  onResult,
+  onBack,
+  onCancel,
+}: {
+  portalId?: string;
+  userEmail: string;
+  userRole: string;
+  onResult: (result: AiComposeResult) => void;
+  onBack: () => void;
+  onCancel: () => void;
+}) {
+  const [description, setDescription] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState<AiComposeResult | null>(null);
+
+  const SUGGESTIONS = [
+    "Send me weekly leave balance report for all employees",
+    "Daily digest of open IT tickets grouped by priority",
+    "Remind managers every Monday about pending approvals",
+    "Monthly training compliance update for the team",
+    "Alert me when IT tickets are overdue by 3 days",
+    "Notify the team every Friday about upcoming training deadlines",
+  ];
+
+  async function compose() {
+    if (!description.trim()) return;
+    setLoading(true); setError(""); setPreview(null);
+    try {
+      const res = await apiFetch("/api/automation/ai-compose", userEmail, userRole, {
+        method: "POST",
+        body: JSON.stringify({ description: description.trim(), portal_id: portalId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Compose failed");
+      setPreview(data);
+    } catch (err: any) {
+      setError(err.message || "AI compose failed. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const kindMeta = preview ? getCatalogItem(preview.automation_kind) : null;
+  const KindIcon = kindMeta ? (CATEGORY_ICONS[kindMeta.category] ?? Zap) : Zap;
+  const confidenceColor = {
+    high: "text-emerald-600 bg-emerald-50 border-emerald-200",
+    medium: "text-amber-600 bg-amber-50 border-amber-200",
+    low: "text-red-600 bg-red-50 border-red-200",
+  }[preview?.confidence ?? "medium"];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <div className="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0">
+          <Wand2 className="h-4 w-4 text-violet-600" />
+        </div>
+        <div>
+          <div className="text-sm font-semibold">Describe what you want automated</div>
+          <div className="text-xs text-muted-foreground">AI will pick the best automation type and configure it for you</div>
+        </div>
+      </div>
+
+      {/* Description input */}
+      <div className="space-y-2">
+        <Textarea
+          autoFocus
+          rows={3}
+          className="text-sm resize-none"
+          placeholder="e.g. Send me a weekly summary of open IT tickets every Monday morning…"
+          value={description}
+          onChange={(e) => { setDescription(e.target.value); setPreview(null); setError(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) compose(); }}
+        />
+        <p className="text-[11px] text-muted-foreground">Press Ctrl+Enter to compose</p>
+      </div>
+
+      {/* Quick suggestion chips */}
+      {!preview && (
+        <div>
+          <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+            <MessageSquare className="h-3 w-3" /> Try one of these:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => { setDescription(s); setPreview(null); setError(""); }}
+                className="text-[11px] px-2.5 py-1 rounded-full border border-border bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm px-3 py-2">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" /> {error}
+        </div>
+      )}
+
+      {/* AI result preview */}
+      {preview && (
+        <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}>
+          <Card className="border-violet-200 dark:border-violet-800/40 bg-violet-50/40 dark:bg-violet-900/10">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ backgroundColor: `${kindMeta?.accent ?? "#8B5CF6"}18` }}>
+                    <KindIcon className="h-3.5 w-3.5" style={{ color: kindMeta?.accent ?? "#8B5CF6" }} />
+                  </div>
+                  <span className="font-semibold text-sm">{preview.name}</span>
+                </div>
+                <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-medium", confidenceColor)}>
+                  {preview.confidence} confidence
+                </span>
+              </div>
+
+              {preview.reasoning && (
+                <p className="text-xs text-muted-foreground italic">"{preview.reasoning}"</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Zap className="h-3 w-3 flex-shrink-0" />
+                  <span>{kindMeta?.label ?? preview.automation_kind}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Clock className="h-3 w-3 flex-shrink-0" />
+                  <span className="capitalize">{preview.frequency}{preview.frequency === "weekly" && preview.day_of_week != null ? ` · ${DAY_NAMES[preview.day_of_week]}` : ""}</span>
+                </div>
+              </div>
+
+              {preview.automation_kind === "custom_email" && preview.email_subject && (
+                <div className="rounded-lg bg-background border p-3 text-xs space-y-1.5">
+                  <div className="font-semibold text-foreground">{preview.email_subject}</div>
+                  <div className="text-muted-foreground whitespace-pre-line line-clamp-3">{preview.email_body}</div>
+                </div>
+              )}
+
+              <Separator />
+
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
+                  onClick={() => onResult(preview)}
+                >
+                  <Check className="h-3.5 w-3.5" /> Use This Setup
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setPreview(null); }}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Try Again
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 pt-1 border-t">
+        <Button variant="outline" size="sm" onClick={onBack} className="gap-1">
+          <ArrowLeft className="h-3.5 w-3.5" /> Browse Catalog
+        </Button>
+        <Button
+          size="sm"
+          className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+          onClick={compose}
+          disabled={loading || !description.trim()}
+        >
+          {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Composing…</> : <><Wand2 className="h-3.5 w-3.5" /> Compose</>}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 1: Type Picker ───────────────────────────────────────────────────────
+
+function TypePicker({
+  portalId,
+  onSelect,
+  onCancel,
+  onAiCompose,
+}: {
+  portalId?: string;
+  onSelect: (item: CatalogItem) => void;
+  onCancel: () => void;
+  onAiCompose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const portalItemIds = new Set(getCatalogForPortal(portalId).filter(i => i.portalIds.length > 0).map((i) => i.id));
+  const allTabs = ["All", ...CATEGORY_ORDER] as const;
+
+  const filtered = search.trim()
+    ? AUTOMATION_CATALOG.filter(
+        (c) =>
+          c.label.toLowerCase().includes(search.toLowerCase()) ||
+          c.description.toLowerCase().includes(search.toLowerCase()),
+      )
+    : AUTOMATION_CATALOG;
+
+  function ItemCard({ item }: { item: CatalogItem }) {
+    const isRelevant = portalId && portalItemIds.has(item.id);
+    const Icon = CATEGORY_ICONS[item.category] ?? Zap;
+    return (
+      <Card
+        className={cn(
+          "cursor-pointer group hover:shadow-md transition-all duration-150 relative overflow-hidden",
+          isRelevant ? "ring-1 ring-amber-300 dark:ring-amber-600/40" : "",
+        )}
+        onClick={() => onSelect(item)}
+      >
+        {isRelevant && (
+          <div
+            className="absolute top-0 left-0 right-0 h-0.5"
+            style={{ backgroundColor: item.accent }}
+          />
+        )}
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <div
+              className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ backgroundColor: `${item.accent}18` }}
+            >
+              <Icon className="h-4 w-4" style={{ color: item.accent }} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors">
+                  {item.label}
+                </span>
+                {isRelevant && (
+                  <Badge variant="outline" className="text-[9px] h-4 px-1.5 border-amber-300 text-amber-700 dark:text-amber-400">
+                    Relevant
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-snug line-clamp-2">
+                {item.description}
+              </p>
+              <div
+                className="mt-2 text-[10px] rounded-md px-2 py-1.5 leading-snug"
+                style={{ backgroundColor: `${item.accent}10`, color: item.accent }}
+              >
+                <span className="font-semibold">Email includes:</span> {item.emailPreview}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* AI compose banner */}
+      <button
+        type="button"
+        onClick={onAiCompose}
+        className="flex items-center gap-3 p-3 rounded-xl border-2 border-violet-200 dark:border-violet-800/40 bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-900/10 dark:to-indigo-900/10 hover:from-violet-100 hover:to-indigo-100 dark:hover:from-violet-900/20 transition-all text-left group"
+      >
+        <div className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
+          <Wand2 className="h-4.5 w-4.5 text-violet-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm text-violet-800 dark:text-violet-300">Let AI build it for you</div>
+          <div className="text-xs text-violet-600 dark:text-violet-400">Describe what you want in plain English — AI picks the right type and fills the form</div>
+        </div>
+        <ArrowLeft className="h-4 w-4 text-violet-400 rotate-180 group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
+      </button>
+
+      <div className="flex items-center gap-2">
+        <Separator className="flex-1" />
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2">or browse types</span>
+        <Separator className="flex-1" />
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input className="pl-9" placeholder="Search automation types…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+
+      {portalId && portalItemIds.size > 0 && !search && (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Sparkles className="h-3 w-3 text-amber-500" />
+          Items marked <Badge variant="outline" className="text-[9px] h-4 px-1.5 border-amber-300 text-amber-700">Relevant</Badge> are tailored to this portal.
+        </div>
+      )}
+
+      {search ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {filtered.map((item) => <ItemCard key={item.id} item={item} />)}
+          {filtered.length === 0 && (
+            <p className="col-span-2 text-center py-10 text-sm text-muted-foreground">No automation types match your search.</p>
+          )}
+        </div>
+      ) : (
+        <Tabs defaultValue="All">
+          <TabsList className="flex-wrap h-auto gap-1 mb-3">
+            {allTabs.map((cat) => (
+              <TabsTrigger key={cat} value={cat} className="text-xs">
+                {cat}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {allTabs.map((cat) => {
+            const items = cat === "All"
+              ? AUTOMATION_CATALOG
+              : AUTOMATION_CATALOG.filter((c) => c.category === cat);
+            return (
+              <TabsContent key={cat} value={cat}>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {items.map((item) => <ItemCard key={item.id} item={item} />)}
+                </div>
+              </TabsContent>
+            );
+          })}
+        </Tabs>
+      )}
+
+      <div className="flex justify-start pt-1 border-t">
+        <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Param Field ───────────────────────────────────────────────────────────────
+
+function ParamField({
+  param,
+  value,
+  onChange,
+}: {
+  param: import("@/lib/automation-catalog").CatalogParam;
+  value: any;
+  onChange: (val: any) => void;
+}) {
+  if (param.type === "toggle") {
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <Label className="text-sm font-normal cursor-pointer">{param.label}</Label>
+        <Switch checked={!!value} onCheckedChange={onChange} />
+      </div>
+    );
+  }
+
+  if (param.type === "select") {
+    return (
+      <div className="space-y-1.5">
+        <Label className="text-xs">{param.label}</Label>
+        <Select value={String(value ?? param.default)} onValueChange={onChange}>
+          <SelectTrigger className="h-9 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(param.options ?? []).map((o) => (
+              <SelectItem key={o.value} value={o.value} className="text-sm">{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {param.hint && <p className="text-[11px] text-muted-foreground">{param.hint}</p>}
+      </div>
+    );
+  }
+
+  if (param.type === "number") {
+    return (
+      <div className="space-y-1.5">
+        <Label className="text-xs">{param.label}</Label>
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={param.min}
+            max={param.max}
+            className="h-9 w-24 text-center text-sm"
+            value={value ?? param.default ?? 0}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              const clamped = param.min !== undefined && v < param.min ? param.min
+                : param.max !== undefined && v > param.max ? param.max : v;
+              onChange(clamped);
+            }}
+          />
+          {param.hint && <span className="text-xs text-muted-foreground">{param.hint}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{param.label}</Label>
+      <Input className="h-9 text-sm" placeholder={param.placeholder ?? ""} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+      {param.hint && <p className="text-[11px] text-muted-foreground">{param.hint}</p>}
+    </div>
+  );
+}
+
+// ── Step 2: Configure Form ────────────────────────────────────────────────────
+
+function ConfigureForm({
+  catalogItem,
   initial,
+  isEdit,
   onSave,
+  onBack,
   onCancel,
   userEmail,
   userRole,
 }: {
+  catalogItem: CatalogItem;
   initial: RuleFormState;
+  isEdit: boolean;
   onSave: (data: RuleFormState) => Promise<void>;
+  onBack: () => void;
   onCancel: () => void;
   userEmail: string;
   userRole: string;
@@ -376,23 +768,18 @@ function RuleForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // MS Teams group picker
   const [groups, setGroups] = useState<TeamsGroup[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
-  const [groupSearch, setGroupSearch] = useState("");
-  const [showGroupPicker, setShowGroupPicker] = useState(false);
   const [expandingGroup, setExpandingGroup] = useState<string | null>(null);
-
-  // User search (type-ahead from employee directory)
-  const [userSearch, setUserSearch] = useState("");
   const [userResults, setUserResults] = useState<{ name: string; email: string }[]>([]);
-  const [showUserSearch, setShowUserSearch] = useState(false);
-  const userSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recipientSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [recipientQuery, setRecipientQuery] = useState("");
+  const [showRecipientDropdown, setShowRecipientDropdown] = useState(false);
 
-  // Individual email input
-  const [emailInput, setEmailInput] = useState("");
-
+  const isCustom = catalogItem.id === "custom_email";
   const set = (key: keyof RuleFormState, val: any) => setForm((prev) => ({ ...prev, [key]: val }));
+  const setParam = (key: string, val: any) =>
+    setForm((prev) => ({ ...prev, extra_config: { ...prev.extra_config, [key]: val } }));
 
   async function loadGroups() {
     if (groups.length > 0) return;
@@ -401,463 +788,387 @@ function RuleForm({
       const res = await apiFetch("/api/automation/ms365/groups", userEmail, userRole);
       const data = await res.json();
       setGroups(data.groups || []);
-    } catch {
-      setGroups([]);
-    } finally {
-      setLoadingGroups(false);
-    }
+    } catch { setGroups([]); } finally { setLoadingGroups(false); }
   }
 
-  function addIndividualEmail() {
-    const raw = emailInput.trim();
-    if (!raw) return;
+  function addRawEmail(raw: string) {
     const addresses = raw.split(/[,;\s]+/).filter(Boolean);
-    const newRecipients: Recipient[] = addresses.map((e) => ({
-      type: "individual",
-      email: e,
-      name: e,
-    }));
     set("recipients_json", [
       ...form.recipients_json,
-      ...newRecipients.filter(
-        (nr) =>
-          !form.recipients_json.some((ex) => ex.type === "individual" && ex.email === nr.email),
-      ),
+      ...addresses
+        .filter((e) => !form.recipients_json.some((ex) => ex.type === "individual" && ex.email === e))
+        .map((e) => ({ type: "individual" as const, email: e, name: e })),
     ]);
-    setEmailInput("");
   }
 
-  function handleUserSearchChange(q: string) {
-    setUserSearch(q);
-    setShowUserSearch(q.length >= 2);
-    if (userSearchRef.current) clearTimeout(userSearchRef.current);
-    if (q.length < 2) {
-      setUserResults([]);
-      return;
-    }
-    userSearchRef.current = setTimeout(async () => {
+  function handleRecipientQueryChange(q: string) {
+    setRecipientQuery(q);
+    setShowRecipientDropdown(q.length >= 1);
+    if (recipientSearchRef.current) clearTimeout(recipientSearchRef.current);
+    if (q.length < 2) { setUserResults([]); return; }
+    recipientSearchRef.current = setTimeout(async () => {
       try {
-        const res = await apiFetch(
-          `/api/automation/ms365/users/search?q=${encodeURIComponent(q)}`,
-          userEmail,
-          userRole,
-        );
+        const res = await apiFetch(`/api/automation/ms365/users/search?q=${encodeURIComponent(q)}`, userEmail, userRole);
         const data = await res.json();
         setUserResults(Array.isArray(data) ? data : []);
-      } catch {
-        setUserResults([]);
-      }
+      } catch { setUserResults([]); }
     }, 250);
   }
 
   function addUserResult(u: { name: string; email: string }) {
-    if (form.recipients_json.some((r) => r.type === "individual" && r.email === u.email)) {
-      setUserSearch("");
-      setUserResults([]);
-      setShowUserSearch(false);
-      return;
+    if (!form.recipients_json.some((r) => r.type === "individual" && r.email === u.email)) {
+      set("recipients_json", [...form.recipients_json, { type: "individual", email: u.email, name: u.name }]);
     }
-    set("recipients_json", [
-      ...form.recipients_json,
-      { type: "individual", email: u.email, name: u.name },
-    ]);
-    setUserSearch("");
-    setUserResults([]);
-    setShowUserSearch(false);
+    setRecipientQuery(""); setUserResults([]); setShowRecipientDropdown(false);
   }
 
   async function addTeamsGroup(group: TeamsGroup) {
     if (form.recipients_json.some((r) => r.type === "teams_group" && r.id === group.id)) {
-      setShowGroupPicker(false);
-      return;
+      setRecipientQuery(""); setShowRecipientDropdown(false); return;
     }
     setExpandingGroup(group.id);
     try {
-      const res = await apiFetch(
-        `/api/automation/ms365/groups/${group.id}/members`,
-        userEmail,
-        userRole,
-      );
+      const res = await apiFetch(`/api/automation/ms365/groups/${group.id}/members`, userEmail, userRole);
       const data = await res.json();
       const memberEmails: string[] = (data.members || []).map((m: any) => m.email).filter(Boolean);
-      const newR: Recipient = {
-        type: "teams_group",
-        id: group.id,
-        name: group.name,
-        emails: memberEmails,
-      };
-      set("recipients_json", [...form.recipients_json, newR]);
+      set("recipients_json", [...form.recipients_json, { type: "teams_group", id: group.id, name: group.name, emails: memberEmails }]);
     } catch {
-      const newR: Recipient = { type: "teams_group", id: group.id, name: group.name, emails: [] };
-      set("recipients_json", [...form.recipients_json, newR]);
-    } finally {
-      setExpandingGroup(null);
-      setShowGroupPicker(false);
-    }
-  }
-
-  function removeRecipient(idx: number) {
-    set(
-      "recipients_json",
-      form.recipients_json.filter((_, i) => i !== idx),
-    );
+      set("recipients_json", [...form.recipients_json, { type: "teams_group", id: group.id, name: group.name, emails: [] }]);
+    } finally { setExpandingGroup(null); setRecipientQuery(""); setShowRecipientDropdown(false); }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.name.trim() || !form.email_subject.trim() || !form.email_body.trim()) {
-      setError("Name, subject, and body are required.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(form);
-    } catch (err: any) {
-      setError(err.message || "Failed to save.");
-    } finally {
-      setSaving(false);
-    }
+    if (!form.name.trim()) { setError("Automation name is required."); return; }
+    if (isCustom && !form.email_subject.trim()) { setError("Email subject is required."); return; }
+    if (isCustom && !form.email_body.trim()) { setError("Email body is required."); return; }
+    setSaving(true); setError("");
+    try { await onSave(form); } catch (err: any) { setError(err.message || "Failed to save."); } finally { setSaving(false); }
   }
 
-  const filteredGroups = groups.filter((g) =>
-    g.name.toLowerCase().includes(groupSearch.toLowerCase()),
+  const CatIcon = CATEGORY_ICONS[catalogItem.category] ?? Zap;
+  const filteredGroupsForSearch = groups.filter((g) =>
+    g.name.toLowerCase().includes(recipientQuery.toLowerCase())
   );
+  const queryLooksLikeEmail = /^[^\s@]+@[^\s@.]+\.[^\s@.]+$/.test(recipientQuery.trim());
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Name + Description */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label className="block text-xs font-semibold text-foreground mb-1">
-            Automation Name <span className="text-red-500">*</span>
-          </label>
-          <input
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder="e.g. Daily Training Reminder"
-            value={form.name}
-            onChange={(e) => set("name", e.target.value)}
-          />
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Kind header */}
+      <div
+        className="flex items-center gap-3 p-3 rounded-xl border"
+        style={{ backgroundColor: `${catalogItem.accent}0d`, borderColor: `${catalogItem.accent}35` }}
+      >
+        <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${catalogItem.accent}20` }}>
+          <CatIcon className="h-4 w-4" style={{ color: catalogItem.accent }} />
         </div>
-        <div>
-          <label className="block text-xs font-semibold text-foreground mb-1">Description</label>
-          <input
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder="What does this automation do?"
-            value={form.description}
-            onChange={(e) => set("description", e.target.value)}
-          />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-foreground">{catalogItem.label}</div>
+          <div className="text-[11px] text-muted-foreground truncate">{catalogItem.emailPreview}</div>
+        </div>
+        {!isEdit && (
+          <Button type="button" variant="ghost" size="sm" onClick={onBack} className="flex-shrink-0 h-7 text-xs gap-1">
+            <ArrowLeft className="h-3 w-3" /> Change
+          </Button>
+        )}
+      </div>
+
+      {/* Name + Description */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Name <span className="text-destructive">*</span></Label>
+          <Input className="h-9 text-sm" placeholder="e.g. Weekly HR Leave Report" value={form.name} onChange={(e) => set("name", e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Description</Label>
+          <Input className="h-9 text-sm" placeholder="Optional description" value={form.description} onChange={(e) => set("description", e.target.value)} />
         </div>
       </div>
 
       {/* Schedule */}
-      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Clock className="h-3.5 w-3.5" /> Schedule
-        </h4>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">
-              Frequency
-            </label>
-            <select
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              value={form.frequency}
-              onChange={(e) => {
-                set("frequency", e.target.value);
-                set("day_of_week", null);
-                set("day_of_month", null);
-              }}
-            >
-              <option value="daily">Daily (weekdays)</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
-
-          {form.frequency === "weekly" && (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
-                Day of Week
-              </label>
-              <select
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                value={form.day_of_week ?? 0}
-                onChange={(e) => set("day_of_week", Number(e.target.value))}
-              >
-                {DAY_NAMES.map((d, i) => (
-                  <option key={i} value={i}>
-                    {d}
-                  </option>
-                ))}
-              </select>
+      <div className="rounded-xl border border-border bg-muted/20">
+        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
+          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Schedule</span>
+        </div>
+        <div className="px-4 py-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Frequency</Label>
+              <Select value={form.frequency} onValueChange={(v) => { set("frequency", v); set("day_of_week", null); set("day_of_month", null); }}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">Daily (weekdays)</SelectItem>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          )}
-
-          {form.frequency === "monthly" && (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
-                Day of Month
-              </label>
-              <select
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                value={form.day_of_month ?? 1}
-                onChange={(e) => set("day_of_month", Number(e.target.value))}
-              >
-                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">
-              Send Time
-            </label>
-            <div className="flex gap-1.5">
-              <select
-                className="flex-1 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                value={form.hour}
-                onChange={(e) => set("hour", Number(e.target.value))}
-              >
-                {Array.from({ length: 24 }, (_, h) => {
-                  const label =
-                    h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
-                  return (
-                    <option key={h} value={h}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-              <select
-                className="w-20 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                value={form.minute ?? 0}
-                onChange={(e) => set("minute", Number(e.target.value))}
-              >
-                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
-                  <option key={m} value={m}>
-                    {m.toString().padStart(2, "0")}
-                  </option>
-                ))}
-              </select>
+            {form.frequency === "weekly" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Day</Label>
+                <Select value={String(form.day_of_week ?? 0)} onValueChange={(v) => set("day_of_week", Number(v))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DAY_NAMES.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {form.frequency === "monthly" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Day of month</Label>
+                <Select value={String(form.day_of_month ?? 1)} onValueChange={(v) => set("day_of_month", Number(v))}>
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => <SelectItem key={d} value={String(d)}>{d}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Send time</Label>
+              <div className="flex gap-1.5">
+                <Select value={String(form.hour)} onValueChange={(v) => set("hour", Number(v))}>
+                  <SelectTrigger className="h-9 text-sm flex-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 24 }, (_, h) => {
+                      const label = h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+                      return <SelectItem key={h} value={String(h)}>{label}</SelectItem>;
+                    })}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  min={0}
+                  max={59}
+                  className="h-9 w-16 text-center text-sm"
+                  value={form.minute ?? 0}
+                  onChange={(e) => set("minute", Math.max(0, Math.min(59, Number(e.target.value) || 0)))}
+                  placeholder="00"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Email subject + body */}
-      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Mail className="h-3.5 w-3.5" /> Email Content
-        </h4>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">
-            Subject <span className="text-red-500">*</span>
-          </label>
-          <input
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder="e.g. Reminder: Complete Your Safety Training"
-            value={form.email_subject}
-            onChange={(e) => set("email_subject", e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">
-            Message Body <span className="text-red-500">*</span>
-          </label>
-          <textarea
-            rows={6}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
-            placeholder={
-              "Hi Team,\n\nThis is a reminder to complete your mandatory training by this Friday.\n\nPlease log in to the LMS portal and finish all pending modules.\n\nThank you!"
-            }
-            value={form.email_body}
-            onChange={(e) => set("email_body", e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Plain text. Line breaks are preserved in the email.
-          </p>
-        </div>
-      </div>
-
-      {/* Recipients */}
-      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-          <Users className="h-3.5 w-3.5" /> Recipients
-        </h4>
-
-        {/* User search (type-ahead from employee directory) */}
-        <div className="relative">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              <input
-                className="w-full pl-7 pr-3 rounded-lg border border-border bg-background py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                placeholder="Search people by name or email…"
-                value={userSearch}
-                onChange={(e) => handleUserSearchChange(e.target.value)}
-                onFocus={() => userSearch.length >= 2 && setShowUserSearch(true)}
-                onBlur={() => setTimeout(() => setShowUserSearch(false), 150)}
-              />
-            </div>
+      {/* Type-specific params */}
+      {catalogItem.params.length > 0 && (
+        <div className="rounded-xl border border-border bg-muted/20">
+          <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
+            <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Report Settings</span>
           </div>
-          {showUserSearch && userResults.length > 0 && (
-            <div className="absolute left-0 top-full mt-1 z-20 bg-background border border-border rounded-xl shadow-lg w-full max-h-52 overflow-y-auto">
-              {userResults.map((u) => (
-                <button
-                  key={u.email}
-                  type="button"
-                  onMouseDown={() => addUserResult(u)}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left transition-colors"
-                >
-                  <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{u.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Manual email input for addresses not in the directory */}
-        <div className="flex gap-2">
-          <input
-            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder="Or type email address directly and press Enter"
-            value={emailInput}
-            onChange={(e) => setEmailInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addIndividualEmail();
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={addIndividualEmail}
-            className="px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors flex items-center gap-1"
-          >
-            <UserPlus className="h-3.5 w-3.5" /> Add
-          </button>
-        </div>
-
-        {/* Teams group picker */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => {
-              setShowGroupPicker((p) => !p);
-              loadGroups();
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-purple-700 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg px-3 py-2 transition-colors"
-          >
-            <Users className="h-3.5 w-3.5" />
-            Add Microsoft Teams group
-            {showGroupPicker ? (
-              <ChevronUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-          </button>
-
-          <AnimatePresence>
-            {showGroupPicker && (
-              <motion.div
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.12 }}
-                className="absolute left-0 top-full mt-1 z-20 bg-background border border-border rounded-xl shadow-lg w-72 max-h-64 overflow-y-auto"
-              >
-                <div className="p-2 border-b border-border sticky top-0 bg-background">
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                    <input
-                      autoFocus
-                      className="w-full pl-7 pr-3 py-1.5 text-sm border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/40 bg-muted/30"
-                      placeholder="Search groups…"
-                      value={groupSearch}
-                      onChange={(e) => setGroupSearch(e.target.value)}
-                    />
-                  </div>
-                </div>
-                {loadingGroups ? (
-                  <div className="p-4 text-center text-sm text-muted-foreground">Loading…</div>
-                ) : filteredGroups.length === 0 ? (
-                  <div className="p-4 text-center text-sm text-muted-foreground">
-                    {groups.length === 0
-                      ? "Connect your Microsoft account in Settings to pick groups."
-                      : "No groups found."}
-                  </div>
-                ) : (
-                  filteredGroups.map((g) => (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => addTeamsGroup(g)}
-                      disabled={expandingGroup === g.id}
-                      className="w-full flex flex-col items-start px-3 py-2 text-sm hover:bg-muted/50 transition-colors text-left disabled:opacity-60"
-                    >
-                      <span className="font-medium truncate">{g.name}</span>
-                      {g.description && (
-                        <span className="text-xs text-muted-foreground truncate">
-                          {g.description}
-                        </span>
-                      )}
-                      {expandingGroup === g.id && (
-                        <span className="text-xs text-muted-foreground">Fetching members…</span>
-                      )}
-                    </button>
-                  ))
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Recipient chips */}
-        {form.recipients_json.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {form.recipients_json.map((r, i) => (
-              <RecipientPill key={i} r={r} onRemove={() => removeRecipient(i)} />
+          <div className="px-4 py-3 space-y-4">
+            {catalogItem.params.map((p) => (
+              <ParamField key={p.key} param={p} value={form.extra_config[p.key] ?? p.default} onChange={(val) => setParam(p.key, val)} />
             ))}
           </div>
-        )}
-        {form.recipients_json.length === 0 && (
-          <p className="text-xs text-muted-foreground">No recipients added yet.</p>
-        )}
+        </div>
+      )}
+
+      {/* Auto-generated notice */}
+      {!isCustom && (
+        <div className="flex items-start gap-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 px-3.5 py-3 text-xs text-emerald-800 dark:text-emerald-300">
+          <Check className="h-4 w-4 flex-shrink-0 mt-0.5 text-emerald-600" />
+          <div>
+            <span className="font-semibold">Auto-generated email</span> — the system queries live data at send time and composes a formatted report automatically.
+          </div>
+        </div>
+      )}
+
+      {/* Custom email content */}
+      {isCustom && (
+        <div className="rounded-xl border border-border bg-muted/20">
+          <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
+            <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Email Content</span>
+          </div>
+          <div className="px-4 py-3 space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Subject <span className="text-destructive">*</span></Label>
+              <Input className="h-9 text-sm" placeholder="e.g. Weekly Team Update" value={form.email_subject} onChange={(e) => set("email_subject", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Message <span className="text-destructive">*</span></Label>
+              <Textarea rows={5} className="text-sm resize-y" placeholder={"Hi Team,\n\nYour message here…"} value={form.email_body} onChange={(e) => set("email_body", e.target.value)} />
+              <p className="text-[11px] text-muted-foreground">Plain text. Line breaks are preserved in the email.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipients */}
+      <div className="rounded-xl border border-border bg-muted/20">
+        <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border">
+          <Users className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Recipients</span>
+        </div>
+        <div className="px-4 py-3 space-y-3">
+          {/* Unified recipient search */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none z-10" />
+            <Input
+              className="pl-8 h-9 text-sm"
+              placeholder="Search people, groups or paste an email…"
+              value={recipientQuery}
+              onChange={(e) => handleRecipientQueryChange(e.target.value)}
+              onFocus={() => {
+                setShowRecipientDropdown(recipientQuery.length >= 1);
+                if (groups.length === 0 && !loadingGroups) loadGroups();
+              }}
+              onBlur={() => setTimeout(() => setShowRecipientDropdown(false), 200)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (queryLooksLikeEmail) {
+                    addRawEmail(recipientQuery.trim());
+                    setRecipientQuery("");
+                    setShowRecipientDropdown(false);
+                  }
+                }
+              }}
+            />
+            {showRecipientDropdown && recipientQuery.length >= 1 && (
+              <div className="absolute left-0 top-full mt-1 z-30 bg-background border border-border rounded-xl shadow-lg w-full max-h-64 overflow-y-auto">
+                {/* People */}
+                {userResults.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 border-b sticky top-0">
+                      People
+                    </div>
+                    {userResults.map((u) => (
+                      <button key={u.email} type="button" onMouseDown={() => addUserResult(u)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left transition-colors">
+                        <UserPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{u.name}</div>
+                          <div className="text-[11px] text-muted-foreground truncate">{u.email}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* Groups */}
+                {(loadingGroups || filteredGroupsForSearch.length > 0) && (
+                  <>
+                    <div className={cn(
+                      "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 border-b sticky top-0",
+                      userResults.length > 0 && "border-t",
+                    )}>
+                      Teams Groups
+                    </div>
+                    {loadingGroups ? (
+                      <div className="flex items-center gap-2 px-3 py-2.5 text-sm text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading groups…
+                      </div>
+                    ) : (
+                      filteredGroupsForSearch.slice(0, 6).map((g) => (
+                        <button key={g.id} type="button" onMouseDown={() => addTeamsGroup(g)}
+                          disabled={expandingGroup === g.id}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left transition-colors disabled:opacity-60">
+                          <Users className="h-3.5 w-3.5 shrink-0 text-purple-500" />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate">{g.name}</div>
+                            {g.description && <div className="text-[11px] text-muted-foreground truncate">{g.description}</div>}
+                            {expandingGroup === g.id && <div className="text-[11px] text-muted-foreground">Fetching members…</div>}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </>
+                )}
+
+                {/* Add raw email */}
+                {queryLooksLikeEmail && (
+                  <button type="button"
+                    onMouseDown={() => { addRawEmail(recipientQuery.trim()); setRecipientQuery(""); setShowRecipientDropdown(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 text-left transition-colors",
+                      (userResults.length > 0 || filteredGroupsForSearch.length > 0) && "border-t",
+                    )}>
+                    <Mail className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                    <span className="text-muted-foreground">Add <span className="font-medium text-foreground">{recipientQuery.trim()}</span></span>
+                  </button>
+                )}
+
+                {/* No results */}
+                {recipientQuery.length >= 2 && !loadingGroups && userResults.length === 0 && filteredGroupsForSearch.length === 0 && !queryLooksLikeEmail && (
+                  <div className="px-3 py-4 text-center text-sm text-muted-foreground">No results found.</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Recipient pills */}
+          {form.recipients_json.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {form.recipients_json.map((r, i) => (
+                <RecipientPill key={i} r={r} onRemove={() => set("recipients_json", form.recipients_json.filter((_, j) => j !== i))} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No recipients added yet. Search above to add people or groups.</p>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2">
-          {error}
+        <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm px-3 py-2">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" /> {error}
         </div>
       )}
 
       <div className="flex justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save Automation"}
-        </button>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" size="sm" disabled={saving}>
+          {saving ? "Saving…" : isEdit ? "Save Changes" : "Create Automation"}
+        </Button>
       </div>
     </form>
+  );
+}
+
+// ── Catalog quick-start shelf ─────────────────────────────────────────────────
+
+function CatalogShelf({
+  portalId,
+  accent,
+  onSelect,
+}: {
+  portalId: string;
+  accent: string;
+  onSelect: (item: CatalogItem) => void;
+}) {
+  const items = getCatalogForPortal(portalId).filter((i) => i.portalIds.length > 0).slice(0, 4);
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-5">
+      <div className="flex items-center gap-1.5 mb-3">
+        <Sparkles className="h-3.5 w-3.5" style={{ color: accent }} />
+        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Quick start</span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {items.map((item) => {
+          const Icon = CATEGORY_ICONS[item.category] ?? Zap;
+          return (
+            <Card key={item.id} className="cursor-pointer group hover:shadow-sm hover:ring-1 hover:ring-primary/20 transition-all" onClick={() => onSelect(item)}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${item.accent}18` }}>
+                    <Icon className="h-3 w-3" style={{ color: item.accent }} />
+                  </div>
+                  <span className="font-semibold text-xs group-hover:text-primary transition-colors truncate">{item.label}</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{item.description}</p>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -871,7 +1182,6 @@ function RuleCard({
   onSendNow,
   onManageCoOwners,
   currentUserEmail,
-  currentUserRole,
 }: {
   rule: AutomationRule;
   onToggle: () => void;
@@ -880,196 +1190,124 @@ function RuleCard({
   onSendNow: () => void;
   onManageCoOwners: () => void;
   currentUserEmail: string;
-  currentUserRole: string;
 }) {
-  const [sendingNow, setSendingNow] = useState(false);
   const canManage = rule.can_manage;
-  const isCoOwnerView =
+  const isCoOwner =
     !canManage &&
-    (rule.co_owners_json ?? [])
-      .map((e) => e.toLowerCase())
-      .includes(currentUserEmail.toLowerCase());
-
-  async function handleSendNow() {
-    setSendingNow(true);
-    onSendNow();
-    setSendingNow(false);
-  }
+    (rule.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(currentUserEmail.toLowerCase());
+  const kindMeta = getCatalogItem(rule.automation_kind);
+  const isCustom = !rule.automation_kind || rule.automation_kind === "custom_email";
+  const KindIcon = kindMeta ? (CATEGORY_ICONS[kindMeta.category] ?? Zap) : Mail;
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97 }}
-      className={cn(
-        "rounded-2xl border bg-card shadow-sm p-5 transition-all",
-        rule.is_active ? "border-border" : "border-border/50 opacity-70",
-      )}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          <div
-            className={cn(
-              "flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center",
-              rule.is_active ? "bg-amber-100 text-amber-600" : "bg-muted text-muted-foreground",
-            )}
-          >
-            <Zap className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-sm text-foreground truncate">{rule.name}</h3>
-              {isCoOwnerView && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5 flex-shrink-0">
-                  <Eye className="h-3 w-3" /> Shared
-                </span>
+    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}>
+      <Card className={cn("transition-all", !rule.is_active && "opacity-60")}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div
+                className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: rule.is_active ? `${kindMeta?.accent ?? "#F59E0B"}18` : undefined }}
+              >
+                <KindIcon className="h-4 w-4" style={{ color: rule.is_active ? (kindMeta?.accent ?? "#F59E0B") : undefined }} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-semibold text-sm text-foreground truncate">{rule.name}</h3>
+                  {isCoOwner && (
+                    <Badge variant="secondary" className="gap-1 text-[10px]">
+                      <Eye className="h-3 w-3" /> Shared
+                    </Badge>
+                  )}
+                </div>
+                <Badge variant="outline" className="mt-1 text-[10px] h-4 px-1.5 font-normal" style={{ borderColor: `${kindMeta?.accent ?? "#64748B"}40`, color: kindMeta?.accent ?? "#64748B" }}>
+                  {kindMeta?.label ?? "Custom Email"}
+                </Badge>
+                {rule.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{rule.description}</p>}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Badge variant={rule.is_active ? "default" : "secondary"} className="text-[10px]">
+                {rule.is_active ? "Active" : "Paused"}
+              </Badge>
+              {canManage && (
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onToggle} title={rule.is_active ? "Pause" : "Resume"}>
+                  {rule.is_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                </Button>
               )}
             </div>
-            {rule.description && (
-              <p className="text-xs text-muted-foreground truncate mt-0.5">{rule.description}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-0.5">
-              By <span className="text-foreground">{rule.created_by}</span>
-            </p>
           </div>
-        </div>
 
-        {/* Active toggle + badge */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span
-            className={cn(
-              "text-xs font-medium px-2 py-0.5 rounded-full border",
-              rule.is_active
-                ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                : "bg-muted border-border text-muted-foreground",
+          <Separator className="mb-3" />
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate">{describeCadence(rule)}</span></div>
+            <div className="flex items-center gap-1.5"><Users className="h-3.5 w-3.5 flex-shrink-0" /><span>{recipientCount(rule.recipients_json)} recipient{recipientCount(rule.recipients_json) !== 1 ? "s" : ""}</span></div>
+            {isCustom && rule.email_subject && (
+              <div className="flex items-center gap-1.5 col-span-2"><Mail className="h-3.5 w-3.5 flex-shrink-0" /><span className="truncate">{rule.email_subject}</span></div>
             )}
-          >
-            {rule.is_active ? "Active" : "Paused"}
-          </span>
-          {canManage && (
-            <button
-              onClick={onToggle}
-              title={rule.is_active ? "Pause" : "Resume"}
-              className="p-1.5 rounded-lg hover:bg-muted/60 transition-colors text-muted-foreground hover:text-foreground"
-            >
-              {rule.is_active ? (
-                <Pause className="h-3.5 w-3.5" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )}
-            </button>
+            <div className="flex items-center gap-1.5"><AlertCircle className="h-3.5 w-3.5 flex-shrink-0" /><StatusBadge status={rule.last_status} /></div>
+          </div>
+
+          {(rule.co_owners_json ?? []).length > 0 && (
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground border-t pt-3">
+              <UserCheck className="h-3.5 w-3.5 text-indigo-500 flex-shrink-0" />
+              <span>
+                {(rule.co_owners_json ?? []).length} co-owner{(rule.co_owners_json ?? []).length !== 1 ? "s" : ""}
+                {(rule.co_owners_json ?? []).length <= 2
+                  ? `: ${(rule.co_owners_json ?? []).join(", ")}`
+                  : `: ${(rule.co_owners_json ?? []).slice(0, 2).join(", ")} +${(rule.co_owners_json ?? []).length - 2} more`}
+              </span>
+            </div>
           )}
-        </div>
-      </div>
 
-      {/* Info grid */}
-      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>{describeCadence(rule)}</span>
-        </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Users className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>
-            {recipientCount(rule.recipients_json)} recipient
-            {recipientCount(rule.recipients_json) !== 1 ? "s" : ""}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <Mail className="h-3.5 w-3.5 flex-shrink-0" />
-          <span className="truncate">{rule.email_subject}</span>
-        </div>
-        <div className="flex items-center gap-1.5 text-muted-foreground">
-          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-          <StatusBadge status={rule.last_status} />
-        </div>
-      </div>
+          <div className="mt-3 flex gap-3 text-xs text-muted-foreground border-t pt-3">
+            <span>Next: <span className="text-foreground">{formatDt(rule.next_run)}</span></span>
+            <span>Last: <span className="text-foreground">{formatDt(rule.last_run)}</span></span>
+          </div>
 
-      {/* Co-owners summary */}
-      {(rule.co_owners_json ?? []).length > 0 && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground border-t border-border/50 pt-3">
-          <UserCheck className="h-3.5 w-3.5 flex-shrink-0 text-indigo-500" />
-          <span>
-            {(rule.co_owners_json ?? []).length} co-owner
-            {(rule.co_owners_json ?? []).length !== 1 ? "s" : ""}
-            {(rule.co_owners_json ?? []).length <= 2
-              ? `: ${(rule.co_owners_json ?? []).join(", ")}`
-              : `: ${(rule.co_owners_json ?? []).slice(0, 2).join(", ")} +${(rule.co_owners_json ?? []).length - 2} more`}
-          </span>
-        </div>
-      )}
-
-      {/* Next / last run */}
-      <div
-        className={cn(
-          "mt-3 flex gap-4 text-xs text-muted-foreground pt-3",
-          (rule.co_owners_json ?? []).length === 0 ? "border-t border-border/50" : "",
-        )}
-      >
-        <span>
-          Next: <span className="text-foreground">{formatDt(rule.next_run)}</span>
-        </span>
-        <span>
-          Last: <span className="text-foreground">{formatDt(rule.last_run)}</span>
-        </span>
-      </div>
-
-      {/* Actions — only for creator / super admin */}
-      {canManage && (
-        <div className="mt-3 flex gap-2 flex-wrap">
-          <button
-            onClick={onEdit}
-            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted/50 transition-colors"
-          >
-            <Edit2 className="h-3 w-3" /> Edit
-          </button>
-          <button
-            onClick={handleSendNow}
-            disabled={sendingNow}
-            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-60"
-          >
-            <Send className="h-3 w-3" /> Send Now
-          </button>
-          <button
-            onClick={onManageCoOwners}
-            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition-colors"
-          >
-            <UserCheck className="h-3 w-3" /> Co-owners
-          </button>
-          <button
-            onClick={onDelete}
-            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors ml-auto"
-          >
-            <Trash2 className="h-3 w-3" /> Delete
-          </button>
-        </div>
-      )}
+          {canManage && (
+            <div className="mt-3 flex gap-2 flex-wrap">
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={onEdit}><Edit2 className="h-3 w-3" /> Edit</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={onSendNow}><Send className="h-3 w-3" /> Send Now</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-indigo-600 border-indigo-200 hover:bg-indigo-50" onClick={onManageCoOwners}><UserCheck className="h-3 w-3" /> Co-owners</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/5 ml-auto" onClick={onDelete}><Trash2 className="h-3 w-3" /> Delete</Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export function AutomationHub() {
+export function AutomationHub({
+  portalId,
+  portalLabel,
+  compact = false,
+}: {
+  portalId?: string;
+  portalLabel?: string;
+  compact?: boolean;
+} = {}) {
   const { user } = useAuth();
   const [rules, setRules] = useState<AutomationRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Modal state
-  const [showForm, setShowForm] = useState(false);
+  const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0);
+  const [selectedKind, setSelectedKind] = useState<CatalogItem | null>(null);
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
+  const [aiPreset, setAiPreset] = useState<Record<string, any> | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AutomationRule | null>(null);
   const [coOwnerRule, setCoOwnerRule] = useState<AutomationRule | null>(null);
-
-  // Toast
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   const email = user?.email ?? "";
   const role = user?.role ?? "";
   const userCanCreate = canCreate(role);
+  const portalAccent = getCatalogForPortal(portalId).find(i => i.portalIds.length > 0)?.accent ?? "#F59E0B";
 
   function showToast(msg: string, type: "success" | "error" = "success") {
     setToast({ msg, type });
@@ -1080,353 +1318,302 @@ export function AutomationHub() {
     setLoading(true);
     try {
       const res = await apiFetch("/api/automation/rules", email, role);
-      if (!res.ok) throw new Error("Failed to load automations");
-      const data = await res.json();
-      setRules(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      if (!res.ok) throw new Error("Failed to load");
+      setRules(await res.json());
+    } catch (err: any) { setError(err.message); } finally { setLoading(false); }
   }, [email, role]);
 
-  useEffect(() => {
-    fetchRules();
-  }, [fetchRules]);
+  useEffect(() => { fetchRules(); }, [fetchRules]);
 
   async function handleSave(formData: RuleFormState) {
     const body = JSON.stringify(formData);
-    if (editingRule) {
-      const res = await apiFetch(`/api/automation/rules/${editingRule.id}`, email, role, {
-        method: "PATCH",
-        body,
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.detail || "Update failed");
-      }
-    } else {
-      const res = await apiFetch("/api/automation/rules", email, role, {
-        method: "POST",
-        body,
-      });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.detail || "Create failed");
-      }
+    const res = editingRule
+      ? await apiFetch(`/api/automation/rules/${editingRule.id}`, email, role, { method: "PATCH", body })
+      : await apiFetch("/api/automation/rules", email, role, { method: "POST", body });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || (editingRule ? "Update failed" : "Create failed"));
     }
-    setShowForm(false);
-    setEditingRule(null);
+    closeWizard();
     showToast(editingRule ? "Automation updated." : "Automation created.");
     fetchRules();
   }
 
   async function handleToggle(rule: AutomationRule) {
-    const res = await apiFetch(`/api/automation/rules/${rule.id}`, email, role, {
-      method: "PATCH",
-      body: JSON.stringify({ is_active: !rule.is_active }),
-    });
-    if (res.ok) {
-      showToast(rule.is_active ? "Automation paused." : "Automation resumed.");
-      fetchRules();
-    } else {
-      showToast("Failed to update status.", "error");
-    }
+    const res = await apiFetch(`/api/automation/rules/${rule.id}`, email, role, { method: "PATCH", body: JSON.stringify({ is_active: !rule.is_active }) });
+    if (res.ok) { showToast(rule.is_active ? "Paused." : "Resumed."); fetchRules(); }
+    else showToast("Failed to update.", "error");
   }
 
   async function handleDelete(rule: AutomationRule) {
-    const res = await apiFetch(`/api/automation/rules/${rule.id}`, email, role, {
-      method: "DELETE",
-    });
+    const res = await apiFetch(`/api/automation/rules/${rule.id}`, email, role, { method: "DELETE" });
     setDeleteConfirm(null);
-    if (res.ok) {
-      showToast("Automation deleted.");
-      fetchRules();
-    } else {
-      showToast("Failed to delete.", "error");
-    }
+    if (res.ok) { showToast("Deleted."); fetchRules(); }
+    else showToast("Failed to delete.", "error");
   }
 
   async function handleSendNow(rule: AutomationRule) {
-    const res = await apiFetch(`/api/automation/rules/${rule.id}/send-now`, email, role, {
-      method: "POST",
-      body: "{}",
-    });
+    const res = await apiFetch(`/api/automation/rules/${rule.id}/send-now`, email, role, { method: "POST", body: "{}" });
     const data = await res.json().catch(() => ({}));
-    if (res.ok && data.success) {
-      showToast(`Sent to ${data.sent_to?.length ?? 0} recipient(s).`);
-    } else {
-      showToast(data.detail || "Send failed.", "error");
-    }
+    if (res.ok && data.success) showToast(`Sent to ${data.sent_to?.length ?? 0} recipient(s).`);
+    else showToast(data.detail || "Send failed.", "error");
   }
 
-  function handleCoOwnerUpdated(updated: AutomationRule) {
-    setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-    setCoOwnerRule(updated);
-  }
+  function closeWizard() { setWizardStep(0); setSelectedKind(null); setEditingRule(null); setAiPreset(null); }
 
+  function openNew() { setEditingRule(null); setSelectedKind(null); setAiPreset(null); setWizardStep(1); }
+  function openNewWithKind(item: CatalogItem) { setEditingRule(null); setSelectedKind(item); setAiPreset(null); setWizardStep(2); }
   function openEdit(rule: AutomationRule) {
-    setEditingRule(rule);
-    setShowForm(true);
+    const kind = getCatalogItem(rule.automation_kind) ?? getCatalogItem("custom_email")!;
+    setEditingRule(rule); setSelectedKind(kind); setAiPreset(null); setWizardStep(2);
   }
 
-  function openCreate() {
-    setEditingRule(null);
-    setShowForm(true);
+  function handleAiResult(result: AiComposeResult) {
+    const kind = getCatalogItem(result.automation_kind) ?? getCatalogItem("custom_email")!;
+    setSelectedKind(kind);
+    setAiPreset({
+      name: result.name, description: result.description,
+      frequency: result.frequency, day_of_week: result.day_of_week, day_of_month: result.day_of_month,
+      hour: result.hour, minute: result.minute,
+      automation_kind: result.automation_kind, extra_config: result.extra_config,
+      email_subject: result.email_subject, email_body: result.email_body,
+      recipients_json: [],
+    });
+    setWizardStep(2);
   }
 
-  const formInitial: RuleFormState = editingRule
+  const showForm = wizardStep > 0;
+  // wizardStep: 0=closed, 1=TypePicker, 2=ConfigureForm, 3=AiComposer
+  const configInitial: RuleFormState = editingRule
     ? {
-        name: editingRule.name,
-        description: editingRule.description,
-        frequency: editingRule.frequency,
-        day_of_week: editingRule.day_of_week,
-        day_of_month: editingRule.day_of_month,
-        hour: editingRule.hour,
-        minute: editingRule.minute ?? 0,
-        email_subject: editingRule.email_subject,
-        email_body: editingRule.email_body,
+        name: editingRule.name, description: editingRule.description,
+        frequency: editingRule.frequency, day_of_week: editingRule.day_of_week, day_of_month: editingRule.day_of_month,
+        hour: editingRule.hour, minute: editingRule.minute ?? 0,
+        automation_kind: editingRule.automation_kind ?? "custom_email",
+        extra_config: editingRule.extra_config ?? {},
+        email_subject: editingRule.email_subject ?? "", email_body: editingRule.email_body ?? "",
         recipients_json: editingRule.recipients_json,
       }
-    : BLANK_FORM;
+    : aiPreset
+      ? (aiPreset as RuleFormState)
+      : selectedKind
+        ? blankFormFromKind(selectedKind)
+        : blankFormFromKind(AUTOMATION_CATALOG.find((c) => c.id === "custom_email")!);
 
-  // Split rules: own/managed vs shared-only
   const managedRules = rules.filter((r) => r.can_manage);
-  const sharedRules = rules.filter(
-    (r) =>
-      !r.can_manage &&
-      (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase()),
-  );
+  const sharedRules = rules.filter((r) => !r.can_manage && (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase()));
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#f5f7fa] dark:bg-background">
-      {/* Header */}
-      <div className="flex-shrink-0 bg-background border-b border-border px-6 py-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-              <Zap className="h-5 w-5 text-amber-600" />
+    <div className={cn("flex bg-muted/30 dark:bg-background", compact ? "flex-col flex-1 min-h-0" : "flex-col h-full")}>
+      {/* Full-page header */}
+      {!compact && (
+        <div className="flex-shrink-0 bg-background border-b px-6 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <Zap className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h1 className="text-base font-bold">Email Automation Hub</h1>
+                <p className="text-xs text-muted-foreground">Smart recurring emails — reports, reminders, and digests powered by live data</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-base font-bold text-foreground">Email Automation Hub</h1>
-              <p className="text-xs text-muted-foreground">
-                Schedule recurring emails to Teams groups or individual recipients
-              </p>
-            </div>
+            {userCanCreate && !showForm && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" className="gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:text-violet-400" onClick={() => { setEditingRule(null); setSelectedKind(null); setAiPreset(null); setWizardStep(3); }}>
+                  <Wand2 className="h-3.5 w-3.5" /> Ask AI
+                </Button>
+                <Button size="sm" onClick={openNew} className="gap-2 shadow-sm">
+                  <Plus className="h-4 w-4" /> New Automation
+                </Button>
+              </div>
+            )}
           </div>
-          {userCanCreate && (
-            <button
-              onClick={openCreate}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm"
-            >
-              <Plus className="h-4 w-4" /> New Automation
-            </button>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="px-5 py-4 space-y-4">
+          {/* Compact drawer header */}
+          {compact && userCanCreate && !showForm && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {portalId ? "Quick start or create from scratch" : "Your scheduled email automations"}
+              </span>
+              <Button size="sm" onClick={openNew} className="h-7 text-xs gap-1">
+                <Plus className="h-3.5 w-3.5" /> New
+              </Button>
+            </div>
+          )}
+
+          {/* Portal catalog shelf */}
+          {!showForm && portalId && (
+            <CatalogShelf portalId={portalId} accent={portalAccent} onSelect={openNewWithKind} />
+          )}
+
+          {/* Divider */}
+          {!showForm && portalId && rules.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Separator className="flex-1" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2">Your automations</span>
+              <Separator className="flex-1" />
+            </div>
+          )}
+
+          {/* Wizard */}
+          <AnimatePresence>
+            {showForm && (
+              <motion.div
+                key="wizard"
+                initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <div className="rounded-xl border border-border bg-background shadow-sm">
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      {wizardStep === 1 ? "Step 1 — Choose type" : wizardStep === 3 ? "AI Automation Composer" : editingRule ? "Edit Automation" : "Step 2 — Configure"}
+                    </span>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={closeWizard}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="px-5 pb-5 pt-4">
+                    {wizardStep === 3 && (
+                      <AiComposer
+                        portalId={portalId}
+                        userEmail={email}
+                        userRole={role}
+                        onResult={handleAiResult}
+                        onBack={() => setWizardStep(1)}
+                        onCancel={closeWizard}
+                      />
+                    )}
+                    {wizardStep === 1 && (
+                      <TypePicker
+                        portalId={portalId}
+                        onSelect={(item) => { setSelectedKind(item); setWizardStep(2); }}
+                        onCancel={closeWizard}
+                        onAiCompose={() => setWizardStep(3)}
+                      />
+                    )}
+                    {wizardStep === 2 && selectedKind && (
+                      <ConfigureForm
+                        key={`${editingRule?.id ?? "new"}-${selectedKind.id}`}
+                        catalogItem={selectedKind}
+                        initial={configInitial}
+                        isEdit={!!editingRule}
+                        onSave={handleSave}
+                        onBack={() => { setWizardStep(1); setSelectedKind(null); }}
+                        onCancel={closeWizard}
+                        userEmail={email}
+                        userRole={role}
+                      />
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Rule list */}
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+            </div>
+          ) : error ? (
+            <Card className="border-destructive/30 bg-destructive/5">
+              <CardContent className="p-4 text-sm text-destructive flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" /> {error}
+              </CardContent>
+            </Card>
+          ) : rules.length === 0 && !showForm ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center mb-4">
+                <Zap className="h-7 w-7 text-amber-500" />
+              </div>
+              <h3 className="font-semibold mb-1">{userCanCreate ? "No automations yet" : "No automations shared with you"}</h3>
+              <p className="text-sm text-muted-foreground max-w-xs mb-4">
+                {userCanCreate
+                  ? "Create a smart automation — it pulls live data and composes the email automatically."
+                  : "Ask an automation creator to add you as a co-owner."}
+              </p>
+              {userCanCreate && <Button size="sm" onClick={openNew} className="gap-2"><Plus className="h-4 w-4" /> Create Automation</Button>}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {managedRules.length > 0 && (
+                <div>
+                  {sharedRules.length > 0 && <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">My Automations</p>}
+                  <div className={cn("grid grid-cols-1 gap-3", !compact && "sm:grid-cols-2 xl:grid-cols-3")}>
+                    <AnimatePresence>
+                      {managedRules.map((rule) => (
+                        <RuleCard key={rule.id} rule={rule}
+                          onToggle={() => handleToggle(rule)} onDelete={() => setDeleteConfirm(rule)}
+                          onEdit={() => openEdit(rule)} onSendNow={() => handleSendNow(rule)}
+                          onManageCoOwners={() => setCoOwnerRule(rule)} currentUserEmail={email}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              )}
+              {sharedRules.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <Eye className="h-3.5 w-3.5" /> Shared with Me
+                  </p>
+                  <div className={cn("grid grid-cols-1 gap-3", !compact && "sm:grid-cols-2 xl:grid-cols-3")}>
+                    <AnimatePresence>
+                      {sharedRules.map((rule) => (
+                        <RuleCard key={rule.id} rule={rule}
+                          onToggle={() => {}} onDelete={() => {}} onEdit={() => {}} onSendNow={() => {}} onManageCoOwners={() => {}}
+                          currentUserEmail={email}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        {/* Create / Edit form */}
-        <AnimatePresence>
-          {showForm && (
-            <motion.div
-              key="form"
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.15 }}
-              className="mb-6 rounded-2xl border border-border bg-card shadow-sm p-5"
-            >
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <h2 className="font-semibold text-sm text-foreground">
-                  {editingRule ? "Edit Automation" : "New Automation"}
-                </h2>
-                <button
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditingRule(null);
-                  }}
-                  className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <RuleForm
-                key={editingRule?.id ?? "new"}
-                initial={formInitial}
-                onSave={handleSave}
-                onCancel={() => {
-                  setShowForm(false);
-                  setEditingRule(null);
-                }}
-                userEmail={email}
-                userRole={role}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Rule list */}
-        {loading ? (
-          <div className="flex flex-col gap-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="rounded-2xl border border-border bg-card h-36 animate-pulse"
-              />
-            ))}
-          </div>
-        ) : error ? (
-          <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">
-            {error}
-          </div>
-        ) : rules.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center mb-4">
-              <Zap className="h-7 w-7 text-amber-500" />
-            </div>
-            <h3 className="font-semibold text-foreground mb-1">
-              {userCanCreate ? "No automations yet" : "No automations shared with you"}
-            </h3>
-            <p className="text-sm text-muted-foreground max-w-xs">
-              {userCanCreate
-                ? "Create your first automation to send scheduled emails — training reminders, weekly updates, or any recurring communication."
-                : "Ask an automation creator to add you as a co-owner to see shared automations here."}
-            </p>
-            {userCanCreate && (
-              <button
-                onClick={openCreate}
-                className="mt-4 flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-              >
-                <Plus className="h-4 w-4" /> Create Automation
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Managed automations (creator or super admin) */}
-            {managedRules.length > 0 && (
-              <div>
-                {sharedRules.length > 0 && (
-                  <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
-                    My Automations
-                  </h2>
-                )}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  <AnimatePresence>
-                    {managedRules.map((rule) => (
-                      <RuleCard
-                        key={rule.id}
-                        rule={rule}
-                        onToggle={() => handleToggle(rule)}
-                        onDelete={() => setDeleteConfirm(rule)}
-                        onEdit={() => openEdit(rule)}
-                        onSendNow={() => handleSendNow(rule)}
-                        onManageCoOwners={() => setCoOwnerRule(rule)}
-                        currentUserEmail={email}
-                        currentUserRole={role}
-                      />
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            )}
-
-            {/* Shared (co-owner) automations */}
-            {sharedRules.length > 0 && (
-              <div>
-                <h2 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <Eye className="h-3.5 w-3.5" /> Shared with Me
-                </h2>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  <AnimatePresence>
-                    {sharedRules.map((rule) => (
-                      <RuleCard
-                        key={rule.id}
-                        rule={rule}
-                        onToggle={() => {}}
-                        onDelete={() => {}}
-                        onEdit={() => {}}
-                        onSendNow={() => {}}
-                        onManageCoOwners={() => {}}
-                        currentUserEmail={email}
-                        currentUserRole={role}
-                      />
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Co-owner modal */}
-      <AnimatePresence>
-        {coOwnerRule && (
-          <CoOwnerModal
-            rule={coOwnerRule}
-            userEmail={email}
-            userRole={role}
-            onClose={() => setCoOwnerRule(null)}
-            onUpdated={handleCoOwnerUpdated}
-          />
-        )}
-      </AnimatePresence>
+      {/* Co-owner dialog */}
+      {coOwnerRule && (
+        <CoOwnerDialog
+          rule={coOwnerRule}
+          userEmail={email}
+          userRole={role}
+          onClose={() => setCoOwnerRule(null)}
+          onUpdated={(updated) => { setRules((p) => p.map((r) => (r.id === updated.id ? updated : r))); setCoOwnerRule(updated); }}
+        />
+      )}
 
       {/* Delete confirm dialog */}
-      <AnimatePresence>
-        {deleteConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              className="bg-card rounded-2xl border border-border shadow-2xl p-6 max-w-sm w-full mx-4"
-            >
-              <h3 className="font-semibold text-foreground mb-2">Delete Automation?</h3>
-              <p className="text-sm text-muted-foreground mb-5">
-                <span className="font-medium text-foreground">{deleteConfirm.name}</span> will be
-                permanently removed and will stop sending emails.
-              </p>
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setDeleteConfirm(null)}
-                  className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleDelete(deleteConfirm)}
-                  className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
-                >
-                  Delete
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Dialog open={!!deleteConfirm} onOpenChange={(o) => !o && setDeleteConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Automation?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{deleteConfirm?.name}</span> will be permanently removed.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="destructive" size="sm" onClick={() => deleteConfirm && handleDelete(deleteConfirm)}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Toast */}
       <AnimatePresence>
         {toast && (
           <motion.div
-            key={toast.msg}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
+            key={toast.msg} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
             className={cn(
               "fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl shadow-lg text-sm font-medium border",
-              toast.type === "success"
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-red-50 border-red-200 text-red-800",
+              toast.type === "success" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-800",
             )}
           >
             {toast.msg}

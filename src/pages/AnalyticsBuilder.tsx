@@ -564,7 +564,7 @@ export function AnalyticsBuilder() {
                   {/* Chart */}
                   <div className="flex-1 overflow-y-auto p-8" ref={chartRef}>
                     <div className="max-w-4xl mx-auto">
-                      <ChartCanvas spec={activeChart} height={420} />
+                      <ChartCanvas spec={activeChart} height={420} showExport />
 
                       {/* Data table preview */}
                       {activeChart.data.length > 0 && (
@@ -661,7 +661,7 @@ export function AnalyticsBuilder() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
-                  <ChartCanvas spec={activeChart} height={300} />
+                  <ChartCanvas spec={activeChart} height={300} showExport />
                 </div>
               </div>
             )}
@@ -861,7 +861,7 @@ function BoardWidget({
   }, [widget.metric, widget.dimension, widget.period, widget.builder_spec, authHeaders]);
 
   if (widget.builder_spec) {
-    return <ChartCanvas spec={widget.builder_spec} height={240} />;
+    return <ChartCanvas spec={widget.builder_spec} height={240} showExport />;
   }
 
   if (loading) {

@@ -26,12 +26,15 @@ import {
   PlayCircle,
   Rocket,
   UserCog,
+  Zap,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
 import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
+import { EmailAutomationDrawer } from "@/components/EmailAutomationDrawer";
+import { useAutomationDrawer } from "@/lib/automation-drawer-store";
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
@@ -280,6 +283,8 @@ function LayoutComponent() {
   const { user, logout } = useAuth();
   const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"] } = useSettings();
   const openIntro = useIntroStore((s) => s.open);
+
+  const { openDrawer: openAutomationDrawer } = useAutomationDrawer();
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -997,6 +1002,14 @@ function LayoutComponent() {
             {/* Proactive Nudges Feed */}
             <ProactiveNudgeFeed />
 
+            {/* Global Email Automation trigger */}
+            <button
+              title="Email Automations"
+              onClick={() => openAutomationDrawer()}
+              className="relative flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <Zap className="h-4 w-4" />
+            </button>
 
           </div>
         </header>
@@ -1117,6 +1130,9 @@ function LayoutComponent() {
 
       {/* --- COPILOT SIDEBAR DRAWER --- */}
       {showCopilot && <CopilotSidebar isOpen={copilotOpen} setIsOpen={setCopilotOpen} />}
+
+      {/* --- GLOBAL EMAIL AUTOMATION DRAWER --- */}
+      <EmailAutomationDrawer />
     </div>
   );
 }

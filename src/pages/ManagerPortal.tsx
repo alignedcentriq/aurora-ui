@@ -49,6 +49,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { AssignTrainingDialog } from "@/components/AssignTrainingDialog";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -1680,6 +1681,8 @@ interface ReadinessRow {
   free_pct: number;
   status: "ready" | "one_course_away" | "gap";
   suggested_course: string | null;
+  suggested_course_id: number | null;
+  employee_id: number | null;
 }
 interface ReadinessResult {
   ok: boolean;
@@ -1706,6 +1709,8 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
   const [skills, setSkills] = useState("");
   const [result, setResult] = useState<ReadinessResult | null>(null);
   const [checking, setChecking] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+  const [assignDialogUser, setAssignDialogUser] = useState<ReadinessRow | null>(null);
 
   useEffect(() => {
     fetch("/api/portal/manager/team/digest", { headers: auth })
@@ -1731,6 +1736,29 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
       setChecking(false);
     }
   }, [skills, auth]);
+
+  const handleAssign = async (r: ReadinessRow) => {
+    if (!r.suggested_course_id || !r.employee_id) return;
+    setActing(r.name);
+    try {
+      const res = await fetch("/api/portal/manager/team/readiness/assign", {
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: r.employee_id,
+          email: r.email,
+          training_id: r.suggested_course_id,
+          due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner(`Assigned ${r.suggested_course} to ${r.name}`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to assign training");
+    } finally {
+      setActing(null);
+    }
+  };
 
   if (loading) return <LoadingState label="Loading team digest…" />;
 
@@ -1841,10 +1869,31 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
                     <div className="min-w-0">
                       <span className="font-semibold text-foreground">{r.name}</span>
                       <span className="text-muted-foreground/70 ml-2">{r.free_pct}% free</span>
-                      {r.suggested_course && (
-                        <span className="text-amber-600 dark:text-amber-400 ml-2">
+                      {r.suggested_course ? (
+                        <span className="text-amber-600 dark:text-amber-400 ml-2 flex items-center gap-1.5 mt-1 sm:mt-0 sm:inline-flex">
                           → {r.suggested_course}
+                          {r.suggested_course_id && (
+                            <Button 
+                              size="icon" 
+                              variant="ghost" 
+                              className="h-5 w-5 rounded-full hover:bg-amber-500/10 text-amber-600" 
+                              onClick={() => handleAssign(r)} 
+                              title="Assign Training"
+                              disabled={acting === r.name}
+                            >
+                              {acting === r.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                            </Button>
+                          )}
                         </span>
+                      ) : (r.status === "gap" || r.status === "one_course_away") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="ml-2 h-6 text-xs text-amber-600 border-amber-600/30 hover:bg-amber-600/10"
+                          onClick={() => setAssignDialogUser(r)}
+                        >
+                          Assign Training...
+                        </Button>
                       )}
                       {r.missing_skills.length > 0 && (
                         <span className="text-muted-foreground/60 ml-2">
@@ -1867,6 +1916,15 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
           )}
         </CardContent>
       </Card>
+      <AssignTrainingDialog
+        isOpen={!!assignDialogUser}
+        onClose={() => setAssignDialogUser(null)}
+        employee={assignDialogUser}
+        authHeaders={auth}
+        onSuccess={() => {
+          // Re-fetch digest or just rely on state if needed
+        }}
+      />
     </div>
   );
 }

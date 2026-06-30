@@ -55,18 +55,87 @@ _TRANSCRIPT_EXTS = ("vtt", "srt")
 # so the top-level folder name is NOT a reliable project key. We route each file
 # to a project by its first path segment (relative to the Projects root):
 #
-#   Individual Project Data/<Project>/...   → one project per <Project> subfolder
-#   Transcripts & Summary/<file>            → one project per summary document
-#   Flash Review Transcripts/...             → aggregate: all files → single slug
-#   Newsletters / Policy / unknown           → NOT projects, skipped entirely
+#   Individual Project Data/<Project>/...              → one project per <Project> subfolder
+#   Transcripts & Summary/<file>                       → one project per summary document
+#   Flash Review Transcripts/<year>/<month>/<date>/... → one project per dated session
+#   Newsletters / Policy / unknown                     → NOT projects, skipped entirely
 #
-# Everything else (loose files, unknown folders) is skipped so non-project content
-# never becomes a bogus "project".
+# Each Flash Review dated folder (e.g. "07th_Jan") becomes its own card. The card
+# name is extracted from the summary filename (stripped of "Masked_" / "_Summary");
+# the transcript in the same folder is grouped under the same slug. The session
+# date (year/month/date) is carried as metadata in the slug and document path.
 _FOLDER_AS_PROJECT = "individual project data"   # subfolder = project
 _DOC_AS_PROJECT = "transcripts & summary"        # each file = project
-_AGGREGATE_AS_PROJECT = "flash review transcripts"  # all files → one slug
-_AGGREGATE_SLUG = "FlashReviews"
-_AGGREGATE_NAME = "Flash Reviews"
+_AGGREGATE_AS_PROJECT = "flash review transcripts"  # dated sub-folder = project
+
+
+def _clean_fr_summary_name(filename: str) -> str:
+    """Human-readable project name from a Flash Review summary/detail filename.
+
+    e.g. 'Masked_LYB_Sales_Incentive_Planning_SIP_Summary.docx'
+         → 'LYB Sales Incentive Planning SIP'
+    """
+    stem = filename.rsplit(".", 1)[0]
+    stem = re.sub(r"^[Mm]asked_", "", stem)
+    stem = re.sub(r"_?[Ss]ummary$", "", stem, flags=re.IGNORECASE)
+    # Strip MS-Teams recording suffixes like "-20250107_173121-Meeting Recording-en-IN"
+    stem = re.sub(r"-\d{8}_\d{6}-Meeting Recording.*$", "", stem)
+    stem = re.sub(r"-Meeting Recording.*$", "", stem, flags=re.IGNORECASE)
+    return stem.replace("_", " ").strip() or stem
+
+
+def _fr_date_label(date_folder: str, month: str, year: str) -> str:
+    """Fallback display name when no summary filename is available."""
+    date_clean = date_folder.replace("_", " ")
+    month_clean = month.split("-")[-1] if "-" in month else month
+    # Avoid doubling the month when it already appears in date_clean (e.g. "07th Jan")
+    if month_clean.lower() in date_clean.lower():
+        return f"Flash Review {date_clean} {year}".strip()
+    return f"Flash Review {date_clean} {month_clean} {year}".strip()
+
+
+def _route_flash_review(segs: list[str]) -> tuple[str, str]:
+    """Route a file from the 'Flash Review Transcripts' tree to a per-session card.
+
+    Supported path shapes (segs[0] = "Flash Review Transcripts"):
+      A) year/month/date_folder/[Summary|Transcript]/file  → per date_folder session
+      B) year/month/date_folder/file (no type sub-folder)  → per date_folder session
+      C) year/month/file (flat — no date sub-folder)       → per file
+    """
+    # Need at least top/year/month to route anything meaningful.
+    if len(segs) < 3:
+        return (_project_slug(f"FlashReview{''.join(segs[1:3])}"), "Flash Reviews")
+
+    year = segs[1]
+    month = segs[2]
+
+    # Structures A & B: segs[3] is a date folder (folders have no '.' in their name)
+    if len(segs) >= 4 and "." not in segs[3]:
+        date_folder = segs[3]
+        slug = _project_slug(f"FR{year}{month}{date_folder}")
+
+        # Structure A: type sub-folder present (Summary / Transcript / etc.)
+        if len(segs) >= 6 and "." not in segs[4]:
+            file_type = segs[4].lower()
+            filename = segs[5]
+            if file_type == "summary":
+                name = _clean_fr_summary_name(filename)
+            else:
+                name = _fr_date_label(date_folder, month, year)
+        # Structure B / A with shallow nesting
+        elif len(segs) >= 5:
+            filename = segs[4]
+            name = _clean_fr_summary_name(filename)
+        else:
+            name = _fr_date_label(date_folder, month, year)
+
+        return (slug, name)
+
+    # Structure C: flat — file sits directly under year/month
+    filename = segs[-1]
+    slug = _project_slug(f"FR{year}{month}{filename.rsplit('.', 1)[0]}")
+    name = _clean_fr_summary_name(filename)
+    return (slug, name)
 
 
 def _route_file(rel_path: str) -> tuple[str, str] | None:
@@ -77,13 +146,21 @@ def _route_file(rel_path: str) -> tuple[str, str] | None:
         return None  # loose file directly under the root — not a project
     top = segs[0].lower()
     if top == _FOLDER_AS_PROJECT and len(segs) >= 3:
-        name = segs[1]
+        sub = segs[1]
+        # If the immediate sub-folder is itself a doc-per-project container (same
+        # name as _DOC_AS_PROJECT, e.g. "Transcripts & Summary" nested under
+        # "Individual Project Data"), route each file as its own project using
+        # the filename stem instead of lumping all files under one slug.
+        if sub.lower() == _DOC_AS_PROJECT:
+            stem = segs[-1].rsplit(".", 1)[0].strip()
+            return (_project_slug(stem), stem)
+        name = sub
         return (_project_slug(name), name)
     if top == _DOC_AS_PROJECT:
         stem = segs[-1].rsplit(".", 1)[0].strip()
         return (_project_slug(stem), stem)
     if top == _AGGREGATE_AS_PROJECT:
-        return (_AGGREGATE_SLUG, _AGGREGATE_NAME)
+        return _route_flash_review(segs)
     return None  # Newsletters, Policy, unknown → skip
 
 
@@ -101,11 +178,39 @@ def _key_builder(filename: str, rel_path: str) -> str | None:
 
 def _title_builder(filename: str, rel_path: str) -> str:
     """Self-describing Policy.title, e.g. 'CMDR — Transcript: Kickoff'. The project
-    name (segment 0 of the title) is what list_project_slugs reads back."""
-    route = _route_file(rel_path)
-    name = route[1] if route else filename.rsplit(".", 1)[0].strip()
+    name (segment 0 of the title) is what list_project_slugs reads back.
+
+    For Flash Review files, prefer the summary-file-derived name so that both the
+    summary and transcript for the same session carry the same project label."""
+    segs = [s for s in rel_path.split("/") if s]
+    top_lower = segs[0].lower() if segs else ""
+
+    if top_lower == _AGGREGATE_AS_PROJECT:
+        route = _route_flash_review(segs)
+        name = route[1]
+        # If this file is itself a summary but got a date-based fallback name,
+        # derive the name directly from the filename.
+        if name.startswith("Flash Review ") and any(h in filename.lower() for h in _SUMMARY_HINTS):
+            name = _clean_fr_summary_name(filename)
+        # Determine doc type from the explicit type sub-folder when present (segs[4]),
+        # NOT from the full rel_path — "Flash Review Transcripts" in the path would
+        # otherwise cause every file to be classified as a transcript.
+        if len(segs) >= 5 and "." not in segs[4]:
+            ft = segs[4].lower()
+            if any(h in ft for h in _SUMMARY_HINTS):
+                doc_type = "Summary"
+            elif "transcript" in ft:
+                doc_type = "Transcript"
+            else:
+                doc_type = segs[4].capitalize()
+        else:
+            doc_type = _classify_doc_type(filename, filename).capitalize()
+    else:
+        route = _route_file(rel_path)
+        name = route[1] if route else filename.rsplit(".", 1)[0].strip()
+        doc_type = _classify_doc_type(filename, rel_path).capitalize()
+
     stem = filename.rsplit(".", 1)[0].strip()
-    doc_type = _classify_doc_type(filename, rel_path).capitalize()
     return f"{name} — {doc_type}: {stem}"
 
 
@@ -233,7 +338,7 @@ def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]
                 all_items.append(it)
 
         elif top_lower == _AGGREGATE_AS_PROJECT:
-            # Recurse into Flash Review Transcripts — all files → single aggregate slug.
+            # Recurse into Flash Review Transcripts — each dated sub-folder = one project card.
             folder_path = f"{root}/{folder_name}"
             sub_items = sp_client.list_files_recursive(drive_id, folder_path)
             for it in sub_items:
@@ -242,14 +347,26 @@ def route_live_projects(drive_id: str, root: str) -> tuple[dict[str, str], list]
             all_items.extend(sub_items)
         # else: Newsletters, Policy, unknown → skip entirely
 
+    # Build live slug → name, preferring summary-derived names over date-based
+    # transcript fallbacks so the card shows the project name, not the date.
+    summary_slugs: set[str] = set()
     for it in all_items:
         name = it.get("name", "")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if ext not in exts:
             continue
-        route = _route_file(it.get("relative_path", name))
-        if route:
-            live[route[0]] = route[1]
+        rel = it.get("relative_path", name)
+        route = _route_file(rel)
+        if not route:
+            continue
+        slug, display_name = route
+        is_summary_path = "/summary/" in rel.lower()
+        if slug not in live:
+            live[slug] = display_name
+        # Summary-derived names always win; transcript names only set if no summary yet
+        if is_summary_path and slug not in summary_slugs:
+            live[slug] = display_name
+            summary_slugs.add(slug)
 
     return live, all_items
 

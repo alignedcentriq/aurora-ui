@@ -392,6 +392,20 @@ SKILL_REGISTRY: tuple[SkillSpec, ...] = (
         roles=_r("pmo", "manager", "admin"),
         risk_class="read",
     ),
+    SkillSpec(
+        key="me",
+        domain="ms365",
+        sub_intent="personal",
+        display_name="My Workspace",
+        tool_groups=("ms365_email", "ms365_teams", "ms365_community"),
+        prompt_fragment=(
+            "[ACTIVE MODE: My Workspace] The user has activated My Workspace mode. "
+            "Prioritise their personal Microsoft 365 delegated actions: send email, post to a "
+            "Teams channel or Viva Engage community, send a Teams message, create a group chat, "
+            "and read their own inbox/calendar/Teams chats."
+        ),
+        risk_class="medium",
+    ),
 )
 
 _SKILL_BY_KEY: dict[str, SkillSpec] = {s.key: s for s in SKILL_REGISTRY}

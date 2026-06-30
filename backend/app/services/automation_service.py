@@ -153,7 +153,8 @@ def update(user_email: str, user_role: str, rule_id: int, payload: dict) -> dict
         changed_timing = False
         for field in [
             "name", "description", "frequency", "day_of_week", "day_of_month",
-            "hour", "minute", "email_subject", "email_body", "recipients_json", "is_active",
+            "hour", "minute", "automation_kind", "extra_config",
+            "email_subject", "email_body", "recipients_json", "is_active",
         ]:
             if field in payload:
                 setattr(rule, field, payload[field])
@@ -485,10 +486,50 @@ def _fire_udemy_inactive(rule: AutomationRule, sender_email: str) -> dict:
     return results
 
 
+def _dispatch_smart(rule: AutomationRule, sender_email: str) -> dict:
+    """Route a non-custom automation_kind to the appropriate smart generator."""
+    from app.services.email_service import _send_html
+    from app.services import smart_generators
+
+    kind = rule.automation_kind or "custom_email"
+
+    if kind == "udemy_inactive":
+        results = _fire_udemy_inactive(rule, sender_email)
+        return {"success": True, **results}
+
+    if kind == "roi_digest":
+        emails = _extract_emails(rule.recipients_json)
+        if not emails:
+            return {"success": False, "error": "no_recipients"}
+        html_body, files = _render_roi_digest(rule)
+        ok = _send_html(sender_email, emails, rule.email_subject or "ROI Digest", html_body, files=files)
+        return {"success": ok, "sent_to": emails}
+
+    # All catalog smart types go through smart_generators
+    generator = getattr(smart_generators, f"gen_{kind}", None)
+    if generator:
+        emails = _extract_emails(rule.recipients_json)
+        if not emails:
+            return {"success": False, "error": "no_recipients"}
+        try:
+            subject, html_body = generator(rule)
+            ok = _send_html(sender_email, emails, subject, html_body)
+            return {"success": ok, "sent_to": emails}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    # Fallback: plain custom email
+    emails = _extract_emails(rule.recipients_json)
+    if not emails:
+        return {"success": False, "error": "no_recipients"}
+    html_body = _build_html(rule.email_subject or rule.name, rule.email_body or "")
+    ok = _send_html(sender_email, emails, rule.email_subject or rule.name, html_body)
+    return {"success": ok, "sent_to": emails}
+
+
 def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
     """Send an automation email immediately (test / on-demand).
     Only creator or Super Admin may trigger this."""
-    from app.services.email_service import _send_html
     db = SessionLocal()
     try:
         rule = db.query(AutomationRule).filter(AutomationRule.id == rule_id).first()
@@ -496,21 +537,7 @@ def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
             return {"success": False, "error": "not_found"}
         if not _can_manage(rule, sender_email, user_role):
             return {"success": False, "error": "forbidden"}
-
-        if rule.automation_kind == "udemy_inactive":
-            results = _fire_udemy_inactive(rule, sender_email)
-            return {"success": True, **results}
-
-        emails = _extract_emails(rule.recipients_json)
-        if not emails:
-            return {"success": False, "error": "no_recipients"}
-        if rule.automation_kind == "roi_digest":
-            html_body, files = _render_roi_digest(rule)
-            ok = _send_html(sender_email, emails, rule.email_subject, html_body, files=files)
-        else:
-            html_body = _build_html(rule.email_subject, rule.email_body)
-            ok = _send_html(sender_email, emails, rule.email_subject, html_body)
-        return {"success": ok, "sent_to": emails}
+        return _dispatch_smart(rule, sender_email)
     finally:
         db.close()
 
@@ -519,7 +546,6 @@ def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
 
 def run_due() -> int:
     """Fire all active rules whose next_run <= now. Called every 60 s from main.py."""
-    from app.services.email_service import _send_html
     now = datetime.datetime.now()
     db = SessionLocal()
     try:
@@ -536,26 +562,20 @@ def run_due() -> int:
         fired = 0
         for rule in due:
             try:
-                if rule.automation_kind == "udemy_inactive":
-                    res = _fire_udemy_inactive(rule, rule.created_by)
-                    sent = res.get("report_sent") or res.get("nudges_sent", 0) > 0
-                    rule.last_status = (
-                        f"sent:report={'yes' if res.get('report_sent') else 'no'}"
-                        f",nudges={res.get('nudges_sent',0)}"
-                        f",inactive={res.get('inactive_count',0)}"
-                    ) if sent else "failed:no_delivery"
-                else:
-                    emails = _extract_emails(rule.recipients_json)
-                    if emails:
-                        if rule.automation_kind == "roi_digest":
-                            html_body, files = _render_roi_digest(rule)
-                            ok = _send_html(rule.created_by, emails, rule.email_subject, html_body, files=files)
-                        else:
-                            html_body = _build_html(rule.email_subject, rule.email_body)
-                            ok = _send_html(rule.created_by, emails, rule.email_subject, html_body)
-                        rule.last_status = "sent" if ok else "failed:send_error"
+                res = _dispatch_smart(rule, rule.created_by)
+                if res.get("success"):
+                    sent_to = res.get("sent_to") or []
+                    nudges = res.get("nudges_sent", 0)
+                    inactive = res.get("inactive_count", 0)
+                    if nudges or inactive:
+                        rule.last_status = (
+                            f"sent:report={'yes' if res.get('report_sent') else 'no'}"
+                            f",nudges={nudges},inactive={inactive}"
+                        )
                     else:
-                        rule.last_status = "failed:no_recipients"
+                        rule.last_status = f"sent:{len(sent_to)}_recipients"
+                else:
+                    rule.last_status = f"failed:{res.get('error','unknown')}"
             except Exception as exc:
                 rule.last_status = f"failed:{str(exc)[:120]}"
             finally:
