@@ -669,7 +669,15 @@ def get_for_employee(email: str) -> Optional[dict]:
                 name=email.split("@")[0].replace(".", " ").title(),
                 email=email,
                 role="Employee",
-                joining_date=_now().date()
+                joining_date=_now().date(),
+                department="IT",
+                designation="Associate",
+                location="Pune",
+                employment_type="Full-time",
+                pf_number="PF-123",
+                insurance_plan="Standard",
+                tax_regime="New",
+                shift_type="Day",
             )
             db.add(emp)
             db.commit()
@@ -719,7 +727,15 @@ def get_journey_for(email: str):
             name=email.split("@")[0].replace(".", " ").title(),
             email=email,
             role="Employee",
-            joining_date=_now().date()
+            joining_date=_now().date(),
+            department="IT",
+            designation="Associate",
+            location="Pune",
+            employment_type="Full-time",
+            pf_number="PF-123",
+            insurance_plan="Standard",
+            tax_regime="New",
+            shift_type="Day",
         )
         db.add(emp)
         db.commit()
