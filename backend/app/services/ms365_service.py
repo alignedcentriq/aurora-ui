@@ -504,6 +504,53 @@ async def book_room(
         return _error(f"Failed to book room: {e}")
 
 
+async def create_teams_event(
+    token: str,
+    subject: str,
+    start: str,
+    end: str,
+    attendee_emails: list[str],
+    body_html: str = "",
+    timezone: str = "Asia/Kolkata",
+) -> dict:
+    """Create a calendar event that is an online Teams meeting and invite attendees.
+
+    start/end: ISO 8601 datetime strings in `timezone` (e.g. '2026-07-05T16:00:00').
+    Graph auto-provisions the Teams join link when isOnlineMeeting=true. Returns the
+    event id, the join URL, and the event web link on success.
+    """
+    url = f"{GRAPH_BASE}/me/events"
+    attendees = [
+        {"emailAddress": {"address": a.strip()}, "type": "required"}
+        for a in attendee_emails if a and a.strip()
+    ]
+    payload = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": body_html or subject},
+        "start": {"dateTime": start, "timeZone": timezone},
+        "end":   {"dateTime": end,   "timeZone": timezone},
+        "attendees": attendees,
+        "isOnlineMeeting": True,
+        "onlineMeetingProvider": "teamsForBusiness",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(url, headers=_headers(token), json=payload)
+            resp.raise_for_status()
+            event = resp.json()
+        join_url = (event.get("onlineMeeting") or {}).get("joinUrl", "")
+        return {
+            "success": True,
+            "event_id": event.get("id", ""),
+            "join_url": join_url,
+            "web_link": event.get("webLink", ""),
+        }
+    except httpx.HTTPStatusError as e:
+        return _error(f"Event creation error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to create Teams event: {e}")
+
+
 # -- Teams Channels -----------------------------------------------------------
 
 async def fetch_joined_teams(token: str) -> dict:

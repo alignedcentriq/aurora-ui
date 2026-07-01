@@ -69,6 +69,12 @@ def _get_or_create_employee(db, email: str) -> Employee:
             notify_hr_new_employee(emp.email, emp.name, db)
         except Exception as _e:
             pass
+        # Email the new hire's manager a magic link to schedule their intro call
+        try:
+            from app.services.manager_call_service import ensure_invite
+            ensure_invite(emp.email, emp.name, db)
+        except Exception as _e:
+            pass
     return emp
 
 
@@ -861,9 +867,8 @@ def _attach_allocations(employees: list[dict]) -> None:
         pass
 
 
-@router.get("/directory")
-def employee_directory(user: CurrentUser = Depends(get_current_user)):
-    """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
+def _compose_directory() -> tuple[list[dict], str]:
+    """Build the flat all-staff directory (employees list + source label).
 
     Primary source (when ZOHO_DBURL is configured) is the live Zoho People profile
     VIEW on the separate HR Postgres server — the authoritative roster with full
@@ -872,8 +877,7 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
 
     Fallback source is the synced MS365 / Azure AD directory enriched per-person by
     the local Zoho HR overlay + Employee row, used when the Zoho DB is unset or
-    unreachable. Open to every authenticated user; photos load via the public MS365
-    photo proxy keyed by email.
+    unreachable.
     """
     from app.services import zoho_directory_service
 
@@ -884,7 +888,7 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
         if employees:
             _attach_enrichment(employees)
             _attach_allocations(employees)
-            return {"count": len(employees), "employees": employees, "source": "zoho"}
+            return employees, "zoho"
 
     from app.models import MS365User
     from app.services.ms365_service import _is_non_human
@@ -934,9 +938,39 @@ def employee_directory(user: CurrentUser = Depends(get_current_user)):
         out.sort(key=lambda x: x["name"].lower())
         _attach_enrichment(out)
         _attach_allocations(out)
-        return {"count": len(out), "employees": out, "source": "ms365"}
+        return out, "ms365"
     finally:
         db.close()
+
+
+@router.get("/directory")
+def employee_directory(user: CurrentUser = Depends(get_current_user)):
+    """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
+
+    Open to every authenticated user; photos load via the public MS365 photo proxy
+    keyed by email. See `_compose_directory` for how sources are combined.
+    """
+    employees, source = _compose_directory()
+    return {"count": len(employees), "employees": employees, "source": source}
+
+
+class DirectoryQueryRequest(BaseModel):
+    query: str
+
+
+@router.post("/directory/query")
+def employee_directory_query(req: DirectoryQueryRequest, user: CurrentUser = Depends(get_current_user)):
+    """Free-text directory search fallback: translates `query` into SQL over the
+    composed directory via an LLM and returns matching employee codes.
+
+    Used by the copilot sidebar's /directory intercept when its instant regex parser
+    (multi-skill/project/year-range phrasing) can't find a filterable dimension —
+    see directory_query_service for why SQL-over-the-composed-payload beats guessing
+    at fixed fields. Returns {"matched": false} for non-filter queries or when the
+    model's SQL doesn't pass validation, so the frontend can fall back further."""
+    from app.services import directory_query_service
+    employees, _source = _compose_directory()
+    return directory_query_service.run_query(employees, req.query)
 
 
 @router.get("/directory/{employee_code}/enrichment")

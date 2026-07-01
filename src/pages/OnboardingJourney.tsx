@@ -28,13 +28,15 @@ import {
   Users,
   GraduationCap,
   Briefcase,
-  MapPin,
+  Video,
   Mail,
   Calendar,
   Check,
   AlertCircle,
   Clock,
   ShieldCheck,
+  PenLine,
+  X as XIcon,
 } from "lucide-react";
 import { Fragment } from "react";
 import { cn } from "@/lib/utils";
@@ -75,8 +77,17 @@ interface JourneyView {
   status: "active" | "completed";
   progress_pct: number;
   next_step: string | null;
+  assigned_device: string | null;
   steps: StepView[];
   documents: DocView[];
+}
+interface ManagerCallView {
+  status: "none" | "pending" | "scheduled" | "cancelled";
+  manager_name?: string | null;
+  manager_email?: string | null;
+  scheduled_start?: string | null;
+  scheduled_label?: string;
+  teams_join_url?: string | null;
 }
 interface VideoView {
   id?: string;
@@ -84,6 +95,13 @@ interface VideoView {
   description?: string;
   url: string;
   chapters: { title: string; start: number }[];
+}
+interface InductionDocView {
+  id: string;
+  title: string;
+  description?: string;
+  url: string;
+  uploaded_filename?: string | null;
 }
 
 const STATUS_PILL: Record<string, string> = {
@@ -115,7 +133,9 @@ export function OnboardingJourney() {
   const [panel, setPanel] = useState<"steps" | "documents" | "video-library" | "video">("steps");
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
   const [videos, setVideos] = useState<VideoView[]>([]);
+  const [inductionDocs, setInductionDocs] = useState<InductionDocView[]>([]);
   const [activeVideo, setActiveVideo] = useState<VideoView | null>(null);
+  const [managerCall, setManagerCall] = useState<ManagerCallView | null>(null);
 
   const authHeaders = useMemo(
     () => ({
@@ -135,6 +155,11 @@ export function OnboardingJourney() {
       if (data && data.steps.length > 0) {
         setSelectedStepKey((prev) => prev || data.next_step || data.steps[0].key);
       }
+      // Manager intro-call status (best-effort — never blocks the journey render).
+      fetch("/api/onboarding/me/manager-call", { headers: authHeaders })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((mc) => mc && setManagerCall(mc))
+        .catch(() => {});
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't load your onboarding.");
     } finally {
@@ -191,6 +216,10 @@ export function OnboardingJourney() {
             .then((list: VideoView[]) => setVideos(Array.isArray(list) ? list : []))
             .catch(() => {});
         }
+        fetch("/api/onboarding/induction-documents", { headers: authHeaders })
+          .then((r) => r.json())
+          .then((list: InductionDocView[]) => setInductionDocs(Array.isArray(list) ? list : []))
+          .catch(() => {});
         return;
       }
       if (step.action_payload?.route) {
@@ -606,17 +635,24 @@ export function OnboardingJourney() {
                           <div className="rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-4 space-y-4">
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/50 dark:border-white/[0.04] pb-2.5">
                               <div>
-                                <span className="text-[10px] text-muted-foreground">Ticket ID</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  Assigned Device
+                                </span>
                                 <p className="text-[13px] font-black text-foreground">
-                                  SRV-IT-2026-9812
+                                  {view.assigned_device || "To be assigned by IT"}
                                 </p>
                               </div>
                               <div className="text-right">
-                                <span className="text-[10px] text-muted-foreground">
-                                  Support Engineer
-                                </span>
-                                <p className="text-[13px] font-bold text-foreground">
-                                  David Miller
+                                <span className="text-[10px] text-muted-foreground">Status</span>
+                                <p
+                                  className={cn(
+                                    "text-[13px] font-bold",
+                                    view.assigned_device
+                                      ? "text-emerald-600 dark:text-emerald-400"
+                                      : "text-amber-600 dark:text-amber-400",
+                                  )}
+                                >
+                                  {view.assigned_device ? "Assigned" : "Awaiting assignment"}
                                 </p>
                               </div>
                             </div>
@@ -631,17 +667,31 @@ export function OnboardingJourney() {
                                   account
                                 </div>
                                 <div className="flex items-center gap-2 text-emerald-500">
-                                  <Check className="h-4 w-4 stroke-[3px]" /> Slack & Gmail access
+                                  <Check className="h-4 w-4 stroke-[3px]" /> Microsoft 365 & Teams
+                                  access
                                 </div>
-                                <div className="flex items-center gap-2 text-muted-foreground">
-                                  <div className="h-4 w-4 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center justify-center shrink-0">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-violet-500 animate-ping" />
-                                  </div>
-                                  MacBook Pro 16" configuration
+                                <div
+                                  className={cn(
+                                    "flex items-center gap-2",
+                                    view.assigned_device
+                                      ? "text-emerald-500"
+                                      : "text-muted-foreground",
+                                  )}
+                                >
+                                  {view.assigned_device ? (
+                                    <Check className="h-4 w-4 stroke-[3px]" />
+                                  ) : (
+                                    <div className="h-4 w-4 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center justify-center shrink-0">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500 animate-ping" />
+                                    </div>
+                                  )}
+                                  {view.assigned_device
+                                    ? `${view.assigned_device} configuration`
+                                    : "Device configuration"}
                                 </div>
                                 <div className="flex items-center gap-2 text-muted-foreground">
                                   <div className="h-4 w-4 rounded-full border border-slate-200 dark:border-zinc-700 shrink-0" />
-                                  Yubikey Security Key mailing
+                                  Security key mailing
                                 </div>
                               </div>
                             </div>
@@ -723,34 +773,63 @@ export function OnboardingJourney() {
 
                       {activeStep.key === "meet_manager" && (
                         <div className="space-y-4">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                            Manager Contact Card
-                          </span>
-                          <div className="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-4">
-                            <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg font-black text-[22px] text-white shrink-0">
-                              SJ
-                            </div>
-                            <div className="flex-1 text-center sm:text-left space-y-1">
-                              <h4 className="text-[15px] font-bold text-foreground">
-                                Sarah Jenkins
-                              </h4>
-                              <p className="text-[12px] text-violet-500 font-semibold">
-                                Director of Data & Analytics
-                              </p>
-                              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-2 text-[11px] text-muted-foreground">
-                                <span className="flex items-center gap-1">
-                                  <MapPin className="h-3.5 w-3.5" /> Pune Office, Floor 10
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <Mail className="h-3.5 w-3.5" /> sarah.j@centriq.ai
-                                </span>
+                          {managerCall && managerCall.manager_name && (
+                            <>
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                                Manager Contact Card
+                              </span>
+                              <div className="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 p-4">
+                                <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg font-black text-[22px] text-white shrink-0">
+                                  {managerCall
+                                    .manager_name!.split(" ")
+                                    .slice(0, 2)
+                                    .map((n) => n[0])
+                                    .join("")
+                                    .toUpperCase()}
+                                </div>
+                                <div className="flex-1 text-center sm:text-left space-y-1">
+                                  <h4 className="text-[15px] font-bold text-foreground">
+                                    {managerCall.manager_name}
+                                  </h4>
+                                  {managerCall.manager_email && (
+                                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-2 text-[11px] text-muted-foreground">
+                                      <span className="flex items-center gap-1">
+                                        <Mail className="h-3.5 w-3.5" /> {managerCall.manager_email}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+                            </>
+                          )}
+
+                          {/* Intro-call scheduling status (driven by the manager's magic-link action) */}
+                          {managerCall?.status === "scheduled" ? (
+                            <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-3 space-y-2">
+                              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                <Calendar className="h-4 w-4 shrink-0" />
+                                <span>Intro call scheduled — {managerCall.scheduled_label}</span>
+                              </div>
+                              {managerCall.teams_join_url && (
+                                <a
+                                  href={managerCall.teams_join_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[#4b53bc] dark:text-indigo-300 hover:underline"
+                                >
+                                  <Video className="h-3.5 w-3.5" /> Join Microsoft Teams meeting →
+                                </a>
+                              )}
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2 rounded-xl bg-violet-500/10 border border-violet-500/20 px-3 py-2 text-[12px] text-violet-600 dark:text-violet-400">
-                            <Calendar className="h-4 w-4 shrink-0" />
-                            <span>1:1 Team Welcome Meeting scheduled today at 4:00 PM.</span>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 text-[12px] text-amber-600 dark:text-amber-400">
+                              <Clock className="h-4 w-4 shrink-0" />
+                              <span>
+                                Your intro call isn't scheduled yet
+                                {managerCall?.manager_name ? ` — ${managerCall.manager_name} has been invited to pick a time.` : ". Your manager will be invited to pick a time."}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -880,6 +959,7 @@ export function OnboardingJourney() {
                   >
                     <VideoLibraryPanel
                       videos={videos}
+                      documents={inductionDocs}
                       onSelect={(v) => { setActiveVideo(v); setPanel("video"); }}
                     />
                   </motion.div>
@@ -968,30 +1048,175 @@ function DocumentsPanel({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [fillDoc, setFillDoc] = useState<DocView | null>(null);
+  const [fillValues, setFillValues] = useState<Record<string, string>>({});
+  const [filling, setFilling] = useState(false);
+  const [sigMode, setSigMode] = useState<"draw" | "type" | "upload">("draw");
+  const [typedSig, setTypedSig] = useState("");
+  const [uploadedSig, setUploadedSig] = useState<string | null>(null);
+  const [sigUploadError, setSigUploadError] = useState<string | null>(null);
+  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
+  const hasDrawnRef = useRef(false);
 
-  const download = useCallback(
-    async (doc: DocView) => {
+  const openFill = useCallback((doc: DocView) => {
+    setFillValues(Object.fromEntries((doc.fields || []).map((f) => [f, ""])));
+    setSigMode("draw");
+    setTypedSig("");
+    setUploadedSig(null);
+    setSigUploadError(null);
+    hasDrawnRef.current = false;
+    setFillDoc(doc);
+  }, []);
+
+  // Normalize an uploaded signature image to a size-capped PNG data URL (drawn onto an
+  // offscreen canvas so the backend always receives the same format it already renders —
+  // no server-side image-format handling needed).
+  const handleSigFile = useCallback((file: File) => {
+    setSigUploadError(null);
+    if (!file.type.startsWith("image/")) {
+      setSigUploadError("Please choose an image file.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onload = () => {
+        const maxW = 452, maxH = 140;
+        const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.width * scale));
+        c.height = Math.max(1, Math.round(img.height * scale));
+        c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
+        setUploadedSig(c.toDataURL("image/png"));
+      };
+      img.onerror = () => setSigUploadError("Couldn't read that image.");
+      img.src = reader.result as string;
+    };
+    reader.onerror = () => setSigUploadError("Couldn't read that file.");
+    reader.readAsDataURL(file);
+  }, []);
+
+  const clearSignature = useCallback(() => {
+    const c = sigCanvasRef.current;
+    if (c) c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+    hasDrawnRef.current = false;
+  }, []);
+
+  const startDraw = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const c = sigCanvasRef.current;
+    if (!c) return;
+    drawingRef.current = true;
+    const ctx = c.getContext("2d")!;
+    const r = c.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(e.clientX - r.left, e.clientY - r.top);
+  }, []);
+
+  const moveDraw = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    const c = sigCanvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d")!;
+    const r = c.getBoundingClientRect();
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineTo(e.clientX - r.left, e.clientY - r.top);
+    ctx.stroke();
+    hasDrawnRef.current = true;
+  }, []);
+
+  const endDraw = useCallback(() => {
+    drawingRef.current = false;
+  }, []);
+
+  // Build a PNG data URL from the drawn canvas, the typed name (rendered in script), or an
+  // uploaded signature image.
+  const buildSignature = useCallback((): string | null => {
+    if (sigMode === "draw") {
+      return hasDrawnRef.current && sigCanvasRef.current
+        ? sigCanvasRef.current.toDataURL("image/png")
+        : null;
+    }
+    if (sigMode === "upload") {
+      return uploadedSig;
+    }
+    const name = typedSig.trim();
+    if (!name) return null;
+    const c = document.createElement("canvas");
+    c.width = 480;
+    c.height = 120;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "italic 44px 'Segoe Script', 'Brush Script MT', cursive";
+    ctx.textBaseline = "middle";
+    ctx.fillText(name, 12, 64);
+    return c.toDataURL("image/png");
+  }, [sigMode, typedSig, uploadedSig]);
+
+  const submitFill = useCallback(async () => {
+    if (!fillDoc) return;
+    setFilling(true);
+    try {
+      const res = await fetch(`/api/onboarding/me/documents/${fillDoc.doc_key}/fill`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ field_values: fillValues, signature: buildSignature() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || "Couldn't submit");
+      toast.success(data.message || "Document completed and sent to HR ✓");
+      setFillDoc(null);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't submit the document.");
+    } finally {
+      setFilling(false);
+    }
+  }, [fillDoc, fillValues, authHeaders, onChanged, buildSignature]);
+
+  const downloadFile = useCallback(
+    async (url: string, fallbackName: string, errorMsg: string) => {
       try {
-        const res = await fetch(`/api/onboarding/documents/${doc.doc_key}/template`, {
-          headers: authHeaders,
-        });
-        if (!res.ok) throw new Error("Couldn't fetch template");
+        const res = await fetch(url, { headers: authHeaders });
+        if (!res.ok) throw new Error(errorMsg);
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        const objUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url;
+        a.href = objUrl;
         const cd = res.headers.get("Content-Disposition") || "";
         const m = cd.match(/filename="?([^"]+)"?/);
-        a.download = m?.[1] || `${doc.doc_key}.txt`;
+        a.download = m?.[1] || fallbackName;
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
+        URL.revokeObjectURL(objUrl);
       } catch {
-        toast.error("Couldn't download that template.");
+        toast.error(errorMsg);
       }
     },
     [authHeaders],
+  );
+
+  const download = useCallback(
+    (doc: DocView) =>
+      downloadFile(
+        `/api/onboarding/documents/${doc.doc_key}/template`,
+        `${doc.doc_key}.txt`,
+        "Couldn't download that template.",
+      ),
+    [downloadFile],
+  );
+
+  const downloadSubmission = useCallback(
+    (doc: DocView) =>
+      downloadFile(
+        `/api/onboarding/me/documents/${doc.doc_key}/submission`,
+        doc.original_name || `${doc.doc_key}_filled`,
+        "Couldn't download your submission.",
+      ),
+    [downloadFile],
   );
 
   const upload = useCallback(
@@ -1090,6 +1315,15 @@ function DocumentsPanel({
 
               {/* Action Buttons & Dropzone */}
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-200/50 dark:border-white/[0.04] pt-4">
+                {doc.fields && doc.fields.length > 0 && (
+                  <button
+                    onClick={() => openFill(doc)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-violet-300 dark:border-violet-700/60 bg-violet-500/10 px-4 py-2 text-[12px] font-bold text-violet-600 dark:text-violet-300 hover:bg-violet-500/20 transition-all cursor-pointer shadow-sm"
+                  >
+                    <PenLine className="h-3.5 w-3.5" /> Fill in app
+                  </button>
+                )}
+
                 <button
                   onClick={() => download(doc)}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/60 px-4 py-2 text-[12px] font-bold text-foreground hover:bg-muted transition-all cursor-pointer shadow-sm"
@@ -1097,13 +1331,23 @@ function DocumentsPanel({
                   <Download className="h-3.5 w-3.5 text-muted-foreground" /> Download Form
                 </button>
 
+                {doc.submitted && (
+                  <button
+                    onClick={() => downloadSubmission(doc)}
+                    title="Download the exact filled file that was saved and sent to HR"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700/60 bg-emerald-500/10 px-4 py-2 text-[12px] font-bold text-emerald-600 dark:text-emerald-300 hover:bg-emerald-500/20 transition-all cursor-pointer shadow-sm"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download My Submission
+                  </button>
+                )}
+
                 <label className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 px-4 py-2 text-[12px] font-bold text-white shadow-md shadow-violet-500/10 hover:shadow-violet-500/20 hover:scale-[1.01] hover:brightness-[1.03] transition-all cursor-pointer">
                   {busy === doc.doc_key ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Upload className="h-3.5 w-3.5" />
                   )}
-                  {doc.submitted ? "Re-upload document" : "Upload filled PDF"}
+                  {doc.submitted ? "Re-upload document" : "Upload document"}
                   <input
                     type="file"
                     className="hidden"
@@ -1124,6 +1368,178 @@ function DocumentsPanel({
           );
         })}
       </div>
+
+      {/* In-app fill modal — inputs come from the doc's declared fields, not parsed from a file */}
+      <AnimatePresence>
+        {fillDoc && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => !filling && setFillDoc(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: "spring", stiffness: 280, damping: 26 }}
+              className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl bg-white dark:bg-zinc-950 border border-slate-200/80 dark:border-white/[0.08] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between px-6 pt-5 pb-3 border-b border-slate-100 dark:border-white/[0.05]">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="h-9 w-9 rounded-xl bg-violet-500/10 border border-violet-500/15 flex items-center justify-center shrink-0">
+                    <PenLine className="h-4.5 w-4.5 text-violet-500" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-black text-foreground truncate">{fillDoc.name}</h3>
+                    <p className="text-[11.5px] text-muted-foreground">
+                      Fill the fields below — we'll create the document and send it to HR.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => !filling && setFillDoc(null)}
+                  className="text-muted-foreground hover:text-foreground rounded-lg p-1.5 transition-colors shrink-0"
+                >
+                  <XIcon className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto px-6 py-4 space-y-3.5">
+                {(fillDoc.fields || []).map((f) => (
+                  <div key={f}>
+                    <label className="block text-[11.5px] font-bold text-foreground mb-1.5">{f}</label>
+                    <input
+                      value={fillValues[f] || ""}
+                      onChange={(e) => setFillValues((v) => ({ ...v, [f]: e.target.value }))}
+                      placeholder={`Enter ${f.toLowerCase()}`}
+                      className="w-full h-10 px-3 rounded-lg border border-slate-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-zinc-900/60 text-[13px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-violet-500/50 focus:border-violet-400/60 transition-all"
+                    />
+                  </div>
+                ))}
+
+                {/* Digital signature — draw or type */}
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11.5px] font-bold text-foreground">Signature</label>
+                    <div className="flex items-center gap-0.5 rounded-lg border border-slate-200/70 dark:border-white/[0.08] p-0.5">
+                      {(["draw", "type", "upload"] as const).map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setSigMode(m)}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-[11px] font-semibold capitalize transition-all",
+                            sigMode === m
+                              ? "bg-violet-600 text-white"
+                              : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {sigMode === "draw" ? (
+                    <div className="relative">
+                      <canvas
+                        ref={sigCanvasRef}
+                        width={452}
+                        height={120}
+                        onPointerDown={startDraw}
+                        onPointerMove={moveDraw}
+                        onPointerUp={endDraw}
+                        onPointerLeave={endDraw}
+                        className="w-full h-[120px] rounded-lg border border-dashed border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 touch-none cursor-crosshair"
+                      />
+                      <button
+                        type="button"
+                        onClick={clearSignature}
+                        className="absolute top-1.5 right-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground bg-white/80 dark:bg-zinc-800/80 rounded px-1.5 py-0.5"
+                      >
+                        Clear
+                      </button>
+                      <p className="text-[10.5px] text-muted-foreground mt-1">Draw your signature above.</p>
+                    </div>
+                  ) : sigMode === "type" ? (
+                    <div>
+                      <input
+                        value={typedSig}
+                        onChange={(e) => setTypedSig(e.target.value)}
+                        placeholder="Type your full name"
+                        className="w-full h-11 px-3 rounded-lg border border-slate-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-zinc-900/60 text-[20px] italic text-foreground placeholder:text-[13px] placeholder:not-italic placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
+                        style={{ fontFamily: "'Segoe Script','Brush Script MT',cursive" }}
+                      />
+                      <p className="text-[10.5px] text-muted-foreground mt-1">
+                        Your typed name becomes your digital signature.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      {uploadedSig ? (
+                        <div className="relative rounded-lg border border-dashed border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 h-[120px] flex items-center justify-center p-2">
+                          <img
+                            src={uploadedSig}
+                            alt="Uploaded signature"
+                            className="max-h-full max-w-full object-contain"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setUploadedSig(null)}
+                            className="absolute top-1.5 right-1.5 text-[10px] font-semibold text-muted-foreground hover:text-foreground bg-white/80 dark:bg-zinc-800/80 rounded px-1.5 py-0.5"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 h-[120px] cursor-pointer hover:border-violet-400/60 hover:bg-violet-50/40 dark:hover:bg-violet-950/20 transition-all">
+                            <Upload className="h-4.5 w-4.5 text-muted-foreground" />
+                            <span className="text-[11px] font-semibold text-muted-foreground">
+                              Click to upload a signature image
+                            </span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleSigFile(f);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                      )}
+                      <p className="text-[10.5px] text-muted-foreground mt-1">
+                        {sigUploadError || "Upload a photo or scan of your signature (PNG/JPG)."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 dark:border-white/[0.05]">
+                <button
+                  onClick={() => setFillDoc(null)}
+                  disabled={filling}
+                  className="rounded-xl px-4 py-2 text-[12.5px] font-semibold text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitFill}
+                  disabled={filling}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 px-4 py-2 text-[12.5px] font-bold text-white shadow-md hover:brightness-[1.03] transition-all disabled:opacity-60"
+                >
+                  {filling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  Submit to HR
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1131,16 +1547,18 @@ function DocumentsPanel({
 // ── Video library picker ───────────────────────────────────────────────────────
 function VideoLibraryPanel({
   videos,
+  documents = [],
   onSelect,
 }: {
   videos: VideoView[];
+  documents?: InductionDocView[];
   onSelect: (v: VideoView) => void;
 }) {
-  if (videos.length === 0) {
+  if (videos.length === 0 && documents.length === 0) {
     return (
       <div className="rounded-3xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-xl p-8 shadow-xl flex items-center gap-3 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin text-violet-500 shrink-0" />
-        Loading induction videos…
+        Loading induction content…
       </div>
     );
   }
@@ -1152,30 +1570,68 @@ function VideoLibraryPanel({
         <h2 className="text-[17px] font-black text-foreground">Induction Videos</h2>
         <span className="ml-auto text-[12px] text-muted-foreground font-medium">{videos.length} video{videos.length !== 1 ? "s" : ""}</span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {videos.map((v) => (
-          <button
-            key={v.id ?? v.title}
-            onClick={() => onSelect(v)}
-            className="group text-left rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-zinc-900/50 p-5 hover:border-violet-400/60 hover:bg-violet-50/40 dark:hover:bg-violet-950/20 transition-all shadow-sm hover:shadow-md cursor-pointer space-y-2"
-          >
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 h-9 w-9 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
-                <PlayCircle className="h-4.5 w-4.5 text-white" />
+      {videos.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {videos.map((v) => (
+            <button
+              key={v.id ?? v.title}
+              onClick={() => onSelect(v)}
+              className="group text-left rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-zinc-900/50 p-5 hover:border-violet-400/60 hover:bg-violet-50/40 dark:hover:bg-violet-950/20 transition-all shadow-sm hover:shadow-md cursor-pointer space-y-2"
+            >
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 h-9 w-9 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                  <PlayCircle className="h-4.5 w-4.5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[14px] font-bold text-foreground leading-snug truncate">{v.title}</p>
+                  {v.description && (
+                    <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">{v.description}</p>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-[14px] font-bold text-foreground leading-snug truncate">{v.title}</p>
-                {v.description && (
-                  <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">{v.description}</p>
-                )}
-              </div>
-            </div>
-            {v.chapters.length > 0 && (
-              <p className="text-[11px] text-muted-foreground pl-12">{v.chapters.length} chapters</p>
-            )}
-          </button>
-        ))}
-      </div>
+              {v.chapters.length > 0 && (
+                <p className="text-[11px] text-muted-foreground pl-12">{v.chapters.length} chapters</p>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {documents.length > 0 && (
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4.5 w-4.5 text-indigo-500" />
+            <h3 className="text-[14px] font-black text-foreground">Reference Documents</h3>
+            <span className="ml-auto text-[12px] text-muted-foreground font-medium">
+              {documents.length} document{documents.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {documents.map((d) => (
+              <a
+                key={d.id}
+                href={d.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex items-start gap-3 rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-zinc-900/50 p-4 hover:border-indigo-400/60 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-all shadow-sm hover:shadow-md"
+              >
+                <div className="mt-0.5 h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-600 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                  <FileText className="h-4.5 w-4.5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[13.5px] font-bold text-foreground leading-snug truncate">{d.title}</p>
+                  {d.description && (
+                    <p className="text-[11.5px] text-muted-foreground mt-0.5 line-clamp-2">{d.description}</p>
+                  )}
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-500 mt-1">
+                    <Download className="h-3 w-3" /> Open
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

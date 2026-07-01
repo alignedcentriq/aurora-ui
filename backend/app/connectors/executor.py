@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from html.parser import HTMLParser
 from typing import Any, Optional
 
 import httpx
@@ -26,6 +28,55 @@ log = logging.getLogger(__name__)
 
 TIMEOUT = 30.0              # generous timeout to survive Azure App Service cold-starts
 MAX_RESPONSE_CHARS = 4000  # trim large responses before returning to the agent
+
+# Tags whose entire content should be discarded when stripping HTML.
+_SKIP_TAGS = frozenset({"script", "style", "head", "noscript", "svg"})
+# Quick pattern to detect an HTML response body.
+_HTML_SNIFF_RE = re.compile(r"<(!DOCTYPE|html|head|body)\b", re.I)
+
+
+class _HTMLTextExtractor(HTMLParser):
+    """Strip HTML tags and return readable text (stdlib, zero deps)."""
+
+    def __init__(self):
+        super().__init__()
+        self._pieces: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in _SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag.lower() in _SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            text = data.strip()
+            if text:
+                self._pieces.append(text)
+
+    def get_text(self) -> str:
+        return " ".join(self._pieces)
+
+
+def _strip_html(html: str) -> str:
+    """Extract readable text from an HTML string."""
+    extractor = _HTMLTextExtractor()
+    try:
+        extractor.feed(html)
+    except Exception:
+        return html  # fallback: return raw if parser chokes
+    return extractor.get_text() or html
+
+
+def _is_html_response(resp: httpx.Response, text: str) -> bool:
+    """Detect if the response is HTML (via Content-Type or body sniffing)."""
+    ct = resp.headers.get("content-type", "")
+    if "text/html" in ct:
+        return True
+    return bool(_HTML_SNIFF_RE.search(text[:500]))
 
 
 def _dig(obj: Any, path: str) -> Any:
@@ -156,7 +207,11 @@ async def execute_operation(
         try:
             result_data = resp.json()
         except Exception:
-            result_data = resp.text
+            raw_text = resp.text
+            if _is_html_response(resp, raw_text):
+                raw_text = _strip_html(raw_text)
+                log.info("Stripped HTML response for operation %s", operation_id)
+            result_data = raw_text
 
         result_data = _apply_response_map(result_data, op.response_map)
         status = "success"

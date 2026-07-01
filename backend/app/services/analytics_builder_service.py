@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func, case, and_
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Employee, EmployeeZohoProfile, MS365User, EmployeeAllocation,
-    Leave, AiRequestLog, ChatFeedback, AiLlmCallLog,
+    Leave, AiRequestLog, ChatFeedback, AiLlmCallLog, ConnectorCallLog,
     # Dynamic query data sources
     ITTicket, SoftwareRequest, AssetAssignment, AssetRequest,
     Reimbursement, Grievance, HRQuery, TravelRequest, TravelExpenseClaim,
@@ -112,20 +112,48 @@ CHART TYPE GUIDELINES:
 """
 
 
+class FilterCondition(BaseModel):
+    source: str = Field(description="Data source id this filter's field/value belongs to")
+    field: str = Field(description="Column name on that source (groupable/numeric/date_col only)")
+    op: str = Field(description="One of: eq | neq | gt | gte | lt | lte | in | contains")
+    value: str = Field(
+        description="The value as a string, coerced server-side to the column's real type "
+                    "(number/date/bool as needed). For op='in', comma-separate multiple values."
+    )
+
+
 class BuilderIntent(BaseModel):
     mode: str = Field(
         default="template",
-        description="'template' — use a predefined query_id; 'dynamic' — query any registered DB table"
+        description="'template' — use a predefined query_id; 'dynamic' — query any registered DB "
+                    "table; 'combine' — one primary_source supplies chart rows, filter_sources "
+                    "constrain WHICH employees are included via a different source"
     )
     # ── Template mode ─────────────────────────────────────────────────────────
     query_id: Optional[str] = Field(default=None, description="Template id (required when mode='template')")
     params: dict = Field(default_factory=dict, description="Template params: period, month, year")
     # ── Dynamic mode ──────────────────────────────────────────────────────────
     data_source: Optional[str] = Field(default=None, description="Data source id (required when mode='dynamic')")
-    group_by: Optional[str] = Field(default=None, description="Column to group by (required when mode='dynamic')")
+    # ── Combine mode ──────────────────────────────────────────────────────────
+    primary_source: Optional[str] = Field(
+        default=None,
+        description="Data source id supplying chart rows (required when mode='combine'); "
+                    "group_by/metric/period below apply to THIS source only"
+    )
+    filter_sources: list[str] = Field(
+        default_factory=list,
+        description="Other data source ids used purely to constrain which employees are "
+                    "included — they never contribute rows to the chart"
+    )
+    filters: list[FilterCondition] = Field(
+        default_factory=list,
+        description="Filter predicates; each filter's source must be primary_source or one of filter_sources"
+    )
+    # ── Shared: applies to data_source (dynamic) or primary_source (combine) ────
+    group_by: Optional[str] = Field(default=None, description="Column to group by (required when mode='dynamic'/'combine')")
     metric: str = Field(default="count", description="'count' | 'sum:col' | 'avg:col' | 'avg_resolution_hours'")
     period: Optional[str] = Field(default=None, description="Time period: 30d|90d|6m|12m (dynamic queries with a date column)")
-    # ── Shared ────────────────────────────────────────────────────────────────
+    # ── Shared across all modes ──────────────────────────────────────────────────
     chart_type: str = Field(description="bar|line|area|pie|scatter|radar|treemap|funnel|composed")
     title: str = Field(description="Concise chart title (under 55 chars)")
     subtitle: Optional[str] = Field(default=None, description="Optional subtitle — timeframe, scope, etc.")
@@ -153,6 +181,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "assigned_to": "IT staff the ticket is assigned to",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "software_requests": {
         "model": SoftwareRequest, "label": "Software Requests",
@@ -162,6 +191,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Pending / Approved / Installed / Rejected",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "asset_assignments": {
         "model": AssetAssignment, "label": "Asset Assignments",
@@ -172,6 +202,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Assigned / Returned",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "asset_requests": {
         "model": AssetRequest, "label": "Asset Requests",
@@ -181,6 +212,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Pending / Fulfilled / Rejected",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     # ── HR ───────────────────────────────────────────────────────────────────────
     "reimbursements": {
@@ -191,6 +223,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Pending / Approved / Rejected",
         },
         "numeric": {"amount": "reimbursement amount"},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "grievances": {
         "model": Grievance, "label": "Grievances",
@@ -200,6 +233,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Open / Under Review / Resolved / Closed",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},  # nullable (anonymous grievances)
     },
     "hr_queries": {
         "model": HRQuery, "label": "HR Queries",
@@ -210,6 +244,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "priority": "Low / Normal / High",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "travel_requests": {
         "model": TravelRequest, "label": "Travel Requests",
@@ -225,6 +260,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "visa_required": ("Visa Required", "No Visa"),
         },
         "numeric": {"estimated_cost": "estimated trip cost"},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "travel_expense_claims": {
         "model": TravelExpenseClaim, "label": "Travel Expense Claims",
@@ -234,12 +270,14 @@ _DATA_SOURCES: dict[str, dict] = {
             "currency": "claim currency",
         },
         "numeric": {"amount": "claimed amount"},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "onboarding_journeys": {
         "model": OnboardingJourney, "label": "New Hire Onboarding Journeys",
         "date_col": "started_at", "resolved_col": None,
         "groupable": {"status": "active / completed"},
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     # ── ADMIN & FACILITIES ───────────────────────────────────────────────────────
     "parking_stickers": {
@@ -250,6 +288,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Active / Expired / Pending / Surrendered",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "facility_complaints": {
         "model": FacilityComplaint, "label": "Facility Complaints",
@@ -261,6 +300,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "location": "office area of the complaint",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "food_vendor_feedback": {
         "model": FoodVendorFeedback, "label": "Food Vendor Feedback",
@@ -272,6 +312,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "hygiene": "hygiene rating (1-5)",
             "service": "service rating (1-5)",
         },
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "visitor_passes": {
         "model": VisitorPass, "label": "Visitor Passes",
@@ -281,12 +322,14 @@ _DATA_SOURCES: dict[str, dict] = {
             "visitor_company": "visitor's company",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},  # host employee
     },
     "desk_key_requests": {
         "model": DeskKeyRequest, "label": "Desk Key Requests",
         "date_col": "created_at", "resolved_col": None,
         "groupable": {"status": "Pending / Approved / Rejected / Released"},
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "announcements": {
         "model": Announcement, "label": "Announcements",
@@ -297,6 +340,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "target_audience": "intended audience",
         },
         "numeric": {},
+        "employee_link": {"type": "none", "column": None},  # authored by admin/HR, not employee-scoped
     },
     # ── LEARNING & TRAINING ──────────────────────────────────────────────────────
     "te_assignments": {
@@ -307,6 +351,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "department": "employee department",
         },
         "numeric": {"score": "assessment score (%)"},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "te_trainings": {
         "model": TeTraining, "label": "Training Courses (TechElevate LMS)",
@@ -316,6 +361,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "training_type": "single / levels",
         },
         "numeric": {"duration_minutes": "course duration in minutes"},
+        "employee_link": {"type": "none", "column": None},  # course catalog, no employee link
     },
     "udemy_license_requests": {
         "model": UdemyLicenseRequest, "label": "Udemy License Requests",
@@ -325,6 +371,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Pending / Approved / Rejected",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "book_requests": {
         "model": BookRequest, "label": "Library Book Requests",
@@ -334,6 +381,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "status": "Pending / Approved / Rejected / Returned / Cancelled",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     # ── AI & ESCALATIONS ─────────────────────────────────────────────────────────
     "escalations": {
@@ -346,12 +394,14 @@ _DATA_SOURCES: dict[str, dict] = {
             "error_type": "error / no_response / unsatisfied",
         },
         "numeric": {},
+        "employee_link": {"type": "email", "column": "user_email"},
     },
     "form_submissions": {
         "model": FormSubmission, "label": "Form Submissions",
         "date_col": "submitted_at", "resolved_col": None,
         "groupable": {"status": "Pending / Approved / Rejected"},
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},  # nullable (anonymous submissions)
     },
     # ── WORKFORCE & SKILLS ───────────────────────────────────────────────────────
     "employee_skills": {
@@ -360,18 +410,21 @@ _DATA_SOURCES: dict[str, dict] = {
         "groupable": {"skill": "skill name"},
         "bool_as_label": {"is_primary": ("Primary Skill", "Secondary Skill")},
         "numeric": {"years_experience": "years of experience in this skill"},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     "appreciations": {
         "model": Appreciation, "label": "Client Appreciations",
         "date_col": "created_at", "resolved_col": None,
         "groupable": {"client_name": "client who sent the appreciation"},
         "numeric": {},
+        "employee_link": {"type": "email", "column": "employee_email"},
     },
     "attendance": {
         "model": Attendance, "label": "Attendance Records (org-wide biometric)",
         "date_col": "date", "resolved_col": None,
         "groupable": {"status": "Present / Absent / WFH / Half-day"},
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
     },
     # ── PROJECT INTELLIGENCE ─────────────────────────────────────────────────────
     "project_profiles": {
@@ -385,6 +438,7 @@ _DATA_SOURCES: dict[str, dict] = {
             "project_size": "project size category",
         },
         "numeric": {},
+        "employee_link": {"type": "none", "column": None},  # no employee link
     },
     # ── EMPLOYEE PROFILE (Zoho HRMS — non-sensitive fields only) ─────────────────
     "employee_zoho_profile": {
@@ -405,6 +459,75 @@ _DATA_SOURCES: dict[str, dict] = {
             "organization_structure": "org unit / sub-org",
         },
         "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
+    },
+    # ── EMPLOYEE DIRECTORY & CORE HR (NEW — combinable primary/filter sources) ───
+    "employee": {
+        "model": Employee, "label": "Employee Directory",
+        "date_col": "joining_date", "resolved_col": None,
+        "groupable": {
+            "department": "employee department",
+            "designation": "job title",
+            "location": "office location",
+            "employment_type": "Full-time / Contract",
+            "shift_type": "Day / Night",
+        },
+        "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "id"},  # Employee IS the spine
+    },
+    "leave": {
+        "model": Leave, "label": "Leave Requests",
+        "date_col": "created_at", "resolved_col": None,
+        "groupable": {
+            "leave_type": "leave type",
+            "status": "Pending / Approved / Rejected",
+        },
+        "numeric": {},
+        "employee_link": {"type": "fk_id", "column": "employee_id"},
+    },
+    "employee_allocation": {
+        "model": EmployeeAllocation, "label": "Employee Allocation (latest snapshot)",
+        "date_col": "allocation_date", "resolved_col": None,
+        "groupable": {
+            "function": "function",
+            "client_master": "client",
+            "billing": "billing status (Billable / Pipeline / For Allocation etc.)",
+            "project_type": "project type",
+            "status": "Active / Inactive",
+        },
+        "numeric": {
+            "efforts_percent": "effort allocation %",
+            "billability_percent": "billability %",
+        },
+        "employee_link": {"type": "code", "column": "employee_id"},  # string code, NOT the FK id
+    },
+    # ── APP USAGE (NEW — AI assistant activity) ──────────────────────────────────
+    "ai_request_log": {
+        "model": AiRequestLog, "label": "AI Assistant Requests",
+        "date_col": "created_at", "resolved_col": None,
+        "groupable": {
+            "domain": "HR / IT / Admin / PMO / General",
+            "model_name": "LLM model used",
+        },
+        "numeric": {
+            "total_latency_ms": "total latency (ms)",
+            "total_tokens": "total tokens",
+        },
+        "employee_link": {"type": "email", "column": "user_email"},
+    },
+    "chat_feedback": {
+        "model": ChatFeedback, "label": "Chat Feedback",
+        "date_col": "created_at", "resolved_col": None,
+        "groupable": {"domain": "hr / admin / it_support / pmo / general"},
+        "numeric": {"rating": "1 = helpful, -1 = unhelpful"},
+        "employee_link": {"type": "none", "column": None},  # only session_id, no employee/email link
+    },
+    "connector_call_log": {
+        "model": ConnectorCallLog, "label": "Connector Usage",
+        "date_col": "created_at", "resolved_col": None,
+        "groupable": {"status": "success / error / timeout"},
+        "numeric": {"latency_ms": "latency (ms)"},
+        "employee_link": {"type": "email", "column": "user_email"},
     },
 }
 
@@ -418,6 +541,8 @@ def _build_dynamic_docs() -> str:
         ("AI & ESCALATIONS", ["escalations", "form_submissions"]),
         ("WORKFORCE & SKILLS", ["employee_skills", "appreciations", "attendance"]),
         ("PROJECT INTELLIGENCE", ["project_profiles"]),
+        ("EMPLOYEE DIRECTORY & CORE HR", ["employee", "employee_zoho_profile", "leave", "employee_allocation"]),
+        ("APP USAGE", ["ai_request_log", "chat_feedback", "connector_call_log"]),
     ]
     lines = [
         "\nDYNAMIC QUERIES (mode='dynamic'):",
@@ -425,6 +550,10 @@ def _build_dynamic_docs() -> str:
         "Set: mode='dynamic', data_source=<id>, group_by=<col>, metric=<metric>[, period=<period>].",
         "period: 30d|90d|6m|12m — only for data sources marked with * (have a date column).",
         "metric: count | sum:<col> | avg:<col> | avg_resolution_hours",
+        "  Q: 'top 10 skills chart' or 'skills breakdown' (single source, no constraint named)",
+        "  -> mode='dynamic', data_source='employee_skills', group_by='skill', metric='count' "
+        "(query_id/filter_sources/filters stay empty/unset — do not set mode='template' here, "
+        "'employee_skills' is not a template id)",
         "",
     ]
     for section, ids in sections:
@@ -448,6 +577,233 @@ def _build_dynamic_docs() -> str:
 
 
 _DYNAMIC_DOCS = _build_dynamic_docs()
+
+
+def _build_combine_docs() -> str:
+    linkable = [sid for sid, s in _DATA_SOURCES.items()
+                if s.get("employee_link", {}).get("type") != "none"]
+    lines = [
+        "\nCOMBINE QUERIES (mode='combine') — cross-domain questions spanning multiple sources:",
+        "Use when the question constrains one data source's rows by a condition that lives on "
+        "a DIFFERENT source, via employee identity — e.g. 'attendance rate for employees with "
+        "skill X', 'leave days by leave type for people in the Pune office', 'IT ticket volume "
+        "by category for employees on billable projects'.",
+        "Set: mode='combine', primary_source=<id that supplies the chart's rows/group_by/metric>, "
+        "filter_sources=[<other ids used only to constrain WHICH employees qualify>], "
+        "filters=[{source, field, op, value}, ...].",
+        "- group_by/metric/period apply ONLY to primary_source (same rules as dynamic mode).",
+        "- A filter with source==primary_source is a plain column condition on the primary table "
+        "itself (e.g. {source:'attendance', field:'status', op:'eq', value:'Present'}).",
+        "- A filter with source in filter_sources constrains primary rows to employees who have "
+        "at least one matching row in THAT source (e.g. {source:'employee_skills', field:'skill', "
+        "op:'eq', value:'Python'} limits the primary source to employees who know Python).",
+        "- Multiple different filter_sources are combined with AND (employee must satisfy all).",
+        "- op is one of: eq | neq | gt | gte | lt | lte | in | contains.",
+        "- Only sources below carry an employee identity and can be used in filter_sources. "
+        "Sources NOT listed here (e.g. announcements, te_trainings, project_profiles, "
+        "chat_feedback) can only be used as primary_source, never in filter_sources.",
+        "- Prefer mode='dynamic' when there is only one relevant source; use 'combine' ONLY when "
+        "filter_sources is non-empty and genuinely different from primary_source.",
+        "- group_by MUST be a field on primary_source; every filter's field MUST be a field on "
+        "the source named in that same filter (see the field list below). Never group the primary "
+        "source by a column that only exists on a filter source.",
+        "- NEVER invent a filter value that isn't explicitly named in the user's message. The "
+        "worked examples below are shape templates only — do NOT reuse their literal values "
+        "(e.g. 'Python', 'Pune', 'Billable') for unrelated requests. If the user's request names "
+        "no constraining value at all (e.g. 'top 10 skills chart' with no department/location/"
+        "status mentioned), use mode='dynamic' with filter_sources=[] and filters=[] — do not "
+        "fabricate a filter just because a field happens to be filterable.",
+        "",
+        "WORKED EXAMPLES (copy this exact shape — the field/source structure, never the literal values):",
+        "  Q: 'attendance status for employees who know Python'",
+        "  -> mode='combine', primary_source='attendance', group_by='status', metric='count', "
+        "filter_sources=['employee_skills'], "
+        "filters=[{source:'employee_skills', field:'skill', op:'eq', value:'Python'}]",
+        "  Q: 'leave requests by type for employees in the Pune office'",
+        "  -> mode='combine', primary_source='leave', group_by='leave_type', metric='count', "
+        "filter_sources=['employee'], "
+        "filters=[{source:'employee', field:'location', op:'eq', value:'Pune'}]",
+        "  Q: 'IT tickets by category for employees on billable projects'",
+        "  -> mode='combine', primary_source='it_tickets', group_by='category', metric='count', "
+        "filter_sources=['employee_allocation'], "
+        "filters=[{source:'employee_allocation', field:'billing', op:'eq', value:'Billable'}]",
+        "  Q: 'present-day attendance count for the Finance department' (filter is on a different "
+        "source than the one being counted)",
+        "  -> mode='combine', primary_source='attendance', group_by='status', metric='count', "
+        "filter_sources=['employee'], "
+        "filters=[{source:'attendance', field:'status', op:'eq', value:'Present'}, "
+        "{source:'employee', field:'department', op:'eq', value:'Finance'}]",
+        "  Q: 'top 10 skills chart' (no constraining value named anywhere)",
+        "  -> mode='dynamic', data_source='employee_skills', group_by='skill', metric='count' "
+        "(no filters, no filter_sources — there is nothing in the request to filter by)",
+        "",
+        "Filterable (employee-linked) sources and their allowed fields:",
+    ]
+    for sid in linkable:
+        src = _DATA_SOURCES[sid]
+        cols = list(src.get("groupable", {})) + list(src.get("numeric", {}))
+        if src.get("date_col"):
+            cols.append(src["date_col"])
+        lines.append(f"  {sid} — fields: {' | '.join(cols)}")
+    return "\n".join(lines)
+
+
+_COMBINE_DOCS = _build_combine_docs()
+
+def _normalize_source_id(src_id: Optional[str]) -> str:
+    """Strip whitespace and the '*' date-column marker the docs annotate sources with — the
+    router LLM occasionally echoes that marker straight into data_source/primary_source."""
+    return (src_id or "").strip().rstrip("*").strip()
+
+
+# ── Filter safety: operator whitelist + value coercion ───────────────────────────────────────
+
+_FILTER_OPS: dict[str, Callable] = {
+    "eq":       lambda col, v: col == v,
+    "neq":      lambda col, v: col != v,
+    "gt":       lambda col, v: col > v,
+    "gte":      lambda col, v: col >= v,
+    "lt":       lambda col, v: col < v,
+    "lte":      lambda col, v: col <= v,
+    "in":       lambda col, v: col.in_(v),
+    "contains": lambda col, v: col.ilike(f"%{v}%"),
+}
+
+_OP_SYMBOLS = {"eq": "=", "neq": "≠", "gt": ">", "gte": "≥", "lt": "<", "lte": "≤",
+               "in": "in", "contains": "contains"}
+
+
+def _describe_combine_filters(conditions: list, period: Optional[str]) -> Optional[str]:
+    """Build an accurate, human-readable subtitle from the applied filters (not LLM freeform)."""
+    parts = [f"{c.field} {_OP_SYMBOLS.get(c.op, c.op)} {c.value}" for c in conditions]
+    text = "Filtered: " + "; ".join(parts) if parts else None
+    if period:
+        text = f"{text} · last {period}" if text else f"Last {period}"
+    return text
+
+
+def _coerce_scalar(python_type: type, raw: Any) -> Any:
+    if python_type is str:
+        return str(raw)
+    if python_type is bool:
+        if isinstance(raw, bool):
+            return raw
+        s = str(raw).strip().lower()
+        if s in ("true", "yes", "1"):
+            return True
+        if s in ("false", "no", "0"):
+            return False
+        raise ValueError(f"Cannot interpret '{raw}' as true/false.")
+    if python_type is int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"Cannot interpret '{raw}' as a whole number.")
+    if python_type is float:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"Cannot interpret '{raw}' as a number.")
+    if python_type in (datetime.date, datetime.datetime):
+        try:
+            s = str(raw)
+            return (datetime.datetime.fromisoformat(s) if python_type is datetime.datetime
+                    else datetime.date.fromisoformat(s))
+        except ValueError:
+            raise ValueError(f"Cannot interpret '{raw}' as a date (use YYYY-MM-DD).")
+    return raw
+
+
+def _coerce_value(col, op: str, raw_value: str) -> Any:
+    try:
+        python_type = col.type.python_type
+    except NotImplementedError:
+        python_type = str
+    if op == "in":
+        parts = [p.strip() for p in str(raw_value).split(",") if p.strip()]
+        if not parts:
+            raise ValueError("Operator 'in' requires at least one comma-separated value.")
+        return [_coerce_scalar(python_type, v) for v in parts]
+    if op == "contains" and python_type is not str:
+        raise ValueError("Operator 'contains' only applies to text columns.")
+    return _coerce_scalar(python_type, raw_value)
+
+
+def _build_column_predicate(Model, src: dict, src_id: str, cond: FilterCondition):
+    """Validate field/op against src's allowlist, coerce value, return a safe SQLAlchemy predicate."""
+    allowed = set(src.get("groupable", {})) | set(src.get("numeric", {})) | set(src.get("bool_as_label", {}))
+    if src.get("date_col"):
+        allowed.add(src["date_col"])
+    if cond.field not in allowed:
+        raise ValueError(f"Cannot filter '{src_id}' on '{cond.field}'. Allowed: {', '.join(sorted(allowed))}")
+    col = getattr(Model, cond.field)
+    op_fn = _FILTER_OPS.get(cond.op)
+    if op_fn is None:
+        raise ValueError(f"Unknown filter operator '{cond.op}'. Allowed: {', '.join(_FILTER_OPS)}")
+    value = _coerce_value(col, cond.op, cond.value)
+    return op_fn(col, value)
+
+
+# ── Employee-identity spine resolution (for combine mode) ────────────────────────────────────
+
+def _get_employee_link(src_id: str) -> dict:
+    src = _DATA_SOURCES.get(_normalize_source_id(src_id))
+    if not src:
+        raise ValueError(f"Unknown data source '{src_id}'.")
+    return src.get("employee_link") or {"type": "none", "column": None}
+
+
+def _resolve_employee_filter(db: Session, source_id: str, conditions: list) -> set:
+    """Apply `conditions` (all targeting `source_id`) to that source's own table, then project
+    down to the DISTINCT set of canonical Employee.id values satisfying them. Never returns rows
+    from `source_id` itself — only identities, so combining sources can never fan out."""
+    source_id = _normalize_source_id(source_id)
+    src = _DATA_SOURCES.get(source_id)
+    if not src:
+        raise ValueError(f"Unknown data source '{source_id}'.")
+    link = _get_employee_link(source_id)
+    if link["type"] == "none":
+        raise ValueError(
+            f"'{source_id}' has no employee linkage and cannot be used as a filter source."
+        )
+    Model = src["model"]
+    preds = [_build_column_predicate(Model, src, source_id, c) for c in conditions]
+
+    if link["type"] == "fk_id":
+        col = getattr(Model, link["column"])
+        q = db.query(col).filter(col.isnot(None), *preds).distinct()
+        return {r[0] for r in q.all()}
+    if link["type"] == "code":
+        col = getattr(Model, link["column"])
+        q = (db.query(Employee.id)
+               .join(Model, col == Employee.employee_id)
+               .filter(*preds).distinct())
+        return {r[0] for r in q.all()}
+    if link["type"] == "email":
+        col = getattr(Model, link["column"])
+        q = (db.query(Employee.id)
+               .join(Model, func.lower(col) == func.lower(Employee.email))
+               .filter(*preds).distinct())
+        return {r[0] for r in q.all()}
+    raise ValueError(f"Unrecognized employee_link type for '{source_id}'.")
+
+
+def _employee_id_set_predicate(db: Session, primary_source_id: str, qualifying_ids: set):
+    """Translate a set of canonical Employee.id back into a predicate on the PRIMARY source's
+    own identity column, whatever convention that source uses."""
+    link = _get_employee_link(primary_source_id)
+    Model = _DATA_SOURCES[primary_source_id]["model"]
+    if link["type"] == "fk_id":
+        return getattr(Model, link["column"]).in_(qualifying_ids)
+    if link["type"] == "code":
+        codes = {r[0] for r in db.query(Employee.employee_id).filter(Employee.id.in_(qualifying_ids))}
+        return getattr(Model, link["column"]).in_(codes)
+    if link["type"] == "email":
+        emails = {r[0] for r in db.query(Employee.email).filter(Employee.id.in_(qualifying_ids))}
+        return getattr(Model, link["column"]).in_(emails)
+    raise ValueError(
+        f"'{primary_source_id}' has no employee linkage and cannot be constrained by filter_sources."
+    )
 
 
 def _snap_filter(M, db, dimension):
@@ -476,9 +832,100 @@ def _rows_to_series(rows, label_col=0, value_col=1, none_label="—") -> list[di
     return out
 
 
+def _zoho_headcount_rows(db: Session, field_candidates: tuple, local_column, local_active_filter):
+    """Headcount-by-<field>, preferring the live Zoho HR view over the local
+    employee_zoho_profiles copy (which is only populated by a manual CSV import and is easy to
+    let go stale/empty). Falls back to the local table when the live view isn't configured or
+    is unreachable, so this still works in demo/offline environments."""
+    from app.services import zoho_directory_service as zds
+    if zds.is_configured():
+        live = zds.aggregate_field_counts(*field_candidates)
+        if live:
+            return live
+    return (db.query(local_column, func.count(EmployeeZohoProfile.id))
+            .filter(local_active_filter, local_column.isnot(None))
+            .group_by(local_column)
+            .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+
+
+def _zoho_joining_trend_rows(db: Session, cutoff):
+    """New-joiner counts per month, preferring the live Zoho HR view (see _zoho_headcount_rows)."""
+    from app.services import zoho_directory_service as zds
+    if zds.is_configured():
+        cutoff_date = cutoff.date() if isinstance(cutoff, datetime.datetime) else cutoff
+        live = zds.aggregate_joining_trend(cutoff_date)
+        if live:
+            return live
+    return (db.query(func.date_trunc("month", EmployeeZohoProfile.date_of_joining),
+                     func.count(EmployeeZohoProfile.id))
+            .filter(EmployeeZohoProfile.date_of_joining >= cutoff,
+                    EmployeeZohoProfile.date_of_joining.isnot(None))
+            .group_by(func.date_trunc("month", EmployeeZohoProfile.date_of_joining))
+            .order_by(func.date_trunc("month", EmployeeZohoProfile.date_of_joining)).all())
+
+
+def _empty_chart_spec(intent: BuilderIntent) -> ChartSpec:
+    return ChartSpec(
+        type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
+        data=[], x_key="x", y_keys=["value"], y_labels={"value": "Count"},
+        colors=[], unit="count", stacked=intent.stacked,
+    )
+
+
 def _run_dynamic_query(db: Session, intent: BuilderIntent) -> ChartSpec:
     """Execute a safe, validated single-table aggregation on any registered data source."""
-    src_id = (intent.data_source or "").strip()
+    return _execute_grouped_query(db, intent, intent.data_source)
+
+
+def _run_combine_query(db: Session, intent: BuilderIntent) -> ChartSpec:
+    """Multi-source: primary_source supplies rows/columns; filter_sources constrain which
+    employees are included via identity-set intersection (semi-join) — never a row-level join,
+    so a one-to-many filter source (e.g. multiple skills per employee) can never fan out and
+    inflate the primary source's count/sum/avg."""
+    primary_id = _normalize_source_id(intent.primary_source)
+    if primary_id not in _DATA_SOURCES:
+        raise ValueError(f"Unknown primary_source '{primary_id}'. Available: {', '.join(_DATA_SOURCES)}")
+
+    norm_filters = [(_normalize_source_id(c.source), c) for c in intent.filters]
+    primary_filters = [c for sid, c in norm_filters if sid == primary_id]
+    identity_filters_by_src: dict[str, list] = {}
+    for sid, c in norm_filters:
+        if sid != primary_id:
+            identity_filters_by_src.setdefault(sid, []).append(c)
+    for raw_sid in intent.filter_sources:   # declared even with zero explicit conditions on it
+        sid = _normalize_source_id(raw_sid)
+        if sid != primary_id:
+            identity_filters_by_src.setdefault(sid, [])
+
+    qualifying: Optional[set] = None
+    for sid, conds in identity_filters_by_src.items():
+        ids = _resolve_employee_filter(db, sid, conds)
+        qualifying = ids if qualifying is None else (qualifying & ids)
+
+    if qualifying is not None and len(qualifying) == 0:
+        return _empty_chart_spec(intent)
+
+    Model = _DATA_SOURCES[primary_id]["model"]
+    extra_predicates = [
+        _build_column_predicate(Model, _DATA_SOURCES[primary_id], primary_id, c)
+        for c in primary_filters
+    ]
+    if qualifying is not None:
+        extra_predicates.append(_employee_id_set_predicate(db, primary_id, qualifying))
+
+    # Deterministic, accurate subtitle from the actual filters — the small router LLM tends to
+    # hallucinate freeform subtitles (e.g. listing statuses that aren't in the data), so we
+    # override rather than trust intent.subtitle here.
+    intent.subtitle = _describe_combine_filters([c for _sid, c in norm_filters], intent.period)
+
+    return _execute_grouped_query(db, intent, primary_id, extra_predicates=extra_predicates)
+
+
+def _execute_grouped_query(db: Session, intent: BuilderIntent, src_id: Optional[str],
+                            extra_predicates: tuple = ()) -> ChartSpec:
+    """Shared executor for 'dynamic' (extra_predicates=()) and 'combine' (extra_predicates from
+    filter_sources / primary-source filters) modes — one validated group_by/metric query."""
+    src_id = _normalize_source_id(src_id)
     src = _DATA_SOURCES.get(src_id)
     if not src:
         raise ValueError(
@@ -557,6 +1004,9 @@ def _run_dynamic_query(db: Session, intent: BuilderIntent) -> ChartSpec:
     for f in extra_filters:
         q = q.filter(f)
 
+    for p in extra_predicates:
+        q = q.filter(p)
+
     q = q.group_by(grp_col).order_by(metric_expr.desc())
     rows = q.all()
 
@@ -590,13 +1040,15 @@ def _run_dynamic_query(db: Session, intent: BuilderIntent) -> ChartSpec:
         y_labels={"value": metric_label},
         colors=_PALETTE[: max(len(data), 1)],
         unit=unit,
-        stacked=intent.stacked,
+        stacked=False,   # single series — stacking is meaningless and renders oddly
     )
 
 
 def _run_query(db: Session, intent: BuilderIntent, user_email: Optional[str] = None) -> ChartSpec:
     if intent.mode == "dynamic":
         return _run_dynamic_query(db, intent)
+    if intent.mode == "combine":
+        return _run_combine_query(db, intent)
 
     qid = intent.query_id
     period = intent.params.get("period", "30d")
@@ -607,30 +1059,22 @@ def _run_query(db: Session, intent: BuilderIntent, user_email: Optional[str] = N
 
     # ── EMPLOYEE HEADCOUNT ──────────────────────────────────────────────────────
     if qid == "headcount_by_function":
-        rows = (db.query(EmployeeZohoProfile.function, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.function.isnot(None))
-                .group_by(EmployeeZohoProfile.function)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        rows = _zoho_headcount_rows(db, ("department", "parentdepartment"),
+                                     EmployeeZohoProfile.function, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
                          y_labels={"value": "Headcount"}, colors=[_PALETTE[0]], unit="count")
 
     if qid == "headcount_by_grade":
-        rows = (db.query(EmployeeZohoProfile.grade, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.grade.isnot(None))
-                .group_by(EmployeeZohoProfile.grade)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        rows = _zoho_headcount_rows(db, ("grade",), EmployeeZohoProfile.grade, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
                          y_labels={"value": "Headcount"}, colors=[_PALETTE[2]], unit="count")
 
     if qid == "headcount_by_gender":
-        rows = (db.query(EmployeeZohoProfile.gender, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.gender.isnot(None))
-                .group_by(EmployeeZohoProfile.gender)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        rows = _zoho_headcount_rows(db, ("gender",), EmployeeZohoProfile.gender, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
@@ -638,10 +1082,7 @@ def _run_query(db: Session, intent: BuilderIntent, user_email: Optional[str] = N
                          colors=[_PALETTE[0], _PALETTE[1], _PALETTE[3]], unit="count")
 
     if qid == "headcount_by_level":
-        rows = (db.query(EmployeeZohoProfile.level, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.level.isnot(None))
-                .group_by(EmployeeZohoProfile.level)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        rows = _zoho_headcount_rows(db, ("level",), EmployeeZohoProfile.level, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
@@ -661,22 +1102,18 @@ def _run_query(db: Session, intent: BuilderIntent, user_email: Optional[str] = N
                          y_labels={"value": "Headcount"}, colors=_PALETTE[:5], unit="count")
 
     if qid == "headcount_by_department":
-        # Use EmployeeZohoProfile.function (Zoho) with inactive filter.
-        # Employee.department was partially randomly assigned; Zoho function is authoritative.
-        rows = (db.query(EmployeeZohoProfile.function, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.function.isnot(None))
-                .group_by(EmployeeZohoProfile.function)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        # Employee.department was partially randomly assigned; the live Zoho HR view
+        # (falling back to the local EmployeeZohoProfile.function copy) is authoritative.
+        rows = _zoho_headcount_rows(db, ("department", "parentdepartment"),
+                                     EmployeeZohoProfile.function, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
                          y_labels={"value": "Headcount"}, colors=[_PALETTE[1]], unit="count")
 
     if qid == "headcount_by_employment_type":
-        rows = (db.query(EmployeeZohoProfile.employment_type, func.count(EmployeeZohoProfile.id))
-                .filter(_ACTIVE, EmployeeZohoProfile.employment_type.isnot(None))
-                .group_by(EmployeeZohoProfile.employment_type)
-                .order_by(func.count(EmployeeZohoProfile.id).desc()).all())
+        rows = _zoho_headcount_rows(db, ("employeetype", "employment_type"),
+                                     EmployeeZohoProfile.employment_type, _ACTIVE)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
@@ -686,12 +1123,7 @@ def _run_query(db: Session, intent: BuilderIntent, user_email: Optional[str] = N
         # Default to 12m — 30d produces near-zero data for a joining trend.
         join_period = intent.params.get("period", "12m")
         join_cutoff = _period_cutoff(join_period)
-        rows = (db.query(func.date_trunc("month", EmployeeZohoProfile.date_of_joining),
-                         func.count(EmployeeZohoProfile.id))
-                .filter(EmployeeZohoProfile.date_of_joining >= join_cutoff,
-                        EmployeeZohoProfile.date_of_joining.isnot(None))
-                .group_by(func.date_trunc("month", EmployeeZohoProfile.date_of_joining))
-                .order_by(func.date_trunc("month", EmployeeZohoProfile.date_of_joining)).all())
+        rows = _zoho_joining_trend_rows(db, join_cutoff)
         data = _rows_to_series(rows)
         return ChartSpec(type=intent.chart_type, title=intent.title, subtitle=intent.subtitle,
                          data=data, x_key="x", y_keys=["value"],
@@ -1002,22 +1434,25 @@ def builder_chat(
     # Build conversation messages for the LLM
     system = (
         "You are an analytics chart-builder agent for Centriq AI, a corporate HR/IT/PMO platform. "
-        "Your job is to map the user's request to a chart configuration using either a predefined "
-        "template (mode='template') or a dynamic DB query (mode='dynamic').\n\n"
+        "Your job is to map the user's request to a chart configuration using a predefined "
+        "template (mode='template'), a single-table DB query (mode='dynamic'), or a multi-source "
+        "query that filters one source by a condition on another (mode='combine').\n\n"
         f"{_TEMPLATE_DOCS}"
         f"{_DYNAMIC_DOCS}\n"
+        f"{_COMBINE_DOCS}\n"
         "DECISION RULES:\n"
         "- Use mode='template' when the request matches one of the named templates above (headcount, leave, allocation, attendance, AI metrics).\n"
-        "- Use mode='dynamic' for EVERYTHING ELSE — IT tickets, reimbursements, travel, training, facilities, skills, escalations, projects, etc.\n"
+        "- Use mode='dynamic' when the request is about ONE data source only — IT tickets, reimbursements, travel, training, facilities, skills, escalations, projects, app usage, etc.\n"
+        "- Use mode='combine' when the request needs rows from one source filtered by a condition on a DIFFERENT source via employee identity (see COMBINE QUERIES above).\n"
         "- For 'change the chart type' requests, keep the same mode/query but change chart_type.\n"
         "- Template period must be one of: 24h, 7d, 30d, 90d, 6m, 12m. Default: 6m.\n"
-        "- Dynamic period: 30d|90d|6m|12m. Only set period when the data source has a date column (marked *).\n"
+        "- Dynamic/combine period: 30d|90d|6m|12m. Only set period when the data source has a date column (marked *).\n"
         "- For pie charts, prefer fewer than 7 categories; use bar for more.\n"
         "- For scatter, always use query_id=headcount_vs_bench (template).\n"
         "- For radar, choose the best single-category template query with chart_type=radar.\n"
         "- For treemap, any headcount or groupable dynamic query works.\n"
         "- For 'my team/reportees attendance', use mode='template', query_id=reportee_attendance_split, chart_type=pie.\n"
-        "- Never invent a query_id or data_source — only use exactly what is listed.\n"
+        "- Never invent a query_id, data_source, primary_source, or filter_sources entry — only use exactly what is listed.\n"
     )
 
     messages = [{"role": "system", "content": system}]
@@ -1025,56 +1460,100 @@ def builder_chat(
         messages.append({"role": turn.get("role", "user"), "content": turn.get("content", "")})
     messages.append({"role": "user", "content": message})
 
-    try:
-        from app.services.llm_resilience import resilient_invoke
+    from app.services.llm_resilience import resilient_invoke
+
+    def _invoke_intent(msgs: list) -> BuilderIntent:
         result = resilient_invoke(
-            "router",
-            messages,
-            build=lambda llm: llm.with_structured_output(BuilderIntent),
+            "router", msgs, build=lambda llm: llm.with_structured_output(BuilderIntent),
         )
-        intent = result if isinstance(result, BuilderIntent) else BuilderIntent(**dict(result))
-    except Exception as exc:
-        log.warning("Builder intent failed: %s", exc)
-        return {
-            "ok": False,
-            "chart": None,
-            "explanation": "I couldn't understand that request. Try describing the chart differently — "
-                           "e.g. \"IT tickets by category\", \"reimbursements by type last 6 months\", "
-                           "or \"headcount by function as a bar chart\".",
-            "suggestions": [
-                "IT tickets by category last 3 months",
-                "Reimbursements by type as pie chart",
-                "Headcount by function as bar chart",
-                "Training assignments by status",
-            ],
-        }
+        return result if isinstance(result, BuilderIntent) else BuilderIntent(**dict(result))
 
-    # Validate chart type
-    if intent.chart_type not in CHART_TYPES:
-        intent.chart_type = "bar"
+    # Up to 2 passes: if the first config names an invalid source/field/metric, feed the exact
+    # validation error back to the model once and let it self-correct (the errors already say
+    # what's allowed). The retry LLM call only happens on a miss — the happy path is one call.
+    intent: Optional[BuilderIntent] = None
+    spec: Optional[ChartSpec] = None
+    for attempt in range(2):
+        try:
+            intent = _invoke_intent(messages)
+        except Exception as exc:
+            log.warning("Builder intent failed: %s", exc)
+            return {
+                "ok": False,
+                "chart": None,
+                "explanation": "I couldn't understand that request. Try describing the chart differently — "
+                               "e.g. \"IT tickets by category\", \"reimbursements by type last 6 months\", "
+                               "or \"headcount by function as a bar chart\".",
+                "suggestions": [
+                    "IT tickets by category last 3 months",
+                    "Reimbursements by type as pie chart",
+                    "Headcount by function as bar chart",
+                    "Training assignments by status",
+                ],
+            }
 
-    try:
-        spec = _run_query(db, intent, user_email=user_email)
-    except ValueError as exc:
-        return {
-            "ok": False,
-            "chart": None,
-            "explanation": f"That data isn't available yet ({exc}). Try one of the suggestions below.",
-            "suggestions": [
-                "Headcount by function",
-                "Leave by type last 3 months",
-                "Utilization by function",
-                "AI requests by domain",
-            ],
-        }
-    except Exception as exc:
-        log.exception("Builder query failed for %s: %s", intent.query_id, exc)
-        return {
-            "ok": False,
-            "chart": None,
-            "explanation": "The query ran into an error. Please try a different question.",
-            "suggestions": [],
-        }
+        # Validate chart type
+        if intent.chart_type not in CHART_TYPES:
+            intent.chart_type = "bar"
+        # Sanitize period — the router LLM sometimes echoes the whole options list
+        # ("30d|90d|6m|12m") into the field, which then leaks into the subtitle.
+        if intent.period and intent.period not in _PERIODS:
+            intent.period = None
+        # The router LLM occasionally copies a literal filter value straight out of the
+        # prompt's worked examples (e.g. a department name) instead of leaving filters empty
+        # when the user's request names no constraint at all. A filter whose value doesn't
+        # appear anywhere in the conversation text is almost certainly hallucinated — drop it
+        # rather than silently returning zero rows.
+        if intent.mode == "combine":
+            # Only the actual conversation (history + this message) — NOT the system prompt,
+            # which contains example filter values (e.g. 'Finance', 'Pune') that would otherwise
+            # trivially "ground" any hallucinated filter the model copies from those examples.
+            convo_text = " ".join(
+                [message] + [t.get("content", "") for t in history if isinstance(t.get("content"), str)]
+            ).lower()
+            grounded = [f for f in intent.filters if f.value.lower() in convo_text]
+            if len(grounded) != len(intent.filters):
+                dropped = [f for f in intent.filters if f not in grounded]
+                log.info("Builder dropped ungrounded filter(s) not present in conversation: %s", dropped)
+            intent.filters = grounded
+            if not intent.filters:
+                intent.mode = "dynamic"
+                intent.data_source = intent.primary_source
+                intent.filter_sources = []
+
+        try:
+            spec = _run_query(db, intent, user_email=user_email)
+            break
+        except ValueError as exc:
+            if attempt == 0:
+                log.info("Builder self-correcting after validation error: %s", exc)
+                messages.append({"role": "assistant", "content": intent.model_dump_json()})
+                messages.append({"role": "user", "content": (
+                    f"That configuration was invalid: {exc} "
+                    "Return a corrected configuration for the SAME request, using ONLY the source "
+                    "ids, group_by columns, filter fields, and metrics listed above and named in "
+                    "that error. Do not invent names."
+                )})
+                continue
+            return {
+                "ok": False,
+                "chart": None,
+                "explanation": f"That data isn't available yet ({exc}). Try one of the suggestions below.",
+                "suggestions": [
+                    "Headcount by function",
+                    "Leave by type last 3 months",
+                    "Utilization by function",
+                    "AI requests by domain",
+                ],
+            }
+        except Exception as exc:
+            log.exception("Builder query failed for %s: %s", intent.query_id, exc)
+            return {
+                "ok": False,
+                "chart": None,
+                "explanation": "The query ran into an error. Please try a different question.",
+                "suggestions": [],
+            }
 
     # Auto-generate follow-up suggestions based on what was just shown
     suggestions = _next_suggestions(intent.query_id, data_source=intent.data_source)

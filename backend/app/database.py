@@ -419,6 +419,16 @@ def init_db():
                 f'  available BOOLEAN DEFAULT TRUE,'
                 f'  fetched_at TIMESTAMP DEFAULT NOW()'
                 f')',
+                # Onboarding: admin-assigned IT device shown in the new hire's IT-setup step
+                f'ALTER TABLE "{SCHEMA}".onboarding_journeys ADD COLUMN IF NOT EXISTS assigned_device VARCHAR',
+                # Onboarding: induction videos + manager-call invites (create_all makes the
+                # tables; these indexes are additive and idempotent)
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_manager_call_invites_token ON "{SCHEMA}".manager_call_invites(token)',
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_manager_call_invites_new_hire ON "{SCHEMA}".manager_call_invites(new_hire_email)',
+                # Onboarding: HR-managed doc sections + induction documents + offboarding
+                # (create_all makes the tables; these indexes are additive and idempotent)
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_doc_sections_key ON "{SCHEMA}".onboarding_doc_sections(doc_key)',
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_offboarded_users_email ON "{SCHEMA}".offboarded_users(email)',
             ]:
                 try:
                     conn.execute(text(stmt))

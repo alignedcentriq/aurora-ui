@@ -17,6 +17,7 @@ import base64
 import datetime
 import logging
 import os
+import re
 from typing import Optional
 
 from app.config import settings
@@ -51,6 +52,69 @@ _DEFAULT_CHAPTERS: tuple[dict, ...] = (
 
 def _now() -> datetime.datetime:
     return datetime.datetime.utcnow()
+
+
+# ── Document catalog (built-in docs + HR-managed custom sections/overrides) ───────
+# The built-in checklist lives in onboarding_template (code). HR can add new sections,
+# hide/soft-remove any doc, edit fields, and toggle "required" via OnboardingDocSection
+# rows, which are merged over the built-ins here so the whole app sees one catalog.
+
+def _merged_docs_list() -> list:
+    """Return the effective ordered doc list = built-ins overridden/extended by DB sections,
+    with soft-removed (is_active=False) docs dropped. Items are tmpl.OnboardingDoc instances."""
+    from app.models import OnboardingDocSection
+
+    order: list[str] = []
+    by_key: dict[str, tmpl.OnboardingDoc] = {}
+    sort_hint: dict[str, int] = {}
+    for i, d in enumerate(tmpl.ONBOARDING_DOCS):
+        by_key[d.doc_key] = d
+        sort_hint[d.doc_key] = i
+        order.append(d.doc_key)
+
+    db = SessionLocal()
+    try:
+        rows = db.query(OnboardingDocSection).all()
+    finally:
+        db.close()
+
+    hidden: set[str] = set()
+    for r in rows:
+        if not r.is_active:
+            hidden.add(r.doc_key)
+            continue
+        by_key[r.doc_key] = tmpl.OnboardingDoc(
+            doc_key=r.doc_key,
+            name=r.name,
+            description=r.description or "",
+            fields=tuple(r.fields or ()),
+            required=bool(r.required),
+        )
+        sort_hint[r.doc_key] = r.sort_order if r.sort_order is not None else 100
+        if r.doc_key not in order:
+            order.append(r.doc_key)
+
+    keys = [k for k in order if k not in hidden]
+    keys.sort(key=lambda k: (sort_hint.get(k, 100), k))
+    return [by_key[k] for k in keys]
+
+
+def all_docs() -> tuple:
+    """Effective onboarding documents (built-in + HR customizations), in display order."""
+    return tuple(_merged_docs_list())
+
+
+def get_doc(doc_key: str):
+    """Effective doc definition for a key (built-in or HR-managed), or None if unknown/hidden."""
+    for d in _merged_docs_list():
+        if d.doc_key == doc_key:
+            return d
+    return None
+
+
+def required_doc_keys() -> set:
+    """doc_keys of every effective required document."""
+    return {d.doc_key for d in _merged_docs_list() if d.required}
 
 
 # ── New-hire detection ─────────────────────────────────────────────────────────
@@ -133,7 +197,7 @@ def _docs_submitted(db, journey: OnboardingJourney) -> bool:
         .filter(OnboardingDocSubmission.journey_id == journey.id)
         .all()
     }
-    return tmpl.required_doc_keys().issubset(submitted)
+    return required_doc_keys().issubset(submitted)
 
 
 _AUTO_DETECTORS = {
@@ -217,7 +281,7 @@ def template_file_path(doc_key: str) -> Optional[str]:
 def generate_text_template(doc_key: str) -> tuple[str, str]:
     """Build a simple fillable text template from the doc's declared fields. Returns
     (filename, text). Used when no HR-authored template file exists yet."""
-    doc = tmpl.get_doc(doc_key)
+    doc = get_doc(doc_key)
     if doc is None:
         raise ValueError(f"Unknown document: {doc_key}")
     lines = [
@@ -240,11 +304,229 @@ def generate_text_template(doc_key: str) -> tuple[str, str]:
     return f"{doc_key}.txt", "\n".join(lines)
 
 
+def render_filled_pdf(doc_key: str, field_values: dict, filled_by: str = "",
+                      signature: str | None = None) -> bytes:
+    """Render an in-app-filled document to a PDF from the doc's *declared* fields and the
+    values the new hire typed. This is NOT extracted from any uploaded file — the fields come
+    from the onboarding_template definition, so we always know the exact labels to render.
+
+    `signature`, if given, is a PNG data URL (data:image/png;base64,...) drawn/typed in the
+    app; it's embedded as the digital signature image at the bottom of the document."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+
+    doc = get_doc(doc_key)
+    if doc is None:
+        raise ValueError(f"Unknown document: {doc_key}")
+
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(buf, pagesize=A4, topMargin=22 * mm, bottomMargin=18 * mm,
+                            leftMargin=20 * mm, rightMargin=20 * mm, title=doc.name)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("t", parent=styles["Title"], fontSize=18, spaceAfter=4)
+    desc_style = ParagraphStyle("d", parent=styles["Normal"], fontSize=9.5,
+                                textColor=colors.HexColor("#64748b"), spaceAfter=12)
+    label_style = ParagraphStyle("l", parent=styles["Normal"], fontSize=9,
+                                 textColor=colors.HexColor("#475569"))
+    value_style = ParagraphStyle("v", parent=styles["Normal"], fontSize=11,
+                                 textColor=colors.HexColor("#0f172a"))
+    note_style = ParagraphStyle("n", parent=styles["Normal"], fontSize=8,
+                                textColor=colors.HexColor("#94a3b8"), spaceBefore=16)
+
+    story = [Paragraph(doc.name, title_style)]
+    if doc.description:
+        story.append(Paragraph(doc.description, desc_style))
+
+    rows = []
+    for fld in (doc.fields or ()):
+        val = str(field_values.get(fld, "") or "").strip() or "—"
+        rows.append([Paragraph(fld, label_style), Paragraph(val, value_style)])
+    if rows:
+        table = Table(rows, colWidths=[62 * mm, 100 * mm])
+        table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.append(table)
+    else:
+        story.append(Paragraph("(No fields — this document is an attachment only.)", desc_style))
+
+    # Digital signature block (drawn or typed in-app), embedded as an image.
+    sig_bytes = _decode_data_url_png(signature)
+    story.append(Spacer(1, 12 * mm))
+    if sig_bytes:
+        story.append(Paragraph("Signature", label_style))
+        try:
+            img = Image(BytesIO(sig_bytes))
+            # Scale to a sensible signature size while preserving aspect ratio.
+            max_w, max_h = 60 * mm, 22 * mm
+            iw, ih = img.imageWidth, img.imageHeight
+            scale = min(max_w / iw, max_h / ih) if iw and ih else 1
+            img.drawWidth, img.drawHeight = iw * scale, ih * scale
+            story.append(img)
+        except Exception:
+            pass
+
+    stamp = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph(
+        f"Digitally completed{' and signed' if sig_bytes else ''} in Centriq by "
+        f"{filled_by or 'the new hire'} on {stamp}.", note_style))
+
+    pdf.build(story)
+    return buf.getvalue()
+
+
+def _decode_data_url_png(data_url: str | None) -> bytes | None:
+    """Decode a 'data:image/...;base64,XXXX' data URL to raw bytes. Returns None if absent/bad."""
+    if not data_url or not isinstance(data_url, str) or "," not in data_url:
+        return None
+    try:
+        return base64.b64decode(data_url.split(",", 1)[1])
+    except Exception:
+        return None
+
+
+# ── Mail-merge into an HR-authored Word/Excel template ────────────────────────────
+# If HR drops a real `.docx`/`.xlsx` template into uploads/onboarding_templates/<doc_key>.*,
+# the new hire's typed values (and signature) are merged straight into THAT file — the same
+# `{{ placeholder }}` convention already used for the SharePoint letter templates (see
+# document_generation/template_engine.py), so the exact letterhead/layout HR authored is what
+# reaches HR and what the employee sees, not a generic reportlab layout.
+#
+# Placeholder names: each declared field label is snake_cased, e.g. "Full name" -> {{ full_name }},
+# "IFSC / SWIFT code" -> {{ ifsc_swift_code }}. The digital signature (drawn/typed/uploaded in
+# the app) fills a reserved `{{ signature_image }}` placeholder as an embedded image. A few
+# auto-filled vars are always available too: {{ employee_name }}, {{ today_date }},
+# {{ company_name }}. Templates with no matching placeholders (or no template at all) fall back
+# to the original app-generated PDF below.
+
+def _placeholder_key(label: str) -> str:
+    """Snake-case a field label into its `{{ }}` placeholder name."""
+    return re.sub(r"[^a-zA-Z0-9]+", "_", (label or "").strip().lower()).strip("_")
+
+
+def _merge_context(doc: "tmpl.OnboardingDoc", field_values: dict, auto_ctx: dict) -> dict:
+    ctx = dict(auto_ctx)
+    for fld in (doc.fields or ()):
+        ctx[_placeholder_key(fld)] = str((field_values or {}).get(fld, "") or "")
+    return ctx
+
+
+def render_filled_docx(template_bytes: bytes, doc: "tmpl.OnboardingDoc", field_values: dict,
+                       signature: str | None, auto_ctx: dict) -> bytes:
+    """Mail-merge field values (+ signature image) into an HR-authored .docx template."""
+    from io import BytesIO
+    from docx.shared import Mm
+    from docxtpl import DocxTemplate, InlineImage
+    from jinja2 import Environment
+
+    tpl = DocxTemplate(BytesIO(template_bytes))
+    ctx = _merge_context(doc, field_values, auto_ctx)
+    sig_bytes = _decode_data_url_png(signature)
+    ctx["signature_image"] = InlineImage(tpl, BytesIO(sig_bytes), height=Mm(16)) if sig_bytes else ""
+
+    env = Environment()
+    env.undefined = type("_Blank", (env.undefined,), {"__str__": lambda self: "", "__html__": lambda self: ""})
+    tpl.render(ctx, jinja_env=env)
+    out = BytesIO()
+    tpl.save(out)
+    return out.getvalue()
+
+
+def render_filled_xlsx(template_bytes: bytes, doc: "tmpl.OnboardingDoc", field_values: dict,
+                       signature: str | None, auto_ctx: dict) -> bytes:
+    """Mail-merge field values (+ signature image) into an HR-authored .xlsx template. Scans
+    every cell for `{{ name }}` tokens and substitutes them; a cell that is exactly
+    `{{ signature_image }}` is cleared and gets the signature picture anchored over it."""
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from openpyxl.drawing.image import Image as XLImage
+
+    wb = load_workbook(BytesIO(template_bytes))
+    ctx = _merge_context(doc, field_values, auto_ctx)
+    sig_bytes = _decode_data_url_png(signature)
+    token_re = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, str) or "{{" not in cell.value:
+                    continue
+                if cell.value.strip().replace(" ", "") == "{{signature_image}}":
+                    cell.value = None
+                    if sig_bytes:
+                        try:
+                            img = XLImage(BytesIO(sig_bytes))
+                            img.width, img.height = 160, 55
+                            ws.add_image(img, cell.coordinate)
+                        except Exception:
+                            log.warning("[onboarding] couldn't embed signature image in xlsx template")
+                    continue
+                cell.value = token_re.sub(lambda m: ctx.get(m.group(1), ""), cell.value)
+
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def fill_document(db, journey: OnboardingJourney, doc_key: str, field_values: dict,
+                  actor_email: str, signature: str | None = None) -> dict:
+    """New hire fills a document *in the app*. If HR authored a real .docx/.xlsx template for
+    this doc, mail-merge the values (+ signature) straight into it, preserving HR's layout;
+    otherwise fall back to rendering a generic PDF from the declared fields. Either way the
+    result goes through the normal submission flow (save + email + record)."""
+    doc = get_doc(doc_key)
+    if doc is None:
+        raise ValueError(f"Unknown document: {doc_key}")
+
+    template_path = template_file_path(doc_key)
+    ext = os.path.splitext(template_path)[1].lower() if template_path else ""
+
+    emp = db.query(Employee).filter(Employee.id == journey.employee_id).first()
+    auto_ctx = {
+        "employee_name": (emp.name if emp else "") or actor_email,
+        "today_date": _now().strftime("%d %b %Y"),
+        "company_name": settings.DOC_COMPANY_NAME,
+    }
+
+    if ext == ".docx":
+        with open(template_path, "rb") as fh:
+            template_bytes = fh.read()
+        out_bytes = render_filled_docx(template_bytes, doc, field_values or {}, signature, auto_ctx)
+        original_name = f"{doc_key}_filled.docx"
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == ".xlsx":
+        with open(template_path, "rb") as fh:
+            template_bytes = fh.read()
+        out_bytes = render_filled_xlsx(template_bytes, doc, field_values or {}, signature, auto_ctx)
+        original_name = f"{doc_key}_filled.xlsx"
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        out_bytes = render_filled_pdf(doc_key, field_values or {}, filled_by=actor_email,
+                                      signature=signature)
+        original_name = f"{doc_key}_filled.pdf"
+        content_type = "application/pdf"
+
+    return submit_document(
+        db, journey, doc_key, out_bytes,
+        original_name=original_name,
+        content_type=content_type,
+        actor_email=actor_email,
+    )
+
+
 def submit_document(db, journey: OnboardingJourney, doc_key: str, content: bytes,
                     original_name: str, content_type: str, actor_email: str) -> dict:
     """Save an uploaded filled document, email it to HR (best-effort), record the submission,
     and recompute the documents step. Returns a small result dict for the route."""
-    doc = tmpl.get_doc(doc_key)
+    doc = get_doc(doc_key)
     if doc is None:
         raise ValueError(f"Unknown document: {doc_key}")
 
@@ -347,7 +629,7 @@ def _doc_status_for(db, journey: OnboardingJourney) -> list[dict]:
               .order_by(OnboardingDocSubmission.submitted_at.asc()).all()):
         subs[s.doc_key] = s  # keep latest (asc order → last write wins)
     out = []
-    for doc in tmpl.all_docs():
+    for doc in all_docs():
         sub = subs.get(doc.doc_key)
         d = doc.to_dict()
         d.update({
@@ -359,6 +641,18 @@ def _doc_status_for(db, journey: OnboardingJourney) -> list[dict]:
         })
         out.append(d)
     return out
+
+
+def latest_submission(db, journey: OnboardingJourney, doc_key: str) -> Optional[OnboardingDocSubmission]:
+    """The new hire's most recent submission row for a document (the exact file that was saved
+    + emailed to HR), or None if they haven't submitted it yet."""
+    return (
+        db.query(OnboardingDocSubmission)
+        .filter(OnboardingDocSubmission.journey_id == journey.id,
+                OnboardingDocSubmission.doc_key == doc_key)
+        .order_by(OnboardingDocSubmission.submitted_at.desc())
+        .first()
+    )
 
 
 def get_for_employee(email: str) -> Optional[dict]:
@@ -392,6 +686,7 @@ def get_for_employee(email: str) -> Optional[dict]:
             "next_step": _next_step_key(steps),
             "started_at": journey.started_at.isoformat() if journey.started_at else None,
             "completed_at": journey.completed_at.isoformat() if journey.completed_at else None,
+            "assigned_device": journey.assigned_device,
             "steps": step_views,
             "documents": _doc_status_for(db, journey),
         }
@@ -411,13 +706,9 @@ def get_journey_for(email: str):
     return db, emp, journey
 
 
-def induction_videos() -> list[dict]:
-    """Return all induction videos available for new hires.
-
-    The primary video comes from INDUCTION_VIDEO_URL / INDUCTION_VIDEO_TITLE settings.
-    Additional videos can be supplied via INDUCTION_EXTRA_VIDEOS_JSON — a JSON array where
-    each object has: title (str), url (str), description? (str), chapters? (list).
-    """
+def _env_induction_videos() -> list[dict]:
+    """Legacy env-var induction videos (INDUCTION_VIDEO_URL / INDUCTION_EXTRA_VIDEOS_JSON).
+    Used only as a fallback when no admin-managed rows exist in the DB, for back-compat."""
     videos: list[dict] = []
 
     if settings.INDUCTION_VIDEO_URL:
@@ -446,6 +737,508 @@ def induction_videos() -> list[dict]:
             pass
 
     return videos
+
+
+def induction_videos() -> list[dict]:
+    """Return all induction videos available for new hires.
+
+    Primary source is the admin-managed InductionVideo table (Control Hub). If that table
+    is empty, falls back to the legacy INDUCTION_VIDEO_URL / INDUCTION_EXTRA_VIDEOS_JSON
+    env vars so existing deployments keep working until an admin adds the first video.
+    """
+    from app.models import InductionVideo
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(InductionVideo)
+            .filter(InductionVideo.is_active == True)  # noqa: E712
+            .order_by(InductionVideo.sort_order, InductionVideo.id)
+            .all()
+        )
+        if rows:
+            return [_serialize_video(v) for v in rows]
+    finally:
+        db.close()
+
+    return _env_induction_videos()
+
+
+def _serialize_video(v) -> dict:
+    """Shape one InductionVideo row for both the new-hire player and the admin table."""
+    return {
+        "id": str(v.id),
+        "title": v.title,
+        "description": v.description or "",
+        "url": v.url,
+        "chapters": v.chapters or [],
+        "uploaded_filename": v.uploaded_filename,
+        "sort_order": v.sort_order or 0,
+        "is_active": bool(v.is_active),
+    }
+
+
+# ── Induction video admin (Control Hub) ──────────────────────────────────────────
+
+_INDUCTION_DIR = os.path.join(_UPLOADS_DIR, "induction")
+
+
+def list_induction_videos_admin() -> list[dict]:
+    """All induction videos (active + inactive) for the admin table, in display order."""
+    from app.models import InductionVideo
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(InductionVideo)
+            .order_by(InductionVideo.sort_order, InductionVideo.id)
+            .all()
+        )
+        return [_serialize_video(v) for v in rows]
+    finally:
+        db.close()
+
+
+def create_induction_video(data: dict, actor_email: str | None = None) -> dict:
+    """Create an induction video row from an admin payload (title/url required)."""
+    from app.models import InductionVideo
+    db = SessionLocal()
+    try:
+        v = InductionVideo(
+            title=(data.get("title") or "").strip(),
+            description=(data.get("description") or "").strip() or None,
+            url=(data.get("url") or "").strip(),
+            uploaded_filename=data.get("uploaded_filename"),
+            chapters=data.get("chapters") or [],
+            sort_order=int(data.get("sort_order") or 0),
+            is_active=bool(data.get("is_active", True)),
+            created_by=actor_email,
+        )
+        db.add(v)
+        db.commit()
+        db.refresh(v)
+        return _serialize_video(v)
+    finally:
+        db.close()
+
+
+def update_induction_video(video_id: int, data: dict) -> dict | None:
+    """Update an induction video row. Returns the updated dict, or None if not found."""
+    from app.models import InductionVideo
+    db = SessionLocal()
+    try:
+        v = db.query(InductionVideo).filter(InductionVideo.id == video_id).first()
+        if v is None:
+            return None
+        if "title" in data:
+            v.title = (data.get("title") or "").strip()
+        if "description" in data:
+            v.description = (data.get("description") or "").strip() or None
+        if "url" in data:
+            v.url = (data.get("url") or "").strip()
+        if "uploaded_filename" in data:
+            v.uploaded_filename = data.get("uploaded_filename")
+        if "chapters" in data:
+            v.chapters = data.get("chapters") or []
+        if "sort_order" in data:
+            v.sort_order = int(data.get("sort_order") or 0)
+        if "is_active" in data:
+            v.is_active = bool(data.get("is_active"))
+        db.commit()
+        db.refresh(v)
+        return _serialize_video(v)
+    finally:
+        db.close()
+
+
+def delete_induction_video(video_id: int) -> bool:
+    """Delete an induction video row (and its uploaded file, if any). Returns True if deleted."""
+    from app.models import InductionVideo
+    db = SessionLocal()
+    try:
+        v = db.query(InductionVideo).filter(InductionVideo.id == video_id).first()
+        if v is None:
+            return False
+        # Best-effort cleanup of a locally-uploaded file (url points under /uploads/induction/).
+        if v.uploaded_filename and v.url and "/uploads/induction/" in v.url:
+            try:
+                fname = v.url.rsplit("/", 1)[-1]
+                fpath = os.path.join(_INDUCTION_DIR, fname)
+                if os.path.isfile(fpath):
+                    os.remove(fpath)
+            except Exception:
+                pass
+        db.delete(v)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def save_induction_upload(content: bytes, original_name: str) -> dict:
+    """Save an uploaded video file under uploads/induction/ and return its public URL.
+
+    Returns {"url": "/uploads/induction/<unique>", "uploaded_filename": original_name}.
+    The URL is served by main.py's /uploads static mount.
+    """
+    import uuid
+    os.makedirs(_INDUCTION_DIR, exist_ok=True)
+    ext = os.path.splitext(original_name or "")[1].lower() or ".mp4"
+    safe = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(_INDUCTION_DIR, safe), "wb") as f:
+        f.write(content)
+    return {"url": f"/uploads/induction/{safe}", "uploaded_filename": original_name or safe}
+
+
+# ── Induction documents (reference PDFs/docs attached to the induction step) ───────
+
+_INDUCTION_DOCS_DIR = os.path.join(_UPLOADS_DIR, "induction_docs")
+
+
+def _serialize_induction_doc(d) -> dict:
+    return {
+        "id": str(d.id),
+        "title": d.title,
+        "description": d.description or "",
+        "url": d.url,
+        "uploaded_filename": d.uploaded_filename,
+        "sort_order": d.sort_order or 0,
+        "is_active": bool(d.is_active),
+    }
+
+
+def induction_documents() -> list[dict]:
+    """Active induction reference documents for new hires (view/download in the induction step)."""
+    from app.models import InductionDocument
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(InductionDocument)
+            .filter(InductionDocument.is_active == True)  # noqa: E712
+            .order_by(InductionDocument.sort_order, InductionDocument.id)
+            .all()
+        )
+        return [_serialize_induction_doc(d) for d in rows]
+    finally:
+        db.close()
+
+
+def list_induction_docs_admin() -> list[dict]:
+    from app.models import InductionDocument
+    db = SessionLocal()
+    try:
+        rows = (db.query(InductionDocument)
+                .order_by(InductionDocument.sort_order, InductionDocument.id).all())
+        return [_serialize_induction_doc(d) for d in rows]
+    finally:
+        db.close()
+
+
+def create_induction_doc(data: dict, actor_email: str | None = None) -> dict:
+    from app.models import InductionDocument
+    db = SessionLocal()
+    try:
+        d = InductionDocument(
+            title=(data.get("title") or "").strip(),
+            description=(data.get("description") or "").strip() or None,
+            url=(data.get("url") or "").strip(),
+            uploaded_filename=data.get("uploaded_filename"),
+            sort_order=int(data.get("sort_order") or 0),
+            is_active=bool(data.get("is_active", True)),
+            created_by=actor_email,
+        )
+        db.add(d)
+        db.commit()
+        db.refresh(d)
+        return _serialize_induction_doc(d)
+    finally:
+        db.close()
+
+
+def update_induction_doc(doc_id: int, data: dict) -> dict | None:
+    from app.models import InductionDocument
+    db = SessionLocal()
+    try:
+        d = db.query(InductionDocument).filter(InductionDocument.id == doc_id).first()
+        if d is None:
+            return None
+        if "title" in data:
+            d.title = (data.get("title") or "").strip()
+        if "description" in data:
+            d.description = (data.get("description") or "").strip() or None
+        if "url" in data:
+            d.url = (data.get("url") or "").strip()
+        if "uploaded_filename" in data:
+            d.uploaded_filename = data.get("uploaded_filename")
+        if "sort_order" in data:
+            d.sort_order = int(data.get("sort_order") or 0)
+        if "is_active" in data:
+            d.is_active = bool(data.get("is_active"))
+        db.commit()
+        db.refresh(d)
+        return _serialize_induction_doc(d)
+    finally:
+        db.close()
+
+
+def delete_induction_doc(doc_id: int) -> bool:
+    from app.models import InductionDocument
+    db = SessionLocal()
+    try:
+        d = db.query(InductionDocument).filter(InductionDocument.id == doc_id).first()
+        if d is None:
+            return False
+        if d.uploaded_filename and d.url and "/uploads/induction_docs/" in d.url:
+            try:
+                fpath = os.path.join(_INDUCTION_DOCS_DIR, d.url.rsplit("/", 1)[-1])
+                if os.path.isfile(fpath):
+                    os.remove(fpath)
+            except Exception:
+                pass
+        db.delete(d)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def save_induction_doc_upload(content: bytes, original_name: str) -> dict:
+    """Save an uploaded induction document under uploads/induction_docs/ and return its URL."""
+    import uuid
+    os.makedirs(_INDUCTION_DOCS_DIR, exist_ok=True)
+    ext = os.path.splitext(original_name or "")[1].lower() or ".pdf"
+    safe = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(_INDUCTION_DOCS_DIR, safe), "wb") as f:
+        f.write(content)
+    return {"url": f"/uploads/induction_docs/{safe}", "uploaded_filename": original_name or safe}
+
+
+# ── Document template admin (HR uploads blank templates to download/fill/upload) ──
+
+def list_doc_templates_admin() -> list[dict]:
+    """Full HR management view of the document catalog: every document — built-in and
+    HR-added, including soft-removed ones — with its effective name/description/fields/required,
+    whether it's active, whether it's a built-in, and any uploaded template file.
+
+    HR uses this to add sections, remove/deactivate them, edit fields, and toggle mandatory.
+    """
+    from app.models import OnboardingDocSection
+
+    builtin_keys = {d.doc_key for d in tmpl.ONBOARDING_DOCS}
+    builtins = {d.doc_key: d for d in tmpl.ONBOARDING_DOCS}
+    builtin_order = {d.doc_key: i for i, d in enumerate(tmpl.ONBOARDING_DOCS)}
+
+    db = SessionLocal()
+    try:
+        rows = {r.doc_key: r for r in db.query(OnboardingDocSection).all()}
+    finally:
+        db.close()
+
+    out = []
+    seen = set()
+    for key in list(builtins.keys()) + [k for k in rows.keys() if k not in builtin_keys]:
+        if key in seen:
+            continue
+        seen.add(key)
+        row = rows.get(key)
+        base = builtins.get(key)
+        name = (row.name if row else base.name) if (row or base) else key
+        description = (row.description if row and row.description is not None else (base.description if base else "")) or ""
+        fields = list(row.fields) if (row and row.fields is not None) else (list(base.fields) if base else [])
+        required = bool(row.required) if row else (base.required if base else True)
+        is_active = bool(row.is_active) if row else True
+        sort_order = (row.sort_order if row and row.sort_order is not None
+                      else (builtin_order.get(key, 100)))
+        path = template_file_path(key)
+        out.append({
+            "doc_key": key,
+            "name": name,
+            "description": description,
+            "fields": fields,
+            "required": required,
+            "is_active": is_active,
+            "is_builtin": key in builtin_keys,
+            "section_id": row.id if row else None,
+            "sort_order": sort_order,
+            "has_template_file": path is not None,
+            "template_filename": os.path.basename(path) if path else None,
+        })
+    out.sort(key=lambda d: (d["sort_order"], d["name"]))
+    return out
+
+
+def _slugify_doc_key(name: str) -> str:
+    import re
+    base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "document"
+    return f"custom_{base}"[:60]
+
+
+def create_doc_section(data: dict, actor_email: str | None = None) -> dict:
+    """HR adds a brand-new document section. doc_key is derived from the name (uniquified)."""
+    from app.models import OnboardingDocSection
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("A document name is required.")
+    db = SessionLocal()
+    try:
+        base_key = _slugify_doc_key(name)
+        key = base_key
+        existing = {d.doc_key for d in tmpl.ONBOARDING_DOCS} | {
+            r.doc_key for r in db.query(OnboardingDocSection).all()
+        }
+        n = 2
+        while key in existing:
+            key = f"{base_key}_{n}"
+            n += 1
+        row = OnboardingDocSection(
+            doc_key=key,
+            name=name,
+            description=(data.get("description") or "").strip() or None,
+            fields=[f.strip() for f in (data.get("fields") or []) if f and f.strip()],
+            required=bool(data.get("required", True)),
+            is_active=bool(data.get("is_active", True)),
+            sort_order=int(data.get("sort_order") or 100),
+            created_by=actor_email,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {"doc_key": row.doc_key, "section_id": row.id}
+    finally:
+        db.close()
+
+
+def update_doc_section(doc_key: str, data: dict) -> dict | None:
+    """Update a document. For built-ins this creates/updates an override row (name/description/
+    fields/required/is_active/sort_order). Returns the effective row info, or None if unknown."""
+    from app.models import OnboardingDocSection
+
+    is_builtin = any(d.doc_key == doc_key for d in tmpl.ONBOARDING_DOCS)
+    db = SessionLocal()
+    try:
+        row = db.query(OnboardingDocSection).filter(
+            OnboardingDocSection.doc_key == doc_key
+        ).first()
+        if row is None:
+            if not is_builtin:
+                return None
+            # First edit of a built-in → seed an override row from its current definition.
+            base = next(d for d in tmpl.ONBOARDING_DOCS if d.doc_key == doc_key)
+            row = OnboardingDocSection(
+                doc_key=doc_key, name=base.name, description=base.description or None,
+                fields=list(base.fields), required=base.required, is_active=True, sort_order=100,
+            )
+            db.add(row)
+        if "name" in data and data["name"] is not None:
+            row.name = str(data["name"]).strip() or row.name
+        if "description" in data:
+            row.description = (data.get("description") or "").strip() or None
+        if "fields" in data:
+            row.fields = [f.strip() for f in (data.get("fields") or []) if f and f.strip()]
+        if "required" in data:
+            row.required = bool(data["required"])
+        if "is_active" in data:
+            row.is_active = bool(data["is_active"])
+        if "sort_order" in data:
+            row.sort_order = int(data.get("sort_order") or 100)
+        db.commit()
+        db.refresh(row)
+        return {"doc_key": row.doc_key, "section_id": row.id, "is_active": row.is_active}
+    finally:
+        db.close()
+
+
+def delete_doc_section(doc_key: str) -> bool:
+    """Remove a document. Custom sections are hard-deleted (and their template file removed);
+    built-ins can't be deleted from code, so they're soft-removed (is_active=False override)."""
+    from app.models import OnboardingDocSection
+
+    is_builtin = any(d.doc_key == doc_key for d in tmpl.ONBOARDING_DOCS)
+    if is_builtin:
+        return update_doc_section(doc_key, {"is_active": False}) is not None
+
+    db = SessionLocal()
+    try:
+        row = db.query(OnboardingDocSection).filter(
+            OnboardingDocSection.doc_key == doc_key
+        ).first()
+        if row is None:
+            return False
+        db.delete(row)
+        db.commit()
+    finally:
+        db.close()
+    _remove_doc_template_file(doc_key)
+    return True
+
+
+def save_doc_template(doc_key: str, content: bytes, original_name: str) -> dict:
+    """Save (or replace) the HR-authored blank template file for a document. Stored as
+    uploads/onboarding_templates/<doc_key><ext> so template_file_path() finds it by key.
+    Returns {doc_key, template_filename}."""
+    if get_doc(doc_key) is None:
+        raise ValueError(f"Unknown document: {doc_key}")
+    os.makedirs(_TEMPLATES_DIR, exist_ok=True)
+    # Remove any existing template for this key (possibly a different extension) first.
+    _remove_doc_template_file(doc_key)
+    ext = os.path.splitext(original_name or "")[1].lower() or ".pdf"
+    fname = f"{doc_key}{ext}"
+    with open(os.path.join(_TEMPLATES_DIR, fname), "wb") as f:
+        f.write(content)
+    return {"doc_key": doc_key, "template_filename": fname}
+
+
+def _remove_doc_template_file(doc_key: str) -> bool:
+    """Delete any template file matching this doc_key (any extension). Returns True if one went."""
+    if not os.path.isdir(_TEMPLATES_DIR):
+        return False
+    removed = False
+    for fname in os.listdir(_TEMPLATES_DIR):
+        if os.path.splitext(fname)[0] == doc_key:
+            try:
+                os.remove(os.path.join(_TEMPLATES_DIR, fname))
+                removed = True
+            except Exception:
+                pass
+    return removed
+
+
+def delete_doc_template(doc_key: str) -> bool:
+    """Remove the HR-authored template file for a doc (new hires fall back to the text stub)."""
+    if get_doc(doc_key) is None:
+        return False
+    return _remove_doc_template_file(doc_key)
+
+
+# ── Assigned IT device (admin-set, shown in the new hire's IT-setup step) ─────────
+
+def get_assigned_device(email: str) -> str | None:
+    """The IT device an admin assigned to this hire, or None."""
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            return None
+        journey = ensure_journey(db, emp)
+        return journey.assigned_device
+    finally:
+        db.close()
+
+
+def set_assigned_device(email: str, device: str | None) -> dict | None:
+    """Admin sets/clears the IT device for a hire. Returns {email, assigned_device} or None."""
+    db = SessionLocal()
+    try:
+        emp = db.query(Employee).filter(Employee.email == email).first()
+        if not emp:
+            return None
+        journey = ensure_journey(db, emp)
+        journey.assigned_device = (device or "").strip() or None
+        db.commit()
+        db.refresh(journey)
+        return {"employee_email": email, "assigned_device": journey.assigned_device}
+    finally:
+        db.close()
 
 
 # ── HR roll-up ───────────────────────────────────────────────────────────────────
@@ -490,7 +1283,7 @@ def overview() -> dict:
                 "progress_pct": pct,
                 "next_step": _next_step_key(steps),
                 "docs_submitted": docs_submitted,
-                "docs_required": len(tmpl.required_doc_keys()),
+                "docs_required": len(required_doc_keys()),
                 "stalled": stalled,
                 "started_at": journey.started_at.isoformat() if journey.started_at else None,
             })
