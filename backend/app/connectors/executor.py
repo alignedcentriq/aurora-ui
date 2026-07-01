@@ -24,7 +24,7 @@ from .auth import inject_auth
 
 log = logging.getLogger(__name__)
 
-TIMEOUT = 15.0
+TIMEOUT = 30.0              # generous timeout to survive Azure App Service cold-starts
 MAX_RESPONSE_CHARS = 4000  # trim large responses before returning to the agent
 
 

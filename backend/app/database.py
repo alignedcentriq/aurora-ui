@@ -116,7 +116,13 @@ def get_db():
     try:
         yield db
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            # SSL connection may have been closed by the server during a long request
+            # (LLM calls, slow external connectors). Not critical — the pool will
+            # discard the dead connection and open a fresh one for the next request.
+            pass
 
 def _background_embed_policies():
     """Runs in a daemon thread — chunks + embeds all un-chunked policies."""

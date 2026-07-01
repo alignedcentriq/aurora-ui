@@ -792,8 +792,8 @@ def generate_questions(db: Session, training_id: int, *, level_id: Optional[int]
         f"- Produce exactly {count} questions."
     )
 
-    model = llm_controls.get_llm("general", default_timeout=90)
-    draft = invoke_json(model, prompt, attempts=2)
+    model = llm_controls.get_llm("general", default_timeout=60)
+    draft = invoke_json(model, prompt, attempts=1)
     if not draft or not isinstance(draft.get("questions"), list):
         return {"error": "generation_failed"}
 

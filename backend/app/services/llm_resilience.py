@@ -46,6 +46,13 @@ class ServerBusyError(Exception):
 # Phrases Ollama uses when its request queue is exhausted (checked case-insensitively).
 _BUSY_PHRASES = ("maximum pending requests exceeded", "server busy")
 
+# Retry config for transient server-busy signals. A previous long request may still be
+# in Ollama's queue; we back off and retry rather than instantly surfacing an error.
+# Kept short (≤2s total) so the SSE connection stays alive and the client receives the
+# busy event rather than seeing a silent connection close.
+_BUSY_MAX_RETRIES = 2
+_BUSY_RETRY_DELAYS = [0.5, 1.5]  # seconds between attempts
+
 
 def _is_server_busy(exc: Exception) -> bool:
     """Return True if *exc* (or its cause) signals that the Ollama queue is full."""
@@ -55,6 +62,10 @@ def _is_server_busy(exc: Exception) -> bool:
 
 # TTFT threshold before we hedge with a fallback stream
 TTFT_HEDGE_SECONDS = 8.0
+
+# Inter-token timeout: if no new token arrives within this window mid-stream, the model
+# is stuck (not just slow to start). Trigger fallback rather than hanging indefinitely.
+IBT_SECONDS = 25.0
 
 # Circuit breaker config per tier
 BREAKER_FAILURE_THRESHOLD = 3
@@ -168,12 +179,34 @@ def _build_llm(
 
 
 async def _stream_llm(tier: str, messages, model_override: Optional[str] = None) -> AsyncIterator[str]:
-    """Yield string chunks from an LLM stream. Raises on error."""
+    """Yield string chunks from an LLM stream. Raises on error.
+
+    IBT watchdog: if no new token arrives within IBT_SECONDS mid-stream, the model is
+    stuck. Raises TimeoutError so resilient_stream can switch to the fallback model
+    instead of hanging indefinitely.
+    """
     llm = _build_llm(tier, model_override, default_timeout=45)
-    async for chunk in llm.astream(messages):
-        content = chunk.content if hasattr(chunk, "content") else str(chunk)
-        if content:
-            yield content
+
+    async def _gen():
+        async for chunk in llm.astream(messages):
+            content = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if content:
+                yield content
+
+    gen = _gen()
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(gen.__anext__(), timeout=IBT_SECONDS)
+                yield chunk
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"Inter-token timeout ({IBT_SECONDS:.0f}s) for tier {tier!r} — model stuck mid-generation"
+                )
+    finally:
+        await gen.aclose()
 
 
 # ── Resilient invoke (tool-calling and structured-output call sites) ──────────
@@ -209,18 +242,27 @@ def resilient_invoke(
         log.warning("Circuit open for tier %r — invoking fallback %r directly", tier, fallback_model)
         return _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).invoke(messages)
 
-    try:
-        result = _prepare(tier, build, None, default_timeout, default_max_tokens).invoke(messages)
-        _breaker.record_success(tier)
-        return result
-    except Exception as exc:
-        if _is_server_busy(exc):
-            log.warning("ML01 server busy for tier %r — rejecting immediately (no fallback)", tier)
-            raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
-        _breaker.record_failure(tier)
-        log.warning("Primary invoke failed for tier %r (%s) — retrying on fallback %r",
-                    tier, exc, fallback_model)
-        return _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).invoke(messages)
+    for attempt in range(_BUSY_MAX_RETRIES + 1):
+        try:
+            result = _prepare(tier, build, None, default_timeout, default_max_tokens).invoke(messages)
+            _breaker.record_success(tier)
+            return result
+        except Exception as exc:
+            if _is_server_busy(exc):
+                if attempt < _BUSY_MAX_RETRIES:
+                    delay = _BUSY_RETRY_DELAYS[attempt]
+                    log.warning(
+                        "ML01 server busy for tier %r — retrying in %.1fs (attempt %d/%d)",
+                        tier, delay, attempt + 1, _BUSY_MAX_RETRIES,
+                    )
+                    time.sleep(delay)
+                    continue
+                log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
+                raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
+            _breaker.record_failure(tier)
+            log.warning("Primary invoke failed for tier %r (%s) — retrying on fallback %r",
+                        tier, exc, fallback_model)
+            return _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).invoke(messages)
 
 
 async def resilient_ainvoke(
@@ -237,18 +279,27 @@ async def resilient_ainvoke(
         log.warning("Circuit open for tier %r — invoking fallback %r directly", tier, fallback_model)
         return await _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).ainvoke(messages)
 
-    try:
-        result = await _prepare(tier, build, None, default_timeout, default_max_tokens).ainvoke(messages)
-        _breaker.record_success(tier)
-        return result
-    except Exception as exc:
-        if _is_server_busy(exc):
-            log.warning("ML01 server busy for tier %r — rejecting immediately (no fallback)", tier)
-            raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
-        _breaker.record_failure(tier)
-        log.warning("Primary ainvoke failed for tier %r (%s) — retrying on fallback %r",
-                    tier, exc, fallback_model)
-        return await _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).ainvoke(messages)
+    for attempt in range(_BUSY_MAX_RETRIES + 1):
+        try:
+            result = await _prepare(tier, build, None, default_timeout, default_max_tokens).ainvoke(messages)
+            _breaker.record_success(tier)
+            return result
+        except Exception as exc:
+            if _is_server_busy(exc):
+                if attempt < _BUSY_MAX_RETRIES:
+                    delay = _BUSY_RETRY_DELAYS[attempt]
+                    log.warning(
+                        "ML01 server busy for tier %r — retrying in %.1fs (attempt %d/%d)",
+                        tier, delay, attempt + 1, _BUSY_MAX_RETRIES,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
+                raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
+            _breaker.record_failure(tier)
+            log.warning("Primary ainvoke failed for tier %r (%s) — retrying on fallback %r",
+                        tier, exc, fallback_model)
+            return await _prepare(tier, build, fallback_model, default_timeout, default_max_tokens).ainvoke(messages)
 
 
 # ── Resilient stream ──────────────────────────────────────────────────────────
@@ -283,6 +334,7 @@ async def resilient_stream(
     primary_task: Optional[asyncio.Task] = None
     fallback_task: Optional[asyncio.Task] = None
     error: Optional[Exception] = None
+    busy_retries = 0
 
     async def _fill_queue(gen_fn, queue: asyncio.Queue):
         try:
@@ -302,6 +354,7 @@ async def resilient_stream(
     got_primary_token = False
     fallback_active = False
     is_fallback = False
+    _pending_error: Optional[Exception] = None
 
     try:
         while True:
@@ -345,7 +398,21 @@ async def resilient_stream(
                     exc = primary_task.exception()
                     if exc:
                         if _is_server_busy(exc):
-                            log.warning("ML01 server busy for tier %r — stopping stream immediately (no fallback)", tier)
+                            if not got_primary_token and busy_retries < _BUSY_MAX_RETRIES:
+                                delay = _BUSY_RETRY_DELAYS[busy_retries]
+                                busy_retries += 1
+                                log.warning(
+                                    "ML01 server busy for tier %r — retrying stream in %.1fs (attempt %d/%d)",
+                                    tier, delay, busy_retries, _BUSY_MAX_RETRIES,
+                                )
+                                await asyncio.sleep(delay)
+                                primary_queue = asyncio.Queue()
+                                primary_task = asyncio.create_task(
+                                    _fill_queue(_stream_llm(tier, messages, primary_model), primary_queue)
+                                )
+                                ttft_deadline = time.monotonic() + TTFT_HEDGE_SECONDS
+                                continue
+                            log.warning("ML01 server busy for tier %r — stopping stream after %d retries", tier, busy_retries)
                             raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
                         _breaker.record_failure(tier)
                         if not fallback_active:
@@ -359,6 +426,11 @@ async def resilient_stream(
                     break
 
                 if fallback_active and fallback_task and fallback_task.done():
+                    if not fallback_task.cancelled():
+                        try:
+                            _pending_error = fallback_task.exception()
+                        except Exception:
+                            pass
                     break
 
                 await asyncio.sleep(0.02)
@@ -367,6 +439,10 @@ async def resilient_stream(
             # We have a real chunk
             got_primary_token = True
             yield chunk, is_fallback
+
+        # Surface fallback failure so main.py sees an error rather than a silent empty stream.
+        if _pending_error is not None:
+            raise _pending_error
 
     except asyncio.CancelledError:
         pass

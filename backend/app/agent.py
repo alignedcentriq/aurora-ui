@@ -3048,7 +3048,13 @@ async def _form_library_strategy(ctx: RouteContext) -> Optional[Decision]:
     inline — fully data-driven, so a new admin form is chat-triggerable with no code change. Runs
     AFTER exact/semantic-high (a precise domain intent always wins). Info-style questions with no
     action verb need a stronger match (so "what is the process for X?" gets a real answer, not a
-    widget). Fail-soft: returns None if the embed model is down."""
+    widget). Fail-soft: returns None if the embed model is down.
+    Skipped when a confident keyword result (≥0.9) already exists — those have enough context to
+    act directly (e.g. "book salween room from 3-3:30pm") and the form widget would be redundant."""
+    # A confident keyword hit means the user's full intent is already resolved; don't override it
+    # with a form widget that would ask for information the message already contains.
+    if ctx.keyword_result and ctx.keyword_result.get("confidence", 0) >= 0.9:
+        return None
     try:
         from app.services.form_library_service import FormLibraryService
         _is_info_no_action = _INFO_QUERY_RE.search(ctx.message) and not _ACTION_VERB_RE.search(ctx.message)
@@ -4677,6 +4683,39 @@ async def ms365_agent_node(state: AgentState):
                 f"cite the author + web_url. If nothing relevant, say so plainly."
             )
 
+    elif sub_intent == "send_email":
+        # Pre-fetch manager email from local DB to avoid the expensive list_org_users
+        # Graph API call (which fetches 1000+ users and causes the 2-3 min hang).
+        user_msg = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        ) or ""
+        if re.search(r'\bmy\s+manager\b|\breporting\s+manager\b', user_msg, re.I):
+            try:
+                from app.database import SessionLocal
+                from app.models import Employee, EmployeeZohoProfile
+                from app.hr_service import HRService
+                db = SessionLocal()
+                try:
+                    emp = db.query(Employee).filter(Employee.email.ilike(user_email)).first()
+                    if emp:
+                        mgr_email = HRService._find_manager_email(db, emp)
+                        mgr_name = ""
+                        prof = db.query(EmployeeZohoProfile).filter(
+                            EmployeeZohoProfile.employee_id == emp.id
+                        ).first()
+                        if prof and prof.reporting_manager:
+                            mgr_name = prof.reporting_manager
+                        if mgr_email:
+                            pre_fetched = (
+                                f"[MANAGER INFO — use this directly, do NOT call list_org_users]\n"
+                                f"Name: {mgr_name or 'Your Manager'}\n"
+                                f"Email: {mgr_email}\n[END]"
+                            )
+                finally:
+                    db.close()
+            except Exception:
+                pass
+
     feedback_ctx = _location_prefix(state) + _get_mode_hint(state) + (state.get("feedback_context") or "")
     if pre_fetched:
         feedback_ctx = pre_fetched + "\n\n" + feedback_ctx
@@ -4698,13 +4737,16 @@ async def ms365_agent_node(state: AgentState):
                 + feedback_ctx
             )
 
-    result = await ms365_agent.ainvoke({
-        "messages": state["messages"],
-        "user_email": user_email,
-        "feedback_context": feedback_ctx,
-        "graph_token": graph_token,
-        "yammer_token": yammer_token,
-    })
+    result = await ms365_agent.ainvoke(
+        {
+            "messages": state["messages"],
+            "user_email": user_email,
+            "feedback_context": feedback_ctx,
+            "graph_token": graph_token,
+            "yammer_token": yammer_token,
+        },
+        config={"recursion_limit": 8},
+    )
 
     # ── Intercept __pending__ signals from write tools ──────────────────────
     # Write tools return {"__pending__": true, "action_type": ..., "params": {...}, ...}
@@ -5035,30 +5077,45 @@ async def connector_agent(state: AgentState):
     )
     full_messages = [SystemMessage(content=system_prompt)] + messages
 
-    # ReAct loop — max 2 tool rounds
-    for _ in range(2):
-        response = await resilient_ainvoke("agent", full_messages,
-                                           build=lambda l: l.bind_tools(tools),
-                                           default_timeout=45)
-        full_messages.append(response)
+    async def _react_loop() -> list:
+        # ReAct loop — max 2 tool rounds
+        for _ in range(2):
+            response = await resilient_ainvoke("agent", full_messages,
+                                               build=lambda l: l.bind_tools(tools),
+                                               default_timeout=30)
+            full_messages.append(response)
 
-        if not (hasattr(response, "tool_calls") and response.tool_calls):
-            break
+            if not (hasattr(response, "tool_calls") and response.tool_calls):
+                break
 
-        # Execute all tool calls
-        for tc in response.tool_calls:
-            tool_fn = next((t for t in tools if t.name == tc["name"]), None)
-            if tool_fn is None:
-                tool_result = f"Tool '{tc['name']}' not found."
-            else:
-                try:
-                    tool_result = await tool_fn.ainvoke(tc.get("args", {}))
-                except Exception as exc:
-                    tool_result = f"Tool error: {exc}"
-            full_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
+            # Execute all tool calls
+            for tc in response.tool_calls:
+                tool_fn = next((t for t in tools if t.name == tc["name"]), None)
+                if tool_fn is None:
+                    tool_result = f"Tool '{tc['name']}' not found."
+                else:
+                    try:
+                        tool_result = await tool_fn.ainvoke(tc.get("args", {}))
+                    except Exception as exc:
+                        tool_result = f"Tool error: {exc}"
+                full_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
 
-    # Return only the new messages (diff from original)
-    new_messages = full_messages[len(messages) + 1:]  # +1 for system message
+        # Return only the new messages (diff from original)
+        return full_messages[len(messages) + 1:]  # +1 for system message
+
+    try:
+        # 90s hard cap: 2×30s LLM + 30s HTTP tool call with buffer.
+        # Prevents the user from seeing "connecting…" for 2+ minutes when the
+        # remote service (e.g. an Azure App Service cold-starting) is slow.
+        new_messages = await asyncio.wait_for(_react_loop(), timeout=90)
+    except asyncio.TimeoutError:
+        new_messages = [AIMessage(
+            content=(
+                f"The {connector['name']} service is taking too long to respond — "
+                "it may be warming up. Please try again in a moment."
+            )
+        )]
+
     return {"messages": new_messages}
 
 

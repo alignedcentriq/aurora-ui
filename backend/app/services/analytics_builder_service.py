@@ -386,6 +386,26 @@ _DATA_SOURCES: dict[str, dict] = {
         },
         "numeric": {},
     },
+    # ── EMPLOYEE PROFILE (Zoho HRMS — non-sensitive fields only) ─────────────────
+    "employee_zoho_profile": {
+        "model": EmployeeZohoProfile, "label": "Employee Zoho Profile",
+        "date_col": "date_of_joining", "resolved_col": None,
+        "groupable": {
+            "function": "business function / department",
+            "designation": "job designation / title",
+            "employment_type": "Full-time / Contract / Intern",
+            "employee_status": "Active / Inactive",
+            "source_of_hire": "Direct / Campus / Referral / Lateral",
+            "gender": "Male / Female / Other",
+            "level": "seniority level",
+            "grade": "pay / seniority grade",
+            "nationality": "nationality",
+            "onboarding_status": "onboarding completion status",
+            "sub_location": "office sub-location",
+            "organization_structure": "org unit / sub-org",
+        },
+        "numeric": {},
+    },
 }
 
 

@@ -1844,11 +1844,23 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                 const stage = (evt.stage as string) ?? "";
                 setActivity(stage);
               }
+            } else if (evt.type === "warning") {
+              // Non-fatal degraded-mode signal (e.g. embedding model warming up).
+              toast.warning("Degraded routing", {
+                description:
+                  (evt.message as string) ??
+                  "AI routing is limited right now — accuracy should improve on your next message.",
+                duration: 5000,
+              });
             } else if (evt.type === "busy") {
               // Queue is full — degrade gracefully instead of timing out.
               setThinking(threadId, false);
               activityTimers.forEach((t) => window.clearTimeout(t));
               setActivity("");
+              toast.error("AI server is busy", {
+                description: "The server is still processing a previous request. Please try again in a moment.",
+                duration: 6000,
+              });
               if (!aiTurnAdded) {
                 addTurn(threadId, {
                   role: "ai",
@@ -1932,6 +1944,10 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           if (!aiTurnAdded) {
             setThinking(threadId, false);
             setActivity("");
+            toast.error("AI server is busy", {
+              description: "The server is still processing a previous request. Please try again in a moment.",
+              duration: 6000,
+            });
             addTurn(threadId, {
               role: "ai",
               text: "I didn't receive a response — the server may be busy. Please try again.",
