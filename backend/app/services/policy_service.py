@@ -13,6 +13,8 @@ All policy data lives in the DB — no runtime dependency on the PDF folder.
 
 import os
 import re
+import time
+import threading
 import datetime
 from difflib import get_close_matches
 from pathlib import Path
@@ -20,6 +22,18 @@ from pathlib import Path
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Policy
+
+# ── Embedding model health tracking ──────────────────────────────────────────
+# Tracks the last time the embedding call failed. Cleared on next success.
+# Used by main.py to emit a SSE warning event when the model is degraded.
+_embedding_failed_at: float | None = None
+_embedding_warmup_lock = threading.Lock()
+_embedding_warmup_running = False
+
+
+def is_embedding_unavailable() -> bool:
+    """True if the embedding model has failed within the last 120 seconds."""
+    return _embedding_failed_at is not None and (time.time() - _embedding_failed_at) < 120.0
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 POLICY_DIR = Path(__file__).resolve().parent.parent.parent / "OneDrive_1_12-5-2026"
@@ -626,6 +640,7 @@ class PolicyService:
         The same text is embedded for answer-cache lookup, semantic router, form match,
         and policy search — so a Redis hit on repeated questions avoids multiple ml01 calls.
         """
+        global _embedding_failed_at
         import hashlib
         import struct
 
@@ -674,9 +689,42 @@ class PolicyService:
                     rc.setex(_redis_key, 86400 * 14, packed.hex())
             except Exception:
                 pass
+            _embedding_failed_at = None  # success — clear any stale failure flag
             return result
         except Exception:
+            _embedding_failed_at = time.time()
+            cls._try_warmup_embedding()
             return None
+
+    @classmethod
+    def _try_warmup_embedding(cls):
+        """Fire-and-forget: ask Ollama to reload the embedding model in the background."""
+        global _embedding_warmup_running
+        with _embedding_warmup_lock:
+            if _embedding_warmup_running:
+                return  # warmup already in progress
+            _embedding_warmup_running = True
+
+        def _do():
+            global _embedding_warmup_running
+            try:
+                import time as _t
+                _t.sleep(2)  # let the current request flow through first
+                from openai import OpenAI
+                client = OpenAI(
+                    base_url=settings.EMBEDDING_BASE_URL,
+                    api_key=settings.EMBEDDING_API_KEY,
+                    max_retries=0,
+                    timeout=60.0,  # longer timeout for cold-load
+                )
+                client.embeddings.create(input="warmup", model=settings.EMBEDDING_MODEL_NAME)
+            except Exception:
+                pass
+            finally:
+                with _embedding_warmup_lock:
+                    _embedding_warmup_running = False
+
+        threading.Thread(target=_do, daemon=True).start()
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
 

@@ -1461,6 +1461,7 @@ async def _get_token_and_location(user_email: str, x_graph_token: Optional[str])
 @app.post("/api/chat")
 async def chat(
     request: ChatRequest,
+    raw_request: Request,
     x_user_email: Optional[str] = Header(None),
     x_user_role: Optional[str] = Header(None),
     x_graph_token: Optional[str] = Header(None),
@@ -1632,6 +1633,8 @@ async def chat(
 
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
+                if await raw_request.is_disconnected():
+                    break
                 event_type = event.get("event", "")
 
                 # ── Track LLM call start ─────────────────────────────────
@@ -1895,6 +1898,14 @@ async def chat(
                 )
         except Exception as _se:
             pass
+
+        # Warn the user if the embedding model was unavailable during this request.
+        # The response was still generated (LLM router took over), but routing accuracy
+        # may be reduced until the embedding model finishes warming up.
+        if not error_msg:
+            from app.services.policy_service import is_embedding_unavailable
+            if is_embedding_unavailable():
+                yield f"data: {json.dumps({'type': 'warning', 'message': 'Semantic routing is warming up — answer accuracy should improve on your next message.'})}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
 

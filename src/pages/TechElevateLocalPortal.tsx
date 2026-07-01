@@ -1023,11 +1023,14 @@ function CreateTrainingModal({
     if (!desc) return;
     setDrafting(true);
     setErr("");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55_000);
     try {
       const res = await fetch("/api/portal/te-local/trainings/generate", {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({ description: desc }),
+        signal: controller.signal,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Couldn't draft the course");
@@ -1053,8 +1056,12 @@ function CreateTrainingModal({
         setMultiLevel(false);
       }
     } catch (e: any) {
-      setErr(e.message);
+      if (e.name === "AbortError")
+        setErr("The shared LLM is busy and timed out. Try again in a moment, or fill in the fields manually below.");
+      else
+        setErr(e.message);
     } finally {
+      clearTimeout(timer);
       setDrafting(false);
     }
   };
@@ -2013,6 +2020,7 @@ function AssessmentEditor({
   const [saved, setSaved] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<DraftQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasMaterials, setHasMaterials] = useState<boolean | null>(null);
   const [count, setCount] = useState(5);
   const [difficulty, setDifficulty] = useState("mixed");
   const [generating, setGenerating] = useState(false);
@@ -2021,11 +2029,17 @@ function AssessmentEditor({
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch(`/api/portal/te-local/trainings/${trainingId}/questions?manage=true`, { headers: authHeaders })
-      .then((r) => r.json())
-      .then((d) =>
-        setSaved((d.results || []).filter((q: any) => (q.level_id ?? null) === levelId)),
-      )
+    Promise.all([
+      fetch(`/api/portal/te-local/trainings/${trainingId}/questions?manage=true`, { headers: authHeaders })
+        .then((r) => r.json()),
+      fetch(`/api/portal/te-local/trainings/${trainingId}/content`, { headers: authHeaders })
+        .then((r) => r.json()),
+    ])
+      .then(([q, c]) => {
+        setSaved((q.results || []).filter((q: any) => (q.level_id ?? null) === levelId));
+        const mats = (c.results || []).filter((m: any) => (m.level_id ?? null) === levelId);
+        setHasMaterials(mats.length > 0);
+      })
       .finally(() => setLoading(false));
   }, [authHeaders, trainingId, levelId]);
 
@@ -2036,20 +2050,27 @@ function AssessmentEditor({
   const generate = async () => {
     setGenerating(true);
     setErr("");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
     try {
       const resp = await fetch(`/api/portal/te-local/trainings/${trainingId}/questions/generate`, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({ level_id: levelId, count, difficulty }),
+        signal: controller.signal,
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.detail || "Generation failed.");
       setDrafts((prev) => [...prev, ...(data.questions || [])]);
       if (data.grounded === false)
-        setErr("Heads up: no materials found, so questions are based only on the title/skills. Add materials for grounded questions.");
+        setErr("Questions generated without course materials — they are based only on the title and skills. Add materials in the Materials tab for better, grounded questions.");
     } catch (e: any) {
-      setErr(e.message);
+      if (e.name === "AbortError")
+        setErr("Generation timed out — the shared LLM is busy. Try again with a smaller count, or add materials first.");
+      else
+        setErr(e.message);
     } finally {
+      clearTimeout(timer);
       setGenerating(false);
     }
   };
@@ -2123,6 +2144,16 @@ function AssessmentEditor({
         </div>
       ) : null}
 
+      {/* No-materials pre-flight warning */}
+      {hasMaterials === false && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] dark:bg-amber-500/[0.08] px-3 py-2.5">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">
+            <span className="font-bold">No materials yet.</span> Switch to the <span className="font-bold">Materials</span> tab and upload a document or add a link first — the AI generates much better questions when it can read the actual course content. You can still generate now, but questions will be based only on the course title and skills.
+          </p>
+        </div>
+      )}
+
       {/* AI generation controls */}
       <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.04] dark:bg-violet-500/[0.06] p-3 flex flex-col gap-2.5">
         <div className="flex items-center gap-2 text-xs font-bold text-violet-700 dark:text-violet-300">
@@ -2147,7 +2178,7 @@ function AssessmentEditor({
             className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
           >
             {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {generating ? "Drafting…" : "Generate"}
+            {generating ? "Drafting… (may take ~30s)" : "Generate"}
           </button>
           <button
             onClick={addBlank}
@@ -2156,6 +2187,11 @@ function AssessmentEditor({
             <Plus className="w-3.5 h-3.5" /> Add manually
           </button>
         </div>
+        {generating && (
+          <p className="text-[10px] text-slate-400 dark:text-zinc-500">
+            The shared LLM is generating your questions. This typically takes 20–60 seconds. Please wait…
+          </p>
+        )}
       </div>
 
       {/* Draft review */}

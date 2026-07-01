@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 _sync_lock = threading.Lock()
 
 # Demo transcripts are the headline data, so .vtt/.srt are included by default.
-_DEFAULT_EXTS = "pdf,docx,pptx,vtt,srt,txt,md,xlsx,csv,html,htm"
+# xlsx/csv are excluded — large tabular files cause MemoryError in MarkItDown and
+# contain no narrative content useful for Project DNA extraction.
+_DEFAULT_EXTS = "pdf,docx,pptx,vtt,srt,txt,md,html,htm"
 
 _SUMMARY_HINTS = ("summary", "summ", "overview", "abstract")
 _TRANSCRIPT_HINTS = ("transcript", "demo", "recording", "meeting", "call")

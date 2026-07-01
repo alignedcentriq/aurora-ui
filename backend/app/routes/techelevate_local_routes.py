@@ -118,39 +118,27 @@ async def generate_training_draft(payload: dict = Body(...),
     if not description:
         raise HTTPException(status_code=422, detail="Describe the training you want to create (a sentence is enough).")
 
+    from functools import partial
+    from starlette.concurrency import run_in_threadpool
     from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
-    model = llm_controls.get_llm("general", default_timeout=60)
+    model = llm_controls.get_llm("general", default_timeout=45)
+    # Keep the prompt and expected output small so the local model responds fast.
+    # Levels are auto-computed below — don't ask the model to generate them.
     prompt = (
-        "You are a corporate training designer for an internal Learning Management System. "
-        "From the admin's description below, design a training course.\n\n"
-        f"Admin's description: {description}\n\n"
-        "Respond with ONLY a JSON object (no markdown fences, no commentary) of this exact shape:\n"
-        '{"title": "Short Course Title", "description": "2-3 sentence overview of what learners will gain.", '
-        '"category": "Technical|Governance & Compliance|Business", '
-        '"duration_minutes": 120, "pass_percentage": 60, '
-        '"skill_tags": ["Skill1", "Skill2"], '
-        '"multi_level": false, '
-        '"levels": [{"name": "Beginner", "duration_minutes": 60, "pass_percentage": 55, "description": "what this level covers"}, '
-        '{"name": "Intermediate", "duration_minutes": 60, "pass_percentage": 65, "description": "..."}, '
-        '{"name": "Advanced", "duration_minutes": 60, "pass_percentage": 75, "description": "..."}]}\n\n'
-        "Rules:\n"
-        "- title: concise, professional. 5-10 words max.\n"
-        "- description: employee-facing, factual, no marketing fluff.\n"
-        "- category: pick the single best fit from the three options.\n"
-        "- duration_minutes: total estimated study time, realistic for the topic (30-480).\n"
-        "- pass_percentage: 50-80, harder topics can be lower.\n"
-        "- skill_tags: 2-5 specific, concrete skills the learner earns on completion. "
-        "Use proper casing (e.g. 'Python', 'Cloud Security', 'Data Analysis').\n"
-        "- multi_level: true only if the topic naturally has a progression (beginner→advanced). "
-        "Simple compliance or awareness courses should be single-level (false).\n"
-        "- levels: include ONLY when multi_level is true. 2-4 levels with ascending difficulty. "
-        "Each level has its own duration and pass percentage.\n"
+        "Corporate LMS training designer. Given the description, output ONLY a compact JSON object.\n"
+        f"Description: {description}\n"
+        'JSON shape: {"title":"5-8 word title","description":"2 sentence learner overview",'
+        '"category":"Technical|Governance & Compliance|Business","duration_minutes":120,'
+        '"pass_percentage":60,"skill_tags":["Skill1","Skill2"],"multi_level":false}\n'
+        "Rules: title≤10 words; category pick one; duration 30-480; pass 50-80; "
+        "skill_tags 2-4 concrete skills; multi_level true only for topics with clear beginner→advanced progression. "
+        "Output raw JSON only, no fences."
     )
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = await run_in_threadpool(partial(invoke_json, model, prompt, 1))
     if draft is None:
-        raise HTTPException(status_code=502, detail="Couldn't draft the course — the model didn't return usable JSON. Try again or rephrase.")
+        raise HTTPException(status_code=502, detail="Couldn't draft the course — the shared LLM timed out. Try again or fill in the fields manually.")
 
     tags = draft.get("skill_tags") or []
     if isinstance(tags, str):
@@ -168,15 +156,13 @@ async def generate_training_draft(payload: dict = Body(...),
     if result["category"] not in ("Technical", "Governance & Compliance", "Business"):
         result["category"] = "Technical"
 
-    if result["multi_level"] and isinstance(draft.get("levels"), list):
+    if result["multi_level"]:
+        # Auto-generate standard 3-level progression without an extra LLM call.
+        per_level = max(30, result["duration_minutes"] // 3)
         result["levels"] = [
-            {
-                "name": str(lv.get("name") or f"Level {i+1}").strip()[:60],
-                "duration_minutes": min(max(int(lv.get("duration_minutes") or 60), 10), 480),
-                "pass_percentage": min(max(int(lv.get("pass_percentage") or 60), 10), 100),
-                "description": str(lv.get("description") or "").strip()[:300],
-            }
-            for i, lv in enumerate(draft["levels"][:5])
+            {"name": "Beginner",     "duration_minutes": per_level, "pass_percentage": max(50, result["pass_percentage"] - 10), "description": ""},
+            {"name": "Intermediate", "duration_minutes": per_level, "pass_percentage": result["pass_percentage"],               "description": ""},
+            {"name": "Advanced",     "duration_minutes": per_level, "pass_percentage": min(90, result["pass_percentage"] + 10), "description": ""},
         ]
     else:
         result["levels"] = []
@@ -248,17 +234,22 @@ async def generate_questions(training_id: int, payload: dict = Body(...), db: Se
     """
     _guard_enabled()
     _guard_lms_write(user)
-    out = te.generate_questions(
-        db, training_id,
-        level_id=payload.get("level_id"),
-        count=payload.get("count") or 5,
-        difficulty=(payload.get("difficulty") or "mixed"),
+    from functools import partial
+    from starlette.concurrency import run_in_threadpool
+    out = await run_in_threadpool(
+        partial(
+            te.generate_questions,
+            db, training_id,
+            level_id=payload.get("level_id"),
+            count=payload.get("count") or 5,
+            difficulty=(payload.get("difficulty") or "mixed"),
+        )
     )
     err = out.get("error")
     if err == "training_not_found":
         raise HTTPException(status_code=404, detail="Training not found.")
     if err:
-        raise HTTPException(status_code=502, detail="Couldn't draft questions from those materials — try again or add more course content.")
+        raise HTTPException(status_code=502, detail="Couldn't draft questions — the model timed out or returned unusable output. Try again or reduce the question count.")
     return out
 
 

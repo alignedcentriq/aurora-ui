@@ -168,6 +168,7 @@ function Avatar({
           src={`/api/ms365/users/${encodeURIComponent(email)}/photo`}
           alt={name}
           loading="lazy"
+          fetchPriority="low"
           draggable={false}
           onError={() => setFailedEmail(email)}
           className="absolute inset-0 h-full w-full object-cover"

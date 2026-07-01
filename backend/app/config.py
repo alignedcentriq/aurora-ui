@@ -542,8 +542,9 @@ class Config:
     # sub-folder name is used as the project key. Leave blank to disable.
     SHAREPOINT_PROJECTS_ROOT = os.getenv("SHAREPOINT_PROJECTS_ROOT", "General/Projects")
     # File extensions to ingest from project folders (comma-separated, no dots).
+    # xlsx/csv excluded — large tabular files cause MemoryError in MarkItDown.
     SHAREPOINT_PROJECT_EXTS = os.getenv(
-        "SHAREPOINT_PROJECT_EXTS", "pdf,docx,pptx,vtt,srt,txt,md,xlsx,csv,html,htm"
+        "SHAREPOINT_PROJECT_EXTS", "pdf,docx,pptx,vtt,srt,txt,md,html,htm"
     )
 
     # ── Observability content-reveal access (Azure AD groups, validated JWT) ───

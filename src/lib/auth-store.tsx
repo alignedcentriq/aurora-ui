@@ -123,6 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         let effectiveRole: Role = "Employee";
         let realRole: Role = "Employee";
         let scopes: string[] = [];
+        let roleResolved = false;
         try {
           const accessRes = await fetchWithTimeout(
             "/api/access/me",
@@ -141,9 +142,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             // real_role lets the Super Admin role-switcher stay visible while impersonating.
             realRole = ROLE_MAP[(accessData.real_role || accessData.role || "").toLowerCase()] ?? effectiveRole;
+            roleResolved = true;
           }
         } catch {
-          // ignore — effectiveRole stays Employee; user will see reduced access until next reload
+          // Network error (e.g. backend busy) — preserve the existing role rather than
+          // downgrading to Employee; the user will keep their current access until the
+          // next successful /api/access/me call.
         }
 
         // Properly capitalize each word of the display name derived from the email
@@ -169,9 +173,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: "mock-id",
           name: displayName,
           email: mockEmail,
-          role: effectiveRole,
-          realRole,
-          scopes,
+          role: roleResolved ? effectiveRole : (prev?.role ?? effectiveRole),
+          realRole: roleResolved ? realRole : (prev?.realRole ?? realRole),
+          scopes: roleResolved ? scopes : (prev?.scopes ?? scopes),
           avatarUrl: prev?.avatarUrl || cachedMockAvatar,
           team: [
             {
@@ -225,6 +229,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let effectiveRole: Role = ROLE_MAP[msalRole.toLowerCase()] ?? (msalRole as Role);
           let realRole: Role = effectiveRole;
           let scopes: string[] = [];
+          let roleResolved = false;
           try {
             const accessRes = await fetchWithTimeout(
               "/api/access/me",
@@ -240,9 +245,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 scopes = accessData.scopes || [];
               }
               realRole = ROLE_MAP[(accessData.real_role || accessData.role || "").toLowerCase()] ?? effectiveRole;
+              roleResolved = true;
             }
           } catch {
-            // Fall through with MSAL role
+            // Network error — fall through; role preserved from prev state below
           }
 
           // Validate the cached avatar is a proper data URL before trusting it.
@@ -259,9 +265,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             id: account.localAccountId,
             name: account.name || account.username || "User",
             email,
-            role: effectiveRole,
-            realRole,
-            scopes,
+            role: roleResolved ? effectiveRole : (prev?.role ?? effectiveRole),
+            realRole: roleResolved ? realRole : (prev?.realRole ?? realRole),
+            scopes: roleResolved ? scopes : (prev?.scopes ?? scopes),
             avatarUrl: prev?.avatarUrl || cachedAvatar,
             team: [
               {
