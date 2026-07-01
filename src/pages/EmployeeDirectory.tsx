@@ -14,6 +14,7 @@ import {
   Clock,
   FolderKanban,
   X,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
@@ -1108,41 +1109,83 @@ export function EmployeeDirectory() {
   const [desig, setDesig] = useState("");
   // Skill / certification / experience / recency / project filters — driven by the copilot
   // sidebar (centriq:directory-filter) and clearable from the header. All match against the
-  // Alchemy enrichment bundled in the directory payload (skills[] + projects[]).
-  const [skillFilter, setSkillFilter] = useState("");
+  // Alchemy enrichment bundled in the directory payload (skills[] + projects[]). Skills/
+  // projects are arrays so a query can name several ("React and Node") — a person matches
+  // if they satisfy ANY named skill/project (see the `filtered` memo below).
+  const [skillFilters, setSkillFilters] = useState<string[]>([]);
   const [minYears, setMinYears] = useState<number | null>(null);
+  const [maxYears, setMaxYears] = useState<number | null>(null);
   const [certifiedOnly, setCertifiedOnly] = useState(false);
-  const [projectFilter, setProjectFilter] = useState("");
+  const [projectFilters, setProjectFilters] = useState<string[]>([]);
   const [usedWithinMonths, setUsedWithinMonths] = useState<number | null>(null);
   // Allocation-aware availability filter (current free capacity from the latest snapshot).
   const [availableOnly, setAvailableOnly] = useState(false);
+  // Free-text query fallback: when the copilot's regex parser can't find a filterable
+  // dimension, the backend translates the query into SQL over the composed directory and
+  // returns the matching employee codes directly (see directory_query_service on the
+  // backend). ANDs with the other filters like everything else.
+  const [queryResultCodes, setQueryResultCodes] = useState<Set<string> | null>(null);
+  const [queryResultSummary, setQueryResultSummary] = useState("");
+  // Visible "memory" of the copilot filter conversation: each turn that added or narrowed
+  // a filter appends one line here, so a sequence like "React developers" → "also
+  // certified" → "5+ years" reads back as a trail instead of silently replacing itself.
+  const [appliedSteps, setAppliedSteps] = useState<string[]>([]);
   const [selected, setSelected] = useState<DirEmployee | null>(null);
   const [orgChartFor, setOrgChartFor] = useState<DirEmployee | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const enrichFilterActive =
-    !!skillFilter ||
+    skillFilters.length > 0 ||
     minYears !== null ||
     certifiedOnly ||
-    !!projectFilter ||
+    projectFilters.length > 0 ||
     usedWithinMonths !== null ||
-    availableOnly;
+    availableOnly ||
+    queryResultCodes !== null;
   const activeFilterCount = useMemo(
     () =>
       (dept ? 1 : 0) +
       (desig ? 1 : 0) +
-      (skillFilter ? 1 : 0) +
+      (skillFilters.length ? 1 : 0) +
       (minYears !== null ? 1 : 0) +
       (certifiedOnly ? 1 : 0) +
-      (projectFilter ? 1 : 0) +
+      (projectFilters.length ? 1 : 0) +
       (usedWithinMonths !== null ? 1 : 0) +
-      (availableOnly ? 1 : 0),
-    [dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly],
+      (availableOnly ? 1 : 0) +
+      (queryResultCodes !== null ? 1 : 0),
+    [
+      dept,
+      desig,
+      skillFilters,
+      minYears,
+      certifiedOnly,
+      projectFilters,
+      usedWithinMonths,
+      availableOnly,
+      queryResultCodes,
+    ],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const authHeaders = {
     ...(user?.email ? { "x-user-email": user.email } : {}),
     ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  // Resets every assistant-driven filter (not manual dept/designation/name search) and
+  // tells the copilot sidebar to forget the accumulated filter context — without this,
+  // the next chat turn would keep merging on top of a search the user just cleared.
+  const clearAssistantFilters = () => {
+    setSkillFilters([]);
+    setMinYears(null);
+    setMaxYears(null);
+    setCertifiedOnly(false);
+    setProjectFilters([]);
+    setUsedWithinMonths(null);
+    setAvailableOnly(false);
+    setQueryResultCodes(null);
+    setQueryResultSummary("");
+    setAppliedSteps([]);
+    window.dispatchEvent(new CustomEvent("centriq:directory-filter-reset"));
   };
 
   const load = async () => {
@@ -1186,8 +1229,8 @@ export function EmployeeDirectory() {
   const filtered = useMemo(() => {
     if (!all) return [];
     const q = query.trim().toLowerCase();
-    const skillQ = skillFilter.trim().toLowerCase();
-    const projectQ = projectFilter.trim().toLowerCase();
+    const skillQs = skillFilters.map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const projectQs = projectFilters.map((p) => p.trim().toLowerCase()).filter(Boolean);
     // Cutoff date for the "used within N months" recency filter (null when not set).
     const usedCutoff =
       usedWithinMonths !== null
@@ -1202,72 +1245,152 @@ export function EmployeeDirectory() {
       if (desig && e.designation !== desig) return false;
       // Skill / certification / experience / recency filters operate on the bundled Alchemy
       // enrichment. A row with no skills array (not yet synced) can't satisfy them, so it's
-      // excluded. All skill-level conditions must hold on the SAME skill entry.
-      if (skillQ || minYears !== null || certifiedOnly || usedCutoff) {
+      // excluded. Several named skills match on ANY of them (OR); the other conditions
+      // (years/certified/recency) must hold on that SAME matched skill entry.
+      if (skillQs.length || minYears !== null || maxYears !== null || certifiedOnly || usedCutoff) {
         const skills = e.skills ?? [];
-        const ok = skills.some((s) => {
-          if (skillQ && !s.skill.toLowerCase().includes(skillQ)) return false;
-          if (minYears !== null && (parseFloat(s.years_experience || "0") || 0) < minYears) return false;
-          if (certifiedOnly && !s.certified) return false;
-          if (usedCutoff) {
-            const lu = s.last_used ? new Date(s.last_used) : null;
-            if (!lu || isNaN(lu.getTime()) || lu < usedCutoff) return false;
-          }
-          return true;
-        });
+        const queries = skillQs.length ? skillQs : [null];
+        const ok = queries.some((skillQ) =>
+          skills.some((s) => {
+            if (skillQ && !s.skill.toLowerCase().includes(skillQ)) return false;
+            const yrs = parseFloat(s.years_experience || "0") || 0;
+            if (minYears !== null && yrs < minYears) return false;
+            if (maxYears !== null && yrs > maxYears) return false;
+            if (certifiedOnly && !s.certified) return false;
+            if (usedCutoff) {
+              const lu = s.last_used ? new Date(s.last_used) : null;
+              if (!lu || isNaN(lu.getTime()) || lu < usedCutoff) return false;
+            }
+            return true;
+          }),
+        );
         if (!ok) return false;
       }
-      // Project filter (partial match): allocations the person was staffed on
-      // (project name or client), plus the Alchemy profile projects + skills-used.
-      if (projectQ) {
-        const ok =
-          (e.allocation_projects ?? []).some((p) => p.toLowerCase().includes(projectQ)) ||
-          (e.allocation_clients ?? []).some((c) => c.toLowerCase().includes(projectQ)) ||
-          (e.projects ?? []).some(
-            (p) =>
-              p.name.toLowerCase().includes(projectQ) ||
-              (p.skills_used || "").toLowerCase().includes(projectQ),
-          );
+      // Project filter (partial match, OR across named projects): allocations the person
+      // was staffed on (project name or client), plus the Alchemy profile projects + skills-used.
+      if (projectQs.length) {
+        const ok = projectQs.some(
+          (projectQ) =>
+            (e.allocation_projects ?? []).some((p) => p.toLowerCase().includes(projectQ)) ||
+            (e.allocation_clients ?? []).some((c) => c.toLowerCase().includes(projectQ)) ||
+            (e.projects ?? []).some(
+              (p) =>
+                p.name.toLowerCase().includes(projectQ) ||
+                (p.skills_used || "").toLowerCase().includes(projectQ),
+            ),
+        );
         if (!ok) return false;
       }
       // Availability (allocation-aware): only people with current free capacity, from
       // the latest allocation snapshot bundled in the payload.
       if (availableOnly && !e.available) return false;
+      // Free-text query fallback (LLM-generated SQL over the composed directory).
+      if (queryResultCodes && !queryResultCodes.has(e.employee_code || "")) return false;
       if (!q) return true;
       return e.name.toLowerCase().includes(q) || handle(e.email).toLowerCase().includes(q);
     });
-  }, [all, query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly]);
+  }, [
+    all,
+    query,
+    dept,
+    desig,
+    skillFilters,
+    minYears,
+    maxYears,
+    certifiedOnly,
+    projectFilters,
+    usedWithinMonths,
+    availableOnly,
+    queryResultCodes,
+  ]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [query, dept, desig, skillFilter, minYears, certifiedOnly, projectFilter, usedWithinMonths, availableOnly]);
+  }, [
+    query,
+    dept,
+    desig,
+    skillFilters,
+    minYears,
+    maxYears,
+    certifiedOnly,
+    projectFilters,
+    usedWithinMonths,
+    availableOnly,
+    queryResultCodes,
+  ]);
 
-  // Sidebar copilot → directory filter. Applies the parsed skill / certification / experience /
-  // recency / project / availability filters to the grid when the assistant handles a
-  // "filter resources…" query.
+  // Sidebar copilot → directory filter. MERGES the parsed skill / certification /
+  // experience / recency / project / availability filters into the grid rather than
+  // replacing it, so a follow-up turn ("also certified", "5+ years") narrows the current
+  // search instead of resetting it. Only dimensions the new turn actually named are
+  // touched — an unset field means "unchanged", not "clear it" (query-result codes and
+  // dept/designation/name search are untouched here too, so everything keeps composing).
   useEffect(() => {
     const handler = (e: Event) => {
       const detail =
         (
           e as CustomEvent<{
-            skill?: string;
+            skills?: string[];
             minYears?: number;
+            maxYears?: number;
             certified?: boolean;
-            project?: string;
+            projects?: string[];
             usedWithinMonths?: number;
             available?: boolean;
           }>
         ).detail || {};
-      setSkillFilter(detail.skill ?? "");
-      setMinYears(detail.minYears ?? null);
-      setCertifiedOnly(!!detail.certified);
-      setProjectFilter(detail.project ?? "");
-      setUsedWithinMonths(detail.usedWithinMonths ?? null);
-      setAvailableOnly(!!detail.available);
-      // Manual dept/designation/name search is left as-is so the two compose.
+      const steps: string[] = [];
+      if (detail.skills?.length) {
+        setSkillFilters((prev) => Array.from(new Set([...prev, ...detail.skills!])));
+        steps.push(detail.skills.join(", "));
+      }
+      if (detail.projects?.length) {
+        setProjectFilters((prev) => Array.from(new Set([...prev, ...detail.projects!])));
+        steps.push(`project ${detail.projects.join(", ")}`);
+      }
+      if (detail.minYears !== undefined) {
+        setMinYears(detail.minYears);
+        setMaxYears(detail.maxYears ?? null);
+        steps.push(
+          detail.maxYears !== undefined
+            ? `${detail.minYears}-${detail.maxYears} yrs`
+            : `${detail.minYears}+ yrs`,
+        );
+      }
+      if (detail.certified) {
+        setCertifiedOnly(true);
+        steps.push("certified");
+      }
+      if (detail.usedWithinMonths !== undefined) {
+        setUsedWithinMonths(detail.usedWithinMonths);
+        steps.push(`used ≤${detail.usedWithinMonths}mo`);
+      }
+      if (detail.available) {
+        setAvailableOnly(true);
+        steps.push("available");
+      }
+      if (steps.length) setAppliedSteps((prev) => [...prev, steps.join(" · ")].slice(-6));
     };
     window.addEventListener("centriq:directory-filter", handler as EventListener);
     return () => window.removeEventListener("centriq:directory-filter", handler as EventListener);
+  }, []);
+
+  // Sidebar copilot → free-text query fallback (regex found nothing, backend translated
+  // the query into SQL over the composed directory and returned matching employee codes).
+  // INTERSECTS with any already-applied query result rather than replacing it, so two
+  // free-text searches in a row narrow down ("Python devs" then "who used it recently")
+  // instead of the second one wiping out the first.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ employeeCodes?: string[]; summary?: string }>).detail || {};
+      const nextCodes = new Set(detail.employeeCodes ?? []);
+      setQueryResultCodes((prev) => (prev ? new Set([...nextCodes].filter((c) => prev.has(c))) : nextCodes));
+      setQueryResultSummary((prev) => (prev ? `${prev} · ${detail.summary}` : detail.summary ?? ""));
+      if (detail.summary) setAppliedSteps((prev) => [...prev, detail.summary!].slice(-6));
+    };
+    window.addEventListener("centriq:directory-query-result", handler as EventListener);
+    return () => window.removeEventListener("centriq:directory-query-result", handler as EventListener);
   }, []);
 
   return (
@@ -1362,12 +1485,7 @@ export function EmployeeDirectory() {
                   onClick={() => {
                     setDept("");
                     setDesig("");
-                    setSkillFilter("");
-                    setMinYears(null);
-                    setCertifiedOnly(false);
-                    setProjectFilter("");
-                    setUsedWithinMonths(null);
-                    setAvailableOnly(false);
+                    clearAssistantFilters();
                   }}
                   className="flex items-center justify-center rounded-xl border border-rose-200 dark:border-rose-950 bg-rose-50/50 dark:bg-rose-950/20 px-3 h-[38px] text-[13px] font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-100/50 transition-all cursor-pointer shadow-sm shrink-0"
                 >
@@ -1383,12 +1501,12 @@ export function EmployeeDirectory() {
               <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/70">
                 Assistant filter
               </span>
-              {skillFilter && (
+              {skillFilters.length > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#1f86e0]/30 bg-[#1f86e0]/10 dark:bg-primary/15 px-2.5 py-1 text-[12px] font-bold text-[#1f86e0] dark:text-primary">
                   <Sparkles className="h-3.5 w-3.5" />
-                  {skillFilter}
+                  {skillFilters.join(", ")}
                   <button
-                    onClick={() => setSkillFilter("")}
+                    onClick={() => setSkillFilters([])}
                     className="ml-0.5 rounded-full hover:bg-[#1f86e0]/20 p-0.5 transition-colors"
                     title="Remove skill filter"
                   >
@@ -1412,9 +1530,12 @@ export function EmployeeDirectory() {
               {minYears !== null && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
                   <Briefcase className="h-3.5 w-3.5" />
-                  {minYears}+ yrs
+                  {maxYears !== null ? `${minYears}-${maxYears} yrs` : `${minYears}+ yrs`}
                   <button
-                    onClick={() => setMinYears(null)}
+                    onClick={() => {
+                      setMinYears(null);
+                      setMaxYears(null);
+                    }}
                     className="ml-0.5 rounded-full hover:bg-emerald-500/20 p-0.5 transition-colors"
                     title="Remove experience filter"
                   >
@@ -1435,12 +1556,12 @@ export function EmployeeDirectory() {
                   </button>
                 </span>
               )}
-              {projectFilter && (
+              {projectFilters.length > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[12px] font-bold text-amber-600 dark:text-amber-400">
                   <FolderKanban className="h-3.5 w-3.5" />
-                  {projectFilter}
+                  {projectFilters.join(", ")}
                   <button
-                    onClick={() => setProjectFilter("")}
+                    onClick={() => setProjectFilters([])}
                     className="ml-0.5 rounded-full hover:bg-amber-500/20 p-0.5 transition-colors"
                     title="Remove project filter"
                   >
@@ -1461,19 +1582,49 @@ export function EmployeeDirectory() {
                   </button>
                 </span>
               )}
+              {queryResultCodes !== null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-2.5 py-1 text-[12px] font-bold text-fuchsia-600 dark:text-fuchsia-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {queryResultSummary || "Assistant search"}
+                  <button
+                    onClick={() => {
+                      setQueryResultCodes(null);
+                      setQueryResultSummary("");
+                    }}
+                    className="ml-0.5 rounded-full hover:bg-fuchsia-500/20 p-0.5 transition-colors"
+                    title="Remove search filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               <button
-                onClick={() => {
-                  setSkillFilter("");
-                  setMinYears(null);
-                  setCertifiedOnly(false);
-                  setProjectFilter("");
-                  setUsedWithinMonths(null);
-                  setAvailableOnly(false);
-                }}
+                onClick={clearAssistantFilters}
                 className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline"
               >
                 Clear
               </button>
+            </div>
+          )}
+
+          {/* Copilot search history — the "memory" of what's been narrowed down turn by
+              turn, since each turn now merges into the current filter instead of replacing
+              it. Purely a readable trail; "Clear" above resets it. */}
+          {appliedSteps.length > 1 && (
+            <div className="flex items-start gap-1.5 rounded-xl border border-slate-200/60 dark:border-white/[0.06] bg-slate-50/60 dark:bg-zinc-950/20 px-3 py-2">
+              <History className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground/60" />
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/70">
+                  Search history
+                </span>
+                <ol className="flex flex-col gap-0.5">
+                  {appliedSteps.map((step, i) => (
+                    <li key={i} className="text-[12px] text-muted-foreground truncate">
+                      <span className="font-bold text-muted-foreground/70">{i + 1}.</span> {step}
+                    </li>
+                  ))}
+                </ol>
+              </div>
             </div>
           )}
 

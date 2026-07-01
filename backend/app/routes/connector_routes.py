@@ -88,7 +88,7 @@ async def list_connectors(user: CurrentUser = Depends(require_admin)):
                 "id": c.id, "slug": c.slug, "name": c.name,
                 "description": c.description, "source_type": c.source_type,
                 "base_url": c.base_url, "status": c.status, "version": c.version,
-                "created_by": c.created_by, "created_at": c.created_at,
+                "seeding_status": c.seeding_status, "created_by": c.created_by, "created_at": c.created_at,
             }
             for c in rows
         ]
@@ -133,6 +133,7 @@ async def get_connector(connector_id: int, user: CurrentUser = Depends(require_a
             "description": conn.description, "source_type": conn.source_type,
             "base_url": conn.base_url, "spec_url": conn.spec_url,
             "status": conn.status, "version": conn.version,
+            "seeding_status": conn.seeding_status,
             "operations": [
                 {
                     "id": o.id, "name": o.name, "display_name": o.display_name,
@@ -407,6 +408,7 @@ async def publish_connector(
         if not conn:
             raise HTTPException(404, "Connector not found")
         conn.status = "published"
+        conn.seeding_status = "seeding"
         conn.version = (conn.version or 1) + 1
         ops_rows = db.query(ConnectorOperation).filter(
             ConnectorOperation.connector_id == connector_id,

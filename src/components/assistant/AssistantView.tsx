@@ -166,16 +166,42 @@ function detectBookIntent(text: string): { path: string; label: string; reply: s
 // ("resources with 5+ years in React") drives the visible grid instead of going to
 // the backend. Deterministic, zero-LLM, strictly scoped to /directory by the caller.
 export interface DirectoryFilter {
-  skill?: string;
+  skills?: string[];
   minYears?: number;
+  maxYears?: number;
   certified?: boolean;
-  project?: string;
+  projects?: string[];
   usedWithinMonths?: number;
   available?: boolean;
 }
 
 const _DIR_STOPWORDS =
-  /^(the|a|an|of|in|with|on|and|or|more|than|over|at|least|min|years?|yrs?|experience|expertise|skills?|project|certified|certification|certificate|last|past|within|months?|weeks?|days?|recently|developers?|engineers?|experts?)$/i;
+  /^(the|a|an|of|in|with|on|and|or|more|than|over|at|least|min|years?|yrs?|experience|expertise|skills?|project|projects|certified|certification|certificate|last|past|within|months?|weeks?|days?|recently|developers?|engineers?|experts?)$/i;
+
+const _DIR_PROJECT_STOPWORDS =
+  /^(a|an|the|any|some|this|that|particular|certain|specific|which|what|various|and|or)$/i;
+
+// Split a comma/"and"/"or" delimited phrase ("React, Node and AWS") into individual
+// tokens, dropping stopwords/empties so trailing filler words don't become fake entries.
+function _splitDirList(chunk: string, stopwords: RegExp, maxLen: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chunk.split(/\s*,\s*|\s+(?:and|or|&)\s+|\s*\/\s*/i)) {
+    const tok = raw.trim().replace(/^["“']|["”']$/g, "");
+    if (!tok || tok.length < 2 || tok.length > maxLen || stopwords.test(tok)) continue;
+    const key = tok.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tok);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+// Lookahead marking where a skill/project list chunk ends — the next filter clause
+// (experience, role noun, certification, recency, punctuation) or end of string.
+const _DIR_LIST_END =
+  "(?=\\s+(?:experience|developers?|engineers?|experts?|specialists?|who|that|having|for|in\\s+the\\s+last|within|during|certified|certification)\\b|,?\\s*(?:more\\s+than|over|at\\s+least|minimum|min|\\d+(?:\\.\\d+)?\\+?\\s*(?:years?|yrs?))|[?.!]|$)";
 
 function parseDirectoryFilter(text: string): DirectoryFilter | null {
   const t = text.trim();
@@ -216,66 +242,87 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
           : n;
   }
 
-  // Project: "worked on <X>", "on the <X> project", "project <X>". A placeholder like
-  // "a particular project" yields no concrete name and is ignored (falls through to backend).
-  let project: string | undefined;
+  // Project(s): "worked on <X>", "on the <X> project", "project <X>, <Y>", "<X> and <Y>
+  // projects". A placeholder like "a particular project" yields no concrete name and is
+  // ignored (falls through to backend).
+  let projects: string[] | undefined;
   const projM =
     t.match(
-      /\b(?:worked|work(?:ing)?)\s+on\s+(?:the\s+)?(?:project\s+)?["“']?([A-Za-z0-9][\w .&/-]{1,40}?)["”']?(?:\s+project)?\s*[?.!]*$/i,
+      /\b(?:worked|work(?:ing)?)\s+on\s+(?:the\s+)?(?:projects?\s+)?["“']?([A-Za-z0-9][\w .&/,-]{1,120}?)["”']?(?:\s+projects?)?\s*[?.!]*$/i,
     ) ||
-    t.match(/\bproject\s+(?:called\s+|named\s+|titled\s+)?["“']?([A-Za-z0-9][\w .&/-]{1,40}?)["”']?\s*[?.!]*$/i);
+    t.match(/\bprojects?\s+(?:called\s+|named\s+|titled\s+)?["“']?([A-Za-z0-9][\w .&/,-]{1,120}?)["”']?\s*[?.!]*$/i);
   if (projM) {
-    const cand = projM[1].trim().replace(/\s+project$/i, "").trim();
-    if (
-      cand.length >= 2 &&
-      !/^(a|an|the|any|some|this|that|particular|certain|specific|which|what|various)$/i.test(cand)
-    ) {
-      project = cand;
+    const cand = projM[1].trim().replace(/\s+projects?$/i, "").trim();
+    const list = _splitDirList(cand, _DIR_PROJECT_STOPWORDS, 60);
+    if (list.length) projects = list;
+  }
+
+  // Years of experience — either a range ("between 3 and 5 years", "3-5 years", "3 to 5
+  // yrs") or a minimum ("more than 5 years", "5+ years", "at least 3 yrs"). Guarded so a
+  // recency phrase ("last 2 years") is not misread as a minimum.
+  let minYears: number | undefined;
+  let maxYears: number | undefined;
+  const rangeM =
+    lower.match(/\bbetween\s+(\d+(?:\.\d+)?)\s+(?:and|to)\s+(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)/) ||
+    lower.match(
+      /\b(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
+    );
+  if (rangeM) {
+    const a = parseFloat(rangeM[1]);
+    const b = parseFloat(rangeM[2]);
+    minYears = Math.min(a, b);
+    maxYears = Math.max(a, b);
+  } else {
+    const yearsM = lower.match(
+      /(?:more than|over|at least|minimum|min|greater than|>=?|above)?\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
+    );
+    if (yearsM && !/\b(?:last|past|within)\s+\d+\s*(?:years?|yrs?)/.test(lower)) {
+      minYears = parseFloat(yearsM[1]);
     }
   }
 
-  // Minimum years of experience: "more than 5 years", "5+ years", "at least 3 yrs".
-  // Guarded so a recency phrase ("last 2 years") is not misread as a minimum.
-  let minYears: number | undefined;
-  const yearsM = lower.match(
-    /(?:more than|over|at least|minimum|min|greater than|>=?|above)?\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
-  );
-  if (yearsM && !/\b(?:last|past|within)\s+\d+\s*(?:years?|yrs?)/.test(lower)) {
-    minYears = parseFloat(yearsM[1]);
-  }
-
-  // Skill / technology: "experience in React", "certified in AWS", "used Python",
-  // "knows SAP", "React developers", "with Node".
-  let skill: string | undefined;
+  // Skill(s) / technology: "experience in React, Node and AWS", "certified in AWS",
+  // "used Python or Java", "knows SAP", "React and Node developers", "with Node".
+  let skills: string[] | undefined;
   const skillM =
     t.match(
-      /\b(?:experience|expertise|skill(?:s|ed)?|proficien\w*|knowledge|hands?[- ]on|certified|certification)\s+(?:in|with|on|of)\s+([A-Za-z][A-Za-z0-9+.#/]*(?:\s[A-Za-z][A-Za-z0-9+.#/]*)?)/i,
+      new RegExp(
+        `\\b(?:experience|expertise|skill(?:s|ed)?|proficien\\w*|knowledge|hands?[- ]on|certified|certification)\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
+        "i",
+      ),
     ) ||
-    t.match(/\b(?:used|using|use|worked\s+with)\s+([A-Za-z][A-Za-z0-9+.#]{1,24})\b/i) ||
-    t.match(/\b([A-Za-z][A-Za-z0-9+.#]{1,24})\s+(?:developers?|engineers?|experts?|specialists?)\b/i) ||
-    t.match(/\b(?:know|knows|knowing|in|with|on)\s+([A-Za-z][A-Za-z0-9+.#]{1,24})\b\s*[?.!]*\s*$/i);
+    t.match(
+      new RegExp(
+        `\\b(?:used|using|use|worked\\s+with|working\\s+with)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
+        "i",
+      ),
+    ) ||
+    t.match(/\b([A-Za-z][A-Za-z0-9+.#/&, ]{1,60}?)\s+(?:developers?|engineers?|experts?|specialists?)\b/i) ||
+    t.match(/\b(?:know|knows|knowing|in|with|on)\s+([A-Za-z][A-Za-z0-9+.#/&, ]{1,60})\s*[?.!]*\s*$/i);
   if (skillM) {
-    skill = skillM[1]
-      .trim()
-      .replace(/\s+(?:years?|yrs?|experience|skills?|expertise|developers?|engineers?|project)$/i, "")
-      .trim();
-    if (_DIR_STOPWORDS.test(skill)) skill = undefined;
+    const list = _splitDirList(skillM[1], _DIR_STOPWORDS, 24);
+    if (list.length) skills = list;
   }
 
   // Don't double-capture a project name's trailing word as a skill.
-  if (project && skill && project.toLowerCase().includes(skill.toLowerCase())) skill = undefined;
+  if (projects && skills) {
+    skills = skills.filter(
+      (s) => !projects!.some((p) => p.toLowerCase().includes(s.toLowerCase())),
+    );
+    if (!skills.length) skills = undefined;
+  }
 
   // Only act when we actually parsed a filterable dimension.
   if (
-    !skill &&
+    !skills &&
     minYears === undefined &&
     !certified &&
-    !project &&
+    !projects &&
     usedWithinMonths === undefined &&
     !available
   )
     return null;
-  return { skill, minYears, certified, project, usedWithinMonths, available };
+  return { skills, minYears, maxYears, certified, projects, usedWithinMonths, available };
 }
 
 // ── My Requests filter parsing ───────────────────────────────────────────────
@@ -665,6 +712,50 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
   // independently and a stopped abort isn't mistaken for a timeout.
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
   const stoppedRef = useRef<Set<string>>(new Set());
+  // The copilot sidebar keeps streaming in the background if it's closed mid-response —
+  // the fetch has no consumer left, but nothing told it to stop. Abort every in-flight
+  // request this instance owns on unmount (sidebar close, portal navigation away, etc.)
+  // so closing/cancelling actually pauses the response instead of letting it run to
+  // completion unseen.
+  useEffect(() => {
+    return () => {
+      controllersRef.current.forEach((controller, threadId) => {
+        stoppedRef.current.add(threadId);
+        controller.abort();
+        setThinking(threadId, false);
+      });
+    };
+  }, [setThinking]);
+  // Set right before a recursive send() re-run so the /directory intercept below skips
+  // itself once (the query already failed both the regex and LLM-SQL fallback) and falls
+  // through to the general backend agent instead of looping.
+  const directoryLlmBypassRef = useRef(false);
+  // True once any directory filter has been applied this session — lets the confirmation
+  // message say "Added ..." for a follow-up turn instead of "Filtering by ..." as if it
+  // replaced everything, since turns now merge (see EmployeeDirectory's event handlers).
+  // Reset when the grid's own "Clear" is clicked or the sidebar leaves /directory.
+  const dirHasActiveFilterRef = useRef(false);
+  // Guards against duplicate submissions of the *same* text fired in quick succession —
+  // e.g. the directory grid's re-render (many avatar images + backdrop-blur cards) can
+  // freeze the main thread long enough that a user's repeated clicks/Enters all queue up
+  // reading the still-uncleared `input` state, each triggering its own send() once the
+  // thread frees up. A short cooldown on identical text collapses those into one send.
+  const lastSendRef = useRef<{ text: string; at: number } | null>(null);
+
+  // Forget the accumulated directory-filter context whenever the grid's "Clear" button
+  // fires (EmployeeDirectory dispatches this) or the copilot leaves /directory — otherwise
+  // the next filter turn on a fresh search would still say "Added ..." as if refining
+  // something the user just wiped.
+  useEffect(() => {
+    const reset = () => {
+      dirHasActiveFilterRef.current = false;
+    };
+    window.addEventListener("centriq:directory-filter-reset", reset);
+    return () => window.removeEventListener("centriq:directory-filter-reset", reset);
+  }, []);
+  useEffect(() => {
+    if (portalContext !== "/directory") dirHasActiveFilterRef.current = false;
+  }, [portalContext]);
 
   // Create a thread whenever there is no active one
   useEffect(() => {
@@ -892,6 +983,12 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       const text = (override ?? input).trim();
       if (!text || !activeId) return;
 
+      const now = Date.now();
+      if (lastSendRef.current && lastSendRef.current.text === text && now - lastSendRef.current.at < 800) {
+        return;
+      }
+      lastSendRef.current = { text, at: now };
+
       // ── Mode command detection ─────────────────────────────────────────────
       // On an empty thread we skip the chat-turn confirmation entirely — the mode
       // banner plus the empty-state heading/cards already say "mode on", and adding
@@ -943,35 +1040,93 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       // ── Portal-scoped intercept: Employee Directory filter ────────────────────
       // When the copilot sidebar is open on /directory, a filter-style query drives the
       // visible grid via a CustomEvent (same pattern as My Requests) — deterministic and
-      // instant, no backend round-trip. Strictly scoped to /directory so it can't hijack
-      // other portals. Non-filter queries fall through to the backend agent below.
+      // instant, no backend round-trip, for the phrasings the regex parser recognizes.
+      // Strictly scoped to /directory so it can't hijack other portals. If the regex finds
+      // no filterable dimension, we ask the backend's LLM-over-SQL fallback (real SQL over
+      // the composed directory handles arbitrary skill/project lists + ranges the regex
+      // can't) before finally letting genuinely non-filter queries fall through to the
+      // general backend agent below. `directoryLlmBypassRef` prevents that final fallthrough
+      // from re-entering this block and looping.
       if (!activeMode && portalContext === "/directory") {
-        const dirFilter = parseDirectoryFilter(text);
-        if (dirFilter) {
-          addTurn(activeId, { role: "user", text });
-          const parts = [
-            dirFilter.certified && dirFilter.skill
-              ? `**${dirFilter.skill}**-certified`
-              : dirFilter.skill
-                ? `**${dirFilter.skill}**`
-                : dirFilter.certified
-                  ? "certified"
-                  : null,
-            dirFilter.minYears !== undefined ? `${dirFilter.minYears}+ years' experience` : null,
-            dirFilter.usedWithinMonths !== undefined
-              ? `used in the last ${dirFilter.usedWithinMonths} month${dirFilter.usedWithinMonths === 1 ? "" : "s"}`
-              : null,
-            dirFilter.project ? `project **${dirFilter.project}**` : null,
-            dirFilter.available ? "currently **available**" : null,
-          ].filter(Boolean);
-          addTurn(activeId, {
-            role: "ai",
-            text: `Filtering the directory${parts.length ? ` by ${parts.join(" · ")}` : ""}. Tweak or clear the filters from the directory header anytime.`,
-          });
-          setInput("");
-          window.dispatchEvent(
-            new CustomEvent("centriq:directory-filter", { detail: dirFilter }),
-          );
+        if (directoryLlmBypassRef.current) {
+          directoryLlmBypassRef.current = false;
+        } else {
+          const dirFilter = parseDirectoryFilter(text);
+          if (dirFilter) {
+            addTurn(activeId, { role: "user", text });
+            const parts = [
+              dirFilter.certified && dirFilter.skills?.length
+                ? `**${dirFilter.skills.join(", ")}**-certified`
+                : dirFilter.skills?.length
+                  ? `**${dirFilter.skills.join(", ")}**`
+                  : dirFilter.certified
+                    ? "certified"
+                    : null,
+              dirFilter.minYears !== undefined
+                ? dirFilter.maxYears !== undefined
+                  ? `${dirFilter.minYears}-${dirFilter.maxYears} years' experience`
+                  : `${dirFilter.minYears}+ years' experience`
+                : null,
+              dirFilter.usedWithinMonths !== undefined
+                ? `used in the last ${dirFilter.usedWithinMonths} month${dirFilter.usedWithinMonths === 1 ? "" : "s"}`
+                : null,
+              dirFilter.projects?.length ? `project **${dirFilter.projects.join(", ")}**` : null,
+              dirFilter.available ? "currently **available**" : null,
+            ].filter(Boolean);
+            const isFollowUp = dirHasActiveFilterRef.current;
+            addTurn(activeId, {
+              role: "ai",
+              text: parts.length
+                ? isFollowUp
+                  ? `Added ${parts.join(" · ")} to your search. Tweak or clear the filters from the directory header anytime.`
+                  : `Filtering the directory by ${parts.join(" · ")}. Tweak or clear the filters from the directory header anytime.`
+                : `Filtering the directory. Tweak or clear the filters from the directory header anytime.`,
+            });
+            dirHasActiveFilterRef.current = true;
+            setInput("");
+            window.dispatchEvent(new CustomEvent("centriq:directory-filter", { detail: dirFilter }));
+            return;
+          }
+
+          // Regex found nothing filterable — try the SQL-over-LLM fallback so odd
+          // phrasing still works. Nothing is echoed to the thread until we know whether
+          // this query is actually a filter, so a no-match can safely recurse below.
+          fetch("/api/employees/directory/query", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(user?.email ? { "x-user-email": user.email } : {}),
+              ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+            },
+            body: JSON.stringify({ query: text }),
+          })
+            .then((r) => (r.ok ? r.json() : { matched: false }))
+            .then((result: { matched?: boolean; employee_codes?: string[]; summary?: string }) => {
+              if (result?.matched) {
+                addTurn(activeId, { role: "user", text });
+                const isFollowUp = dirHasActiveFilterRef.current;
+                addTurn(activeId, {
+                  role: "ai",
+                  text: isFollowUp
+                    ? `Narrowed down to **${result.summary}**. Tweak or clear the filters from the directory header anytime.`
+                    : `Filtering the directory by **${result.summary}**. Tweak or clear the filters from the directory header anytime.`,
+                });
+                dirHasActiveFilterRef.current = true;
+                setInput("");
+                window.dispatchEvent(
+                  new CustomEvent("centriq:directory-query-result", {
+                    detail: { employeeCodes: result.employee_codes ?? [], summary: result.summary },
+                  }),
+                );
+              } else {
+                directoryLlmBypassRef.current = true;
+                sendRef.current(text);
+              }
+            })
+            .catch(() => {
+              directoryLlmBypassRef.current = true;
+              sendRef.current(text);
+            });
           return;
         }
       }

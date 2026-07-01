@@ -243,6 +243,14 @@ class Config:
             "shivani.patel@alignedautomation.com,"
             "suraj.ghuge@alignedautomation.com,"
             "priyanka.sonawane@alignedautomation.com,"
+            "abhinav.mishra@alignedautomation.com,"
+            "ashwani.tiwary@alignedautomation.com,"
+            "homyar.bhathena@alignedautomation.com,"
+            "nitin.asati@alignedautomation.com,"
+            "sarang.kulkarni@alignedautomation.com,"
+            "seema.yadav@alignedautomation.com,"
+            "vinodh.ramadas@alignedautomation.com,"
+            "shishir.keshari@alignedautomation.com,"
             "kajal.jadhav@alignedautomation.com,"
             "shivam.sharma@alignedautomation.com",
         ).split(",")

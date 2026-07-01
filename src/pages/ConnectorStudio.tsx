@@ -60,6 +60,7 @@ interface Connector {
   base_url: string | null;
   status: string;
   version: number;
+  seeding_status?: string;
   created_by: string | null;
   created_at: string;
 }
@@ -249,6 +250,40 @@ export default function ConnectorStudio() {
     fetchConnectors();
   }, [fetchConnectors]);
 
+  // Polling for seeding status
+  useEffect(() => {
+    if (!selected || selected.seeding_status !== "seeding") return;
+
+    let attempts = 0;
+    const interval = setInterval(async () => {
+      attempts++;
+      if (attempts > 20) {
+        clearInterval(interval);
+        return;
+      }
+      try {
+        const detail = await apiFetch(`/api/admin/connectors/${selected.id}`);
+        // If status changed, update the UI and stop polling
+        if (detail.seeding_status !== "seeding") {
+          setSelected(detail);
+          setConnectors((prev) =>
+            prev.map((c) => (c.id === detail.id ? { ...c, seeding_status: detail.seeding_status } : c))
+          );
+          clearInterval(interval);
+          if (detail.seeding_status === "seeded") {
+            toast.success("Router seeding completed");
+          } else if (detail.seeding_status === "failed") {
+            toast.error("Router seeding failed");
+          }
+        }
+      } catch (e) {
+        // ignore fetch errors during polling
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [selected?.id, selected?.seeding_status]);
+
   const selectConnector = async (id: number) => {
     try {
       const detail = await apiFetch(`/api/admin/connectors/${id}`);
@@ -324,6 +359,19 @@ export default function ConnectorStudio() {
     </span>
   );
 
+  const seedingIcon = (status?: string) => {
+    if (status === "seeding") {
+      return <Loader2 className="h-4 w-4 text-amber-500 animate-spin shrink-0" title="Seeding router..." />;
+    }
+    if (status === "seeded") {
+      return <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" title="Router ready" />;
+    }
+    if (status === "failed") {
+      return <AlertCircle className="h-4 w-4 text-red-500 shrink-0" title="Seeding failed — try re-publishing" />;
+    }
+    return null;
+  };
+
   return (
     <div className="flex h-full min-h-[calc(100dvh-64px)] bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
@@ -377,7 +425,10 @@ export default function ConnectorStudio() {
             >
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <span className="text-sm font-medium truncate">{c.name}</span>
-                {statusBadge(c.status)}
+                <div className="flex items-center gap-2">
+                  {seedingIcon(c.seeding_status)}
+                  {statusBadge(c.status)}
+                </div>
               </div>
               <span className="text-xs text-gray-400 font-mono">{c.slug}</span>
             </button>
@@ -422,7 +473,10 @@ export default function ConnectorStudio() {
                     <ChevronLeft className="h-5 w-5" />
                   </Button>
                   <h1 className="text-xl font-semibold truncate">{selected.name}</h1>
-                  {statusBadge(selected.status)}
+                  <div className="flex items-center gap-2">
+                    {seedingIcon(selected.seeding_status)}
+                    {statusBadge(selected.status)}
+                  </div>
                   <span className="text-xs text-gray-400 shrink-0">v{selected.version}</span>
                 </div>
                 <p className="text-sm text-gray-500 mt-1 break-words">

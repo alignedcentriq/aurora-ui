@@ -144,10 +144,13 @@ def _is_active(row: dict) -> bool:
     return True
 
 
-def fetch_directory() -> list[dict]:
-    """Return the active roster from the Zoho view in `DirEmployee` shape, sorted by name.
+def fetch_raw_rows() -> list[dict]:
+    """Return every column of every row in the Zoho view, lower-cased keys, no shaping/filtering.
 
-    Fail-soft: returns [] on any error or when the source isn't configured."""
+    Fail-soft: returns [] on any error or when the source isn't configured. Used both by
+    fetch_directory() (shaped for the Directory page) and by analytics aggregations that need
+    live headcount-by-X counts straight off the authoritative HR roster rather than a stale
+    local copy."""
     engine = _get_engine()
     if engine is None:
         return []
@@ -157,11 +160,20 @@ def fetch_directory() -> list[dict]:
         with engine.connect() as conn:
             result = conn.execute(text(f"SELECT * FROM {view}"))
             # Lower-case every column key once so mapping is casing-agnostic.
-            raw_rows = [
+            return [
                 {str(k).lower(): v for k, v in m.items()}
                 for m in result.mappings().all()
             ]
     except Exception:
+        return []
+
+
+def fetch_directory() -> list[dict]:
+    """Return the active roster from the Zoho view in `DirEmployee` shape, sorted by name.
+
+    Fail-soft: returns [] on any error or when the source isn't configured."""
+    raw_rows = fetch_raw_rows()
+    if not raw_rows:
         return []
 
     out: list[dict] = []
@@ -193,3 +205,54 @@ def fetch_directory() -> list[dict]:
 
     out.sort(key=lambda x: x["name"].lower())
     return out
+
+
+def _parse_any_date(v) -> datetime.date | None:
+    if isinstance(v, datetime.datetime):
+        return v.date()
+    if isinstance(v, datetime.date):
+        return v
+    s = (str(v).strip() if v else "")
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.datetime.strptime(s[:19], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def aggregate_field_counts(*field_candidates: str, active_only: bool = True) -> list[tuple[str, int]]:
+    """Live headcount-by-<field> straight off the Zoho view — no local copy to go stale.
+
+    field_candidates are tried in order per row (first non-empty wins), same convention as
+    _g(). Returns [(label, count), ...] sorted by count descending. Fail-soft: [] when the
+    view isn't configured/reachable, so callers can fall back to a local source."""
+    rows = fetch_raw_rows()
+    counts: dict[str, int] = {}
+    for row in rows:
+        if active_only and not _is_active(row):
+            continue
+        val = _g(row, *field_candidates)
+        if not val:
+            continue
+        counts[val] = counts.get(val, 0) + 1
+    return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def aggregate_joining_trend(cutoff: datetime.date) -> list[tuple[datetime.date, int]]:
+    """Live new-joiner count per month since `cutoff`, off the Zoho view's dateofjoining.
+
+    Matches all joiners in the window regardless of current employment status (mirrors the
+    original 'joining_trend' query, which never filtered on active/inactive). Returns
+    [(month_start_date, count), ...] sorted chronologically. Fail-soft: [] when unavailable."""
+    rows = fetch_raw_rows()
+    counts: dict[datetime.date, int] = {}
+    for row in rows:
+        d = _parse_any_date(row.get("dateofjoining"))
+        if not d or d < cutoff:
+            continue
+        month_key = d.replace(day=1)
+        counts[month_key] = counts.get(month_key, 0) + 1
+    return sorted(counts.items(), key=lambda kv: kv[0])

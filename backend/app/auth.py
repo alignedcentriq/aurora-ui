@@ -55,6 +55,19 @@ def get_current_user(
     if settings.ALLOWED_EMAILS and email not in settings.ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail="Access denied.")
 
+    # Offboarded users are blocked (reversibly) — one-click offboarding sets this.
+    try:
+        from app.models import OffboardedUser
+        if db.query(OffboardedUser).filter(
+            OffboardedUser.email == email,
+            OffboardedUser.status == "offboarded",
+        ).first():
+            raise HTTPException(status_code=403, detail="Your access has been revoked. Contact HR.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     # 1. Resolve the REAL role + scopes (DB override wins over the Azure AD header claim).
     real_role = None
     scopes: List[str] = []

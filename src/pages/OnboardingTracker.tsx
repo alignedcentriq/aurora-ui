@@ -18,10 +18,16 @@ import {
   Search,
   Filter,
   Lock,
+  Laptop,
+  Save,
+  Video,
+  ShieldOff,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import OnboardingContentAdmin from "./OnboardingContentAdmin";
 
 interface JourneyRow {
   employee_name: string;
@@ -53,6 +59,8 @@ interface StepView {
 }
 interface DetailView {
   employee_name: string;
+  employee_email: string;
+  assigned_device: string | null;
   progress_pct: number;
   status: string;
   steps: StepView[];
@@ -144,9 +152,14 @@ export function OnboardingTracker() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "completed" | "stalled">("all");
+  const [view, setView] = useState<"tracker" | "content">("tracker");
+  const [deviceInput, setDeviceInput] = useState("");
+  const [savingDevice, setSavingDevice] = useState(false);
+  const [offStatus, setOffStatus] = useState<{ offboarded: boolean; status: string } | null>(null);
+  const [offBusy, setOffBusy] = useState(false);
 
-  // ── HR-only guard ──────────────────────────────────────────────
-  if (user && user.role !== "HR") {
+  // ── HR / Admin guard (matches backend require_hr) ──────────────
+  if (user && !["HR", "Admin", "Super Admin"].includes(user.role)) {
     return (
       <div className="flex h-full items-center justify-center bg-gradient-to-br from-[#f8fafc] to-[#f1f5f9] dark:from-[#030712] dark:to-[#091120]">
         <motion.div
@@ -201,7 +214,14 @@ export function OnboardingTracker() {
           headers: authHeaders,
         });
         if (!res.ok) throw new Error("Failed");
-        setDetail(await res.json());
+        const d: DetailView = await res.json();
+        setDetail(d);
+        setDeviceInput(d.assigned_device || "");
+        setOffStatus(null);
+        fetch(`/api/offboarding/status/${encodeURIComponent(d.employee_email)}`, { headers: authHeaders })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((s) => s && setOffStatus(s))
+          .catch(() => {});
       } catch {
         toast.error("Couldn't load that journey.");
       } finally {
@@ -210,6 +230,59 @@ export function OnboardingTracker() {
     },
     [authHeaders],
   );
+
+  const runOffboard = useCallback(
+    async (reinstate: boolean) => {
+      if (!detail) return;
+      const verb = reinstate ? "reinstate" : "offboard";
+      if (
+        !reinstate &&
+        !confirm(
+          `Revoke ALL app access for ${detail.employee_name}?\n\nThis blocks their sign-in, clears their role & extra permissions, and removes their stored Microsoft/Zoho connections. You can reinstate them later.`,
+        )
+      )
+        return;
+      setOffBusy(true);
+      try {
+        const res = await fetch(`/api/offboarding/${verb}`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ email: detail.employee_email }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || "Failed");
+        toast.success(reinstate ? "Access reinstated." : "Access revoked.");
+        setOffStatus({ offboarded: !reinstate, status: reinstate ? "reinstated" : "offboarded" });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Action failed.");
+      } finally {
+        setOffBusy(false);
+      }
+    },
+    [detail, authHeaders],
+  );
+
+  const saveDevice = useCallback(async () => {
+    if (!detail) return;
+    setSavingDevice(true);
+    try {
+      const res = await fetch("/api/onboarding/admin/device", {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({
+          employee_email: detail.employee_email,
+          assigned_device: deviceInput.trim() || null,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      setDetail((d) => (d ? { ...d, assigned_device: deviceInput.trim() || null } : d));
+      toast.success("Assigned device updated.");
+    } catch {
+      toast.error("Couldn't update the device.");
+    } finally {
+      setSavingDevice(false);
+    }
+  }, [detail, deviceInput, authHeaders]);
 
   const filteredJourneys = useMemo(() => {
     if (!data) return [];
@@ -270,17 +343,46 @@ export function OnboardingTracker() {
               Live progress for every new joiner — steps, documents & status at a glance.
             </p>
           </div>
-          <button
-            onClick={load}
-            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-violet-50 dark:hover:bg-violet-950/30 hover:text-violet-600 dark:hover:text-violet-400 border border-transparent hover:border-violet-200 dark:hover:border-violet-800/50 transition-all"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            {/* View switcher: joiner tracker vs. induction-content management */}
+            <div className="flex items-center gap-0.5 rounded-xl border border-slate-200/70 dark:border-white/[0.08] bg-white/70 dark:bg-zinc-900/50 p-0.5">
+              <button
+                onClick={() => setView("tracker")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all",
+                  view === "tracker"
+                    ? "bg-violet-600 text-white shadow-sm shadow-violet-600/30"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Users className="h-3.5 w-3.5" /> Tracker
+              </button>
+              <button
+                onClick={() => setView("content")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all",
+                  view === "content"
+                    ? "bg-violet-600 text-white shadow-sm shadow-violet-600/30"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Video className="h-3.5 w-3.5" /> Content
+              </button>
+            </div>
+            {view === "tracker" && (
+              <button
+                onClick={load}
+                className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-violet-50 dark:hover:bg-violet-950/30 hover:text-violet-600 dark:hover:text-violet-400 border border-transparent hover:border-violet-200 dark:hover:border-violet-800/50 transition-all"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                Refresh
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Stats row */}
-        {data && (
+        {view === "tracker" && data && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
             <StatCard
               label="Total Joiners"
@@ -318,8 +420,11 @@ export function OnboardingTracker() {
         )}
       </div>
 
+      {/* ── Content management view ── */}
+      {view === "content" && <OnboardingContentAdmin authHeaders={authHeaders} />}
+
       {/* ── Search & Filter bar ── */}
-      {data && data.journeys.length > 0 && (
+      {view === "tracker" && data && data.journeys.length > 0 && (
         <div className="flex items-center gap-3 px-6 sm:px-8 py-3 border-b border-slate-200/50 dark:border-white/[0.04] bg-white/30 dark:bg-zinc-950/20 backdrop-blur-sm shrink-0">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -351,6 +456,7 @@ export function OnboardingTracker() {
       )}
 
       {/* ── Journey List ── */}
+      {view === "tracker" && (
       <div className="flex-1 overflow-auto px-6 sm:px-8 py-5">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
@@ -472,6 +578,7 @@ export function OnboardingTracker() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Detail Drawer ── */}
       <AnimatePresence>
@@ -664,6 +771,81 @@ export function OnboardingTracker() {
                         </motion.li>
                       ))}
                     </ul>
+                  </div>
+
+                  {/* Assigned IT device */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="h-5 w-5 rounded-md bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center">
+                        <Laptop className="h-3 w-3 text-white" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-foreground">
+                        Assigned Device
+                      </p>
+                    </div>
+                    <p className="text-[11.5px] text-muted-foreground mb-2">
+                      The laptop/device this hire is issued — shown in their IT-setup step.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={deviceInput}
+                        onChange={(e) => setDeviceInput(e.target.value)}
+                        placeholder='e.g. MacBook Pro 16" or Dell Latitude 5540'
+                        className="flex-1 h-9 px-3 rounded-lg border border-slate-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-zinc-900/60 text-[12.5px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-teal-500/50 focus:border-teal-400/60 transition-all"
+                      />
+                      <button
+                        onClick={saveDevice}
+                        disabled={savingDevice || deviceInput.trim() === (detail.assigned_device || "")}
+                        className="flex items-center gap-1.5 rounded-lg px-3 h-9 text-[12px] font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                      >
+                        {savingDevice ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Save className="h-3.5 w-3.5" />
+                        )}
+                        Save
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Offboarding — danger zone */}
+                  <div className="rounded-2xl border border-red-200/60 dark:border-red-900/30 bg-red-50/40 dark:bg-red-950/10 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="h-5 w-5 rounded-md bg-gradient-to-br from-red-500 to-rose-600 flex items-center justify-center">
+                        <ShieldOff className="h-3 w-3 text-white" />
+                      </div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
+                        Offboarding
+                      </p>
+                      {offStatus?.offboarded && (
+                        <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
+                          ACCESS REVOKED
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11.5px] text-muted-foreground mb-3">
+                      One-click revoke all app access: blocks sign-in, clears role &amp; extra
+                      permissions, and removes stored Microsoft/Zoho connections. Reversible.
+                    </p>
+                    {offStatus?.offboarded ? (
+                      <button
+                        onClick={() => runOffboard(true)}
+                        disabled={offBusy}
+                        className="flex items-center gap-1.5 rounded-lg px-3 h-9 text-[12px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                      >
+                        {offBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                        Reinstate access
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => runOffboard(false)}
+                        disabled={offBusy}
+                        className="flex items-center gap-1.5 rounded-lg px-3 h-9 text-[12px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-colors"
+                      >
+                        {offBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+                        Offboard &amp; revoke access
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

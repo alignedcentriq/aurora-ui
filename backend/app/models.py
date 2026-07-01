@@ -1792,6 +1792,7 @@ class Connector(Base):
     spec_url = Column(String, nullable=True)
     status = Column(String, default="draft", index=True)             # draft | published | disabled
     version = Column(Integer, default=1)                             # bump on edit → cache invalidation
+    seeding_status = Column(String, default="idle")                   # idle | seeding | seeded | failed
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -2115,6 +2116,9 @@ class OnboardingJourney(Base):
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey(f"{SCHEMA}.employees.id"), unique=True, index=True, nullable=False)
     status = Column(String, default="active", index=True)    # active | completed
+    # IT device the admin assigned to this hire (e.g. "MacBook Pro 16\"", "Dell Latitude 5540").
+    # Surfaced in the new hire's IT-setup step; blank until an admin sets it.
+    assigned_device = Column(String, nullable=True)
     started_at = Column(DateTime, default=datetime.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -2166,6 +2170,119 @@ class OnboardingDocSubmission(Base):
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     journey = relationship("OnboardingJourney", back_populates="documents")
+
+
+class InductionVideo(Base):
+    """An induction/orientation video shown to new hires in the onboarding journey.
+
+    Admin-managed via the Control Hub (replacing the old env-var-only source). A video
+    is either an external URL (SharePoint/Stream/YouTube/MP4) or a file uploaded to
+    uploads/induction/ and served via the /uploads static mount. `chapters` is a JSON
+    list of {title, start} seek points rendered by the chaptered player.
+    """
+    __tablename__ = "induction_videos"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    url = Column(String, nullable=False)                     # external URL or /uploads/... path
+    uploaded_filename = Column(String, nullable=True)        # original name if uploaded (else None)
+    chapters = Column(JSON, nullable=True)                   # [{"title": str, "start": int}]
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class InductionDocument(Base):
+    """A reference document (handbook, policy pack, slides) attached to the induction step.
+
+    Admin-managed like InductionVideo. New hires can view/download these alongside the videos.
+    `url` is either an external link or an uploaded file under uploads/induction_docs/.
+    """
+    __tablename__ = "induction_documents"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    url = Column(String, nullable=False)
+    uploaded_filename = Column(String, nullable=True)
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class OnboardingDocSection(Base):
+    """HR-managed onboarding document section — gives HR full control over the joining-document
+    checklist beyond the built-in set (services/onboarding_template.py).
+
+    A row is either a brand-new custom document OR an override of a built-in document that shares
+    its doc_key (to change its name/description/fields/required, or hide it via is_active=False).
+    onboarding_service merges these over the code-defined built-ins.
+    """
+    __tablename__ = "onboarding_doc_sections"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    doc_key = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    fields = Column(JSON, nullable=True)                     # list[str] of field labels
+    required = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=100)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class OffboardedUser(Base):
+    """A user whose access has been revoked via one-click offboarding. Reversible: `status`
+    flips to 'reinstated' on undo. While status='offboarded' the auth gate denies the account.
+    `revoked_summary` records what was cleared (roles, connected accounts) for audit + undo."""
+    __tablename__ = "offboarded_users"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, default="offboarded")           # offboarded | reinstated
+    offboarded_by = Column(String, nullable=True)
+    offboarded_at = Column(DateTime, default=datetime.datetime.utcnow)
+    reinstated_by = Column(String, nullable=True)
+    reinstated_at = Column(DateTime, nullable=True)
+    revoked_summary = Column(JSON, nullable=True)
+
+
+class ManagerCallInvite(Base):
+    """A new hire's intro call with their manager, scheduled by the manager via an
+    emailed magic link (no login required — authenticated by the unguessable token).
+
+    Created once per new hire the first time they're added (idempotent on new_hire_email).
+    The manager clicks the link, picks a date/time, and the backend books a real Teams
+    online-meeting event via Microsoft Graph. Until then the new hire sees "not scheduled yet".
+    """
+    __tablename__ = "manager_call_invites"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    new_hire_email = Column(String, index=True, nullable=False, unique=True)
+    new_hire_name = Column(String, nullable=True)
+    manager_email = Column(String, index=True, nullable=True)
+    manager_name = Column(String, nullable=True)
+    token = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, default="pending")              # pending | scheduled | cancelled
+    scheduled_start = Column(DateTime, nullable=True)        # UTC
+    scheduled_end = Column(DateTime, nullable=True)          # UTC
+    teams_join_url = Column(String, nullable=True)
+    graph_event_id = Column(String, nullable=True)
+    graph_organizer_email = Column(String, nullable=True)   # mailbox that hosts the event
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    scheduled_at = Column(DateTime, nullable=True)           # when the manager picked the slot
 
 
 # ── Insight Bus (ARB #48) ──────────────────────────────────────────────────────
