@@ -662,7 +662,19 @@ def get_for_employee(email: str) -> Optional[dict]:
     try:
         emp = db.query(Employee).filter(Employee.email == email).first()
         if not emp:
-            return None
+            # Auto-create for demo/onboarding purposes if missing
+            import uuid
+            emp = Employee(
+                employee_id=f"AA-{uuid.uuid4().hex[:6].upper()}",
+                name=email.split("@")[0].replace(".", " ").title(),
+                email=email,
+                role="Employee",
+                joining_date=_now().date()
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+            
         journey = ensure_journey(db, emp)
         recompute(db, journey)
         steps = _step_map(journey)
@@ -700,8 +712,19 @@ def get_journey_for(email: str):
     db = SessionLocal()
     emp = db.query(Employee).filter(Employee.email == email).first()
     if not emp:
-        db.close()
-        return None, None, None
+        # Auto-create for demo/onboarding purposes if missing
+        import uuid
+        emp = Employee(
+            employee_id=f"AA-{uuid.uuid4().hex[:6].upper()}",
+            name=email.split("@")[0].replace(".", " ").title(),
+            email=email,
+            role="Employee",
+            joining_date=_now().date()
+        )
+        db.add(emp)
+        db.commit()
+        db.refresh(emp)
+        
     journey = ensure_journey(db, emp)
     return db, emp, journey
 
