@@ -9,7 +9,7 @@ services:
     # Host nginx config already has: proxy_pass http://127.0.0.1:8090 — no admin action needed.
     # Branch A only (we own 80/443): change to "80:80","443:443" and run first-deploy.sh.
     ports:
-      - "8091:80"
+      - "8090:80"
     volumes:
       # Mounted conf wins over the baked copy — edit + `docker compose restart nginx`, no rebuild.
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
