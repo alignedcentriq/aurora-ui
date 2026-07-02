@@ -31,6 +31,7 @@ import {
   Globe,
   Rocket,
   Brain,
+  ScrollText,
 } from "lucide-react";
 
 // Page components are lazy-loaded so the Control Hub route ships only the shell;
@@ -73,6 +74,9 @@ const LLMControlsPage = lazy(() =>
 const AccessManagement = lazy(() =>
   import("@/pages/AccessManagement").then((m) => ({ default: m.AccessManagement })),
 );
+const AuditTrail = lazy(() =>
+  import("@/pages/AuditTrail").then((m) => ({ default: m.AuditTrail })),
+);
 const CabinDirectory = lazy(() =>
   import("@/pages/CabinDirectory").then((m) => ({ default: m.CabinDirectory })),
 );
@@ -104,6 +108,7 @@ type TabId =
   | "observability"
   | "llm-controls"
   | "role-control"
+  | "audit-trail"
   | "admin-portal"
   | "hr-portal"
   | "onboarding-tracker"
@@ -161,6 +166,15 @@ const TABS: TabItem[] = [
     color: "#F59E0B",
     show: (role) => role === "Super Admin",
     component: AccessManagement,
+  },
+  {
+    id: "audit-trail",
+    label: "Audit Trail",
+    category: "System & Ops",
+    icon: ScrollText,
+    color: "#F59E0B",
+    show: (role) => role === "Super Admin",
+    component: AuditTrail,
   },
   {
     id: "observability",
@@ -339,6 +353,8 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   dashboard: "Broadcast alerts, policy changes, and official events to the workspace.",
   "analytics-builder": "Describe any chart in plain English, iterate, export — and save multi-chart dashboards.",
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
+  "audit-trail":
+    "Complete history of role, access, automation, and settings changes — who, what, when, before and after.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
   "automation-hub": "Automate email sequences, rule actions, and triggers.",

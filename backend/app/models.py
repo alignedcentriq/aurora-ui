@@ -245,6 +245,9 @@ class ProjectProfile(Base):
     delivery_start_date = Column(String, nullable=True)
     delivery_end_date = Column(String, nullable=True)
     dna_summary = Column(Text, nullable=True)             # text fed to the embedder
+    lineage_summary = Column(Text, nullable=True)         # contextual origins/roots
+    related_projects = Column(JSON, nullable=True)        # list[str] of related project slugs/names
+    reference_docs = Column(JSON, nullable=True)          # list[str] of architecture/policy dependencies
     embedding = Column(Vector(768), nullable=True)
     confidence = Column(String, default="inferred")       # verified | inferred (overall)
     review_status = Column(String, default="draft")       # draft | reviewed
@@ -1667,6 +1670,30 @@ class AutomationRule(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class AutomationSendLog(Base):
+    """One row per automation email dispatch — full audit history for AutomationRule.
+
+    Written on every scheduled fire (automation_service.run_due) and every manual
+    trigger (automation_service.send_now). rule_name/created_by are snapshotted so
+    history remains visible even after the rule itself is edited or deleted.
+    """
+    __tablename__ = "automation_send_logs"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_id = Column(Integer, ForeignKey(f"{SCHEMA}.automation_rules.id", ondelete="SET NULL"), nullable=True, index=True)
+    rule_name = Column(String, nullable=False)
+    created_by = Column(String, index=True, nullable=False)   # rule owner at send time
+    automation_kind = Column(String, nullable=True)
+    triggered_by = Column(String, nullable=False, default="scheduled")  # scheduled | manual
+    triggered_by_email = Column(String, nullable=True)        # who clicked "Send Now" (manual only)
+    recipients_json = Column(JSON, default=list)               # flattened emails actually sent to
+    recipient_count = Column(Integer, default=0)
+    status = Column(String, nullable=False)                    # sent | failed
+    detail = Column(Text, nullable=True)                       # outcome detail / error message
+    sent_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+
 class SavedDashboard(Base):
     """A user-built analytics board from the Analytics Studio. Holds one or more chart
     widgets, each naming entries from the server-side metric catalog (never raw SQL).
@@ -2100,6 +2127,41 @@ class ProactiveNudge(Base):
     # Last time the action was fired / pushed — drives the manager-nudge cooldown.
     last_actioned_at = Column(DateTime, nullable=True)
     last_delivered_at = Column(DateTime, nullable=True)     # best-effort Teams/email push
+
+
+class ActivityLogEntry(Base):
+    """Org-wide admin/system activity ledger — the source of both the header Activity
+    bell (last-30-days, short form) and the Control Hub Audit Trail (unbounded, full
+    detail, Super Admin only).
+
+    One row per confirmed state change (role grants/revocations, role/capability
+    definitions, automation CRUD + system-triggered fires, settings changes). Never
+    covers chat/prompt traffic — that's AI Observability's job. Emitted by
+    activity_log_service.emit(), which never raises so a logging failure can never
+    break the action it's recording.
+    """
+    __tablename__ = "activity_log_entries"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    actor_email = Column(String, index=True, nullable=False)
+    actor_name = Column(String, nullable=True)        # denormalized display name at emit time
+
+    category = Column(String, index=True, nullable=False)     # role_assignment | role_definition | access_grant | automation | settings
+    action_type = Column(String, index=True, nullable=False)  # role_assign | role_change | role_revoke | role_def_create | ...
+    severity = Column(String, default="normal", index=True)   # high | normal | low
+
+    target_type = Column(String, nullable=True)       # user | role | automation_rule | setting
+    target_id = Column(String, nullable=True)          # email / role slug / rule id / setting key
+    target_name = Column(String, nullable=True)        # denormalized display label
+
+    summary = Column(String, nullable=False)            # "Shivam Sharma added Suraj Ghuge as admin"
+    old_value = Column(JSON, nullable=True)
+    new_value = Column(JSON, nullable=True)
+    entry_metadata = Column("metadata", JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
 
 class OnboardingJourney(Base):

@@ -662,9 +662,6 @@ export function ConfigPage() {
             <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
               Assets & Config
             </p>
-            <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">
-              AI Prompt Config
-            </h1>
             <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">
               Tune the prompts, announcements, and grounding sources that power your domain.
             </p>

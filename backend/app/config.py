@@ -234,28 +234,17 @@ class Config:
     HOST = os.getenv("HOST", "0.0.0.0")
 
     # ── Access allowlist ──────────────────────────────────────────────────────
-    # Only these emails may use the app. Override via ALLOWED_EMAILS env var
-    # (comma-separated) to avoid a rebuild when the list changes.
-    ALLOWED_EMAILS: set = {
-        e.strip().lower()
-        for e in os.getenv(
-            "ALLOWED_EMAILS",
-            "shivani.patel@alignedautomation.com,"
-            "suraj.ghuge@alignedautomation.com,"
-            "priyanka.sonawane@alignedautomation.com,"
-            "abhinav.mishra@alignedautomation.com,"
-            "ashwani.tiwary@alignedautomation.com,"
-            "homyar.bhathena@alignedautomation.com,"
-            "nitin.asati@alignedautomation.com,"
-            "sarang.kulkarni@alignedautomation.com,"
-            "seema.yadav@alignedautomation.com,"
-            "vinodh.ramadas@alignedautomation.com,"
-            "shishir.keshari@alignedautomation.com,"
-            "kajal.jadhav@alignedautomation.com,"
-            "shivam.sharma@alignedautomation.com",
-        ).split(",")
-        if e.strip()
-    }
+    # Anyone who can SSO in with an @alignedautomation.com account may use the
+    # app — access is gated by Azure AD SSO itself, not a hand-maintained list.
+    # Override via ALLOWED_EMAIL_DOMAIN env var if the company domain changes.
+    ALLOWED_EMAIL_DOMAIN = os.getenv("ALLOWED_EMAIL_DOMAIN", "alignedautomation.com").strip().lower()
+
+    # Only this Super Admin may use the test-role-switcher (x-impersonate-role). Other
+    # accounts granted "super admin" via a DB override still can't switch roles — the
+    # capability is pinned to one trusted person, not the role itself.
+    ROLE_SWITCH_ALLOWED_EMAIL = os.getenv(
+        "ROLE_SWITCH_ALLOWED_EMAIL", "shivam.sharma@alignedautomation.com"
+    ).strip().lower()
 
     # Email — all outbound notifications go to this address (Teams channel or shared inbox)
     # Set NOTIFY_TO_EMAIL in .env — no fallback; emails are silently skipped if unset

@@ -191,7 +191,7 @@ export function OnboardingTracker() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/onboarding/overview", { headers: authHeaders });
+      const res = await fetch("/api/onboard/overview", { headers: authHeaders });
       if (!res.ok) throw new Error("Failed to load");
       setData(await res.json());
     } catch {
@@ -210,7 +210,7 @@ export function OnboardingTracker() {
       setDetailLoading(true);
       setDetail(null);
       try {
-        const res = await fetch(`/api/onboarding/overview/${encodeURIComponent(email)}`, {
+        const res = await fetch(`/api/onboard/overview/${encodeURIComponent(email)}`, {
           headers: authHeaders,
         });
         if (!res.ok) throw new Error("Failed");
@@ -221,7 +221,7 @@ export function OnboardingTracker() {
         fetch(`/api/offboarding/status/${encodeURIComponent(d.employee_email)}`, { headers: authHeaders })
           .then((r) => (r.ok ? r.json() : null))
           .then((s) => s && setOffStatus(s))
-          .catch(() => {});
+          .catch(() => { });
       } catch {
         toast.error("Couldn't load that journey.");
       } finally {
@@ -266,7 +266,7 @@ export function OnboardingTracker() {
     if (!detail) return;
     setSavingDevice(true);
     try {
-      const res = await fetch("/api/onboarding/admin/device", {
+      const res = await fetch("/api/onboard/admin/device", {
         method: "PUT",
         headers: authHeaders,
         body: JSON.stringify({
@@ -336,9 +336,6 @@ export function OnboardingTracker() {
                 HR Portal
               </span>
             </div>
-            <h1 className="text-[24px] font-black tracking-tight text-foreground">
-              Onboarding Tracker
-            </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
               Live progress for every new joiner — steps, documents & status at a glance.
             </p>
@@ -457,127 +454,127 @@ export function OnboardingTracker() {
 
       {/* ── Journey List ── */}
       {view === "tracker" && (
-      <div className="flex-1 overflow-auto px-6 sm:px-8 py-5">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
-            <Loader2 className="h-7 w-7 animate-spin text-violet-500" />
-            <span className="text-[13px]">Loading journeys…</span>
-          </div>
-        ) : !data || data.journeys.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
-            <div className="h-14 w-14 rounded-2xl bg-violet-500/10 flex items-center justify-center">
-              <Users className="h-6 w-6 text-violet-400 opacity-70" />
+        <div className="flex-1 overflow-auto px-6 sm:px-8 py-5">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
+              <Loader2 className="h-7 w-7 animate-spin text-violet-500" />
+              <span className="text-[13px]">Loading journeys…</span>
             </div>
-            <p className="text-[14px] font-medium">No onboarding journeys yet.</p>
-            <p className="text-[12px] text-muted-foreground/60">
-              New joiners will appear here once added.
-            </p>
-          </div>
-        ) : filteredJourneys.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-            <Search className="h-6 w-6 opacity-40" />
-            <p className="text-[13px]">No results matching your search.</p>
-          </div>
-        ) : (
-          <div className="space-y-2.5 max-w-4xl">
-            <AnimatePresence initial={false}>
-              {filteredJourneys.map((j, idx) => (
-                <motion.button
-                  key={j.employee_email}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.25, delay: idx * 0.03 }}
-                  onClick={() => openDetail(j.employee_email)}
-                  className="w-full text-left rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 backdrop-blur-xl p-4 hover:border-violet-400/60 dark:hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/5 transition-all group"
-                >
-                  <div className="flex items-center gap-4">
-                    {/* Avatar */}
-                    <div
-                      className={cn(
-                        "h-10 w-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white text-[13px] font-black shrink-0 shadow-sm",
-                        getAvatarColor(j.employee_name),
-                      )}
-                    >
-                      {getInitials(j.employee_name)}
-                    </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[14px] font-bold text-foreground truncate">
-                          {j.employee_name}
-                        </span>
-                        {j.designation && (
-                          <span className="text-[11px] text-muted-foreground truncate">
-                            {j.designation}
-                          </span>
+          ) : !data || data.journeys.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-muted-foreground gap-3">
+              <div className="h-14 w-14 rounded-2xl bg-violet-500/10 flex items-center justify-center">
+                <Users className="h-6 w-6 text-violet-400 opacity-70" />
+              </div>
+              <p className="text-[14px] font-medium">No onboarding journeys yet.</p>
+              <p className="text-[12px] text-muted-foreground/60">
+                New joiners will appear here once added.
+              </p>
+            </div>
+          ) : filteredJourneys.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
+              <Search className="h-6 w-6 opacity-40" />
+              <p className="text-[13px]">No results matching your search.</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5 max-w-4xl">
+              <AnimatePresence initial={false}>
+                {filteredJourneys.map((j, idx) => (
+                  <motion.button
+                    key={j.employee_email}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.25, delay: idx * 0.03 }}
+                    onClick={() => openDetail(j.employee_email)}
+                    className="w-full text-left rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 backdrop-blur-xl p-4 hover:border-violet-400/60 dark:hover:border-violet-500/30 hover:shadow-lg hover:shadow-violet-500/5 transition-all group"
+                  >
+                    <div className="flex items-center gap-4">
+                      {/* Avatar */}
+                      <div
+                        className={cn(
+                          "h-10 w-10 rounded-xl bg-gradient-to-br flex items-center justify-center text-white text-[13px] font-black shrink-0 shadow-sm",
+                          getAvatarColor(j.employee_name),
                         )}
-                        {j.department && (
-                          <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800/80 text-muted-foreground border border-slate-200/70 dark:border-white/[0.06]">
-                            {j.department}
-                          </span>
-                        )}
-                        {j.status === "completed" && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle2 className="h-3 w-3" /> Completed
-                          </span>
-                        )}
-                        {j.stalled && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                            <AlertTriangle className="h-3 w-3" /> Stalled
-                          </span>
-                        )}
+                      >
+                        {getInitials(j.employee_name)}
                       </div>
 
-                      {/* Progress bar */}
-                      <div className="flex items-center gap-2.5 mt-2.5">
-                        <div className="flex-1 h-1.5 rounded-full bg-slate-200/80 dark:bg-zinc-800 overflow-hidden max-w-xs">
-                          <motion.div
-                            className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500"
-                            initial={{ width: 0 }}
-                            animate={{ width: `${j.progress_pct}%` }}
-                            transition={{ duration: 0.8, ease: "easeOut", delay: idx * 0.04 }}
-                          />
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[14px] font-bold text-foreground truncate">
+                            {j.employee_name}
+                          </span>
+                          {j.designation && (
+                            <span className="text-[11px] text-muted-foreground truncate">
+                              {j.designation}
+                            </span>
+                          )}
+                          {j.department && (
+                            <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800/80 text-muted-foreground border border-slate-200/70 dark:border-white/[0.06]">
+                              {j.department}
+                            </span>
+                          )}
+                          {j.status === "completed" && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              <CheckCircle2 className="h-3 w-3" /> Completed
+                            </span>
+                          )}
+                          {j.stalled && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                              <AlertTriangle className="h-3 w-3" /> Stalled
+                            </span>
+                          )}
                         </div>
-                        <span className="text-[12px] font-bold text-foreground tabular-nums w-8 text-right">
-                          {j.progress_pct}%
-                        </span>
+
+                        {/* Progress bar */}
+                        <div className="flex items-center gap-2.5 mt-2.5">
+                          <div className="flex-1 h-1.5 rounded-full bg-slate-200/80 dark:bg-zinc-800 overflow-hidden max-w-xs">
+                            <motion.div
+                              className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${j.progress_pct}%` }}
+                              transition={{ duration: 0.8, ease: "easeOut", delay: idx * 0.04 }}
+                            />
+                          </div>
+                          <span className="text-[12px] font-bold text-foreground tabular-nums w-8 text-right">
+                            {j.progress_pct}%
+                          </span>
+                        </div>
+
+                        {/* Meta row */}
+                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <FileText className="h-3 w-3" />
+                            {j.docs_submitted}/{j.docs_required} docs
+                          </span>
+                          {j.joining_date && (
+                            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <Calendar className="h-3 w-3" />
+                              {new Date(j.joining_date).toLocaleDateString("en-IN", {
+                                day: "numeric",
+                                month: "short",
+                              })}
+                            </span>
+                          )}
+                          {j.next_step && j.status !== "completed" && (
+                            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              {j.next_step.replace(/_/g, " ")}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Meta row */}
-                      <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <FileText className="h-3 w-3" />
-                          {j.docs_submitted}/{j.docs_required} docs
-                        </span>
-                        {j.joining_date && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <Calendar className="h-3 w-3" />
-                            {new Date(j.joining_date).toLocaleDateString("en-IN", {
-                              day: "numeric",
-                              month: "short",
-                            })}
-                          </span>
-                        )}
-                        {j.next_step && j.status !== "completed" && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            {j.next_step.replace(/_/g, " ")}
-                          </span>
-                        )}
-                      </div>
+                      {/* Arrow */}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-violet-500 group-hover:translate-x-0.5 transition-all shrink-0" />
                     </div>
-
-                    {/* Arrow */}
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-violet-500 group-hover:translate-x-0.5 transition-all shrink-0" />
-                  </div>
-                </motion.button>
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
-      </div>
+                  </motion.button>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Detail Drawer ── */}

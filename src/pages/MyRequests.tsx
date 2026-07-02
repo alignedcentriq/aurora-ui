@@ -602,9 +602,6 @@ export function MyRequests() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-8 py-4 sm:py-6 border-b border-border/40 shrink-0 gap-4">
         <div>
-          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-foreground">
-            My Requests
-          </h1>
           <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground mt-0.5 font-medium">
             Monitor and track your leaves, expenses, travel bookings, and support tickets in one
             place.

@@ -153,7 +153,6 @@ function DocumentsPage() {
               <FileText className="h-5 w-5" style={{ color: "var(--connectivity)" }} />
             </div>
             <div>
-              <h1 className="text-xl font-semibold leading-tight text-foreground">Documents</h1>
               <p className="text-[13px] text-muted-foreground">
                 Request letters and certificates, or browse the shared document library.
               </p>

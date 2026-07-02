@@ -83,7 +83,6 @@ export function ITPortal() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground">IT Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
             Manage support tickets and software installation requests
           </p>

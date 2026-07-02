@@ -49,10 +49,12 @@ def get_current_user(
     Test impersonation: a *real* Super Admin may set `x-impersonate-role` to act as any
     role for testing. This is a non-destructive overlay — the Super Admin's grant is only
     READ, never changed, so they can switch back at any time. It can never be used to
-    escalate: the overlay is applied only when the resolved real role is Super Admin.
+    escalate: the overlay is applied only when the resolved real role is Super Admin AND
+    the caller's email is settings.ROLE_SWITCH_ALLOWED_EMAIL. Other accounts granted
+    Super Admin via a DB override can act as Super Admin but can never switch roles.
     """
     email = (x_user_email or "").strip().lower() or settings.DEFAULT_USER_EMAIL
-    if settings.ALLOWED_EMAILS and email not in settings.ALLOWED_EMAILS:
+    if settings.ALLOWED_EMAIL_DOMAIN and not email.endswith("@" + settings.ALLOWED_EMAIL_DOMAIN):
         raise HTTPException(status_code=403, detail="Access denied.")
 
     # Offboarded users are blocked (reversibly) — one-click offboarding sets this.
@@ -91,7 +93,12 @@ def get_current_user(
     # 2. Apply the test-impersonation overlay (real Super Admin only).
     effective_role = real_role
     imp = (x_impersonate_role or "").strip().lower()
-    if real_role == "super admin" and imp and imp in VALID_ROLES:
+    if (
+        real_role == "super admin"
+        and email == settings.ROLE_SWITCH_ALLOWED_EMAIL
+        and imp
+        and imp in VALID_ROLES
+    ):
         effective_role = imp
         if imp != "super admin":
             scopes = []  # test the target role cleanly, without the super-admin scopes

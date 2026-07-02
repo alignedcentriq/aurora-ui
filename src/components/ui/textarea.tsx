@@ -32,11 +32,11 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         onMouseMove={handleMouseMove}
         onMouseEnter={() => setVisible(true)}
         onMouseLeave={() => setVisible(false)}
-        className="p-[1.5px] rounded-xl transition duration-300 group/input bg-border/40 dark:bg-zinc-800 w-full"
+        className="p-[1.5px] rounded-xl transition-all duration-300 group/input bg-gradient-to-br from-border via-border/50 to-border dark:from-zinc-700 dark:via-zinc-800 dark:to-zinc-700 w-full shadow-sm focus-within:shadow-lg focus-within:shadow-primary/15 focus-within:from-primary/50 focus-within:via-primary/20 focus-within:to-primary/50"
       >
         <textarea
           className={cn(
-            "flex min-h-[60px] w-full border-none bg-white dark:bg-zinc-950 text-foreground shadow-sm rounded-lg px-3 py-2 text-sm placeholder:text-muted-foreground/50 focus-visible:outline-none focus-visible:ring-[2px] focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50 transition duration-300 md:text-sm",
+            "flex min-h-[60px] w-full border-none bg-gradient-to-b from-white to-slate-50 dark:from-zinc-900 dark:to-zinc-950 text-foreground shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)] rounded-[10px] px-3 py-2 text-sm font-medium placeholder:text-muted-foreground/45 placeholder:font-normal focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 transition duration-300 md:text-sm",
             className,
           )}
           ref={ref}

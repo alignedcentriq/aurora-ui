@@ -348,7 +348,6 @@ export function AnalyticsBuilder() {
                     <Sparkles className="h-4.5 w-4.5 text-indigo-400" />
                   </div>
                   <div>
-                    <h1 className="text-[16px] font-bold text-foreground leading-tight">Analytics Builder</h1>
                     <p className="text-[11px] text-muted-foreground">
                       Describe any chart in plain English
                     </p>

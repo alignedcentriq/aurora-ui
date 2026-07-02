@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 import type { SkillsEditorPrefill } from "@/lib/chat-store";
+import { DatePicker } from "@/components/ui/date-picker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -236,12 +237,7 @@ export function SkillsEditorWidget({ userEmail, userRole, prefill, onSaved }: Pr
             </div>
             <div>
               <label className={labelCls}>Last used</label>
-              <input
-                type="date"
-                value={newLastUsed}
-                onChange={(e) => setNewLastUsed(e.target.value)}
-                className={inputCls}
-              />
+              <DatePicker value={newLastUsed} onChange={setNewLastUsed} toDate={new Date()} />
             </div>
             <div className="sm:col-span-2">
               <label className={labelCls}>Certification name (optional)</label>
@@ -454,12 +450,7 @@ function SkillCard({
         </div>
         <div>
           <label className={labelCls}>Last used</label>
-          <input
-            type="date"
-            value={lastUsed}
-            onChange={(e) => setLastUsed(e.target.value)}
-            className={inputCls}
-          />
+          <DatePicker value={lastUsed} onChange={setLastUsed} toDate={new Date()} />
         </div>
         <div className="sm:col-span-2">
           <label className={labelCls}>Certification name</label>

@@ -11,13 +11,43 @@ Internal-only: no client-facing proposal/case-study generation here.
 Prefix: /api/project-iq
 """
 
+import time
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 from pydantic import BaseModel
 
 from app.auth import CurrentUser, require_non_employee, require_pmo
+from app.database import SessionLocal
+from app.models import AiRequestLog
 from app.services import project_iq_service as piq
 
 router = APIRouter(prefix="/api/project-iq", tags=["Project IQ"])
+
+
+def _log_query(user_email: str, domain: str, route_method: str, query_text: str,
+              result_count: int, start: float) -> None:
+    """Best-effort Observability log for a Project IQ NL query — these endpoints are
+    hit directly from ProjectIQPortal and never touch the /api/chat pipeline, so without
+    this they're invisible in the AI Observability dashboard."""
+    db: Session = SessionLocal()
+    try:
+        db.add(AiRequestLog(
+            session_id=f"project-iq-{user_email}",
+            user_email=user_email,
+            user_message=query_text,
+            domain=domain,
+            route_method=route_method,
+            response_text=f"{result_count} result(s)",
+            response_length=result_count,
+            total_latency_ms=int((time.time() - start) * 1000),
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 class SearchRequest(BaseModel):
@@ -52,11 +82,22 @@ async def get_profile(slug: str, user: CurrentUser = Depends(require_non_employe
 @router.post("/search")
 async def search(req: SearchRequest, user: CurrentUser = Depends(require_non_employee)):
     """'Have we done this before?' — ranked similar past projects for a description."""
+    start = time.time()
     hits = piq.find_similar_projects(
         req.description, limit=max(1, min(req.limit, 10)), reviewed_only=req.reviewed_only,
     )
     piq.record_queries([h.get("slug") for h in hits])  # triage signal: what people actually look for
+    _log_query(user.email, "project_iq", "project_iq_search", req.description, len(hits), start)
     return {"query": req.description, "results": hits}
+
+
+@router.post("/agentic-dna-search")
+async def agentic_dna_search(req: SearchRequest, user: CurrentUser = Depends(require_non_employee)):
+    """Deep DNA Search via Agentic RAG multi-hop traversal."""
+    start = time.time()
+    result = piq.agentic_dna_search(req.description)
+    _log_query(user.email, "project_iq", "project_iq_agentic_search", req.description, len(result.get("profiles", [])), start)
+    return {"query": req.description, "answer": result.get("answer"), "results": result.get("profiles", [])}
 
 
 @router.get("/analytics")
@@ -109,17 +150,26 @@ async def review(slug: str, req: ReviewRequest, user: CurrentUser = Depends(requ
 
 @router.get("/lessons")
 async def lessons(topic: str, user: CurrentUser = Depends(require_non_employee)):
-    return {"topic": topic, "lessons": piq.lessons_for(topic)}
+    start = time.time()
+    results = piq.lessons_for(topic)
+    _log_query(user.email, "project_iq", "project_iq_lessons", topic, len(results), start)
+    return {"topic": topic, "lessons": results}
 
 
 @router.get("/experts")
 async def experts(skills: str, user: CurrentUser = Depends(require_non_employee)):
-    return {"skills": skills, "experts": piq.find_experts(skills)}
+    start = time.time()
+    results = piq.find_experts(skills)
+    _log_query(user.email, "project_iq", "project_iq_experts", skills, len(results), start)
+    return {"skills": skills, "experts": results}
 
 
 @router.get("/assets")
 async def assets(need: str, user: CurrentUser = Depends(require_non_employee)):
-    return {"need": need, "assets": piq.find_reusable_assets(need)}
+    start = time.time()
+    results = piq.find_reusable_assets(need)
+    _log_query(user.email, "project_iq", "project_iq_assets", need, len(results), start)
+    return {"need": need, "assets": results}
 
 
 # ── Phase 2 endpoints ─────────────────────────────────────────────────────────

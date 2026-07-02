@@ -31,7 +31,6 @@ export function LLMControlsPage() {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground">LLM Model Controls</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
             Runtime kill switch, GPU throttle, per-tier model parameters, and domain toggles
           </p>

@@ -118,7 +118,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const loadDocs = useCallback(async () => {
     setDocsLoading(true);
     try {
-      const res = await fetch("/api/onboarding/admin/doc-templates", { headers: authHeaders });
+      const res = await fetch("/api/onboard/admin/doc-templates", { headers: authHeaders });
       if (!res.ok) throw new Error();
       setDocs(await res.json());
     } catch {
@@ -134,7 +134,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
       const fd = new FormData();
       fd.append("file", file);
       const { "Content-Type": _ct, ...headers } = authHeaders;
-      const res = await fetch(`/api/onboarding/admin/doc-templates/${doc_key}/upload`, {
+      const res = await fetch(`/api/onboard/admin/doc-templates/${doc_key}/upload`, {
         method: "POST",
         headers,
         body: fd,
@@ -156,7 +156,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     if (!confirm(`Remove the uploaded template for "${doc.name}"? New hires will get the auto-generated form instead.`))
       return;
     try {
-      const res = await fetch(`/api/onboarding/admin/doc-templates/${doc.doc_key}`, {
+      const res = await fetch(`/api/onboard/admin/doc-templates/${doc.doc_key}`, {
         method: "DELETE",
         headers: authHeaders,
       });
@@ -170,7 +170,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
 
   const downloadTemplate = async (doc: DocTemplate) => {
     try {
-      const res = await fetch(`/api/onboarding/documents/${doc.doc_key}/template`, {
+      const res = await fetch(`/api/onboard/documents/${doc.doc_key}/template`, {
         headers: authHeaders,
       });
       if (!res.ok) throw new Error();
@@ -224,8 +224,8 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     try {
       const res = await fetch(
         section.doc_key
-          ? `/api/onboarding/admin/doc-sections/${section.doc_key}`
-          : "/api/onboarding/admin/doc-sections",
+          ? `/api/onboard/admin/doc-sections/${section.doc_key}`
+          : "/api/onboard/admin/doc-sections",
         {
           method: section.doc_key ? "PUT" : "POST",
           headers: authHeaders,
@@ -245,7 +245,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
 
   const toggleDocActive = async (d: DocTemplate) => {
     try {
-      const res = await fetch(`/api/onboarding/admin/doc-sections/${d.doc_key}`, {
+      const res = await fetch(`/api/onboard/admin/doc-sections/${d.doc_key}`, {
         method: "PUT",
         headers: authHeaders,
         body: JSON.stringify({ is_active: !d.is_active }),
@@ -259,7 +259,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
 
   const toggleDocRequired = async (d: DocTemplate) => {
     try {
-      const res = await fetch(`/api/onboarding/admin/doc-sections/${d.doc_key}`, {
+      const res = await fetch(`/api/onboard/admin/doc-sections/${d.doc_key}`, {
         method: "PUT",
         headers: authHeaders,
         body: JSON.stringify({ required: !d.required }),
@@ -277,7 +277,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
       : `Delete the "${d.name}" document section? This can't be undone.`;
     if (!confirm(msg)) return;
     try {
-      const res = await fetch(`/api/onboarding/admin/doc-sections/${d.doc_key}`, {
+      const res = await fetch(`/api/onboard/admin/doc-sections/${d.doc_key}`, {
         method: "DELETE",
         headers: authHeaders,
       });
@@ -300,7 +300,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const loadIndDocs = useCallback(async () => {
     setIndLoading(true);
     try {
-      const res = await fetch("/api/onboarding/admin/induction-docs", { headers: authHeaders });
+      const res = await fetch("/api/onboard/admin/induction-docs", { headers: authHeaders });
       if (!res.ok) throw new Error();
       setIndDocs(await res.json());
     } catch {
@@ -332,7 +332,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     try {
       const isEdit = !!indEditing.id;
       const res = await fetch(
-        isEdit ? `/api/onboarding/admin/induction-docs/${indEditing.id}` : "/api/onboarding/admin/induction-docs",
+        isEdit ? `/api/onboard/admin/induction-docs/${indEditing.id}` : "/api/onboard/admin/induction-docs",
         { method: isEdit ? "PUT" : "POST", headers: authHeaders, body: JSON.stringify(payload) },
       );
       if (!res.ok) throw new Error();
@@ -349,7 +349,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const removeIndDoc = async (d: InductionDoc) => {
     if (!confirm(`Delete "${d.title}"?`)) return;
     try {
-      const res = await fetch(`/api/onboarding/admin/induction-docs/${d.id}`, {
+      const res = await fetch(`/api/onboard/admin/induction-docs/${d.id}`, {
         method: "DELETE",
         headers: authHeaders,
       });
@@ -367,7 +367,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
       const fd = new FormData();
       fd.append("file", file);
       const { "Content-Type": _ct, ...headers } = authHeaders;
-      const res = await fetch("/api/onboarding/admin/induction-docs/upload", {
+      const res = await fetch("/api/onboard/admin/induction-docs/upload", {
         method: "POST",
         headers,
         body: fd,
@@ -394,7 +394,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/onboarding/admin/videos", { headers: authHeaders });
+      const res = await fetch("/api/onboard/admin/videos", { headers: authHeaders });
       if (!res.ok) throw new Error();
       setVideos(await res.json());
     } catch {
@@ -456,7 +456,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     try {
       const isEdit = !!editing.id;
       const res = await fetch(
-        isEdit ? `/api/onboarding/admin/videos/${editing.id}` : "/api/onboarding/admin/videos",
+        isEdit ? `/api/onboard/admin/videos/${editing.id}` : "/api/onboard/admin/videos",
         {
           method: isEdit ? "PUT" : "POST",
           headers: authHeaders,
@@ -477,7 +477,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const remove = async (v: InductionVideo) => {
     if (!confirm(`Delete "${v.title}"? This can't be undone.`)) return;
     try {
-      const res = await fetch(`/api/onboarding/admin/videos/${v.id}`, {
+      const res = await fetch(`/api/onboard/admin/videos/${v.id}`, {
         method: "DELETE",
         headers: authHeaders,
       });
@@ -491,7 +491,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
 
   const toggleActive = async (v: InductionVideo) => {
     try {
-      const res = await fetch(`/api/onboarding/admin/videos/${v.id}`, {
+      const res = await fetch(`/api/onboard/admin/videos/${v.id}`, {
         method: "PUT",
         headers: authHeaders,
         body: JSON.stringify({ is_active: !v.is_active }),
@@ -510,7 +510,7 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
       fd.append("file", file);
       // Don't send Content-Type: the browser sets the multipart boundary.
       const { "Content-Type": _ct, ...headers } = authHeaders;
-      const res = await fetch("/api/onboarding/admin/videos/upload", {
+      const res = await fetch("/api/onboard/admin/videos/upload", {
         method: "POST",
         headers,
         body: fd,

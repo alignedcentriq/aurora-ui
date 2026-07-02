@@ -29,6 +29,7 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  History,
 } from "lucide-react";
 import {
   AUTOMATION_CATALOG,
@@ -68,6 +69,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -102,6 +104,21 @@ interface AutomationRule {
   last_status: string | null;
   created_at: string;
   can_manage: boolean;
+}
+
+interface SendLogEntry {
+  id: number;
+  rule_id: number | null;
+  rule_name: string;
+  created_by: string;
+  automation_kind: string | null;
+  triggered_by: string;         // scheduled | manual
+  triggered_by_email: string | null;
+  recipients_json: string[];
+  recipient_count: number;
+  status: string;               // sent | failed
+  detail: string | null;
+  sent_at: string | null;
 }
 
 interface TeamsGroup {
@@ -1174,6 +1191,115 @@ function CatalogShelf({
 
 // ── Rule Card ─────────────────────────────────────────────────────────────────
 
+function HistoryDialog({
+  ruleId,
+  title,
+  subtitle,
+  userEmail,
+  userRole,
+  showRuleColumn,
+  showCreatorColumn,
+  onClose,
+}: {
+  ruleId?: number;
+  title: string;
+  subtitle: string;
+  userEmail: string;
+  userRole: string;
+  showRuleColumn: boolean;
+  showCreatorColumn: boolean;
+  onClose: () => void;
+}) {
+  const [logs, setLogs] = useState<SendLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const url = ruleId != null ? `/api/automation/history?rule_id=${ruleId}` : "/api/automation/history";
+        const res = await apiFetch(url, userEmail, userRole);
+        if (!res.ok) throw new Error("Failed to load history");
+        const data = await res.json();
+        if (!cancelled) setLogs(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ruleId, userEmail, userRole]);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><History className="h-4 w-4" /> {title}</DialogTitle>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
+        </DialogHeader>
+        <ScrollArea className="max-h-[60vh]">
+          {loading ? (
+            <div className="space-y-2 py-1">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}
+            </div>
+          ) : error ? (
+            <div className="text-sm text-destructive py-6 flex items-center gap-2 justify-center">
+              <AlertCircle className="h-4 w-4" /> {error}
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-10 text-center">No sends recorded yet.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Sent</TableHead>
+                  {showRuleColumn && <TableHead>Automation</TableHead>}
+                  {showCreatorColumn && <TableHead>Created By</TableHead>}
+                  <TableHead>Triggered By</TableHead>
+                  <TableHead>Recipients</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {logs.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell className="whitespace-nowrap text-xs">{formatDt(l.sent_at)}</TableCell>
+                    {showRuleColumn && <TableCell className="text-xs font-medium max-w-[160px] truncate">{l.rule_name}</TableCell>}
+                    {showCreatorColumn && <TableCell className="text-xs">{l.created_by}</TableCell>}
+                    <TableCell className="text-xs">
+                      {l.triggered_by === "manual" ? `Manual — ${l.triggered_by_email ?? "—"}` : "Scheduled"}
+                    </TableCell>
+                    <TableCell className="text-xs" title={l.recipients_json.join(", ")}>
+                      {l.recipient_count > 0
+                        ? `${l.recipient_count} recipient${l.recipient_count !== 1 ? "s" : ""}`
+                        : (l.detail ?? "—")}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-0.5">
+                        <StatusBadge status={l.status} />
+                        {l.status === "failed" && l.detail && (
+                          <span className="text-[10px] text-muted-foreground max-w-[180px] truncate" title={l.detail}>{l.detail}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </ScrollArea>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RuleCard({
   rule,
   onToggle,
@@ -1181,6 +1307,7 @@ function RuleCard({
   onEdit,
   onSendNow,
   onManageCoOwners,
+  onViewHistory,
   currentUserEmail,
 }: {
   rule: AutomationRule;
@@ -1189,6 +1316,7 @@ function RuleCard({
   onEdit: () => void;
   onSendNow: () => void;
   onManageCoOwners: () => void;
+  onViewHistory: () => void;
   currentUserEmail: string;
 }) {
   const canManage = rule.can_manage;
@@ -1261,9 +1389,14 @@ function RuleCard({
             </div>
           )}
 
-          <div className="mt-3 flex gap-3 text-xs text-muted-foreground border-t pt-3">
-            <span>Next: <span className="text-foreground">{formatDt(rule.next_run)}</span></span>
-            <span>Last: <span className="text-foreground">{formatDt(rule.last_run)}</span></span>
+          <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground border-t pt-3">
+            <div className="flex gap-3">
+              <span>Next: <span className="text-foreground">{formatDt(rule.next_run)}</span></span>
+              <span>Last: <span className="text-foreground">{formatDt(rule.last_run)}</span></span>
+            </div>
+            <Button size="sm" variant="ghost" className="h-6 text-xs gap-1 px-2" onClick={onViewHistory}>
+              <History className="h-3 w-3" /> History
+            </Button>
           </div>
 
           {canManage && (
@@ -1302,11 +1435,14 @@ export function AutomationHub({
   const [aiPreset, setAiPreset] = useState<Record<string, any> | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AutomationRule | null>(null);
   const [coOwnerRule, setCoOwnerRule] = useState<AutomationRule | null>(null);
+  const [historyRule, setHistoryRule] = useState<AutomationRule | null>(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   const email = user?.email ?? "";
   const role = user?.role ?? "";
   const userCanCreate = canCreate(role);
+  const isSuperAdmin = role.toLowerCase() === "super admin";
   const portalAccent = getCatalogForPortal(portalId).find(i => i.portalIds.length > 0)?.accent ?? "#F59E0B";
 
   function showToast(msg: string, type: "success" | "error" = "success") {
@@ -1414,18 +1550,26 @@ export function AutomationHub({
                 <Zap className="h-5 w-5 text-amber-600" />
               </div>
               <div>
-                <h1 className="text-base font-bold">Email Automation Hub</h1>
                 <p className="text-xs text-muted-foreground">Smart recurring emails — reports, reminders, and digests powered by live data</p>
               </div>
             </div>
-            {userCanCreate && !showForm && (
+            {!showForm && (
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:text-violet-400" onClick={() => { setEditingRule(null); setSelectedKind(null); setAiPreset(null); setWizardStep(3); }}>
-                  <Wand2 className="h-3.5 w-3.5" /> Ask AI
-                </Button>
-                <Button size="sm" onClick={openNew} className="gap-2 shadow-sm">
-                  <Plus className="h-4 w-4" /> New Automation
-                </Button>
+                {rules.length > 0 && (
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAllHistory(true)}>
+                    <History className="h-3.5 w-3.5" /> {isSuperAdmin ? "All Send History" : "Send History"}
+                  </Button>
+                )}
+                {userCanCreate && (
+                  <>
+                    <Button size="sm" variant="outline" className="gap-1.5 border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:text-violet-400" onClick={() => { setEditingRule(null); setSelectedKind(null); setAiPreset(null); setWizardStep(3); }}>
+                      <Wand2 className="h-3.5 w-3.5" /> Ask AI
+                    </Button>
+                    <Button size="sm" onClick={openNew} className="gap-2 shadow-sm">
+                      <Plus className="h-4 w-4" /> New Automation
+                    </Button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1550,7 +1694,8 @@ export function AutomationHub({
                         <RuleCard key={rule.id} rule={rule}
                           onToggle={() => handleToggle(rule)} onDelete={() => setDeleteConfirm(rule)}
                           onEdit={() => openEdit(rule)} onSendNow={() => handleSendNow(rule)}
-                          onManageCoOwners={() => setCoOwnerRule(rule)} currentUserEmail={email}
+                          onManageCoOwners={() => setCoOwnerRule(rule)} onViewHistory={() => setHistoryRule(rule)}
+                          currentUserEmail={email}
                         />
                       ))}
                     </AnimatePresence>
@@ -1567,6 +1712,7 @@ export function AutomationHub({
                       {sharedRules.map((rule) => (
                         <RuleCard key={rule.id} rule={rule}
                           onToggle={() => {}} onDelete={() => {}} onEdit={() => {}} onSendNow={() => {}} onManageCoOwners={() => {}}
+                          onViewHistory={() => setHistoryRule(rule)}
                           currentUserEmail={email}
                         />
                       ))}
@@ -1587,6 +1733,37 @@ export function AutomationHub({
           userRole={role}
           onClose={() => setCoOwnerRule(null)}
           onUpdated={(updated) => { setRules((p) => p.map((r) => (r.id === updated.id ? updated : r))); setCoOwnerRule(updated); }}
+        />
+      )}
+
+      {/* Per-rule history dialog */}
+      {historyRule && (
+        <HistoryDialog
+          ruleId={historyRule.id}
+          title="Send History"
+          subtitle={`Every send for "${historyRule.name}"`}
+          userEmail={email}
+          userRole={role}
+          showRuleColumn={false}
+          showCreatorColumn={false}
+          onClose={() => setHistoryRule(null)}
+        />
+      )}
+
+      {/* All-automations history dialog */}
+      {showAllHistory && (
+        <HistoryDialog
+          title={isSuperAdmin ? "All Send History" : "Send History"}
+          subtitle={
+            isSuperAdmin
+              ? "Every automation across the organization — who created it and what was sent."
+              : "Automations you created or have access to."
+          }
+          userEmail={email}
+          userRole={role}
+          showRuleColumn
+          showCreatorColumn={isSuperAdmin}
+          onClose={() => setShowAllHistory(false)}
         />
       )}
 

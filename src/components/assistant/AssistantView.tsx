@@ -1925,6 +1925,11 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
         .slice(1)
         .map((step, index) => window.setTimeout(() => setActivity(step), (index + 1) * 1800));
 
+      // Tracked outside the streaming closure so the catch handler below can tell,
+      // on Stop/abort, whether any reply text had already reached the chat turn.
+      let aiTurnAdded = false;
+      let accumulatedText = "";
+
       const fetchSuggestions = (userText: string, aiText: string, domain: string) => {
         fetch("/api/suggestions", {
           method: "POST",
@@ -1976,8 +1981,6 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           // SSE stream reader
           const reader = res.body!.getReader();
           const decoder = new TextDecoder();
-          let aiTurnAdded = false;
-          let accumulatedText = "";
           let buffer = "";
 
           const processLine = (line: string) => {
@@ -2111,10 +2114,17 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           }
         })
         .catch((err: Error & { code?: string }) => {
-          // User pressed Stop — abort the request quietly, finalize any partial reply,
-          // and don't show a timeout/error message.
+          // User pressed Stop — finalize any partial reply instead of a timeout/error
+          // message. If nothing had streamed in yet, leave a visible "stopped" turn
+          // rather than silently returning to a blank screen.
           if (err.name === "AbortError" && stoppedRef.current.has(threadId)) {
-            updateLastAITurn(threadId, { streaming: false });
+            if (aiTurnAdded && accumulatedText.trim()) {
+              updateLastAITurn(threadId, { streaming: false });
+            } else if (aiTurnAdded) {
+              updateLastAITurn(threadId, { streaming: false, text: "Response stopped." });
+            } else {
+              addTurn(threadId, { role: "ai", text: "Response stopped." });
+            }
             return;
           }
 

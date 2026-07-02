@@ -43,7 +43,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 
-// ── Types (mirror the /api/onboarding/me payload) ────────────────────────────
+// ── Types (mirror the /api/onboard/me payload) ────────────────────────────
 interface StepView {
   key: string;
   title: string;
@@ -125,7 +125,7 @@ function fmtTime(secs: number) {
 }
 
 export function OnboardingJourney() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [view, setView] = useState<JourneyView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,7 +147,7 @@ export function OnboardingJourney() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/onboarding/me", { headers: authHeaders });
+      const res = await fetch("/api/onboard/me", { headers: authHeaders });
       if (!res.ok)
         throw new Error((await res.json().catch(() => ({})))?.detail || "Failed to load");
       const data = await res.json();
@@ -156,10 +156,10 @@ export function OnboardingJourney() {
         setSelectedStepKey((prev) => prev || data.next_step || data.steps[0].key);
       }
       // Manager intro-call status (best-effort — never blocks the journey render).
-      fetch("/api/onboarding/me/manager-call", { headers: authHeaders })
+      fetch("/api/onboard/me/manager-call", { headers: authHeaders })
         .then((r) => (r.ok ? r.json() : null))
         .then((mc) => mc && setManagerCall(mc))
-        .catch(() => {});
+        .catch(() => { });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't load your onboarding.");
     } finally {
@@ -168,8 +168,9 @@ export function OnboardingJourney() {
   }, [authHeaders]);
 
   useEffect(() => {
+    if (authLoading) return;
     load();
-  }, [load]);
+  }, [authLoading, load]);
 
   // Drop a prompt into the chat assistant and go to it.
   const askInChat = useCallback(
@@ -186,7 +187,7 @@ export function OnboardingJourney() {
     async (key: string) => {
       setBusyStep(key);
       try {
-        const res = await fetch(`/api/onboarding/me/steps/${key}/complete`, {
+        const res = await fetch(`/api/onboard/me/steps/${key}/complete`, {
           method: "POST",
           headers: { ...authHeaders, "Content-Type": "application/json" },
         });
@@ -211,15 +212,15 @@ export function OnboardingJourney() {
       if (step.kind === "video") {
         setPanel("video-library");
         if (videos.length === 0) {
-          fetch("/api/onboarding/induction-videos", { headers: authHeaders })
+          fetch("/api/onboard/induction-videos", { headers: authHeaders })
             .then((r) => r.json())
             .then((list: VideoView[]) => setVideos(Array.isArray(list) ? list : []))
-            .catch(() => {});
+            .catch(() => { });
         }
-        fetch("/api/onboarding/induction-documents", { headers: authHeaders })
+        fetch("/api/onboard/induction-documents", { headers: authHeaders })
           .then((r) => r.json())
           .then((list: InductionDocView[]) => setInductionDocs(Array.isArray(list) ? list : []))
-          .catch(() => {});
+          .catch(() => { });
         return;
       }
       if (step.action_payload?.route) {
@@ -1159,7 +1160,7 @@ function DocumentsPanel({
     if (!fillDoc) return;
     setFilling(true);
     try {
-      const res = await fetch(`/api/onboarding/me/documents/${fillDoc.doc_key}/fill`, {
+      const res = await fetch(`/api/onboard/me/documents/${fillDoc.doc_key}/fill`, {
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ field_values: fillValues, signature: buildSignature() }),
@@ -1202,7 +1203,7 @@ function DocumentsPanel({
   const download = useCallback(
     (doc: DocView) =>
       downloadFile(
-        `/api/onboarding/documents/${doc.doc_key}/template`,
+        `/api/onboard/documents/${doc.doc_key}/template`,
         `${doc.doc_key}.txt`,
         "Couldn't download that template.",
       ),
@@ -1212,7 +1213,7 @@ function DocumentsPanel({
   const downloadSubmission = useCallback(
     (doc: DocView) =>
       downloadFile(
-        `/api/onboarding/me/documents/${doc.doc_key}/submission`,
+        `/api/onboard/me/documents/${doc.doc_key}/submission`,
         doc.original_name || `${doc.doc_key}_filled`,
         "Couldn't download your submission.",
       ),
@@ -1225,7 +1226,7 @@ function DocumentsPanel({
       try {
         const fd = new FormData();
         fd.append("file", file);
-        const res = await fetch(`/api/onboarding/me/documents/${doc.doc_key}/upload`, {
+        const res = await fetch(`/api/onboard/me/documents/${doc.doc_key}/upload`, {
           method: "POST",
           headers: authHeaders,
           body: fd,
@@ -1495,21 +1496,21 @@ function DocumentsPanel({
                         </div>
                       ) : (
                         <label className="flex flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 h-[120px] cursor-pointer hover:border-violet-400/60 hover:bg-violet-50/40 dark:hover:bg-violet-950/20 transition-all">
-                            <Upload className="h-4.5 w-4.5 text-muted-foreground" />
-                            <span className="text-[11px] font-semibold text-muted-foreground">
-                              Click to upload a signature image
-                            </span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) handleSigFile(f);
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
+                          <Upload className="h-4.5 w-4.5 text-muted-foreground" />
+                          <span className="text-[11px] font-semibold text-muted-foreground">
+                            Click to upload a signature image
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleSigFile(f);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
                       )}
                       <p className="text-[10.5px] text-muted-foreground mt-1">
                         {sigUploadError || "Upload a photo or scan of your signature (PNG/JPG)."}
@@ -1692,7 +1693,7 @@ function VideoPanel({
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (v.paused) v.play().catch(() => {});
+    if (v.paused) v.play().catch(() => { });
     else v.pause();
   }, []);
 
@@ -1733,7 +1734,7 @@ function VideoPanel({
   const toggleFs = useCallback(() => {
     const w = wrapRef.current;
     if (!w) return;
-    if (!document.fullscreenElement) w.requestFullscreen?.().catch(() => {});
+    if (!document.fullscreenElement) w.requestFullscreen?.().catch(() => { });
     else document.exitFullscreen?.();
   }, []);
 
@@ -1980,7 +1981,7 @@ function VideoPanel({
                   key={i}
                   onClick={() => {
                     seekTo(ch.start);
-                    videoRef.current?.play().catch(() => {});
+                    videoRef.current?.play().catch(() => { });
                   }}
                   disabled={!video.url}
                   className={cn(

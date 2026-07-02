@@ -564,9 +564,6 @@ export function UdemyBusinessPortal() {
                 Learning Platform
               </span>
             </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-none bg-clip-text bg-gradient-to-r from-white via-slate-100 to-purple-200">
-              Udemy Business
-            </h1>
             <p className="text-sm sm:text-base text-white/70 mt-2 max-w-xl leading-relaxed">
               Browse your organization's course catalog and monitor development progress in real-time.
             </p>

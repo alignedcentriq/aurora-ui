@@ -654,6 +654,14 @@ def create_role(
         db.add(RoleCapabilityMap(role_slug=slug, capability_key=key))
     db.commit()
 
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "role_definition", "role_def_create",
+        f"{activity_log_service.resolve_display_name(db, user.email)} created the \"{payload.name}\" role with {len(caps)} capabilities.",
+        target_type="role", target_id=slug, target_name=payload.name,
+        new_value={"name": payload.name, "capabilities": caps},
+    )
+
     return {"slug": slug, "name": payload.name, "capabilities": caps, "message": "Role created."}
 
 
@@ -668,6 +676,9 @@ def update_role(
     role = db.query(AppRole).filter(AppRole.slug == slug).first()
     if not role:
         raise HTTPException(status_code=404, detail=f"Role '{slug}' not found.")
+
+    old_name = role.name
+    old_caps = _role_capabilities(slug, db)
 
     if payload.name is not None:
         role.name = payload.name
@@ -688,6 +699,16 @@ def update_role(
             db.add(RoleCapabilityMap(role_slug=slug, capability_key=key))
 
     db.commit()
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "role_definition", "role_def_update",
+        f"{activity_log_service.resolve_display_name(db, user.email)} updated the \"{role.name}\" role.",
+        target_type="role", target_id=slug, target_name=role.name,
+        old_value={"name": old_name, "capabilities": old_caps},
+        new_value={"name": role.name, "capabilities": payload.capabilities if payload.capabilities is not None else old_caps},
+    )
+
     return {"slug": slug, "message": "Role updated.", "capabilities": payload.capabilities}
 
 
@@ -704,9 +725,18 @@ def delete_role(
     if role.is_system:
         raise HTTPException(status_code=400, detail="System roles cannot be deleted.")
 
+    role_name = role.name
     db.query(RoleCapabilityMap).filter(RoleCapabilityMap.role_slug == slug).delete()
     db.delete(role)
     db.commit()
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "role_definition", "role_def_delete",
+        f"{activity_log_service.resolve_display_name(db, user.email)} deleted the \"{role_name}\" role.",
+        target_type="role", target_id=slug, target_name=role_name,
+    )
+
     return {"message": f"Role '{slug}' deleted."}
 
 
@@ -857,6 +887,9 @@ def assign_role(
         raise HTTPException(status_code=400, detail=f"Unknown capability keys: {invalid_extra}")
 
     override = db.query(UserRoleOverride).filter(UserRoleOverride.email == email).first()
+    old_role = override.role if override else None
+    old_extra = list(override.extra_capabilities or []) if override else []
+
     if override:
         override.role = role
         override.scopes = scopes if scopes else None
@@ -874,6 +907,32 @@ def assign_role(
         db.add(override)
 
     db.commit()
+
+    from app.services import activity_log_service
+    actor_name = activity_log_service.resolve_display_name(db, user.email)
+    target_name = activity_log_service.resolve_display_name(db, email)
+    if old_role is None:
+        activity_log_service.emit(
+            user.email, "role_assignment", "role_assign",
+            f"{actor_name} added {target_name} as {role}.",
+            severity="high", target_type="user", target_id=email, target_name=target_name,
+            new_value={"role": role},
+        )
+    elif old_role != role:
+        activity_log_service.emit(
+            user.email, "role_assignment", "role_change",
+            f"{actor_name} changed {target_name}'s role from {old_role} to {role}.",
+            severity="high", target_type="user", target_id=email, target_name=target_name,
+            old_value={"role": old_role}, new_value={"role": role},
+        )
+    if sorted(old_extra) != sorted(extra):
+        activity_log_service.emit(
+            user.email, "access_grant", "access_grant_update",
+            f"{actor_name} updated {target_name}'s extra access ({len(extra)} capabilities granted).",
+            severity="normal", target_type="user", target_id=email, target_name=target_name,
+            old_value={"extra_capabilities": old_extra}, new_value={"extra_capabilities": extra},
+        )
+
     return {"message": f"Role '{role}' assigned to {email}", "scopes": scopes, "extra_capabilities": extra}
 
 
@@ -887,8 +946,20 @@ def revoke_role(
     override = db.query(UserRoleOverride).filter(UserRoleOverride.email == email).first()
     if not override:
         raise HTTPException(status_code=404, detail="No role override found for this user.")
+    old_role = override.role
     db.delete(override)
     db.commit()
+
+    from app.services import activity_log_service
+    actor_name = activity_log_service.resolve_display_name(db, user.email)
+    target_name = activity_log_service.resolve_display_name(db, email)
+    activity_log_service.emit(
+        user.email, "role_assignment", "role_revoke",
+        f"{actor_name} revoked {target_name}'s {old_role} role.",
+        severity="high", target_type="user", target_id=email, target_name=target_name,
+        old_value={"role": old_role},
+    )
+
     return {"message": f"Role override removed for {email}. User reverts to Azure AD role."}
 
 

@@ -574,6 +574,36 @@ def notify_teams_activity(
     ).start()
 
 
+def notify_admin_activity_alert(
+    actor_email: str,
+    recipient_emails: "list[str]",
+    subject: str,
+    body_html: str,
+) -> None:
+    """Fire-and-forget: branded email + Teams Activity-feed ping to each recipient, sent
+    from the ACTOR's own connected MS365 mailbox. Used for high-severity admin activity
+    (e.g. role changes) — notifies every OTHER Super Admin, never the actor themselves.
+
+    Follows the 'other notices -> email + Teams Activity feed' convention (as opposed to
+    the 1:1-chat approve/reject pattern above). Degrades silently, same as everywhere else
+    in this module, if the actor has no connected MS365 account.
+    """
+    import threading
+
+    def _run():
+        for to in recipient_emails:
+            try:
+                _send_html(actor_email, to, subject, body_html)
+            except Exception as exc:
+                logger.warning("[activity-alert] email to %s failed: %s", to, exc)
+            try:
+                notify_teams_activity(actor_email, to, subject, body_html)
+            except Exception as exc:
+                logger.warning("[activity-alert] teams-activity ping to %s failed: %s", to, exc)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _send_approval_via_teams_or_email(
     sender_email: str,
     recipient_email: str,

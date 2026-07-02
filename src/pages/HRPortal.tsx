@@ -155,7 +155,6 @@ export function HRPortal() {
       {/* Header */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
-          <h1 className="text-[20px] font-semibold text-foreground">HR Portal</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
             Manage requests and new employee onboarding
           </p>

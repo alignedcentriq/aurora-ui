@@ -35,10 +35,20 @@ async def update_llm_controls(
     user: CurrentUser = Depends(require_super_admin),
 ):
     """Validate + persist a partial update. Bounds are enforced server-side."""
+    old_config = llm_controls.get_config()
     try:
         new = llm_controls.update_config(patch, updated_by=user.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "settings", "settings_llm_controls",
+        "{actor} updated LLM controls (" + ", ".join(patch.keys()) + ").",
+        target_type="setting", target_id="llm_controls", target_name="LLM Model Controls",
+        old_value=old_config, new_value=new,
+    )
+
     return {"status": "ok", "effective": new, **llm_controls.get_meta()}
 
 
@@ -63,7 +73,17 @@ async def get_model_capabilities(
 @router.post("/reset")
 async def reset_llm_controls(user: CurrentUser = Depends(require_super_admin)):
     """Clear all overrides — revert to env defaults."""
+    old_config = llm_controls.get_config()
     new = llm_controls.reset_config(updated_by=user.email)
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "settings", "settings_llm_controls_reset",
+        "{actor} reset LLM controls to defaults.",
+        target_type="setting", target_id="llm_controls", target_name="LLM Model Controls",
+        old_value=old_config, new_value=new,
+    )
+
     return {"status": "ok", "effective": new, **llm_controls.get_meta()}
 
 

@@ -61,6 +61,7 @@ from app.routes.manager_routes import router as manager_router
 from app.routes.attendance_routes import router as attendance_router
 from app.routes.access_routes import router as access_router
 from app.routes.automation_routes import router as automation_router
+from app.routes.activity_routes import router as activity_router
 from app.routes.escalation_routes import router as escalation_router
 from app.routes.welcome_routes import router as welcome_router, public_router as welcome_public_router
 from app.routes.travel_routes import router as travel_router, admin_router as travel_admin_router
@@ -190,6 +191,7 @@ app.include_router(manager_router)
 app.include_router(attendance_router)
 app.include_router(access_router)
 app.include_router(automation_router)
+app.include_router(activity_router)
 app.include_router(escalation_router)
 app.include_router(welcome_router)
 app.include_router(welcome_public_router)

@@ -26,15 +26,13 @@ import {
   PlayCircle,
   Rocket,
   UserCog,
-  Zap,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
-import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
+import { ActivityBell } from "@/components/assistant/ActivityBell";
 import { EmailAutomationDrawer } from "@/components/EmailAutomationDrawer";
-import { useAutomationDrawer } from "@/lib/automation-drawer-store";
 import { useChatStore } from "@/lib/chat-store";
 import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
@@ -283,8 +281,6 @@ function LayoutComponent() {
   const { user, logout } = useAuth();
   const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"] } = useSettings();
   const openIntro = useIntroStore((s) => s.open);
-
-  const { openDrawer: openAutomationDrawer } = useAutomationDrawer();
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -626,7 +622,6 @@ function LayoutComponent() {
                   Object.values(threads)
                     .filter((t) => t.turns.length > 0)
                     .sort((a, b) => b.updatedAt - a.updatedAt)
-                    .slice(0, 8)
                     .map((t) => {
                       const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
                       const chatTitle = firstUserMsg
@@ -980,9 +975,11 @@ function LayoutComponent() {
 
             {/* Page Title (Desktop Only) / Logo + Brand (Mobile Only) */}
             <div className="flex items-center gap-2">
-              <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
-                {getPageTitle(location.pathname)}
-              </span>
+              {location.pathname !== "/" && (
+                <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
+                  {getPageTitle(location.pathname)}
+                </span>
+              )}
 
               {/* Logo + Brand (Mobile Only) */}
               <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
@@ -994,23 +991,11 @@ function LayoutComponent() {
 
           {/* Right Side Utilities */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Announcement Banner (Desktop Only) */}
-            <div className="hidden xl:block">
-              <AnnouncementBanner variant="topbar" />
-            </div>
-
-            {/* Proactive Nudges Feed */}
+            {/* Notifications: announcements + proactive nudges, merged into one bell */}
             <ProactiveNudgeFeed />
 
-            {/* Global Email Automation trigger */}
-            <button
-              title="Email Automations"
-              onClick={() => openAutomationDrawer()}
-              className="relative flex items-center justify-center h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            >
-              <Zap className="h-4 w-4" />
-            </button>
-
+            {/* Admin/system Activity feed */}
+            <ActivityBell />
           </div>
         </header>
 

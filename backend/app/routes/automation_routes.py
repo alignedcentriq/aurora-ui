@@ -80,6 +80,20 @@ def delete_rule(rule_id: int, user: CurrentUser = Depends(require_non_employee))
     return {"success": True}
 
 
+# ── Send history ───────────────────────────────────────────────────────────────
+
+@router.get("/history")
+def get_history(
+    rule_id: Optional[int] = None,
+    limit: int = 200,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Full send-history audit trail — who it was sent to and when.
+    Super Admin sees every automation's history; everyone else sees history for
+    automations they created or co-own."""
+    return automation_service.list_history(user.email, user.role, rule_id=rule_id, limit=min(max(limit, 1), 500))
+
+
 # ── Co-owner management ────────────────────────────────────────────────────────
 
 @router.patch("/rules/{rule_id}/co-owners")

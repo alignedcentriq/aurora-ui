@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plane, Globe, Hotel, CheckCircle2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DatePicker } from "@/components/ui/date-picker";
 
 interface Props {
   userEmail: string;
@@ -146,23 +147,20 @@ export function TravelRequestForm({ userEmail, onSubmitted }: Props) {
             <label className={labelCls}>
               Travel Date <span className="text-rose-400">*</span>
             </label>
-            <input
-              type="date"
+            <DatePicker
               value={form.travel_date}
-              onChange={(e) => set("travel_date", e.target.value)}
-              className={inputCls}
-              required
+              onChange={(v) => set("travel_date", v)}
+              fromDate={new Date()}
             />
           </div>
           <div>
             <label className={labelCls}>
               Return Date <span className="text-[#94a3b8] normal-case font-normal">(optional)</span>
             </label>
-            <input
-              type="date"
+            <DatePicker
               value={form.return_date}
-              onChange={(e) => set("return_date", e.target.value)}
-              className={inputCls}
+              onChange={(v) => set("return_date", v)}
+              fromDate={new Date()}
             />
           </div>
         </div>
