@@ -102,7 +102,6 @@ function fmtTick(v: any): string {
       if (!isNaN(d.getTime()))
         return d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
     }
-    if (v.length > 14) return v.slice(0, 14) + "…";
   }
   return String(v ?? "");
 }
@@ -217,7 +216,60 @@ function CustomTooltip({
 
 const axisStyle = { fontSize: 10, fill: "var(--muted-foreground)" };
 
-function GridAxes({ unit, hideVertical = true }: { unit?: string | null; hideVertical?: boolean }) {
+// Safety cap only — long department names ("Technology Services", "Sales and
+// Marketing"…) render in full both on screen and in the exported PNG/SVG. We
+// only clip genuinely pathological strings so a stray 60-char value can't blow
+// out the axis; the full text is always in the <title> and chart tooltip.
+const TICK_MAX = 48;
+
+/**
+ * Custom X-axis tick. Short labels render flat and centred; long labels
+ * (e.g. "Technology Services", "DS & AI Services") rotate so the whole name
+ * is visible instead of being cut to "Technology Ser…". A <title> carries the
+ * full, untruncated name for hover — and this survives PNG/SVG export.
+ */
+function AngledTick(props: any) {
+  const { x, y, payload } = props;
+  const full = fmtTick(payload?.value);
+  const shown = full.length > TICK_MAX ? full.slice(0, TICK_MAX) + "…" : full;
+  const rotate = full.length > 8;
+
+  if (!rotate) {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <title>{full}</title>
+        <text dy={12} textAnchor="middle" fontSize={10} fill="var(--muted-foreground)">
+          {shown}
+        </text>
+      </g>
+    );
+  }
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <title>{full}</title>
+      <text
+        dy={7}
+        dx={-2}
+        textAnchor="end"
+        transform="rotate(-32)"
+        fontSize={10}
+        fill="var(--muted-foreground)"
+      >
+        {shown}
+      </text>
+    </g>
+  );
+}
+
+function GridAxes({
+  unit,
+  hideVertical = true,
+  categorical = false,
+}: {
+  unit?: string | null;
+  hideVertical?: boolean;
+  categorical?: boolean;
+}) {
   return (
     <>
       <CartesianGrid
@@ -228,11 +280,11 @@ function GridAxes({ unit, hideVertical = true }: { unit?: string | null; hideVer
       />
       <XAxis
         dataKey="x"
-        tick={axisStyle}
-        tickFormatter={fmtTick}
+        tick={<AngledTick />}
+        interval={categorical ? 0 : "preserveStartEnd"}
+        height={categorical ? 96 : 44}
         axisLine={{ stroke: "var(--border)", strokeOpacity: 0.4 }}
         tickLine={false}
-        dy={4}
       />
       <YAxis
         tick={axisStyle}
@@ -477,7 +529,7 @@ function BarCanvas({ spec, height }: { spec: ChartSpec; height: number }) {
   const isStacked = spec.stacked;
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={spec.data} barCategoryGap="28%" barGap={3}>
+      <BarChart data={spec.data} barCategoryGap="28%" barGap={3} margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
         <defs>
           {spec.y_keys.map((k, i) => {
             const c = color(spec, i);
@@ -489,7 +541,7 @@ function BarCanvas({ spec, height }: { spec: ChartSpec; height: number }) {
             );
           })}
         </defs>
-        <GridAxes unit={spec.unit} />
+        <GridAxes unit={spec.unit} categorical />
         <RechartsTooltip
           content={<CustomTooltip unit={spec.unit} yLabels={spec.y_labels} />}
           cursor={{ fill: "var(--muted)", opacity: 0.25, radius: 4 } as any}
@@ -907,7 +959,7 @@ function ComposedCanvas({ spec, height }: { spec: ChartSpec; height: number }) {
   const [barKey, ...lineKeys] = spec.y_keys;
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <ComposedChart data={spec.data}>
+      <ComposedChart data={spec.data} margin={{ left: 4, right: 8, top: 4, bottom: 4 }}>
         {barKey && (
           <defs>
             <linearGradient id={`${uid}cg0`} x1="0" y1="0" x2="0" y2="1">
@@ -916,7 +968,7 @@ function ComposedCanvas({ spec, height }: { spec: ChartSpec; height: number }) {
             </linearGradient>
           </defs>
         )}
-        <GridAxes unit={spec.unit} />
+        <GridAxes unit={spec.unit} categorical />
         <RechartsTooltip content={<CustomTooltip unit={spec.unit} yLabels={spec.y_labels} />} />
         <LegendStyle />
         {barKey && (

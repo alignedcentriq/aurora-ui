@@ -1,5 +1,8 @@
 import { createRouter, useRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
+// Side-effect import: in dev, unregister any stale production service worker that
+// would otherwise intercept the dev server and blank the page. No-op in prod.
+import "./lib/sw-guard";
 // Side-effect import: installs the /centriq path-prefix fetch shim before any request.
 import "./lib/api-base";
 
