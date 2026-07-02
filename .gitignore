@@ -48,7 +48,7 @@ ENV/
 .env
 .env.*
 !.env.example
-!.env.local
+.env.local
 .dev.vars
 # OneDrive_1_12-5-2026
 
