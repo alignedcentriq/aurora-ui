@@ -36,6 +36,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
+import { apiUrl } from "@/lib/api-base";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -2306,7 +2307,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
                           title="View screenshot"
                         >
                           <img
-                            src={`/api/appreciations/${r.id}/screenshot`}
+                            src={apiUrl(`/api/appreciations/${r.id}/screenshot`)}
                             alt="Screenshot"
                             className="h-12 w-16 object-cover"
                           />

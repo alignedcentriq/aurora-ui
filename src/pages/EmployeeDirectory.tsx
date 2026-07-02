@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/lib/api-base";
 import {
   Dialog,
   DialogContent,
@@ -166,7 +167,7 @@ function Avatar({
         // the previously-loaded photo while the new one loads.
         <img
           key={email}
-          src={`/api/ms365/users/${encodeURIComponent(email)}/photo`}
+          src={apiUrl(`/api/ms365/users/${encodeURIComponent(email)}/photo`)}
           alt={name}
           loading="lazy"
           fetchPriority="low"

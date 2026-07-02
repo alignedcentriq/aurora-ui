@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/lib/api-base";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -495,7 +496,7 @@ function PersonCard({ person }: { person: Person }) {
                           title="View screenshot"
                         >
                           <img
-                            src={`/api/appreciations/${a.id}/screenshot`}
+                            src={apiUrl(`/api/appreciations/${a.id}/screenshot`)}
                             alt="Appreciation screenshot"
                             className="h-14 w-20 object-cover"
                           />

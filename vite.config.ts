@@ -44,17 +44,18 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: "/centriq/index.html",
-        // Never serve cached responses for API or upload endpoints
-        navigateFallbackDenylist: [/^\/api/, /^\/uploads/],
+        // Never serve cached responses for API or upload endpoints.
+        // Paths are under the /centriq deploy prefix (see src/lib/api-base.ts).
+        navigateFallbackDenylist: [/^\/centriq\/api/, /^\/centriq\/uploads/],
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         runtimeCaching: [
           {
             // Auth API and backend calls — always go to network, never cache
-            urlPattern: /^\/api\//,
+            urlPattern: /^\/centriq\/api\//,
             handler: "NetworkOnly",
           },
           {
-            urlPattern: /^\/uploads\//,
+            urlPattern: /^\/centriq\/uploads\//,
             handler: "CacheFirst",
             options: {
               cacheName: "uploads-cache",
@@ -72,6 +73,26 @@ export default defineConfig({
       ignored: ["**/backend/**"],
     },
     proxy: {
+      // The fetch shim (src/lib/api-base.ts) prefixes backend paths with /centriq in dev
+      // too, so proxy the prefixed paths and strip /centriq before hitting the backend.
+      "/centriq/api": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: true,
+        timeout: 180000,
+        proxyTimeout: 180000,
+        rewrite: (p) => p.replace(/^\/centriq/, ""),
+      },
+      "/centriq/uploads": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/centriq/, ""),
+      },
+      "/centriq/verify": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/centriq/, ""),
+      },
+      // Kept for any direct/tooling calls that still use the bare paths.
       "/api": {
         target: "http://127.0.0.1:8080",
         changeOrigin: true,

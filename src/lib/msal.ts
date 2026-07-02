@@ -12,8 +12,12 @@ const msalConfig: Configuration = {
   auth: {
     clientId: import.meta.env.VITE_MSAL_CLIENT_ID || "",
     authority: authority,
+    // App lives under /centriq on the shared host — the login redirect MUST return to
+    // origin + BASE_URL, not the bare origin (which lands on a different app's catch-all).
+    // NOTE: this exact URI must be registered as a redirect URI in the Azure app registration.
     redirectUri:
-      import.meta.env.VITE_MSAL_REDIRECT_URI || (isBrowser ? window.location.origin : ""),
+      import.meta.env.VITE_MSAL_REDIRECT_URI ||
+      (isBrowser ? window.location.origin + import.meta.env.BASE_URL : ""),
   },
   cache: {
     cacheLocation: "sessionStorage",
