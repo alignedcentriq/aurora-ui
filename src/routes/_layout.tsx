@@ -31,8 +31,8 @@ import {
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
-import { AnnouncementBanner } from "@/components/assistant/AnnouncementBanner";
 import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
+import { ActivityBell } from "@/components/assistant/ActivityBell";
 import { EmailAutomationDrawer } from "@/components/EmailAutomationDrawer";
 import { useAutomationDrawer } from "@/lib/automation-drawer-store";
 import { useChatStore } from "@/lib/chat-store";
@@ -980,9 +980,11 @@ function LayoutComponent() {
 
             {/* Page Title (Desktop Only) / Logo + Brand (Mobile Only) */}
             <div className="flex items-center gap-2">
-              <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
-                {getPageTitle(location.pathname)}
-              </span>
+              {location.pathname !== "/" && (
+                <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
+                  {getPageTitle(location.pathname)}
+                </span>
+              )}
 
               {/* Logo + Brand (Mobile Only) */}
               <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
@@ -994,13 +996,11 @@ function LayoutComponent() {
 
           {/* Right Side Utilities */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Announcement Banner (Desktop Only) */}
-            <div className="hidden xl:block">
-              <AnnouncementBanner variant="topbar" />
-            </div>
-
-            {/* Proactive Nudges Feed */}
+            {/* Notifications: announcements + proactive nudges, merged into one bell */}
             <ProactiveNudgeFeed />
+
+            {/* Admin/system Activity feed */}
+            <ActivityBell />
 
             {/* Global Email Automation trigger */}
             <button

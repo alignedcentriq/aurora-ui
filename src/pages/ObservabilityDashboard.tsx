@@ -226,7 +226,6 @@ export function ObservabilityDashboard() {
               <Activity className="h-5 w-5 text-indigo-400" />
             </div>
             <div>
-              <h1 className="text-[20px] font-bold text-foreground">AI Observability</h1>
               <p className="text-[12px] text-muted-foreground">
                 Activity logs, performance metrics & analytics
               </p>

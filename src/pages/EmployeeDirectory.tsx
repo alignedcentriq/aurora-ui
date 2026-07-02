@@ -1399,11 +1399,7 @@ export function EmployeeDirectory() {
       <div className="shrink-0 border-b border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card px-4 sm:px-6 py-3.5 shadow-sm">
         <div className="flex flex-col gap-3">
           {/* Header Row */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 sm:justify-start gap-4">
-            <h1 className="text-[18px] sm:text-[20px] font-black text-[#0f2a4a] dark:text-white tracking-tight shrink-0">
-              Employee Directory
-            </h1>
-
+          <div className="flex flex-col md:flex-row md:items-center justify-end gap-4 sm:justify-end gap-4">
             {/* Mobile Refresh Button */}
             <button
               onClick={load}

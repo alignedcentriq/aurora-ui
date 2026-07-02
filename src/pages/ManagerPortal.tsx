@@ -258,7 +258,6 @@ export function ManagerPortal() {
             <UserCog className="h-6 w-6 sm:h-7 sm:w-7 text-[var(--collaboration)] animate-pulse" />
           </div>
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Team</h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
               {isFM
                 ? "Manage hierarchy allocations, track readiness, onboarding, and team operations."

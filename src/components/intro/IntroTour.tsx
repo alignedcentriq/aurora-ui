@@ -270,24 +270,41 @@ const SYSTEMS = [
   { label: "ManageEngine Helpdesk", Icon: Headset, c: "var(--connectivity)" },
 ];
 
-// Lay the tools out in a centered grid so every card is fully visible.
-const GRID_COLS = 5;
-const COL_W = 158;
-const ROW_H = 88;
-const GRID = (() => {
-  const rows = Math.ceil(SYSTEMS.length / GRID_COLS);
+// Track viewport width so the tool grid can stay fully on-screen everywhere.
+function useViewportWidth() {
+  const [w, setW] = React.useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1200
+  );
+  React.useEffect(() => {
+    const onResize = () => setW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return w;
+}
+
+// Lay the tools out in a centered, responsive grid so every card is fully visible.
+function buildGrid(cols: number, colW: number, rowH: number) {
+  const rows = Math.ceil(SYSTEMS.length / cols);
   return SYSTEMS.map((s, i) => {
-    const row = Math.floor(i / GRID_COLS);
-    const itemsInRow = Math.min(GRID_COLS, SYSTEMS.length - row * GRID_COLS);
-    const col = i % GRID_COLS;
-    const x = (col - (itemsInRow - 1) / 2) * COL_W;
-    const y = (row - (rows - 1) / 2) * ROW_H;
+    const row = Math.floor(i / cols);
+    const itemsInRow = Math.min(cols, SYSTEMS.length - row * cols);
+    const col = i % cols;
+    const x = (col - (itemsInRow - 1) / 2) * colW;
+    const y = (row - (rows - 1) / 2) * rowH;
     return { ...s, x, y };
   });
-})();
+}
 
 function Scene3() {
   const [merged, setMerged] = React.useState(false);
+  const vw = useViewportWidth();
+
+  // Fewer, tighter columns on small screens; roomy grid on desktop.
+  const cols = vw < 440 ? 2 : vw < 680 ? 3 : vw < 960 ? 4 : 5;
+  const cardW = vw < 440 ? 128 : 140;
+  const rowH = vw < 440 ? 74 : 86;
+  const grid = React.useMemo(() => buildGrid(cols, cardW + 14, rowH), [cols, cardW, rowH]);
 
   // Show every tool spread out first, then converge them into one core.
   React.useEffect(() => {
@@ -308,7 +325,7 @@ function Scene3() {
       </motion.p>
 
       <div className="relative z-10 flex h-[300px] w-full items-center justify-center">
-        {GRID.map((s, i) => (
+        {grid.map((s, i) => (
           <motion.div
             key={s.label}
             initial={{ opacity: 0, scale: 0.7, x: s.x, y: s.y }}
@@ -322,16 +339,19 @@ function Scene3() {
                 ? { duration: 0.8, ease: [0.6, 0, 0.2, 1], delay: i * 0.02 }
                 : { delay: 0.1 + i * 0.05, type: "spring", stiffness: 220, damping: 20 }
             }
-            className="absolute flex h-[64px] w-[140px] items-center gap-2.5 rounded-2xl border border-white/15 bg-white/[0.07] px-3 backdrop-blur-xl"
-            style={{ boxShadow: `0 12px 40px -12px color-mix(in oklab, ${s.c} 50%, transparent)` }}
+            className="absolute flex h-[60px] items-center gap-2 rounded-2xl border border-white/15 bg-white/[0.07] px-2.5 backdrop-blur-xl"
+            style={{
+              width: cardW,
+              boxShadow: `0 12px 40px -12px color-mix(in oklab, ${s.c} 50%, transparent)`,
+            }}
           >
             <div
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
               style={{ background: `color-mix(in oklab, ${s.c} 20%, transparent)`, color: s.c }}
             >
-              <s.Icon className="h-4 w-4" />
+              <s.Icon className="h-3.5 w-3.5" />
             </div>
-            <span className="text-[12px] font-semibold leading-tight text-white">{s.label}</span>
+            <span className="text-[11px] font-semibold leading-tight text-white">{s.label}</span>
           </motion.div>
         ))}
 

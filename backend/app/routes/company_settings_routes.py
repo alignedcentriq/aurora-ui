@@ -30,10 +30,20 @@ async def set_company_context(
     payload: CompanyContextPayload,
     user: CurrentUser = Depends(require_super_admin),
 ):
+    old_value = CompanySettingsService.get_company_context()
     CompanySettingsService.set("company_context", payload.value, updated_by=user.email)
     # Drop cached company-info answers so they don't serve the old context.
     # (Policy changes invalidate via the SharePoint sync; company context didn't.)
     AnswerCacheService.invalidate_domain("general")
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "settings", "settings_company_context",
+        "{actor} updated the company context.",
+        target_type="setting", target_id="company_context", target_name="Company Context",
+        old_value={"value": (old_value or "")[:5000]}, new_value={"value": (payload.value or "")[:5000]},
+    )
+
     return {"status": "ok", "message": "Company context updated."}
 
 
@@ -72,5 +82,15 @@ async def set_cabin_directory(
     payload: CompanyContextPayload,
     user: CurrentUser = Depends(require_super_admin),
 ):
+    old_value = CompanySettingsService.get("cabin_directory")
     CompanySettingsService.set("cabin_directory", payload.value, updated_by=user.email)
+
+    from app.services import activity_log_service
+    activity_log_service.emit(
+        user.email, "settings", "settings_cabin_directory",
+        "{actor} updated the cabin directory.",
+        target_type="setting", target_id="cabin_directory", target_name="Cabin Directory",
+        old_value={"value": (old_value or "")[:5000]}, new_value={"value": (payload.value or "")[:5000]},
+    )
+
     return {"status": "ok", "message": "Cabin directory updated."}

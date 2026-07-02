@@ -237,9 +237,6 @@ export function LeadershipPortal() {
               Leadership
             </span>
           </div>
-          <h1 className="text-xl sm:text-[24px] font-black tracking-tight text-foreground mt-1">
-            Capability Command
-          </h1>
           <p className="text-[13px] text-muted-foreground mt-0.5 max-w-2xl leading-relaxed">
             Org-wide workforce intelligence — capability, pipeline readiness, single-point-of-failure
             risk, and bench cost.

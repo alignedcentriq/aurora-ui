@@ -336,9 +336,6 @@ export function OnboardingTracker() {
                 HR Portal
               </span>
             </div>
-            <h1 className="text-[24px] font-black tracking-tight text-foreground">
-              Onboarding Tracker
-            </h1>
             <p className="text-[13px] text-muted-foreground mt-0.5">
               Live progress for every new joiner — steps, documents & status at a glance.
             </p>

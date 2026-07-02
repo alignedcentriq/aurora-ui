@@ -170,9 +170,6 @@ export function PMOPortal() {
               Program Management Office
             </span>
           </div>
-          <h1 className="text-[24px] font-black tracking-tight text-foreground mt-1 bg-gradient-to-r from-foreground via-foreground/90 to-foreground/75 bg-clip-text">
-            PMO Portal
-          </h1>
           <p className="text-[13px] text-muted-foreground mt-0.5 max-w-2xl leading-relaxed">
             {TAB_SUBTITLE[tab]}
           </p>

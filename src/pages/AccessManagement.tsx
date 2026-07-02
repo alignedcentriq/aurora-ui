@@ -566,7 +566,6 @@ export function AccessManagement() {
           <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400" />
         </div>
         <div>
-          <h1 className="text-base font-semibold text-foreground leading-tight tracking-tight">Access Management</h1>
           <p className="text-[11px] text-muted-foreground hidden sm:block mt-0.5">
             Create roles, assign capabilities, and manage per-user access overrides.
           </p>

@@ -499,9 +499,6 @@ export function ProjectIQPortal() {
             <Brain className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-foreground">
-              Project IQ
-            </h2>
             <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
               Reuse delivery knowledge from past projects — internal only.
             </p>

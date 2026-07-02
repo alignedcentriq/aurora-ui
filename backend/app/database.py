@@ -429,6 +429,10 @@ def init_db():
                 # (create_all makes the tables; these indexes are additive and idempotent)
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_doc_sections_key ON "{SCHEMA}".onboarding_doc_sections(doc_key)',
                 f'CREATE UNIQUE INDEX IF NOT EXISTS idx_offboarded_users_email ON "{SCHEMA}".offboarded_users(email)',
+                # Activity feed / Audit Trail: org-wide admin-action ledger (create_all
+                # handles the table; this composite index serves the audit query shape —
+                # filter by category, sorted newest-first).
+                f'CREATE INDEX IF NOT EXISTS idx_activity_log_category_created ON "{SCHEMA}".activity_log_entries(category, created_at DESC)',
             ]:
                 try:
                     conn.execute(text(stmt))

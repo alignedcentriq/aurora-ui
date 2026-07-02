@@ -328,9 +328,6 @@ function SettingsPage() {
         transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
         className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/80 backdrop-blur-xl px-4 py-4 sm:px-8 sm:py-5"
       >
-        <h1 className="text-lg sm:text-xl font-semibold text-foreground tracking-tight">
-          Settings
-        </h1>
         <p className="text-[12px] sm:text-[13px] text-muted-foreground mt-0.5">
           Manage your preferences and personalization
         </p>

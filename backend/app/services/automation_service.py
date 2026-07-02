@@ -18,8 +18,10 @@ import datetime
 import html
 from typing import Optional
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
-from app.models import AutomationRule
+from app.models import AutomationRule, AutomationSendLog
 
 
 # ── Scheduling math ────────────────────────────────────────────────────────────
@@ -132,6 +134,16 @@ def create(user_email: str, user_role: str, payload: dict) -> dict:
         db.add(rule)
         db.commit()
         db.refresh(rule)
+
+        from app.services import activity_log_service
+        actor_name = activity_log_service.resolve_display_name(db, user_email)
+        activity_log_service.emit(
+            user_email, "automation", "automation_create",
+            f"{actor_name} created automation \"{rule.name}\" ({rule.frequency}).",
+            target_type="automation_rule", target_id=str(rule.id), target_name=rule.name,
+            new_value={"frequency": rule.frequency, "automation_kind": rule.automation_kind, "is_active": rule.is_active},
+        )
+
         return {"success": True, "rule": _rule_dict(rule, user_email, user_role)}
     except Exception as e:
         db.rollback()
@@ -149,13 +161,16 @@ def update(user_email: str, user_role: str, rule_id: int, payload: dict) -> dict
         if not _can_manage(rule, user_email, user_role):
             return {"success": False, "error": "forbidden"}
 
-        timing_fields = {"frequency", "day_of_week", "day_of_month", "hour", "minute"}
-        changed_timing = False
-        for field in [
+        watched_fields = [
             "name", "description", "frequency", "day_of_week", "day_of_month",
             "hour", "minute", "automation_kind", "extra_config",
             "email_subject", "email_body", "recipients_json", "is_active",
-        ]:
+        ]
+        before = {f: getattr(rule, f) for f in watched_fields if f in payload}
+
+        timing_fields = {"frequency", "day_of_week", "day_of_month", "hour", "minute"}
+        changed_timing = False
+        for field in watched_fields:
             if field in payload:
                 setattr(rule, field, payload[field])
                 if field in timing_fields:
@@ -169,6 +184,19 @@ def update(user_email: str, user_role: str, rule_id: int, payload: dict) -> dict
 
         db.commit()
         db.refresh(rule)
+
+        after = {f: getattr(rule, f) for f in before}
+        changed = {f: v for f, v in after.items() if before[f] != v}
+        if changed:
+            from app.services import activity_log_service
+            actor_name = activity_log_service.resolve_display_name(db, user_email)
+            activity_log_service.emit(
+                user_email, "automation", "automation_update",
+                f"{actor_name} updated automation \"{rule.name}\".",
+                target_type="automation_rule", target_id=str(rule.id), target_name=rule.name,
+                old_value={f: before[f] for f in changed}, new_value=changed,
+            )
+
         return {"success": True, "rule": _rule_dict(rule, user_email, user_role)}
     except Exception as e:
         db.rollback()
@@ -185,8 +213,18 @@ def delete(user_email: str, user_role: str, rule_id: int) -> dict:
             return {"success": False, "error": "not_found"}
         if not _can_manage(rule, user_email, user_role):
             return {"success": False, "error": "forbidden"}
+        rule_name, rule_id_val = rule.name, rule.id
         db.delete(rule)
         db.commit()
+
+        from app.services import activity_log_service
+        actor_name = activity_log_service.resolve_display_name(db, user_email)
+        activity_log_service.emit(
+            user_email, "automation", "automation_delete",
+            f"{actor_name} deleted automation \"{rule_name}\".",
+            target_type="automation_rule", target_id=str(rule_id_val), target_name=rule_name,
+        )
+
         return {"success": True}
     except Exception as e:
         db.rollback()
@@ -527,6 +565,47 @@ def _dispatch_smart(rule: AutomationRule, sender_email: str) -> dict:
     return {"success": ok, "sent_to": emails}
 
 
+def _summarize_dispatch(res: dict) -> tuple[str, str, list[str]]:
+    """Turn a _dispatch_smart result into (status, detail, recipients) for logging."""
+    if res.get("success"):
+        sent_to = res.get("sent_to") or []
+        nudges = res.get("nudges_sent", 0)
+        inactive = res.get("inactive_count", 0)
+        if nudges or inactive:
+            detail = (
+                f"report={'yes' if res.get('report_sent') else 'no'}"
+                f",nudges={nudges},inactive={inactive}"
+            )
+            return "sent", detail, []
+        return "sent", f"{len(sent_to)}_recipients", sent_to
+    return "failed", str(res.get("error", "unknown"))[:200], []
+
+
+def _record_send(
+    db,
+    rule: AutomationRule,
+    status: str,
+    detail: str,
+    recipients: list[str],
+    triggered_by: str,
+    triggered_by_email: Optional[str],
+    sent_at: Optional[datetime.datetime] = None,
+) -> None:
+    db.add(AutomationSendLog(
+        rule_id=rule.id,
+        rule_name=rule.name,
+        created_by=rule.created_by,
+        automation_kind=rule.automation_kind,
+        triggered_by=triggered_by,
+        triggered_by_email=triggered_by_email,
+        recipients_json=recipients,
+        recipient_count=len(recipients),
+        status=status,
+        detail=detail,
+        sent_at=sent_at or datetime.datetime.now(),
+    ))
+
+
 def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
     """Send an automation email immediately (test / on-demand).
     Only creator or Super Admin may trigger this."""
@@ -537,7 +616,14 @@ def send_now(rule_id: int, sender_email: str, user_role: str) -> dict:
             return {"success": False, "error": "not_found"}
         if not _can_manage(rule, sender_email, user_role):
             return {"success": False, "error": "forbidden"}
-        return _dispatch_smart(rule, sender_email)
+        result = _dispatch_smart(rule, sender_email)
+        status, detail, recipients = _summarize_dispatch(result)
+        now = datetime.datetime.now()
+        rule.last_run = now
+        rule.last_status = f"{status}:{detail}"
+        _record_send(db, rule, status, detail, recipients, "manual", sender_email, sent_at=now)
+        db.commit()
+        return result
     finally:
         db.close()
 
@@ -563,23 +649,13 @@ def run_due() -> int:
         for rule in due:
             try:
                 res = _dispatch_smart(rule, rule.created_by)
-                if res.get("success"):
-                    sent_to = res.get("sent_to") or []
-                    nudges = res.get("nudges_sent", 0)
-                    inactive = res.get("inactive_count", 0)
-                    if nudges or inactive:
-                        rule.last_status = (
-                            f"sent:report={'yes' if res.get('report_sent') else 'no'}"
-                            f",nudges={nudges},inactive={inactive}"
-                        )
-                    else:
-                        rule.last_status = f"sent:{len(sent_to)}_recipients"
-                else:
-                    rule.last_status = f"failed:{res.get('error','unknown')}"
+                status, detail, recipients = _summarize_dispatch(res)
             except Exception as exc:
-                rule.last_status = f"failed:{str(exc)[:120]}"
+                status, detail, recipients = "failed", str(exc)[:120], []
             finally:
+                rule.last_status = f"{status}:{detail}"
                 rule.last_run = now
+                _record_send(db, rule, status, detail, recipients, "scheduled", None, sent_at=now)
                 # Always advance next_run — even on failure — to prevent hot-looping.
                 rule.next_run = compute_next_run(
                     rule.frequency, rule.day_of_week, rule.day_of_month, rule.hour,
@@ -588,11 +664,58 @@ def run_due() -> int:
                 )
                 fired += 1
 
+                try:
+                    from app.services import activity_log_service
+                    activity_log_service.emit(
+                        "system@centriq.ai", "automation", "automation_fire",
+                        f"Automation \"{rule.name}\" fired automatically — {status} ({len(recipients)} recipient(s)).",
+                        severity="low", target_type="automation_rule", target_id=str(rule.id),
+                        target_name=rule.name, new_value={"status": status, "detail": detail},
+                    )
+                except Exception:
+                    pass
+
         if due:
             db.commit()
         return fired
     except Exception as exc:
         return 0
+    finally:
+        db.close()
+
+
+# ── Send history ───────────────────────────────────────────────────────────────
+
+def list_history(
+    user_email: str,
+    user_role: str,
+    rule_id: Optional[int] = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Full send-history audit trail.
+
+    Super Admin sees every automation's history. Everyone else sees history for
+    automations they created or co-own (own history survives rule deletion via the
+    created_by snapshot on the log row).
+    """
+    db = SessionLocal()
+    try:
+        q = db.query(AutomationSendLog)
+        if rule_id is not None:
+            q = q.filter(AutomationSendLog.rule_id == rule_id)
+
+        if user_role.lower() != "super admin":
+            accessible_ids = {
+                r.id for r in db.query(AutomationRule).all()
+                if r.created_by == user_email or _is_co_owner(r, user_email)
+            }
+            clause = AutomationSendLog.created_by == user_email
+            if accessible_ids:
+                clause = or_(clause, AutomationSendLog.rule_id.in_(accessible_ids))
+            q = q.filter(clause)
+
+        logs = q.order_by(AutomationSendLog.sent_at.desc()).limit(limit).all()
+        return [_log_dict(l) for l in logs]
     finally:
         db.close()
 
@@ -624,4 +747,21 @@ def _rule_dict(r: AutomationRule, user_email: str = "", user_role: str = "") -> 
         "last_status": r.last_status,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "can_manage": can_manage,
+    }
+
+
+def _log_dict(l: AutomationSendLog) -> dict:
+    return {
+        "id": l.id,
+        "rule_id": l.rule_id,
+        "rule_name": l.rule_name,
+        "created_by": l.created_by,
+        "automation_kind": l.automation_kind,
+        "triggered_by": l.triggered_by,
+        "triggered_by_email": l.triggered_by_email,
+        "recipients_json": l.recipients_json or [],
+        "recipient_count": l.recipient_count or 0,
+        "status": l.status,
+        "detail": l.detail,
+        "sent_at": l.sent_at.isoformat() if l.sent_at else None,
     }

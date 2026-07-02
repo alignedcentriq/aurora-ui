@@ -228,9 +228,6 @@ export function AdminDashboard() {
             <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#00a29a] dark:text-[#00c4bb] mb-1">
               System & Ops
             </p>
-            <h1 className="text-[22px] font-bold text-[#0f172a] dark:text-white tracking-tight">
-              Admin
-            </h1>
             <p className="text-[13px] text-[#64748b] dark:text-white/50 mt-0.5">
               Manage announcements and monitor system status across the workspace.
             </p>

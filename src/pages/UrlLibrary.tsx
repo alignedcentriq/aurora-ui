@@ -449,9 +449,6 @@ export function UrlLibrary() {
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#00a29a] dark:text-[#00c4bb] mb-0.5">
             Assets &amp; Config
           </p>
-          <h1 className="text-[20px] font-bold text-[#0f172a] dark:text-white tracking-tight">
-            URL Library
-          </h1>
           <p className="text-[12px] text-[#64748b] dark:text-white/50 mt-0.5 max-w-[520px]">
             Register company apps, portals, and websites. Centriq surfaces the right link in chat
             when a user's question matches — no code change needed for new apps.
