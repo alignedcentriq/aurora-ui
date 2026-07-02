@@ -21,6 +21,8 @@ import { SuggestionChips } from "./SuggestionChips";
 import { motion, AnimatePresence } from "framer-motion";
 
 import { useVoiceStore } from "@/lib/voice-store";
+import { openFormById } from "@/lib/form-trigger";
+import type { DynamicFormField } from "@/lib/chat-store";
 
 type Props = {
   value: string;
@@ -65,7 +67,14 @@ interface MentionUser {
 }
 
 type SlashItem =
-  | { kind: "form"; id: number; name: string; description: string; category: string }
+  | {
+      kind: "form";
+      id: number;
+      name: string;
+      description: string;
+      category: string;
+      fields?: DynamicFormField[];
+    }
   | { kind: "url"; id: number; name: string; url: string; purpose: string }
   | { kind: "route"; id: string; name: string; path: string; description: string }
   | { kind: "mode"; id: string; name: string; command: string; description: string };
@@ -202,7 +211,13 @@ export function Composer({
       ]);
       const forms: SlashItem[] = formsRes.ok
         ? (await formsRes.json()).map(
-            (f: { id: number; name: string; description: string; category: string }) => ({
+            (f: {
+              id: number;
+              name: string;
+              description: string;
+              category: string;
+              fields?: DynamicFormField[];
+            }) => ({
               kind: "form" as const,
               ...f,
             }),
@@ -255,7 +270,15 @@ export function Composer({
         // Send the mode command as a message so AssistantView intercepts it
         onQuickAction?.(item.command);
       } else {
-        onQuickAction?.(item.name);
+        // Form pick — open the form inline directly, bypassing the LLM/heuristic
+        // routing that firing the name as a chat message would otherwise trigger.
+        openFormById({
+          formId: item.id,
+          name: item.name,
+          description: item.description,
+          fields: item.fields ?? [],
+          submitEndpoint: "/api/forms/submit",
+        });
       }
     },
     [value, slashStart, onChange, onQuickAction, onNavigate],
