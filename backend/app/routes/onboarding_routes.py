@@ -24,7 +24,7 @@ from app.services import actions
 from app.services import onboarding_service as svc
 from app.services import onboarding_template as tmpl
 
-router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
+router = APIRouter(prefix="/api/onboard", tags=["Onboarding"])
 
 # Uploaded induction videos can be large — allow up to 500 MB.
 _MAX_VIDEO_BYTES = 500 * 1024 * 1024

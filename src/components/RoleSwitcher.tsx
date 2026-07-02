@@ -12,9 +12,16 @@ const ALL_ROLES: { label: string; slug: string }[] = [
   { label: "Admin", slug: "admin" },
 ];
 
+// Only this Super Admin may test-switch roles — pinned to one trusted person, not the
+// role itself, so other accounts granted Super Admin can't use it. Kept in sync with
+// backend/app/config.py's ROLE_SWITCH_ALLOWED_EMAIL (the backend is the real gate; this
+// just hides the UI for everyone else).
+const ROLE_SWITCH_ALLOWED_EMAIL = "shivam.sharma@alignedautomation.com";
+
 export function RoleSwitcher() {
   const { user } = useAuth();
   if (user?.realRole !== "Super Admin") return null;
+  if (user?.email?.toLowerCase() !== ROLE_SWITCH_ALLOWED_EMAIL) return null;
 
   const current = getImpersonatedRole();
 

@@ -52,13 +52,15 @@ async def connect_provider(
     NOTE: This is a top-level browser navigation (the popup is pointed straight
     at this URL), so the SPA's x-user-email / x-user-role headers are NOT sent
     and get_current_user cannot be used here. We authenticate from the ?email=
-    query param instead and validate it against ALLOWED_EMAILS.
+    query param instead and validate it against ALLOWED_EMAIL_DOMAIN.
     """
     if provider not in PROVIDERS:
         raise HTTPException(400, f"Unknown provider: {provider}")
 
     user_email = (email or "").lower().strip()
-    if not user_email or (settings.ALLOWED_EMAILS and user_email not in settings.ALLOWED_EMAILS):
+    if not user_email or (
+        settings.ALLOWED_EMAIL_DOMAIN and not user_email.endswith("@" + settings.ALLOWED_EMAIL_DOMAIN)
+    ):
         raise HTTPException(403, "Access denied.")
 
     try:

@@ -6,7 +6,7 @@ Public (no auth — authenticated by the unguessable token in the URL):
 
 Mirrors welcome_routes' public backend-rendered pattern so the manager needs no login and
 the frontend SPA isn't involved. The new hire's own status is read via the authenticated
-/api/onboarding/me/manager-call endpoint (see onboarding_routes).
+/api/onboard/me/manager-call endpoint (see onboarding_routes).
 """
 
 from __future__ import annotations
