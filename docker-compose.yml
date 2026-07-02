@@ -23,6 +23,10 @@ services:
     build: ./backend
     env_file:
       - ./backend/.env
+    volumes:
+      # Runtime uploads (onboarding docs, induction videos) must survive container
+      # recreation — without this mount they vanish on every rebuild.
+      - ./backend/uploads:/backend/uploads
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LANGFUSE_HOST=http://langfuse-server:3000
