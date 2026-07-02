@@ -7,6 +7,8 @@ The query surface is whitelisted in analytics_service (metric/dimension catalog)
 routes never accept raw SQL.
 """
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -14,7 +16,7 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_non_employee, require_admin, get_current_user
 from app.database import get_db
-from app.models import SavedDashboard
+from app.models import AiRequestLog, SavedDashboard
 from app.services import analytics_service as svc
 from app.services import automation_service as autosvc
 from app.services import analytics_builder_service as builder_svc
@@ -319,8 +321,35 @@ def builder_chat(body: BuilderChatBody, user: CurrentUser = Depends(require_non_
     msg = (body.message or "").strip()
     if not msg:
         raise HTTPException(status_code=400, detail="Empty message.")
-    return builder_svc.builder_chat(db, msg, body.history or [], role=user.role,
-                                    user_email=user.email)
+
+    start = time.time()
+    result = builder_svc.builder_chat(db, msg, body.history or [], role=user.role,
+                                      user_email=user.email)
+
+    # Observability: this bypasses the main /api/chat pipeline, so log it here
+    # the same way — otherwise chart-builder conversations are invisible in the
+    # AI Observability dashboard.
+    try:
+        explanation = result.get("explanation") if isinstance(result, dict) else None
+        ok = bool(result.get("ok")) if isinstance(result, dict) else False
+        db.add(AiRequestLog(
+            session_id=f"analytics-builder-{user.email}",
+            user_email=user.email,
+            user_message=msg,
+            domain="analytics_builder",
+            sub_intent=(result.get("chart") or {}).get("type") if isinstance(result, dict) else None,
+            route_method="analytics_builder_chat",
+            response_text=(explanation or "")[:2000] or None,
+            response_length=len(explanation) if explanation else 0,
+            total_latency_ms=int((time.time() - start) * 1000),
+            llm_call_count=1,
+            error=None if ok else explanation,
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    return result
 
 
 @router.delete("/dashboards/{board_id}")

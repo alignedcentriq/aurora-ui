@@ -2,6 +2,8 @@ import { useState } from "react";
 import { UserPlus, CheckCircle2 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { VisitorPassPrefill } from "@/lib/chat-store";
+import { DatePicker } from "@/components/ui/date-picker";
+import { TimePicker } from "@/components/ui/time-picker";
 
 interface Props {
   userEmail: string;
@@ -111,25 +113,18 @@ export function VisitorPassForm({ userEmail, prefill, onSubmitted }: Props) {
             <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
               Visit Date <span className="text-destructive">*</span>
             </label>
-            <input
-              required
-              type="date"
-              min={todayISO()}
+            <DatePicker
               value={visitDate}
-              onChange={(e) => setVisitDate(e.target.value)}
-              className={inputCls}
+              onChange={setVisitDate}
+              fromDate={new Date(`${todayISO()}T00:00:00`)}
+              placeholder="Select date"
             />
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">
               Visit Time <span className="text-muted-foreground/60">(optional)</span>
             </label>
-            <input
-              type="time"
-              value={visitTime}
-              onChange={(e) => setVisitTime(e.target.value)}
-              className={inputCls}
-            />
+            <TimePicker value={visitTime} onChange={setVisitTime} placeholder="Select time" />
           </div>
         </div>
 

@@ -134,6 +134,9 @@ JSON shape (all keys required; use null / [] where unknown):
   "delivery_start_date": "string|null",
   "delivery_end_date": "string|null",
   "overall_confidence": "verified|inferred",
+  "lineage_summary": "string|null",
+  "related_projects": ["string", ...],
+  "reference_docs": ["string", ...],
   "capabilities": [{"capability_name": "string", "category": "string|null", "maturity_level": "string|null", "confidence": "verified|inferred", "evidence": "string|null"}],
   "integrations": [{"system_name": "string", "integration_type": "string|null", "complexity_level": "string|null", "lessons_learned": "string|null", "confidence": "verified|inferred"}],
   "lessons": [{"category": "string|null", "lesson": "string", "impact_level": "string|null", "recommendation": "string|null", "confidence": "verified|inferred", "evidence": "string|null"}],
@@ -202,6 +205,12 @@ def _upsert_profile(slug: str, name: str, data: dict, source_doc_count: int) -> 
         profile.delivery_end_date = data.get("delivery_end_date")
         profile.confidence = _norm_conf(data.get("overall_confidence"))
         profile.source_doc_count = source_doc_count
+        
+        # Lineage metadata
+        profile.lineage_summary = data.get("lineage_summary")
+        profile.related_projects = _as_list(data.get("related_projects"))
+        profile.reference_docs = _as_list(data.get("reference_docs"))
+
         # A rebuild re-derives the facts, so any prior human review no longer applies.
         profile.review_status = "draft"
         profile.reviewed_by = None
@@ -351,6 +360,9 @@ def _profile_to_dict(p: ProjectProfile, similarity: float | None = None,
         "source_doc_count": p.source_doc_count,
         "query_count": p.query_count or 0,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        "lineage_summary": p.lineage_summary,
+        "related_projects": p.related_projects or [],
+        "reference_docs": p.reference_docs or [],
     }
     if similarity is not None:
         d["similarity"] = round(similarity, 3)
@@ -1285,4 +1297,56 @@ def lessons_to_training(slug: str, max_courses_per_area: int = 3) -> dict:
         "slug": slug,
         "project_name": profile.get("name", slug),
         "areas": result_areas,
+    }
+
+
+def agentic_dna_search(query_text: str) -> dict:
+    """Agentic RAG for DNA: multi-hop traversal of project lineage."""
+    # Hop 1: Semantic search
+    initial_hits = find_similar_projects(query_text, limit=3)
+    if not initial_hits:
+        return {"answer": "No projects match the query.", "profiles": []}
+    
+    # Hop 2: Traversal (gather lineage docs/related projects)
+    profiles = {}
+    for hit in initial_hits:
+        profiles[hit["slug"]] = hit
+        for related in hit.get("related_projects") or []:
+            if related not in profiles:
+                # Naive slug mapping, fetch profile
+                p = get_profile(related)
+                if p: profiles[related] = p
+                
+    # Build context
+    context_lines = []
+    for p in profiles.values():
+        context_lines.append(f"Project: {p['name']} (Slug: {p['slug']})")
+        context_lines.append(f"Lineage: {p.get('lineage_summary') or 'N/A'}")
+        context_lines.append(f"References: {p.get('reference_docs') or []}")
+        context_lines.append(f"Capabilities: {[c.get('capability_name') for c in p.get('capabilities') or []][:3]}")
+        context_lines.append("")
+    context_str = "\n".join(context_lines)
+
+    prompt = f"""You are a Project DNA analyst. Answer the user's query about our delivery capabilities by synthesizing a multi-hop lineage response based on the following project context. Include references to specific projects.
+
+USER QUERY: {query_text}
+
+CONTEXT:
+{context_str}
+
+Respond in markdown. Be concise and focus on lineage and capabilities."""
+
+    try:
+        from app.services import llm_controls_service as llm_controls
+        model = llm_controls.get_llm("service")
+        # simple invoke
+        response = model.invoke(prompt)
+        answer = getattr(response, "content", "")
+    except Exception as exc:
+        logger.error(f"[ProjectIQ] Agentic search error: {exc}")
+        answer = "Sorry, failed to generate an agentic response."
+        
+    return {
+        "answer": answer,
+        "profiles": list(profiles.values()),
     }

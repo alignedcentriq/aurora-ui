@@ -245,6 +245,9 @@ class ProjectProfile(Base):
     delivery_start_date = Column(String, nullable=True)
     delivery_end_date = Column(String, nullable=True)
     dna_summary = Column(Text, nullable=True)             # text fed to the embedder
+    lineage_summary = Column(Text, nullable=True)         # contextual origins/roots
+    related_projects = Column(JSON, nullable=True)        # list[str] of related project slugs/names
+    reference_docs = Column(JSON, nullable=True)          # list[str] of architecture/policy dependencies
     embedding = Column(Vector(768), nullable=True)
     confidence = Column(String, default="inferred")       # verified | inferred (overall)
     review_status = Column(String, default="draft")       # draft | reviewed

@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -460,16 +461,14 @@ export function RoomBookingWidget({ userEmail, userRole, prefill, onBooked }: Pr
             {
               label: "Date",
               content: (
-                <input
-                  type="date"
+                <DatePicker
                   value={date}
-                  min={localDateISO()}
-                  onChange={(e) => {
-                    setDate(e.target.value);
+                  fromDate={new Date(`${localDateISO()}T00:00:00`)}
+                  onChange={(v) => {
+                    setDate(v);
                     setRoomsChecked(false);
                     setSelectedRoom(null);
                   }}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow"
                 />
               ),
             },

@@ -242,7 +242,7 @@ function ReviewBadge({ status }: { status: string }) {
       {reviewed ? (
         <CheckCircle2 className="w-3 h-3" />
       ) : (
-        <Loader2 className="w-3 h-3 animate-spin" />
+        <FileText className="w-3 h-3" />
       )}
       {reviewed ? "Reviewed" : "Draft"}
     </span>
@@ -267,6 +267,10 @@ export function ProjectIQPortal() {
   const [results, setResults] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  
+  // Agentic search
+  const [isAgentic, setIsAgentic] = useState(false);
+  const [agenticAnswer, setAgenticAnswer] = useState<string | null>(null);
 
   // detail drawer
   const [selected, setSelected] = useState<Profile | null>(null);
@@ -402,14 +406,19 @@ export function ProjectIQPortal() {
     setSearching(true);
     setSearched(true);
     setBrief(null);
+    setAgenticAnswer(null);
     try {
-      const resp = await fetch("/api/project-iq/search", {
+      const endpoint = isAgentic ? "/api/project-iq/agentic-dna-search" : "/api/project-iq/search";
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({ description: query.trim(), limit: 5 }),
       });
       const data = await resp.json();
       setResults(data.results || []);
+      if (isAgentic && data.answer) {
+        setAgenticAnswer(data.answer);
+      }
     } catch {
       setResults([]);
     } finally {
@@ -626,9 +635,24 @@ export function ProjectIQPortal() {
             {/* Glow accent */}
             <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-gradient-to-bl from-sky-500/5 to-transparent rounded-full pointer-events-none blur-3xl group-hover:from-sky-500/10 transition-all duration-500" />
 
-            <label className="text-xs sm:text-sm font-semibold text-foreground flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-sky-500" />
-              Have we built something similar before?
+            <label className="text-xs sm:text-sm font-semibold text-foreground flex items-center justify-between gap-1.5 w-full">
+              <span className="flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-sky-500" />
+                Have we built something similar before?
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsAgentic(!isAgentic)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all shadow-sm",
+                  isAgentic
+                    ? "bg-violet-500/10 text-violet-600 border-violet-500/30"
+                    : "bg-muted text-muted-foreground border-border"
+                )}
+              >
+                <Brain className="w-3.5 h-3.5" />
+                {isAgentic ? "Deep DNA Search" : "Standard Search"}
+              </button>
             </label>
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1 relative flex flex-col">
@@ -718,6 +742,16 @@ export function ProjectIQPortal() {
 
             {!searching && results.length > 0 && (
               <>
+                {isAgentic && agenticAnswer && (
+                  <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-5 flex flex-col gap-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-violet-500 flex items-center gap-1.5">
+                      <Brain className="w-4 h-4" /> Agentic Synthesis
+                    </h4>
+                    <div className="prose prose-sm dark:prose-invert max-w-none text-xs sm:text-sm whitespace-pre-wrap leading-relaxed text-foreground">
+                      {agenticAnswer}
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between px-1">
                   <h3 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     Matched DNA Profiles ({results.length})
