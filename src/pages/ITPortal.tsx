@@ -28,6 +28,9 @@ import {
   Undo,
   Info,
   Mail,
+  HardDrive,
+  Server,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -544,6 +547,40 @@ interface CapCheck {
   model: string;
 }
 
+// Live capacity picture from GET /api/it/llm-controls/capacity.
+interface OllamaModelResidency {
+  name: string;
+  size: number;
+  size_vram: number;
+  size_cpu: number;
+  gpu_pct: number;
+  placement: "gpu" | "partial" | "cpu";
+  context_length: number | null;
+  expires_at: string | null;
+}
+interface CapacityInfo {
+  gate: { active: number; waiting: number; max_concurrency: number; max_queue: number };
+  ollama: { reachable: boolean; models: OllamaModelResidency[]; error: string | null };
+  capacity: {
+    max_concurrency: number;
+    max_queue: number;
+    loaded_models: number;
+    ollama_parallel: {
+      num_parallel: number | null;
+      max_loaded_models: number | null;
+      max_queue: number | null;
+    };
+    server_capacity: {
+      recommended: number;
+      hard: number | null;
+      basis: string;
+    };
+  };
+}
+
+const fmtGB = (bytes: number): string =>
+  bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+
 export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [data, setData] = useState<LlmControlsResponse | null>(null);
   const [cfg, setCfg] = useState<LlmCfg | null>(null);
@@ -555,6 +592,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
     waiting: number;
     max_concurrency: number;
   } | null>(null);
+  const [capacity, setCapacity] = useState<CapacityInfo | null>(null);
   const [capChecks, setCapChecks] = useState<Record<string, CapCheck>>({});
 
   const fetch_ = useCallback(async () => {
@@ -620,6 +658,25 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
     };
     tick();
     const id = setInterval(tick, 3000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Real capacity picture — app queue + Ollama GPU/CPU residency (cached ~3s server-side).
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/it/llm-controls/capacity", { headers: authHeaders });
+        if (res.ok && active) setCapacity(await res.json());
+      } catch {
+        /* ignore transient */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
     return () => {
       active = false;
       clearInterval(id);
@@ -709,6 +766,12 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
   const disabledCount = cfg.disabled_domains.length;
   const cap = load?.max_concurrency ?? cfg.max_concurrency;
   const fillPct = load ? Math.min(100, Math.round((load.active / Math.max(1, cap)) * 100)) : 0;
+
+  // Capacity validation: max_concurrency must not exceed what the shared server can serve.
+  const svrCap = capacity?.capacity.server_capacity ?? null;
+  const overHardConc = svrCap?.hard != null && cfg.max_concurrency > svrCap.hard;
+  const overRecommendedConc =
+    svrCap != null && !overHardConc && cfg.max_concurrency > svrCap.recommended;
 
   // Compile list of unsaved changes
   const pendingChanges: { label: string; details: string }[] = [];
@@ -868,21 +931,54 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
         desc="Adjust system-wide limits for parallel generations. Extra incoming requests enter a queue before receiving a busy signal. Applied instantly."
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-          <div className="lg:col-span-7 flex flex-wrap gap-6">
-            <NumField
-              label="Max concurrency"
-              value={cfg.max_concurrency}
-              bounds={data.bounds.max_concurrency}
-              onChange={(v) => setCfg({ ...cfg, max_concurrency: Number(v) || 1 })}
-              className="w-full sm:w-48"
-            />
-            <NumField
-              label="Max queue size"
-              value={cfg.max_queue}
-              bounds={data.bounds.max_queue}
-              onChange={(v) => setCfg({ ...cfg, max_queue: Number(v) || 0 })}
-              className="w-full sm:w-48"
-            />
+          <div className="lg:col-span-7">
+            <div className="flex flex-wrap gap-6">
+              <NumField
+                label="Max concurrency"
+                value={cfg.max_concurrency}
+                bounds={data.bounds.max_concurrency}
+                onChange={(v) => setCfg({ ...cfg, max_concurrency: Number(v) || 1 })}
+                className="w-full sm:w-48"
+              />
+              <NumField
+                label="Max queue size"
+                value={cfg.max_queue}
+                bounds={data.bounds.max_queue}
+                onChange={(v) => setCfg({ ...cfg, max_queue: Number(v) || 0 })}
+                className="w-full sm:w-48"
+              />
+            </div>
+            {/* Server-capacity validation — can't admit more than ml01 can serve */}
+            {svrCap && (overHardConc || overRecommendedConc) && (
+              <div
+                className={cn(
+                  "mt-4 flex items-start gap-2 rounded-xl border p-3 text-[12px] leading-relaxed",
+                  overHardConc
+                    ? "border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05] text-rose-700 dark:text-rose-300"
+                    : "border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/[0.05] text-amber-800 dark:text-amber-200/90",
+                )}
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {overHardConc ? (
+                    <>
+                      <span className="font-bold">Exceeds server capacity.</span> The shared server
+                      can serve at most <span className="font-semibold">{svrCap.hard}</span>{" "}
+                      concurrent generations. Requests above this pile onto the GPU and slow everyone
+                      down — saving is blocked until you lower it.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-bold">Above the recommended ceiling of{" "}
+                      {svrCap.recommended}.</span> ml01 is a shared server and likely can't serve
+                      this many in parallel. Keep it at {svrCap.recommended} or below unless you know
+                      capacity has increased.
+                    </>
+                  )}
+                  <span className="mt-1 block text-[11px] opacity-70">Basis: {svrCap.basis}</span>
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="lg:col-span-5 border-t lg:border-t-0 lg:border-l border-[var(--border)]/50 pt-4 lg:pt-0 lg:pl-6">
@@ -937,6 +1033,218 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* ── Real server capacity + live GPU/CPU queue ── */}
+      <Card
+        icon={<Server className="h-4 w-4 text-primary" />}
+        title="Server Capacity & Live Queue"
+        desc="What the shared LLM server (ml01) is actually doing right now — real GPU/CPU model placement, the live request queue, and how many requests it will serve at once. Distinct from the throttle above, which is our app-side admission cap."
+      >
+        {(() => {
+          const c = capacity;
+          const gate = c?.gate;
+          const models = c?.ollama.models ?? [];
+          const par = c?.capacity.ollama_parallel;
+          const onCpu = models.filter((m) => m.placement !== "gpu");
+
+          return (
+            <div className="flex flex-col gap-6">
+              {/* Capacity summary tiles */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  {
+                    label: "Concurrent slots",
+                    value: c ? String(c.capacity.max_concurrency) : "—",
+                    sub: "served at once (app cap)",
+                    icon: Layers,
+                  },
+                  {
+                    label: "Queue depth",
+                    value: c ? String(c.capacity.max_queue) : "—",
+                    sub: "wait before busy signal",
+                    icon: SlidersHorizontal,
+                  },
+                  {
+                    label: "Models resident",
+                    value: c ? String(c.capacity.loaded_models) : "—",
+                    sub: "loaded on ml01 now",
+                    icon: Cpu,
+                  },
+                  {
+                    label: "Ollama parallel",
+                    value: par?.num_parallel != null ? String(par.num_parallel) : "server-set",
+                    sub: par?.num_parallel != null ? "per-model on ml01" : "not visible here",
+                    icon: Server,
+                  },
+                ].map((t) => (
+                  <div
+                    key={t.label}
+                    className="rounded-2xl border border-[var(--border)] bg-card/60 p-4"
+                  >
+                    <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
+                      <t.icon className="h-3.5 w-3.5" />
+                      {t.label}
+                    </div>
+                    <div className="mt-1.5 text-2xl font-bold text-foreground tabular-nums">
+                      {t.value}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground/70 mt-0.5">{t.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Live request queue (real admission gate) */}
+              <div className="rounded-2xl border border-[var(--border)] bg-card/60 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
+                    <Gauge className="h-4 w-4 text-primary" />
+                    Request queue
+                  </span>
+                  {gate && (
+                    <span className="font-mono text-[12px] text-foreground/80">
+                      {gate.active}/{gate.max_concurrency} running
+                      <span className="text-muted-foreground/60">
+                        {" · "}
+                        {gate.waiting} waiting
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {/* Running slots as filled/empty pills */}
+                <div className="flex flex-wrap gap-1.5">
+                  {gate
+                    ? Array.from({ length: Math.min(gate.max_concurrency, 20) }).map((_, i) => (
+                        <div
+                          key={i}
+                          className={cn(
+                            "h-2.5 w-2.5 rounded-full transition-colors",
+                            i < gate.active
+                              ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]"
+                              : "bg-secondary dark:bg-secondary/40",
+                          )}
+                        />
+                      ))
+                    : null}
+                </div>
+                {gate && gate.waiting > 0 && (
+                  <div className="mt-3 flex items-center gap-2 text-[12px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {gate.waiting} request{gate.waiting === 1 ? "" : "s"} queued and waiting for a
+                    free slot.
+                  </div>
+                )}
+                {gate && gate.waiting === 0 && gate.active === 0 && (
+                  <div className="mt-3 text-[12px] text-muted-foreground/70">
+                    Idle — no requests running or queued right now.
+                  </div>
+                )}
+              </div>
+
+              {/* Real GPU / CPU model placement */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
+                    <HardDrive className="h-4 w-4 text-primary" />
+                    GPU / CPU placement
+                  </span>
+                  <span className="text-[11px] text-muted-foreground/60">
+                    live from ml01 /api/ps
+                  </span>
+                </div>
+
+                {!c ? (
+                  <div className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 text-[12px] text-muted-foreground/70">
+                    Loading server state…
+                  </div>
+                ) : !c.ollama.reachable ? (
+                  <div className="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05] p-4 text-[12px] text-rose-700 dark:text-rose-300">
+                    Ollama server unreachable{c.ollama.error ? ` — ${c.ollama.error}` : ""}. VPN is
+                    required from outside the office.
+                  </div>
+                ) : models.length === 0 ? (
+                  <div className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 text-[12px] text-muted-foreground/70">
+                    No models resident. The first request will pay a cold load.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    {models.map((m) => {
+                      const gpuPct = m.gpu_pct;
+                      const cpuPct = 100 - gpuPct;
+                      const badge =
+                        m.placement === "gpu"
+                          ? {
+                              label: "GPU",
+                              cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                            }
+                          : m.placement === "partial"
+                            ? {
+                                label: `${gpuPct}% GPU`,
+                                cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                              }
+                            : {
+                                label: "On CPU",
+                                cls: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+                              };
+                      return (
+                        <div
+                          key={m.name}
+                          className="rounded-2xl border border-[var(--border)] bg-card/60 p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-mono text-[13px] font-semibold text-foreground truncate">
+                              {m.name}
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                                badge.cls,
+                              )}
+                            >
+                              {badge.label}
+                            </span>
+                          </div>
+                          {/* GPU vs CPU split bar */}
+                          <div className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-secondary dark:bg-secondary/40">
+                            <div
+                              className="h-full bg-emerald-500 transition-all"
+                              style={{ width: `${gpuPct}%` }}
+                            />
+                            <div
+                              className="h-full bg-rose-500/80 transition-all"
+                              style={{ width: `${cpuPct}%` }}
+                            />
+                          </div>
+                          <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground/70 font-mono">
+                            <span>
+                              {fmtGB(m.size_vram)} VRAM
+                              {cpuPct > 0 ? ` · ${fmtGB(m.size_cpu)} RAM` : ""}
+                            </span>
+                            <span>{fmtGB(m.size)} total</span>
+                          </div>
+                          {m.placement === "cpu" && (
+                            <div className="mt-2.5 flex items-start gap-2 text-[12px] text-rose-600 dark:text-rose-400">
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              Evicted to CPU — this model has no GPU memory, so responses will be
+                              very slow (this is the usual cause of requests that never finish).
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {onCpu.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground/60 px-1">
+                        A model runs on CPU when the GPU can't hold it alongside the resident set.
+                        Freeing VRAM (fewer/smaller resident models) is the only fix — it's a shared
+                        server, so this is a coordination issue, not an app bug.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </Card>
 
       {/* ── Per-tier model params ── */}
@@ -1326,7 +1634,12 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
 
               <button
                 onClick={onSaveClick}
-                disabled={saving || !dirty}
+                disabled={saving || !dirty || overHardConc}
+                title={
+                  overHardConc
+                    ? `Max concurrency exceeds server capacity (${svrCap?.hard}). Lower it to apply.`
+                    : undefined
+                }
                 className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-[13px] font-bold text-primary-foreground hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none shadow-[0_4px_12px_rgba(59,143,232,0.15)]"
               >
                 {saving ? (
