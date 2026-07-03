@@ -70,6 +70,48 @@ async def get_model_capabilities(
     return result
 
 
+@router.get("/capacity")
+async def get_capacity(_: CurrentUser = Depends(require_super_admin)):
+    """Live capacity picture across all three layers, for the LLM controls dashboard:
+
+      * gate      — our app admission queue (how many chats are running the LLM chain
+                    right now / waiting / the caps that bound them).
+      * ollama    — the *real* GPU/CPU placement of every loaded model on ml01 (from
+                    /api/ps). Surfaces CPU eviction, the usual "requests never finish" cause.
+      * capacity  — how many concurrent requests the system actually admits, plus any
+                    server-side Ollama parallelism knobs visible from here.
+
+    Read-only. Cached ~3s server-side so many admin pollers issue one ml01 probe."""
+    from app.concurrency import chat_gate
+
+    gate = await chat_gate.stats()
+    residency = llm_controls.ollama_residency()
+    parallel = llm_controls.ollama_parallelism()
+
+    try:
+        from app.services.llm_resilience import get_breaker_status
+        breakers = get_breaker_status()
+    except Exception:  # noqa: BLE001
+        breakers = {}
+
+    max_conc, max_queue = llm_controls.concurrency_limits()
+    return {
+        "gate": gate,
+        "ollama": residency,
+        "capacity": {
+            # The authoritative ceiling on simultaneous generations is our app gate,
+            # since the shared server can't be tuned from here.
+            "max_concurrency": max_conc,
+            "max_queue": max_queue,
+            "loaded_models": len(residency.get("models") or []),
+            "ollama_parallel": parallel,
+            # Safe ceiling for max_concurrency (drives the editor's validation).
+            "server_capacity": llm_controls.server_capacity(),
+        },
+        "circuit_breakers": breakers,
+    }
+
+
 @router.post("/reset")
 async def reset_llm_controls(user: CurrentUser = Depends(require_super_admin)):
     """Clear all overrides — revert to env defaults."""

@@ -176,6 +176,144 @@ def model_capabilities(model_name: str) -> dict:
     return result
 
 
+def _ps_url() -> str:
+    root = settings.AGENT_BASE_URL.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3]
+    return root.rstrip("/") + "/api/ps"
+
+
+_ps_cache: tuple[float, Optional[dict]] = (0.0, None)
+_PS_TTL = 3.0  # short — this backs a live meter, but shields ml01 from every admin poll
+
+
+def ollama_residency() -> dict:
+    """Real GPU/CPU placement of every model currently loaded on the Ollama server,
+    read from ``/api/ps``. This is the *actual* hardware state — distinct from our
+    app-level admission gate — so IT can see when a model has been evicted to CPU
+    (``size_vram`` < ``size``), which is the usual cause of "requests never finish".
+
+    Returns ``{"reachable": bool, "models": [...], "error": str|None}`` where each
+    model carries ``size``, ``size_vram``, ``size_cpu``, ``gpu_pct`` and a coarse
+    ``placement`` in {"gpu", "partial", "cpu"}. Cached ``_PS_TTL`` seconds; never raises."""
+    global _ps_cache
+    now = time.time()
+    if _ps_cache[1] is not None and (now - _ps_cache[0]) < _PS_TTL:
+        return _ps_cache[1]
+
+    result: dict = {"reachable": False, "models": [], "error": None}
+    try:
+        import urllib.request
+        with urllib.request.urlopen(_ps_url(), timeout=3) as resp:  # noqa: S310 — internal host
+            data = json.loads(resp.read().decode("utf-8"))
+        result["reachable"] = True
+        for m in data.get("models") or []:
+            size = int(m.get("size") or 0)
+            vram = int(m.get("size_vram") or 0)
+            cpu = max(0, size - vram)
+            gpu_pct = round(100 * vram / size) if size else 0
+            if vram <= 0:
+                placement = "cpu"
+            elif cpu <= 0:
+                placement = "gpu"
+            else:
+                placement = "partial"
+            result["models"].append({
+                "name": m.get("name") or m.get("model") or "?",
+                "size": size,
+                "size_vram": vram,
+                "size_cpu": cpu,
+                "gpu_pct": gpu_pct,
+                "placement": placement,
+                "context_length": m.get("context_length"),
+                "expires_at": m.get("expires_at"),
+            })
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)
+
+    _ps_cache = (now, result)
+    return result
+
+
+def ollama_parallelism() -> dict:
+    """Server-side concurrency knobs, if this process happens to know them (they
+    configure the Ollama server on ml01, not our client, so they're usually only
+    set in the env when we run Ollama ourselves). ``None`` means "configured on the
+    server, not visible from here"."""
+    import os
+
+    def _int(name: str) -> Optional[int]:
+        raw = os.getenv(name)
+        try:
+            return int(raw) if raw not in (None, "") else None
+        except ValueError:
+            return None
+
+    return {
+        "num_parallel": _int("OLLAMA_NUM_PARALLEL"),
+        "max_loaded_models": _int("OLLAMA_MAX_LOADED_MODELS"),
+        "max_queue": _int("OLLAMA_MAX_QUEUE"),
+    }
+
+
+def server_capacity() -> dict:
+    """The safe ceiling for our app-side ``max_concurrency`` — i.e. how many
+    generations the shared LLM server can actually run at once.
+
+      * ``recommended`` — the number IT should not exceed. If the config beyond this
+        is applied, requests can't be served in parallel and instead pile onto the
+        GPU (the exact failure we see today with max_concurrency=40).
+      * ``hard`` — a real, server-derived ceiling we can *enforce* (raise on exceed).
+        Only set when Ollama's parallelism is visible from here (env vars present);
+        otherwise ``None`` (we warn but don't block, since we'd be guessing).
+      * ``basis`` — human-readable explanation of where the number came from.
+    """
+    import os
+
+    # Explicit operator override — the one knob that makes the ceiling enforceable
+    # when ml01's parallelism isn't visible here. Set SERVER_MAX_CONCURRENCY in the
+    # backend env to the shared server's real capacity and it becomes a hard cap.
+    try:
+        explicit = os.getenv("SERVER_MAX_CONCURRENCY")
+        if explicit not in (None, ""):
+            n = int(explicit)
+            if n > 0:
+                return {
+                    "recommended": n,
+                    "hard": n,
+                    "basis": f"SERVER_MAX_CONCURRENCY={n} (operator-set hard cap)",
+                }
+    except (TypeError, ValueError):
+        pass
+
+    par = ollama_parallelism()
+    num_parallel = par.get("num_parallel")
+    max_loaded = par.get("max_loaded_models")
+
+    if num_parallel:
+        if max_loaded:
+            hard = num_parallel * max_loaded
+            basis = f"OLLAMA_NUM_PARALLEL={num_parallel} × OLLAMA_MAX_LOADED_MODELS={max_loaded}"
+            return {"recommended": hard, "hard": hard, "basis": basis}
+        # Parallel-per-model known but loaded-model cap isn't → recommend, don't enforce.
+        return {
+            "recommended": num_parallel,
+            "hard": None,
+            "basis": f"OLLAMA_NUM_PARALLEL={num_parallel} per loaded model (loaded-model cap not visible)",
+        }
+
+    # Ollama's server-side parallelism isn't visible from this process. Fall back to
+    # the env-tuned safe default and only *warn* — hard-blocking on a guess would be wrong.
+    return {
+        "recommended": settings.CHAT_MAX_CONCURRENCY,
+        "hard": None,
+        "basis": (
+            f"conservative default (CHAT_MAX_CONCURRENCY={settings.CHAT_MAX_CONCURRENCY}); "
+            "ml01 parallelism isn't visible from here, so this is a guardrail, not a hard limit"
+        ),
+    }
+
+
 def _defaults() -> dict[str, Any]:
     """Effective config when IT has overridden nothing. Mirrors current behavior:
     summarizer/general use FAST_MODEL_NAME (the dedicated *_MODEL_NAME env vars are
@@ -380,6 +518,19 @@ def _validate_patch(patch: dict) -> dict:
             v = int(patch[fld])
             _check_range(fld, v)
             clean[fld] = v
+
+    # Guardrail: never let the app admit more concurrent generations than the shared
+    # server can actually run. When the server's real capacity is known we hard-block;
+    # otherwise the UI still warns against exceeding the recommended ceiling.
+    if "max_concurrency" in clean:
+        cap = server_capacity()
+        hard = cap.get("hard")
+        if hard is not None and clean["max_concurrency"] > hard:
+            raise ValueError(
+                f"max_concurrency {clean['max_concurrency']} exceeds the shared server's real "
+                f"capacity of {hard} ({cap['basis']}). Requests beyond this can't be served in "
+                f"parallel — they pile onto the GPU and every user slows down. Lower it to {hard} or below."
+            )
 
     if "semantic_router" in patch:
         sr = patch["semantic_router"]
