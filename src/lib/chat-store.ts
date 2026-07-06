@@ -87,6 +87,12 @@ export interface DynamicFormData {
   submit_endpoint: string;
   // {field_name: value} resolved from the logged-in user's profile for autofill-bound fields.
   prefill?: Record<string, string>;
+  // When set, the form submits by invoking a Connector Studio operation instead of the
+  // default forms endpoint — field values are passed straight through as the op's args.
+  submit_target?: {
+    kind: "connector";
+    operation_id: number;
+  };
 }
 
 // LLM-drafted form template shown for admin review/editing before it's actually created.
@@ -130,6 +136,7 @@ export interface InteractivePayload {
     | "dynamic_form"
     | "form_builder"
     | "quick_choice"
+    | "connector_link"
     | "travel_request_form"
     | "travel_expense_form"
     | "cancel_leave_form"
@@ -147,7 +154,19 @@ export interface InteractivePayload {
     | DynamicFormData
     | QuickChoiceData
     | FormBuilderDraft
+    | ConnectorLinkData
     | ChartSpec;
+}
+
+// Shown when a user hits a per_user connector they haven't linked their own credential to.
+export interface ConnectorLinkData {
+  connector_id: number;
+  connector_name: string;
+  auth_type: string;
+  // "manual" → collect credential fields; "oauth" → one-click SSO sign-in (Microsoft/Zoho).
+  mode?: "manual" | "oauth";
+  provider?: string;
+  fields: { name: string; label: string; secret?: boolean }[];
 }
 
 export interface Turn {

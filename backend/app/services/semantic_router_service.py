@@ -28,7 +28,10 @@ back to the existing LLM router. This service never raises into the request path
 from __future__ import annotations
 
 import datetime
+import logging
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 
 from app.database import SessionLocal
 from app.models import RouterExample
@@ -195,7 +198,8 @@ class SemanticRouterService:
     def add_example(utterance: str, domain: str, sub_intent: str,
                     entities: dict | None = None, source: str = "manual",
                     embedding: list | None = None,
-                    connector_operation_id: int | None = None) -> bool:
+                    connector_operation_id: int | None = None,
+                    raise_on_error: bool = False) -> bool:
         """Idempotent upsert of one labeled example, keyed by normalised utterance.
 
         If ``embedding`` is supplied (e.g. ChatFeedback.user_message_embedding for a confirmed
@@ -234,6 +238,90 @@ class SemanticRouterService:
             _EXACT[norm] = {"domain": domain, "sub_intent": sub_intent, "entities": entities or {}}
             return True
         except Exception as e:  # noqa: BLE001
+            db.rollback()
+            log.warning("add_example failed for %r (domain=%s sub_intent=%s): %s",
+                        utterance[:80], domain, sub_intent, e, exc_info=True)
+            if raise_on_error:
+                raise
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_example_active(example_id: int, is_active: bool) -> bool:
+        """Soft-enable/disable one example. Keeps the O(1) exact-match cache in sync."""
+        db = SessionLocal()
+        try:
+            row = db.query(RouterExample).filter(RouterExample.id == example_id).first()
+            if row is None:
+                return False
+            row.is_active = is_active
+            db.commit()
+            if is_active:
+                _EXACT[row.utterance_norm] = {"domain": row.domain, "sub_intent": row.sub_intent, "entities": row.entities or {}}
+            else:
+                _EXACT.pop(row.utterance_norm, None)
+            return True
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def delete_example(example_id: int) -> bool:
+        """Hard-delete one example and drop it from the exact-match cache."""
+        db = SessionLocal()
+        try:
+            row = db.query(RouterExample).filter(RouterExample.id == example_id).first()
+            if row is None:
+                return False
+            norm = row.utterance_norm
+            db.delete(row)
+            db.commit()
+            _EXACT.pop(norm, None)
+            return True
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
+    @staticmethod
+    def edit_example(example_id: int, new_utterance: str) -> bool:
+        """Change an example's phrasing in place — re-normalises and re-embeds.
+
+        Returns False if the new phrasing collides with a different existing example
+        (utterance_norm is the unique idempotency key)."""
+        new_utterance = (new_utterance or "").strip()
+        if not new_utterance:
+            return False
+        db = SessionLocal()
+        try:
+            row = db.query(RouterExample).filter(RouterExample.id == example_id).first()
+            if row is None:
+                return False
+            old_norm = row.utterance_norm
+            new_norm = _norm(new_utterance)
+            if new_norm != old_norm:
+                clash = db.query(RouterExample).filter(
+                    RouterExample.utterance_norm == new_norm,
+                    RouterExample.id != example_id,
+                ).first()
+                if clash is not None:
+                    return False
+            expanded, _ = _expand_query(new_utterance)
+            emb = PolicyService._get_embedding(expanded)
+            row.utterance = new_utterance
+            row.utterance_norm = new_norm
+            if emb is not None:
+                row.embedding = emb
+            db.commit()
+            _EXACT.pop(old_norm, None)
+            if row.is_active:
+                _EXACT[new_norm] = {"domain": row.domain, "sub_intent": row.sub_intent, "entities": row.entities or {}}
+            return True
+        except Exception:  # noqa: BLE001
             db.rollback()
             return False
         finally:

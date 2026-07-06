@@ -3720,6 +3720,27 @@ DYNAMIC_FORM_END = "[DYNAMIC_FORM_END]"
 QUICK_CHOICE_START = "[QUICK_CHOICE_START]"
 QUICK_CHOICE_END = "[QUICK_CHOICE_END]"
 
+# Marker for the "connect your account" card shown when a user hits a per_user
+# connector they haven't linked their own credential to yet.
+CONNECTOR_LINK_START = "[CONNECTOR_LINK_START]"
+CONNECTOR_LINK_END = "[CONNECTOR_LINK_END]"
+
+
+def _connector_link_fields(auth_type: str) -> list:
+    """The credential inputs the link card collects, keyed to what inject_auth reads."""
+    if auth_type == "api_key":
+        return [{"name": "api_key", "label": "API Key", "secret": True}]
+    if auth_type == "bearer":
+        return [{"name": "token", "label": "Access Token", "secret": True}]
+    if auth_type == "basic":
+        return [
+            {"name": "username", "label": "Username", "secret": False},
+            {"name": "password", "label": "Password", "secret": True},
+        ]
+    if auth_type == "oauth2":
+        return [{"name": "access_token", "label": "Access Token", "secret": True}]
+    return []
+
 
 def _ms365_confirmation_card(action_type: str, params: dict) -> str:
     """Build the user-facing confirmation card for a staged MS365 write action.
@@ -4814,10 +4835,17 @@ def _greeting_response(state: AgentState) -> str:
         except Exception:
             pass
 
-    # Lead with a few role-appropriate capabilities rather than a fixed menu.
-    visible = _caps.capabilities_for_role(role)[:4]
+    # Lead with a few role-appropriate capabilities rather than a fixed menu, and
+    # surface one connected app (connector) if any are published + visible to this role.
+    all_caps = _caps.capabilities_for_role(role)
+    statics = [c for c in all_caps if not c.key.startswith("connector_")]
+    conns = [c for c in all_caps if c.key.startswith("connector_")]
+    visible = (statics[:3] + conns[:1]) if conns else statics[:4]
     if visible:
-        bullets = "\n".join(f"- {c.title} — _e.g. \"{c.examples[0]}\"_" for c in visible)
+        bullets = "\n".join(
+            (f"- {c.title} — _e.g. \"{c.examples[0]}\"_" if c.examples else f"- {c.title}")
+            for c in visible
+        )
         body = (
             f" I'm Centriq, your workplace assistant. Here are a few things I can help you with:\n\n"
             f"{bullets}\n\nWhat would you like to do?"
@@ -5066,6 +5094,44 @@ async def connector_agent(state: AgentState):
         return {"messages": [AIMessage(
             content=f"No operations are available to you for the '{slug}' connector."
         )]}
+
+    # Connectors that use the caller's own credential (per_user, or connected_account SSO):
+    # if it's not linked yet, render a "connect your account" card instead of running tools
+    # that would just fail with 401.
+    from app.database import SessionLocal
+    from app.models import ConnectorAuth as _ConnectorAuth
+    from app.connectors.auth import has_credential, connected_account_provider
+    with SessionLocal() as _db:
+        _auth = _db.query(_ConnectorAuth).filter(
+            _ConnectorAuth.connector_id == connector["id"]
+        ).first()
+    _auth_type = _auth.auth_type if _auth else "none"
+    _auth_mode = _auth.auth_mode if _auth else "service"
+    _needs_link = _auth_type == "connected_account" or (_auth_mode == "per_user" and _auth_type != "none")
+    if _needs_link and not has_credential(connector["id"], _auth_type, _auth_mode, user_email):
+        if _auth_type == "connected_account":
+            # SSO: user signs in via the existing OAuth popup — no token typing.
+            link_payload = {
+                "connector_id": connector["id"],
+                "connector_name": connector["name"],
+                "auth_type": "connected_account",
+                "mode": "oauth",
+                "provider": connected_account_provider(connector["id"]),
+                "fields": [],
+            }
+        else:
+            link_payload = {
+                "connector_id": connector["id"],
+                "connector_name": connector["name"],
+                "auth_type": _auth_type,
+                "mode": "manual",
+                "fields": _connector_link_fields(_auth_type),
+            }
+        return {"messages": [AIMessage(content=(
+            f"To use **{connector['name']}**, connect your account first — your credential "
+            f"stays encrypted and is used only for your own requests.\n"
+            f"{CONNECTOR_LINK_START}{json.dumps(link_payload)}{CONNECTOR_LINK_END}"
+        ))]}
 
     tools = build_tools_for_request(ops, user_email, max_tools=8)
 

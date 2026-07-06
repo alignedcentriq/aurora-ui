@@ -301,22 +301,25 @@ export function DynamicFormWidget({ data, userEmail, userRole, onSubmitted }: Pr
     if (missingRequired || submitting || submitted) return;
     setSubmitting(true);
     try {
-      const res = await fetch(data.submit_endpoint || "/api/forms/submit", {
+      // Connector-backed forms invoke a Connector Studio operation; others use the forms endpoint.
+      const connector = data.submit_target?.kind === "connector" ? data.submit_target : null;
+      const endpoint = connector ? "/api/connectors/invoke" : data.submit_endpoint || "/api/forms/submit";
+      const payload = connector
+        ? { operation_id: connector.operation_id, args: values }
+        : { form_template_id: data.template_id, field_values: values };
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(userEmail ? { "x-user-email": userEmail } : {}),
           ...(userRole ? { "x-user-role": userRole.toLowerCase() } : {}),
         },
-        body: JSON.stringify({
-          form_template_id: data.template_id,
-          field_values: values,
-        }),
+        body: JSON.stringify(payload),
       });
       const result = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(result.detail || "Submission failed.");
       setSubmitted(true);
-      onSubmitted(result.message || "Your request has been submitted.");
+      onSubmitted(result.message || result.text || "Your request has been submitted.");
     } catch (err) {
       onSubmitted(err instanceof Error ? err.message : "Failed to submit. Please try again.");
     } finally {

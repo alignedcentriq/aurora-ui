@@ -176,9 +176,11 @@ async def enrich_with_llm(ops: list[dict], connector_name: str) -> list[dict]:
     """
     try:
         from app.services.llm_controls_service import get_llm
-        from app.config import settings
 
-        llm = get_llm(settings.ROUTER_MODEL_NAME)
+        # get_llm takes a TIER name, not a model id — the "router" tier is the light
+        # model this enrichment is meant to use. (Passing a model id raised "unknown
+        # tier" and, because this block is fail-soft, silently skipped all enrichment.)
+        llm = get_llm("router")
 
         enriched = []
         for op in ops:

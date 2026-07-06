@@ -1187,6 +1187,7 @@ _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', r
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
 _form_builder_re = re.compile(r'\[FORM_BUILDER_START\](.*?)\[FORM_BUILDER_END\]', re.DOTALL)
 _quick_choice_re = re.compile(r'\[QUICK_CHOICE_START\](.*?)\[QUICK_CHOICE_END\]', re.DOTALL)
+_connector_link_re = re.compile(r'\[CONNECTOR_LINK_START\](.*?)\[CONNECTOR_LINK_END\]', re.DOTALL)
 _chart_re = re.compile(r'\[CHART_START\](.*?)\[CHART_END\]', re.DOTALL)
 _download_tag_re = re.compile(r"\[DOWNLOAD_PDF:([^:]+):([^\]]+)\]")
 # ARB #41 — citation extraction. RAG search tools (search_policies / search_projects /
@@ -1299,6 +1300,17 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         except Exception as _e:
             logger.warning("Failed to parse QUICK_CHOICE marker JSON (widget dropped): %s; raw=%.200r", _e, qc_match.group(1))
             final_message = _quick_choice_re.sub("", final_message).strip()
+
+    # Extract the connector "connect your account" card (per_user connectors).
+    cl_match = _connector_link_re.search(final_message)
+    if cl_match:
+        try:
+            cl_data = json.loads(cl_match.group(1))
+            interactive = {"type": "connector_link", "data": cl_data}
+            final_message = _connector_link_re.sub("", final_message).strip()
+        except Exception as _e:
+            logger.warning("Failed to parse CONNECTOR_LINK marker JSON (widget dropped): %s; raw=%.200r", _e, cl_match.group(1))
+            final_message = _connector_link_re.sub("", final_message).strip()
 
     # Extract analytics chart (ChartSpec) — must run BEFORE the JSON-blob stripping below so the
     # chart JSON isn't mangled. The marker wraps the JSON, so it's removed before any blob regex.
