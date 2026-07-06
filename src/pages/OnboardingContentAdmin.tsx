@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode, type DragEvent } from "react";
 import {
   Loader2,
   PlusCircle,
@@ -7,11 +7,19 @@ import {
   Upload,
   Video,
   Link2,
-  GripVertical,
   FileText,
   Download,
   CheckCircle2,
+  FileX2,
+  ListChecks,
+  Link as LinkIcon,
+  Bell,
+  Zap,
+  ArrowUpRight,
+  MessageSquare,
+  GripVertical,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -87,6 +95,54 @@ interface InductionDoc {
   is_active: boolean;
 }
 
+interface StepAdmin {
+  step_key: string;
+  title: string;
+  description: string;
+  category: string;
+  kind: string; // manual | deeplink | documents | video
+  cta_label: string;
+  action_payload: { prompt?: string; route?: string };
+  required: boolean;
+  is_active: boolean;
+  is_builtin: boolean;
+  auto: boolean;
+  sort_order: number;
+}
+
+interface StepDraft {
+  step_key?: string;
+  title: string;
+  description: string;
+  category: string;
+  kind: string;
+  cta_label: string;
+  prompt: string;
+  required: boolean;
+  is_active: boolean;
+  sort_order: number;
+  is_builtin: boolean;
+}
+
+interface QuickLink {
+  id: string;
+  title: string;
+  url: string;
+  description: string;
+  category: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+interface ReminderSettings {
+  enabled: boolean;
+  stall_days: number;
+  remind_hire: boolean;
+  remind_manager: boolean;
+  remind_hr: boolean;
+  hr_email: string;
+}
+
 interface Props {
   authHeaders: Record<string, string>;
 }
@@ -99,6 +155,192 @@ const EMPTY: Partial<InductionVideo> = {
   sort_order: 0,
   is_active: true,
 };
+
+// ── Shared layout primitives ────────────────────────────────────────
+// One card per content type with a consistent header band, so the three
+// sections read as an aligned column even though their row actions differ.
+function SectionCard({
+  icon,
+  iconGradient,
+  title,
+  count,
+  description,
+  action,
+  children,
+}: {
+  icon: ReactNode;
+  iconGradient: string;
+  title: string;
+  count?: number;
+  description: ReactNode;
+  action: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-900/40 backdrop-blur-xl overflow-hidden shadow-sm">
+      <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.05] bg-white/50 dark:bg-zinc-950/20">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={cn(
+                "h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br",
+                iconGradient,
+              )}
+            >
+              {icon}
+            </div>
+            <h3 className="text-[14.5px] font-black text-foreground tracking-tight">{title}</h3>
+            {count != null && (
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800 text-muted-foreground tabular-nums">
+                {count}
+              </span>
+            )}
+          </div>
+          <p className="text-[12px] text-muted-foreground mt-1.5 leading-relaxed max-w-2xl">
+            {description}
+          </p>
+        </div>
+        <div className="shrink-0">{action}</div>
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+interface DndProps {
+  onDragStart: (e: DragEvent) => void;
+  onDragOver: (e: DragEvent) => void;
+  onDrop: (e: DragEvent) => void;
+  onDragEnd: (e: DragEvent) => void;
+  dragging: boolean;
+}
+
+// A row with an optional drag handle, a fixed leading icon, flexible body, and a
+// right-anchored action rail (divider makes the controls line up down the list).
+function Row({
+  icon,
+  iconGradient,
+  active,
+  children,
+  actions,
+  dnd,
+}: {
+  icon: ReactNode;
+  iconGradient: string;
+  active: boolean;
+  children: ReactNode;
+  actions: ReactNode;
+  dnd?: DndProps;
+}) {
+  return (
+    <div
+      onDragOver={dnd?.onDragOver}
+      onDrop={dnd?.onDrop}
+      className={cn(
+        "flex items-center gap-2.5 rounded-xl border px-3.5 py-3 transition-colors bg-white/70 dark:bg-zinc-900/50",
+        active
+          ? "border-slate-200/70 dark:border-white/[0.06]"
+          : "border-dashed border-slate-300/70 dark:border-white/[0.08] opacity-60",
+        dnd?.dragging && "ring-2 ring-violet-400/60 opacity-60",
+      )}
+    >
+      {dnd && (
+        <button
+          draggable
+          onDragStart={dnd.onDragStart}
+          onDragEnd={dnd.onDragEnd}
+          title="Drag to reorder"
+          aria-label="Drag to reorder"
+          className="shrink-0 -ml-1 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      )}
+      <div
+        className={cn(
+          "h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br",
+          iconGradient,
+        )}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">{children}</div>
+      <div className="flex items-center gap-1 shrink-0 pl-2.5 border-l border-slate-200/60 dark:border-white/[0.05]">
+        {actions}
+      </div>
+    </div>
+  );
+}
+
+// Consistent icon-button used across every row's action rail.
+function IconBtn({
+  onClick,
+  title,
+  disabled,
+  tone = "violet",
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+  tone?: "violet" | "sky" | "amber" | "red";
+  children: ReactNode;
+}) {
+  const tones: Record<string, string> = {
+    violet: "hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30",
+    sky: "hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/30",
+    amber: "hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30",
+    red: "hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30",
+  };
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className={cn(
+        "p-2 rounded-lg text-muted-foreground transition-colors disabled:opacity-40",
+        tones[tone],
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Small uppercase pill used for status/type tags on a row title.
+function Pill({ tone, children }: { tone: string; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded",
+        tone,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+// A label + hint on the left, a control on the right — used by the reminders settings card.
+function SettingRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-3">
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-foreground">{label}</p>
+        <p className="text-[11.5px] text-muted-foreground mt-0.5">{hint}</p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
 
 export default function OnboardingContentAdmin({ authHeaders }: Props) {
   const [videos, setVideos] = useState<InductionVideo[]>([]);
@@ -361,6 +603,20 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     }
   };
 
+  const toggleIndActive = async (d: InductionDoc) => {
+    try {
+      const res = await fetch(`/api/onboard/admin/induction-docs/${d.id}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ is_active: !d.is_active }),
+      });
+      if (!res.ok) throw new Error();
+      loadIndDocs();
+    } catch {
+      toast.error("Couldn't update the document.");
+    }
+  };
+
   const onIndUpload = async (file: File) => {
     setIndUploading(true);
     try {
@@ -388,6 +644,254 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
       toast.error(e instanceof Error ? e.message : "Couldn't upload.");
     } finally {
       setIndUploading(false);
+    }
+  };
+
+  // ── Journey steps ───────────────────────────────────────────────
+  const [steps, setSteps] = useState<StepAdmin[]>([]);
+  const [stepsLoading, setStepsLoading] = useState(true);
+  const [stepDraft, setStepDraft] = useState<StepDraft | null>(null);
+  const [savingStep, setSavingStep] = useState(false);
+
+  const loadSteps = useCallback(async () => {
+    setStepsLoading(true);
+    try {
+      const res = await fetch("/api/onboard/admin/steps", { headers: authHeaders });
+      if (!res.ok) throw new Error();
+      setSteps(await res.json());
+    } catch {
+      toast.error("Couldn't load journey steps.");
+    } finally {
+      setStepsLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    loadSteps();
+  }, [loadSteps]);
+
+  const openNewStep = () =>
+    setStepDraft({
+      title: "",
+      description: "",
+      category: "",
+      kind: "manual",
+      cta_label: "",
+      prompt: "",
+      required: true,
+      is_active: true,
+      sort_order: (steps[steps.length - 1]?.sort_order ?? 0) + 10,
+      is_builtin: false,
+    });
+  const openEditStep = (s: StepAdmin) =>
+    setStepDraft({
+      step_key: s.step_key,
+      title: s.title,
+      description: s.description,
+      category: s.category,
+      kind: s.kind,
+      cta_label: s.cta_label,
+      prompt: s.action_payload?.prompt || "",
+      required: s.required,
+      is_active: s.is_active,
+      sort_order: s.sort_order,
+      is_builtin: s.is_builtin,
+    });
+
+  const saveStep = async () => {
+    if (!stepDraft) return;
+    if (!stepDraft.title.trim()) {
+      toast.error("A step title is required.");
+      return;
+    }
+    setSavingStep(true);
+    const payload: Record<string, unknown> = {
+      title: stepDraft.title.trim(),
+      description: stepDraft.description || "",
+      category: stepDraft.category.trim() || "General",
+      cta_label: stepDraft.cta_label.trim(),
+      required: stepDraft.required,
+      is_active: stepDraft.is_active,
+      sort_order: stepDraft.sort_order,
+    };
+    // kind is only settable on custom steps; the deeplink prompt applies to both.
+    if (!stepDraft.is_builtin) payload.kind = stepDraft.kind;
+    if (stepDraft.kind === "deeplink") payload.prompt = stepDraft.prompt.trim();
+    try {
+      const isEdit = !!stepDraft.step_key;
+      const res = await fetch(
+        isEdit ? `/api/onboard/admin/steps/${stepDraft.step_key}` : "/api/onboard/admin/steps",
+        { method: isEdit ? "PUT" : "POST", headers: authHeaders, body: JSON.stringify(payload) },
+      );
+      if (!res.ok) throw new Error();
+      toast.success(isEdit ? "Step updated." : "Journey step added.");
+      setStepDraft(null);
+      loadSteps();
+    } catch {
+      toast.error("Couldn't save the step.");
+    } finally {
+      setSavingStep(false);
+    }
+  };
+
+  const patchStep = async (s: StepAdmin, data: Partial<Record<string, unknown>>) => {
+    try {
+      const res = await fetch(`/api/onboard/admin/steps/${s.step_key}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error();
+      loadSteps();
+    } catch {
+      toast.error("Couldn't update the step.");
+    }
+  };
+
+  const removeStep = async (s: StepAdmin) => {
+    const msg = s.is_builtin
+      ? `Hide "${s.title}" from the journey? (Built-in — you can re-enable it later.)`
+      : `Delete the "${s.title}" step? This can't be undone.`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await fetch(`/api/onboard/admin/steps/${s.step_key}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error();
+      toast.success(s.is_builtin ? "Step hidden." : "Step deleted.");
+      loadSteps();
+    } catch {
+      toast.error("Couldn't remove the step.");
+    }
+  };
+
+  // ── Quick links ─────────────────────────────────────────────────
+  const [links, setLinks] = useState<QuickLink[]>([]);
+  const [linksLoading, setLinksLoading] = useState(true);
+  const [linkDraft, setLinkDraft] = useState<Partial<QuickLink> | null>(null);
+  const [savingLink, setSavingLink] = useState(false);
+
+  const loadLinks = useCallback(async () => {
+    setLinksLoading(true);
+    try {
+      const res = await fetch("/api/onboard/admin/quick-links", { headers: authHeaders });
+      if (!res.ok) throw new Error();
+      setLinks(await res.json());
+    } catch {
+      toast.error("Couldn't load quick links.");
+    } finally {
+      setLinksLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    loadLinks();
+  }, [loadLinks]);
+
+  const saveLink = async () => {
+    if (!linkDraft) return;
+    if (!linkDraft.title?.trim() || !linkDraft.url?.trim()) {
+      toast.error("Title and a URL are required.");
+      return;
+    }
+    setSavingLink(true);
+    const payload = {
+      title: linkDraft.title.trim(),
+      url: linkDraft.url.trim(),
+      description: linkDraft.description || "",
+      category: linkDraft.category || "",
+      sort_order: linkDraft.sort_order ?? 0,
+      is_active: linkDraft.is_active ?? true,
+    };
+    try {
+      const isEdit = !!linkDraft.id;
+      const res = await fetch(
+        isEdit ? `/api/onboard/admin/quick-links/${linkDraft.id}` : "/api/onboard/admin/quick-links",
+        { method: isEdit ? "PUT" : "POST", headers: authHeaders, body: JSON.stringify(payload) },
+      );
+      if (!res.ok) throw new Error();
+      toast.success(isEdit ? "Quick link updated." : "Quick link added.");
+      setLinkDraft(null);
+      loadLinks();
+    } catch {
+      toast.error("Couldn't save the quick link.");
+    } finally {
+      setSavingLink(false);
+    }
+  };
+
+  const toggleLinkActive = async (l: QuickLink) => {
+    try {
+      const res = await fetch(`/api/onboard/admin/quick-links/${l.id}`, {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify({ is_active: !l.is_active }),
+      });
+      if (!res.ok) throw new Error();
+      loadLinks();
+    } catch {
+      toast.error("Couldn't update the quick link.");
+    }
+  };
+
+  const removeLink = async (l: QuickLink) => {
+    if (!confirm(`Delete "${l.title}"?`)) return;
+    try {
+      const res = await fetch(`/api/onboard/admin/quick-links/${l.id}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error();
+      toast.success("Quick link deleted.");
+      loadLinks();
+    } catch {
+      toast.error("Couldn't delete the quick link.");
+    }
+  };
+
+  // ── Reminder settings ───────────────────────────────────────────
+  const [reminders, setReminders] = useState<ReminderSettings | null>(null);
+  const [remindersDirty, setRemindersDirty] = useState(false);
+  const [savingReminders, setSavingReminders] = useState(false);
+
+  const loadReminders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/onboard/admin/reminder-settings", { headers: authHeaders });
+      if (!res.ok) throw new Error();
+      setReminders(await res.json());
+      setRemindersDirty(false);
+    } catch {
+      toast.error("Couldn't load reminder settings.");
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    loadReminders();
+  }, [loadReminders]);
+
+  const patchReminders = (data: Partial<ReminderSettings>) => {
+    setReminders((r) => (r ? { ...r, ...data } : r));
+    setRemindersDirty(true);
+  };
+
+  const saveReminders = async () => {
+    if (!reminders) return;
+    setSavingReminders(true);
+    try {
+      const res = await fetch("/api/onboard/admin/reminder-settings", {
+        method: "PUT",
+        headers: authHeaders,
+        body: JSON.stringify(reminders),
+      });
+      if (!res.ok) throw new Error();
+      setReminders(await res.json());
+      setRemindersDirty(false);
+      toast.success("Reminder settings saved.");
+    } catch {
+      toast.error("Couldn't save reminder settings.");
+    } finally {
+      setSavingReminders(false);
     }
   };
 
@@ -534,191 +1038,450 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
     }
   };
 
-  return (
-    <div className="flex-1 overflow-auto px-6 sm:px-8 py-5">
-      <div className="max-w-4xl">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-[15px] font-black text-foreground">Induction Videos</h3>
-            <p className="text-[12.5px] text-muted-foreground mt-0.5">
-              Manage the orientation videos new hires watch. Paste an external link
-              (SharePoint/Stream/YouTube/MP4) or upload a file.
-            </p>
-          </div>
-          <Button onClick={openNew} size="sm" className="gap-1.5">
-            <PlusCircle className="h-4 w-4" /> Add video
-          </Button>
-        </div>
+  const [tab, setTab] = useState<
+    "steps" | "videos" | "documents" | "reference" | "links" | "reminders"
+  >("steps");
 
-        {loading ? (
-          <div className="flex items-center justify-center py-20 text-muted-foreground gap-2">
-            <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
-            <span className="text-[13px]">Loading videos…</span>
-          </div>
-        ) : videos.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3 rounded-2xl border border-dashed border-slate-200 dark:border-white/[0.08]">
-            <div className="h-14 w-14 rounded-2xl bg-violet-500/10 flex items-center justify-center">
-              <Video className="h-6 w-6 text-violet-400 opacity-70" />
-            </div>
-            <p className="text-[14px] font-medium">No induction videos yet.</p>
-            <Button onClick={openNew} variant="outline" size="sm" className="gap-1.5">
-              <PlusCircle className="h-4 w-4" /> Add your first video
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-2.5">
-            {videos.map((v) => (
-              <div
-                key={v.id}
+  // ── Drag-to-reorder (native HTML5 DnD; no dependency) ───────────
+  const dragFrom = useRef<number | null>(null);
+  const [dragKind, setDragKind] = useState<string | null>(null);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  const persistOrder = useCallback(
+    async (url: string, keys: (string | number)[], reload: () => void) => {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ order: keys }),
+        });
+        if (!res.ok) throw new Error();
+        reload();
+      } catch {
+        toast.error("Couldn't save the new order.");
+        reload();
+      }
+    },
+    [authHeaders],
+  );
+
+  // Returns per-row drag handlers. `commit` receives the reordered key list.
+  function makeDnd<T>(
+    kind: string,
+    list: T[],
+    setList: (v: T[]) => void,
+    keyOf: (t: T) => string | number,
+    commit: (keys: (string | number)[]) => void,
+  ) {
+    return (index: number): DndProps => ({
+      dragging: dragKind === kind && dragIdx === index,
+      onDragStart: (e) => {
+        dragFrom.current = index;
+        setDragKind(kind);
+        setDragIdx(index);
+        e.dataTransfer.effectAllowed = "move";
+      },
+      onDragOver: (e) => {
+        if (dragKind !== kind) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      },
+      onDrop: (e) => {
+        e.preventDefault();
+        const from = dragFrom.current;
+        dragFrom.current = null;
+        setDragKind(null);
+        setDragIdx(null);
+        if (from === null || from === index || dragKind !== kind) return;
+        const next = list.slice();
+        const [moved] = next.splice(from, 1);
+        next.splice(index, 0, moved);
+        setList(next);
+        commit(next.map(keyOf));
+      },
+      onDragEnd: () => {
+        dragFrom.current = null;
+        setDragKind(null);
+        setDragIdx(null);
+      },
+    });
+  }
+
+  const stepDnd = makeDnd("steps", steps, setSteps, (s) => s.step_key, (keys) =>
+    persistOrder("/api/onboard/admin/steps/reorder", keys, loadSteps),
+  );
+  const videoDnd = makeDnd("videos", videos, setVideos, (v) => v.id, (keys) =>
+    persistOrder("/api/onboard/admin/videos/reorder", keys, load),
+  );
+  const docDnd = makeDnd("documents", docs, setDocs, (d) => d.doc_key, (keys) =>
+    persistOrder("/api/onboard/admin/doc-sections/reorder", keys, loadDocs),
+  );
+  const indDocDnd = makeDnd("reference", indDocs, setIndDocs, (d) => d.id, (keys) =>
+    persistOrder("/api/onboard/admin/induction-docs/reorder", keys, loadIndDocs),
+  );
+  const linkDnd = makeDnd("links", links, setLinks, (l) => l.id, (keys) =>
+    persistOrder("/api/onboard/admin/quick-links/reorder", keys, loadLinks),
+  );
+
+  const TABS = [
+    { key: "steps", label: "Journey Steps", icon: ListChecks, count: steps.length },
+    { key: "videos", label: "Videos", icon: Video, count: videos.length },
+    { key: "documents", label: "Documents", icon: FileText, count: docs.length },
+    { key: "reference", label: "Reference Docs", icon: FileText, count: indDocs.length },
+    { key: "links", label: "Quick Links", icon: LinkIcon, count: links.length },
+    { key: "reminders", label: "Reminders", icon: Bell },
+  ] as const;
+
+  return (
+    <div className="flex-1 overflow-auto px-6 sm:px-8 py-6">
+      <div className="max-w-4xl mx-auto">
+        {/* Section navigation — each content type is its own tab, not one long scroll. */}
+        <nav className="flex flex-wrap items-center gap-1.5 mb-5">
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            const activeTab = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
                 className={cn(
-                  "flex items-center gap-3 rounded-2xl border p-3.5 transition-colors bg-white/70 dark:bg-zinc-900/50",
-                  v.is_active
-                    ? "border-slate-200/70 dark:border-white/[0.06]"
-                    : "border-slate-200/50 dark:border-white/[0.04] opacity-60",
+                  "flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-semibold transition-all border",
+                  activeTab
+                    ? "bg-violet-600 text-white border-violet-600 shadow-sm shadow-violet-600/30"
+                    : "bg-white/60 dark:bg-zinc-900/50 text-muted-foreground hover:text-foreground border-slate-200/70 dark:border-white/[0.06]",
                 )}
               >
-                <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
-                  <Video className="h-4.5 w-4.5 text-white" />
-                </div>
-                <div className="min-w-0 flex-1">
+                <Icon className="h-3.5 w-3.5" />
+                {t.label}
+                {"count" in t && t.count != null && (
+                  <span
+                    className={cn(
+                      "text-[10px] font-bold px-1.5 rounded-full tabular-nums",
+                      activeTab ? "bg-white/20" : "bg-slate-200/70 dark:bg-zinc-800",
+                    )}
+                  >
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {tab === "steps" && (
+        <>
+        {/* ── Journey steps ── */}
+        <SectionCard
+          icon={<ListChecks className="h-4 w-4 text-white" />}
+          iconGradient="from-fuchsia-500 to-purple-600"
+          title="Journey Steps"
+          count={steps.length}
+          description="The ordered steps every new hire walks. Add your own cards, retitle or reorder built-ins, toggle required, or hide any step. Custom steps are a simple “Mark done” card or a link that opens the assistant / a page."
+          action={
+            <Button onClick={openNewStep} size="sm" className="gap-1.5">
+              <PlusCircle className="h-4 w-4" /> Add step
+            </Button>
+          }
+        >
+          {stepsLoading ? (
+            <LoadingRow tone="violet" label="Loading journey…" />
+          ) : (
+            <div className="space-y-2">
+              {steps.map((s, i) => (
+                <Row
+                  key={s.step_key}
+                  dnd={stepDnd(i)}
+                  active={s.is_active}
+                  icon={<span className="text-[12px] font-black text-white tabular-nums">{i + 1}</span>}
+                  iconGradient="from-fuchsia-500 to-purple-600"
+                  actions={
+                    <>
+                      <Switch
+                        checked={s.is_active}
+                        onCheckedChange={() => patchStep(s, { is_active: !s.is_active })}
+                        aria-label="Active"
+                        className="mr-0.5"
+                      />
+                      <IconBtn onClick={() => openEditStep(s)} title="Edit step" tone="violet">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      <IconBtn
+                        onClick={() => removeStep(s)}
+                        title={s.is_builtin ? "Hide step" : "Delete step"}
+                        tone="red"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </IconBtn>
+                    </>
+                  }
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13.5px] font-bold text-foreground truncate">{s.title}</span>
+                    {s.category && (
+                      <Pill tone="bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400">
+                        {s.category}
+                      </Pill>
+                    )}
+                    {s.auto ? (
+                      <Pill tone="bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">
+                        <Zap className="h-2.5 w-2.5" /> AUTO
+                      </Pill>
+                    ) : s.kind === "deeplink" ? (
+                      <Pill tone="bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400">
+                        <MessageSquare className="h-2.5 w-2.5" /> LINK
+                      </Pill>
+                    ) : null}
+                    <button
+                      onClick={() => patchStep(s, { required: !s.required })}
+                      title="Toggle required"
+                      className={cn(
+                        "text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors",
+                        s.required
+                          ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+                          : "bg-slate-100 dark:bg-zinc-800 text-slate-400",
+                      )}
+                    >
+                      {s.required ? "REQUIRED" : "OPTIONAL"}
+                    </button>
+                    <Pill
+                      tone={
+                        s.is_builtin
+                          ? "bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400"
+                          : "bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400"
+                      }
+                    >
+                      {s.is_builtin ? "BUILT-IN" : "CUSTOM"}
+                    </Pill>
+                    {!s.is_active && (
+                      <Pill tone="bg-slate-200 dark:bg-zinc-800 text-slate-500">HIDDEN</Pill>
+                    )}
+                  </div>
+                  <p className="text-[11.5px] text-muted-foreground truncate">
+                    {s.description || "No description"}
+                  </p>
+                </Row>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+        </>
+        )}
+
+        {/* ── Induction videos ── */}
+        {tab === "videos" && (
+        <SectionCard
+          icon={<Video className="h-4 w-4 text-white" />}
+          iconGradient="from-violet-500 to-indigo-600"
+          title="Induction Videos"
+          count={videos.length}
+          description="Orientation videos new hires watch. Paste an external link (SharePoint / Stream / YouTube / MP4) or upload a file."
+          action={
+            <Button onClick={openNew} size="sm" className="gap-1.5">
+              <PlusCircle className="h-4 w-4" /> Add video
+            </Button>
+          }
+        >
+          {loading ? (
+            <LoadingRow tone="violet" label="Loading videos…" />
+          ) : videos.length === 0 ? (
+            <EmptyRow
+              icon={<Video className="h-6 w-6 text-violet-400 opacity-70" />}
+              label="No induction videos yet."
+              action={
+                <Button onClick={openNew} variant="outline" size="sm" className="gap-1.5">
+                  <PlusCircle className="h-4 w-4" /> Add your first video
+                </Button>
+              }
+            />
+          ) : (
+            <div className="space-y-2">
+              {videos.map((v, i) => (
+                <Row
+                  key={v.id}
+                  dnd={videoDnd(i)}
+                  active={v.is_active}
+                  icon={<Video className="h-4 w-4 text-white" />}
+                  iconGradient="from-violet-500 to-indigo-600"
+                  actions={
+                    <>
+                      <Switch
+                        checked={v.is_active}
+                        onCheckedChange={() => toggleActive(v)}
+                        aria-label="Active"
+                        className="mr-0.5"
+                      />
+                      <IconBtn onClick={() => openEdit(v)} title="Edit" tone="violet">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      <IconBtn onClick={() => remove(v)} title="Delete" tone="red">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </IconBtn>
+                    </>
+                  }
+                >
                   <div className="flex items-center gap-2">
                     <span className="text-[13.5px] font-bold text-foreground truncate">
                       {v.title}
                     </span>
                     {v.uploaded_filename ? (
-                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
+                      <Pill tone="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
                         <Upload className="h-2.5 w-2.5" /> UPLOADED
-                      </span>
+                      </Pill>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400">
+                      <Pill tone="bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400">
                         <Link2 className="h-2.5 w-2.5" /> LINK
-                      </span>
+                      </Pill>
                     )}
                   </div>
                   <p className="text-[11.5px] text-muted-foreground truncate">
                     {v.description || v.url}
+                    {v.chapters?.length > 0 && (
+                      <span className="text-muted-foreground/70">
+                        {" · "}
+                        {v.chapters.length} chapter{v.chapters.length === 1 ? "" : "s"}
+                      </span>
+                    )}
                   </p>
-                  {v.chapters?.length > 0 && (
-                    <p className="text-[10.5px] text-muted-foreground/70 mt-0.5">
-                      {v.chapters.length} chapter{v.chapters.length === 1 ? "" : "s"}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Switch
-                    checked={v.is_active}
-                    onCheckedChange={() => toggleActive(v)}
-                    aria-label="Active"
-                  />
-                  <button
-                    onClick={() => openEdit(v)}
-                    className="p-2 rounded-lg text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => remove(v)}
-                    className="p-2 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                </Row>
+              ))}
+            </div>
+          )}
+        </SectionCard>
         )}
 
         {/* ── Documents ── */}
-        <div className="mt-9">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[15px] font-black text-foreground flex items-center gap-2">
-                <FileText className="h-4 w-4 text-sky-500" /> Documents
-              </h3>
-              <p className="text-[12.5px] text-muted-foreground mt-0.5">
-                Full control of the joining-document checklist. Add sections, set fields &amp;
-                mandatory, hide any doc, and upload a blank template. Drop a real .docx/.xlsx
-                with <code className="text-[11px] bg-slate-100 dark:bg-zinc-800 px-1 rounded">{"{{ field }}"}</code>{" "}
-                placeholders (hover Upload for the exact tokens) to mail-merge new-hire answers
-                straight into it — any other file type is just a static download.
-              </p>
-            </div>
-            <Button onClick={openNewSection} size="sm" className="gap-1.5 shrink-0">
+        {tab === "documents" && (
+        <SectionCard
+          icon={<FileText className="h-4 w-4 text-white" />}
+          iconGradient="from-sky-500 to-blue-600"
+          title="Documents"
+          count={docs.length}
+          description={
+            <>
+              The joining-document checklist. Add sections, set fields &amp; mandatory, hide any
+              doc, and upload a blank template. Drop a real .docx/.xlsx with{" "}
+              <code className="text-[11px] bg-slate-100 dark:bg-zinc-800 px-1 rounded">
+                {"{{ field }}"}
+              </code>{" "}
+              placeholders (hover Upload for the exact tokens) to mail-merge new-hire answers
+              straight into it — any other file type is just a static download.
+            </>
+          }
+          action={
+            <Button onClick={openNewSection} size="sm" className="gap-1.5">
               <PlusCircle className="h-4 w-4" /> Add section
             </Button>
-          </div>
-
+          }
+        >
           {docsLoading ? (
-            <div className="flex items-center justify-center py-14 text-muted-foreground gap-2">
-              <Loader2 className="h-5 w-5 animate-spin text-sky-500" />
-              <span className="text-[13px]">Loading templates…</span>
-            </div>
+            <LoadingRow tone="sky" label="Loading templates…" />
           ) : (
-            <div className="space-y-2.5">
-              {docs.map((doc) => (
-                <div
+            <div className="space-y-2">
+              {docs.map((doc, i) => (
+                <Row
                   key={doc.doc_key}
-                  className={cn(
-                    "flex items-center gap-3 rounded-2xl border p-3.5 transition-colors bg-white/70 dark:bg-zinc-900/50",
-                    doc.is_active
-                      ? "border-slate-200/70 dark:border-white/[0.06]"
-                      : "border-slate-200/50 dark:border-white/[0.04] opacity-60",
-                  )}
-                >
-                  <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shrink-0">
-                    <FileText className="h-4.5 w-4.5 text-white" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13.5px] font-bold text-foreground truncate">
-                        {doc.name}
-                      </span>
+                  dnd={docDnd(i)}
+                  active={doc.is_active}
+                  icon={<FileText className="h-4 w-4 text-white" />}
+                  iconGradient="from-sky-500 to-blue-600"
+                  actions={
+                    <>
+                      <Switch
+                        checked={doc.is_active}
+                        onCheckedChange={() => toggleDocActive(doc)}
+                        aria-label="Active"
+                        className="mr-0.5"
+                      />
+                      <IconBtn
+                        onClick={() => openEditSection(doc)}
+                        title="Edit name, fields, mandatory"
+                        tone="violet"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      {doc.has_template_file && (
+                        <IconBtn
+                          onClick={() => downloadTemplate(doc)}
+                          title="Download current template"
+                          tone="sky"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </IconBtn>
+                      )}
                       <button
-                        onClick={() => toggleDocRequired(doc)}
-                        title="Toggle mandatory"
-                        className={cn(
-                          "text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors",
-                          doc.required
-                            ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
-                            : "bg-slate-100 dark:bg-zinc-800 text-slate-400",
-                        )}
+                        onClick={() => docFileRefs.current[doc.doc_key]?.click()}
+                        disabled={uploadingDoc === doc.doc_key}
+                        title={placeholderHint(doc)}
+                        className="flex items-center gap-1.5 rounded-lg px-2.5 h-8 text-[11.5px] font-semibold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors"
                       >
-                        {doc.required ? "MANDATORY" : "OPTIONAL"}
+                        {uploadingDoc === doc.doc_key ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        {doc.has_template_file ? "Replace" : "Upload"}
                       </button>
-                      <span
-                        className={cn(
-                          "text-[9px] font-bold px-1.5 py-0.5 rounded",
-                          doc.is_builtin
-                            ? "bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400"
-                            : "bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400",
-                        )}
+                      {doc.has_template_file && (
+                        <IconBtn
+                          onClick={() => deleteDocTemplate(doc)}
+                          title="Remove template file (revert to auto form)"
+                          tone="amber"
+                        >
+                          <FileX2 className="h-3.5 w-3.5" />
+                        </IconBtn>
+                      )}
+                      <IconBtn
+                        onClick={() => removeSection(doc)}
+                        title={doc.is_builtin ? "Hide document" : "Delete document section"}
+                        tone="red"
                       >
-                        {doc.is_builtin ? "BUILT-IN" : "CUSTOM"}
-                      </span>
-                      {!doc.is_active && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-zinc-800 text-slate-500">
-                          HIDDEN
-                        </span>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </IconBtn>
+                    </>
+                  }
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13.5px] font-bold text-foreground truncate">
+                      {doc.name}
+                    </span>
+                    <button
+                      onClick={() => toggleDocRequired(doc)}
+                      title="Toggle mandatory"
+                      className={cn(
+                        "text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors",
+                        doc.required
+                          ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+                          : "bg-slate-100 dark:bg-zinc-800 text-slate-400",
                       )}
-                      {doc.has_template_file ? (
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
-                          <CheckCircle2 className="h-2.5 w-2.5" /> TEMPLATE
-                        </span>
-                      ) : (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400">
-                          AUTO FORM
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11.5px] text-muted-foreground truncate">
-                      {doc.template_filename ||
-                        doc.description ||
-                        (doc.fields.length
-                          ? `${doc.fields.length} field${doc.fields.length === 1 ? "" : "s"}`
-                          : "No fillable fields")}
-                    </p>
+                    >
+                      {doc.required ? "MANDATORY" : "OPTIONAL"}
+                    </button>
+                    <Pill
+                      tone={
+                        doc.is_builtin
+                          ? "bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400"
+                          : "bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400"
+                      }
+                    >
+                      {doc.is_builtin ? "BUILT-IN" : "CUSTOM"}
+                    </Pill>
+                    {doc.has_template_file ? (
+                      <Pill tone="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-2.5 w-2.5" /> TEMPLATE
+                      </Pill>
+                    ) : (
+                      <Pill tone="bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400">
+                        AUTO FORM
+                      </Pill>
+                    )}
                   </div>
+                  <p className="text-[11.5px] text-muted-foreground truncate">
+                    {doc.template_filename ||
+                      doc.description ||
+                      (doc.fields.length
+                        ? `${doc.fields.length} field${doc.fields.length === 1 ? "" : "s"}`
+                        : "No fillable fields")}
+                  </p>
                   <input
                     ref={(el) => {
                       docFileRefs.current[doc.doc_key] = el;
@@ -731,146 +1494,260 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
                       e.target.value = "";
                     }}
                   />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Switch
-                      checked={doc.is_active}
-                      onCheckedChange={() => toggleDocActive(doc)}
-                      aria-label="Active"
-                    />
-                    <button
-                      onClick={() => openEditSection(doc)}
-                      title="Edit name, fields, mandatory"
-                      className="p-2 rounded-lg text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    {doc.has_template_file && (
-                      <button
-                        onClick={() => downloadTemplate(doc)}
-                        title="Download current template"
-                        className="p-2 rounded-lg text-muted-foreground hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/30 transition-colors"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => docFileRefs.current[doc.doc_key]?.click()}
-                      disabled={uploadingDoc === doc.doc_key}
-                      title={placeholderHint(doc)}
-                      className="flex items-center gap-1.5 rounded-lg px-2.5 h-8 text-[11.5px] font-semibold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50 transition-colors"
-                    >
-                      {uploadingDoc === doc.doc_key ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Upload className="h-3.5 w-3.5" />
-                      )}
-                      {doc.has_template_file ? "Replace" : "Upload"}
-                    </button>
-                    {doc.has_template_file && (
-                      <button
-                        onClick={() => deleteDocTemplate(doc)}
-                        title="Remove template file (revert to auto form)"
-                        className="p-2 rounded-lg text-muted-foreground hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => removeSection(doc)}
-                      title={doc.is_builtin ? "Hide document" : "Delete document section"}
-                      className="p-2 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
+                </Row>
               ))}
             </div>
           )}
-        </div>
+        </SectionCard>
+        )}
 
         {/* ── Induction documents ── */}
-        <div className="mt-9">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-[15px] font-black text-foreground flex items-center gap-2">
-                <FileText className="h-4 w-4 text-indigo-500" /> Induction Documents
-              </h3>
-              <p className="text-[12.5px] text-muted-foreground mt-0.5">
-                Reference material (handbooks, slides, policy packs) new hires can view alongside
-                the induction videos. Add a link or upload a file.
-              </p>
-            </div>
+        {tab === "reference" && (
+        <SectionCard
+          icon={<FileText className="h-4 w-4 text-white" />}
+          iconGradient="from-indigo-500 to-violet-600"
+          title="Induction Documents"
+          count={indDocs.length}
+          description="Reference material (handbooks, slides, policy packs) new hires can view alongside the induction videos. Add a link or upload a file."
+          action={
             <Button
-              onClick={() => setIndEditing({ title: "", description: "", url: "", sort_order: indDocs.length, is_active: true })}
+              onClick={() =>
+                setIndEditing({ title: "", description: "", url: "", sort_order: indDocs.length, is_active: true })
+              }
               size="sm"
-              className="gap-1.5 shrink-0"
+              className="gap-1.5"
             >
               <PlusCircle className="h-4 w-4" /> Add document
             </Button>
-          </div>
-
+          }
+        >
           {indLoading ? (
-            <div className="flex items-center justify-center py-14 text-muted-foreground gap-2">
-              <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
-              <span className="text-[13px]">Loading documents…</span>
-            </div>
+            <LoadingRow tone="indigo" label="Loading documents…" />
           ) : indDocs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-muted-foreground gap-2 rounded-2xl border border-dashed border-slate-200 dark:border-white/[0.08]">
-              <FileText className="h-6 w-6 text-indigo-400 opacity-70" />
-              <p className="text-[13px]">No induction documents yet.</p>
-            </div>
+            <EmptyRow
+              icon={<FileText className="h-6 w-6 text-indigo-400 opacity-70" />}
+              label="No induction documents yet."
+            />
           ) : (
-            <div className="space-y-2.5">
-              {indDocs.map((d) => (
-                <div
+            <div className="space-y-2">
+              {indDocs.map((d, i) => (
+                <Row
                   key={d.id}
-                  className={cn(
-                    "flex items-center gap-3 rounded-2xl border p-3.5 transition-colors bg-white/70 dark:bg-zinc-900/50",
-                    d.is_active
-                      ? "border-slate-200/70 dark:border-white/[0.06]"
-                      : "border-slate-200/50 dark:border-white/[0.04] opacity-60",
-                  )}
+                  dnd={indDocDnd(i)}
+                  active={d.is_active}
+                  icon={<FileText className="h-4 w-4 text-white" />}
+                  iconGradient="from-indigo-500 to-violet-600"
+                  actions={
+                    <>
+                      <Switch
+                        checked={d.is_active}
+                        onCheckedChange={() => toggleIndActive(d)}
+                        aria-label="Active"
+                        className="mr-0.5"
+                      />
+                      <IconBtn onClick={() => setIndEditing({ ...d })} title="Edit" tone="violet">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      <IconBtn onClick={() => removeIndDoc(d)} title="Delete" tone="red">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </IconBtn>
+                    </>
+                  }
                 >
-                  <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
-                    <FileText className="h-4.5 w-4.5 text-white" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13.5px] font-bold text-foreground truncate">{d.title}</span>
+                    {d.uploaded_filename ? (
+                      <Pill tone="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
+                        <Upload className="h-2.5 w-2.5" /> UPLOADED
+                      </Pill>
+                    ) : (
+                      <Pill tone="bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400">
+                        <Link2 className="h-2.5 w-2.5" /> LINK
+                      </Pill>
+                    )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13.5px] font-bold text-foreground truncate">{d.title}</span>
-                      {d.uploaded_filename ? (
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
-                          <Upload className="h-2.5 w-2.5" /> UPLOADED
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400">
-                          <Link2 className="h-2.5 w-2.5" /> LINK
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11.5px] text-muted-foreground truncate">
-                      {d.description || d.url}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => setIndEditing({ ...d })}
-                      className="p-2 rounded-lg text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={() => removeIndDoc(d)}
-                      className="p-2 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
+                  <p className="text-[11.5px] text-muted-foreground truncate">
+                    {d.description || d.url}
+                  </p>
+                </Row>
               ))}
             </div>
           )}
-        </div>
+        </SectionCard>
+        )}
+
+        {/* ── Day-1 quick links ── */}
+        {tab === "links" && (
+        <SectionCard
+          icon={<LinkIcon className="h-4 w-4 text-white" />}
+          iconGradient="from-teal-500 to-emerald-600"
+          title="Day-1 Quick Links"
+          count={links.length}
+          description="A short list of the apps and portals a new joiner needs early — HRMS, IT service desk, learning portal, org directory. Shown as clickable tiles in their onboarding journey."
+          action={
+            <Button
+              onClick={() =>
+                setLinkDraft({
+                  title: "",
+                  url: "",
+                  description: "",
+                  category: "",
+                  sort_order: (links[links.length - 1]?.sort_order ?? 0) + 10,
+                  is_active: true,
+                })
+              }
+              size="sm"
+              className="gap-1.5"
+            >
+              <PlusCircle className="h-4 w-4" /> Add link
+            </Button>
+          }
+        >
+          {linksLoading ? (
+            <LoadingRow tone="sky" label="Loading links…" />
+          ) : links.length === 0 ? (
+            <EmptyRow
+              icon={<LinkIcon className="h-6 w-6 text-teal-400 opacity-70" />}
+              label="No quick links yet."
+            />
+          ) : (
+            <div className="space-y-2">
+              {links.map((l, i) => (
+                <Row
+                  key={l.id}
+                  dnd={linkDnd(i)}
+                  active={l.is_active}
+                  icon={<LinkIcon className="h-4 w-4 text-white" />}
+                  iconGradient="from-teal-500 to-emerald-600"
+                  actions={
+                    <>
+                      <Switch
+                        checked={l.is_active}
+                        onCheckedChange={() => toggleLinkActive(l)}
+                        aria-label="Active"
+                        className="mr-0.5"
+                      />
+                      <IconBtn
+                        onClick={() => window.open(l.url, "_blank", "noopener")}
+                        title="Open link"
+                        tone="sky"
+                      >
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      <IconBtn onClick={() => setLinkDraft({ ...l })} title="Edit" tone="violet">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </IconBtn>
+                      <IconBtn onClick={() => removeLink(l)} title="Delete" tone="red">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </IconBtn>
+                    </>
+                  }
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13.5px] font-bold text-foreground truncate">{l.title}</span>
+                    {l.category && (
+                      <Pill tone="bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">
+                        {l.category}
+                      </Pill>
+                    )}
+                  </div>
+                  <p className="text-[11.5px] text-muted-foreground truncate">
+                    {l.description || l.url}
+                  </p>
+                </Row>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+        )}
+
+        {/* ── Stalled-joiner reminders ── */}
+        {tab === "reminders" && (
+        <SectionCard
+          icon={<Bell className="h-4 w-4 text-white" />}
+          iconGradient="from-amber-500 to-orange-600"
+          title="Stalled-Joiner Reminders"
+          description="When a hire's journey goes quiet, the assistant can nudge them, their manager, and/or HR to follow up. Tuned here — no redeploy needed. Reminders re-arm at most once per recipient per week while a journey stays stalled."
+          action={
+            <Button
+              onClick={saveReminders}
+              size="sm"
+              disabled={!remindersDirty || savingReminders || !reminders}
+              className="gap-1.5"
+            >
+              {savingReminders && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          }
+        >
+          {!reminders ? (
+            <LoadingRow tone="violet" label="Loading settings…" />
+          ) : (
+            <div className="space-y-3">
+              <SettingRow
+                label="Reminders enabled"
+                hint="Master switch for the stalled-journey follow-ups."
+              >
+                <Switch
+                  checked={reminders.enabled}
+                  onCheckedChange={(c) => patchReminders({ enabled: c })}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Consider a journey stalled after"
+                hint="Days of no activity before a reminder fires. Also drives the tracker's Stalled count."
+              >
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    className="w-20"
+                    value={reminders.stall_days}
+                    disabled={!reminders.enabled}
+                    onChange={(e) =>
+                      patchReminders({ stall_days: Math.max(1, parseInt(e.target.value) || 1) })
+                    }
+                  />
+                  <span className="text-[12px] text-muted-foreground">days</span>
+                </div>
+              </SettingRow>
+              <SettingRow label="Remind the new hire" hint="Nudge the joiner to pick their journey back up.">
+                <Switch
+                  checked={reminders.remind_hire}
+                  disabled={!reminders.enabled}
+                  onCheckedChange={(c) => patchReminders({ remind_hire: c })}
+                />
+              </SettingRow>
+              <SettingRow label="Remind their manager" hint="Nudge the hire's manager to check in.">
+                <Switch
+                  checked={reminders.remind_manager}
+                  disabled={!reminders.enabled}
+                  onCheckedChange={(c) => patchReminders({ remind_manager: c })}
+                />
+              </SettingRow>
+              <SettingRow label="Remind HR" hint="Also send a follow-up to the HR mailbox below.">
+                <Switch
+                  checked={reminders.remind_hr}
+                  disabled={!reminders.enabled}
+                  onCheckedChange={(c) => patchReminders({ remind_hr: c })}
+                />
+              </SettingRow>
+              {reminders.remind_hr && (
+                <SettingRow label="HR email" hint="Where the HR follow-up nudge is addressed.">
+                  <Input
+                    type="email"
+                    className="w-64"
+                    placeholder="hr@company.com"
+                    value={reminders.hr_email}
+                    disabled={!reminders.enabled}
+                    onChange={(e) => patchReminders({ hr_email: e.target.value })}
+                  />
+                </SettingRow>
+              )}
+            </div>
+          )}
+        </SectionCard>
+        )}
       </div>
 
       {/* Add / Edit dialog */}
@@ -960,31 +1837,18 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
                 One per line as <code>M:SS Title</code> — drives the chaptered player.
               </p>
             </div>
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="v-sort" className="mb-0">
-                  Order
-                </Label>
-                <Input
-                  id="v-sort"
-                  type="number"
-                  className="w-20"
-                  value={editing?.sort_order ?? 0}
-                  onChange={(e) =>
-                    setEditing((s) => ({ ...s!, sort_order: parseInt(e.target.value) || 0 }))
-                  }
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="v-active" className="mb-0">
-                  Active
-                </Label>
-                <Switch
-                  id="v-active"
-                  checked={editing?.is_active ?? true}
-                  onCheckedChange={(c) => setEditing((s) => ({ ...s!, is_active: c }))}
-                />
-              </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Label htmlFor="v-active" className="mb-0">
+                Active
+              </Label>
+              <Switch
+                id="v-active"
+                checked={editing?.is_active ?? true}
+                onCheckedChange={(c) => setEditing((s) => ({ ...s!, is_active: c }))}
+              />
+              <span className="text-[11px] text-muted-foreground ml-2">
+                Order is set by dragging rows in the list.
+              </span>
             </div>
           </div>
 
@@ -1173,6 +2037,236 @@ export default function OnboardingContentAdmin({ authHeaders }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Journey step add / edit dialog */}
+      <Dialog open={!!stepDraft} onOpenChange={(o) => !o && setStepDraft(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {stepDraft?.step_key ? `Edit "${stepDraft?.title}"` : "Add journey step"}
+            </DialogTitle>
+            <DialogDescription>
+              {stepDraft?.is_builtin
+                ? "Built-in step — your changes override the default (title, order, CTA, required)."
+                : "New hires see active steps in their onboarding journey, in order."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3.5 py-1 max-h-[60vh] overflow-auto pr-1">
+            <div>
+              <Label htmlFor="st-title">Title</Label>
+              <Input
+                id="st-title"
+                value={stepDraft?.title || ""}
+                onChange={(e) => setStepDraft((s) => ({ ...s!, title: e.target.value }))}
+                placeholder="e.g. Set up your workspace"
+              />
+            </div>
+            <div>
+              <Label htmlFor="st-desc">Description</Label>
+              <Textarea
+                id="st-desc"
+                rows={2}
+                value={stepDraft?.description || ""}
+                onChange={(e) => setStepDraft((s) => ({ ...s!, description: e.target.value }))}
+                placeholder="What the new hire should do in this step."
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="st-cat">Category</Label>
+                <Input
+                  id="st-cat"
+                  value={stepDraft?.category || ""}
+                  onChange={(e) => setStepDraft((s) => ({ ...s!, category: e.target.value }))}
+                  placeholder="Get set up"
+                />
+              </div>
+              <div>
+                <Label htmlFor="st-cta">Button label</Label>
+                <Input
+                  id="st-cta"
+                  value={stepDraft?.cta_label || ""}
+                  onChange={(e) => setStepDraft((s) => ({ ...s!, cta_label: e.target.value }))}
+                  placeholder={stepDraft?.kind === "deeplink" ? "Open" : "Mark done"}
+                />
+              </div>
+            </div>
+            {/* Kind is fixed for built-ins (their sub-flow can't be retargeted); editable for custom steps. */}
+            {!stepDraft?.is_builtin && (
+              <div>
+                <Label>Step type</Label>
+                <Select
+                  value={stepDraft?.kind || "manual"}
+                  onValueChange={(v) => setStepDraft((s) => ({ ...s!, kind: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">Manual — a “Mark done” card</SelectItem>
+                    <SelectItem value="deeplink">Link — opens the assistant with a prompt</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {stepDraft?.kind === "deeplink" && (
+              <div>
+                <Label htmlFor="st-prompt">Assistant prompt</Label>
+                <Textarea
+                  id="st-prompt"
+                  rows={2}
+                  value={stepDraft?.prompt || ""}
+                  onChange={(e) => setStepDraft((s) => ({ ...s!, prompt: e.target.value }))}
+                  placeholder="What the assistant should be asked when the hire taps the button."
+                />
+                <p className="text-[10.5px] text-muted-foreground mt-1">
+                  Tapping the button drops this into the chat for the new hire.
+                </p>
+              </div>
+            )}
+            <div className="flex items-center gap-6 pt-1 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="st-req" className="mb-0">
+                  Required
+                </Label>
+                <Switch
+                  id="st-req"
+                  checked={stepDraft?.required ?? true}
+                  onCheckedChange={(c) => setStepDraft((s) => ({ ...s!, required: c }))}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="st-active" className="mb-0">
+                  Active
+                </Label>
+                <Switch
+                  id="st-active"
+                  checked={stepDraft?.is_active ?? true}
+                  onCheckedChange={(c) => setStepDraft((s) => ({ ...s!, is_active: c }))}
+                />
+              </div>
+              <span className="text-[11px] text-muted-foreground">
+                Drag rows in the list to set the order.
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setStepDraft(null)} disabled={savingStep}>
+              Cancel
+            </Button>
+            <Button onClick={saveStep} disabled={savingStep} className="gap-1.5">
+              {savingStep && <Loader2 className="h-4 w-4 animate-spin" />}
+              {stepDraft?.step_key ? "Save changes" : "Add step"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick link add / edit dialog */}
+      <Dialog open={!!linkDraft} onOpenChange={(o) => !o && setLinkDraft(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{linkDraft?.id ? "Edit quick link" : "Add quick link"}</DialogTitle>
+            <DialogDescription>Shown as a Day-1 tile in the new hire's journey.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3.5 py-1">
+            <div>
+              <Label htmlFor="ql-title">Title</Label>
+              <Input
+                id="ql-title"
+                value={linkDraft?.title || ""}
+                onChange={(e) => setLinkDraft((s) => ({ ...s!, title: e.target.value }))}
+                placeholder="HR Self-Service (Zoho People)"
+              />
+            </div>
+            <div>
+              <Label htmlFor="ql-url">URL</Label>
+              <Input
+                id="ql-url"
+                value={linkDraft?.url || ""}
+                onChange={(e) => setLinkDraft((s) => ({ ...s!, url: e.target.value }))}
+                placeholder="https://…"
+              />
+            </div>
+            <div>
+              <Label htmlFor="ql-cat">Category</Label>
+              <Input
+                id="ql-cat"
+                value={linkDraft?.category || ""}
+                onChange={(e) => setLinkDraft((s) => ({ ...s!, category: e.target.value }))}
+                placeholder="Tools / HR / Learning"
+              />
+            </div>
+            <div>
+              <Label htmlFor="ql-desc">Description</Label>
+              <Textarea
+                id="ql-desc"
+                rows={2}
+                value={linkDraft?.description || ""}
+                onChange={(e) => setLinkDraft((s) => ({ ...s!, description: e.target.value }))}
+                placeholder="One line on what this is for."
+              />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Label htmlFor="ql-active" className="mb-0">
+                Active
+              </Label>
+              <Switch
+                id="ql-active"
+                checked={linkDraft?.is_active ?? true}
+                onCheckedChange={(c) => setLinkDraft((s) => ({ ...s!, is_active: c }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setLinkDraft(null)} disabled={savingLink}>
+              Cancel
+            </Button>
+            <Button onClick={saveLink} disabled={savingLink} className="gap-1.5">
+              {savingLink && <Loader2 className="h-4 w-4 animate-spin" />}
+              {linkDraft?.id ? "Save changes" : "Add link"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function LoadingRow({ tone, label }: { tone: string; label: string }) {
+  const spin: Record<string, string> = {
+    violet: "text-violet-500",
+    sky: "text-sky-500",
+    indigo: "text-indigo-500",
+  };
+  return (
+    <div className="flex items-center justify-center py-12 text-muted-foreground gap-2">
+      <Loader2 className={cn("h-5 w-5 animate-spin", spin[tone])} />
+      <span className="text-[13px]">{label}</span>
+    </div>
+  );
+}
+
+function EmptyRow({
+  icon,
+  label,
+  action,
+}: {
+  icon: ReactNode;
+  label: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3 rounded-xl border border-dashed border-slate-200 dark:border-white/[0.08]">
+      <div className="h-12 w-12 rounded-2xl bg-slate-500/5 flex items-center justify-center">
+        {icon}
+      </div>
+      <p className="text-[13px] font-medium">{label}</p>
+      {action}
     </div>
   );
 }

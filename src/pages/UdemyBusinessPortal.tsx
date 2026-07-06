@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { TableEmpty } from "@/components/ui/TableEmpty";
 
 type Tab = "catalog" | "insights" | "activity" | "course-activity" | "inactive" | "automations";
 
@@ -207,6 +209,48 @@ function TableSkeleton() {
       <div className="h-16 bg-slate-100 dark:bg-zinc-900/40 border border-slate-200 dark:border-zinc-800/50 rounded-2xl w-full" />
       <div className="h-16 bg-slate-100 dark:bg-zinc-900/40 border border-slate-200 dark:border-zinc-800/50 rounded-2xl w-full" />
       <div className="h-16 bg-slate-100 dark:bg-zinc-900/40 border border-slate-200 dark:border-zinc-800/50 rounded-2xl w-full" />
+    </div>
+  );
+}
+
+function matchesQuery(row: any, q: string) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return Object.values(row).some((v) => {
+    if (v == null) return false;
+    if (Array.isArray(v)) return v.some((x) => String(x).toLowerCase().includes(needle));
+    return String(v).toLowerCase().includes(needle);
+  });
+}
+
+function TableSearch({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative flex-1 min-w-[200px] sm:max-w-xs">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10 pointer-events-none" />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder || "Search…"}
+        className="h-10 pl-9 pr-9"
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          title="Clear search"
+          className="absolute right-3 top-1/2 -translate-y-1/2 z-10 text-muted-foreground hover:text-foreground cursor-pointer"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -714,6 +758,7 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
   const [error, setError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ added: number; skipped: number; errors: number } | null>(null);
+  const [search, setSearch] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -760,6 +805,8 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
     return pct >= 100 || r.completion_time || r.completion_date || r.completed_at;
   });
 
+  const filteredRows = rows.filter((r) => matchesQuery(r, search.trim()));
+
   if (loading) {
     return <TableSkeleton />;
   }
@@ -774,7 +821,7 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
           <div>
             <p className="text-sm font-extrabold text-slate-800 dark:text-white">Course Activity</p>
             <p className="text-xs text-slate-500 dark:text-zinc-400">
-              {rows.length} record(s) · {completedRows.length} completed
+              {search.trim() ? `${filteredRows.length} of ${rows.length}` : `${rows.length} record(s)`} · {completedRows.length} completed
             </p>
           </div>
         </div>
@@ -820,6 +867,14 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
         </div>
       )}
 
+      {rows.length > 0 && (
+        <TableSearch
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by learner, course, category…"
+        />
+      )}
+
       {!error && rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-500 dark:text-zinc-400 gap-3 border border-slate-200 dark:border-zinc-800/80 rounded-2xl bg-white/70 dark:bg-zinc-900/60">
           <div className="w-14 h-14 rounded-3xl bg-slate-200/50 dark:bg-zinc-850 flex items-center justify-center">
@@ -827,9 +882,16 @@ function CourseActivityTab({ authHeaders }: { authHeaders: Record<string, string
           </div>
           <p className="text-sm font-bold">No course activity data yet.</p>
         </div>
-      ) : rows.length > 0 ? (
-        <ResponsiveTable rows={rows} type="course-activity" />
-      ) : null}
+      ) : filteredRows.length === 0 ? (
+        <TableEmpty
+          className="rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60"
+          icon={<Search className="w-7 h-7" />}
+        >
+          <span className="text-sm font-bold">No records match "{search.trim()}".</span>
+        </TableEmpty>
+      ) : (
+        <ResponsiveTable rows={filteredRows} type="course-activity" />
+      )}
     </div>
   );
 }
@@ -1544,6 +1606,7 @@ function InactiveSeatsTab({
   const [done, setDone] = useState<Record<string, string>>({}); // email -> "done" | error msg
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
+  const [search, setSearch] = useState("");
 
   const deactivate = useCallback(
     async (email: string) => {
@@ -1595,9 +1658,20 @@ function InactiveSeatsTab({
     if (days > 0) load(days); // wait for the configured default (set by SeatPills) before loading
   }, [load, days]);
 
-  useEffect(() => { setPage(0); }, [rows]);
+  const filteredRows = rows.filter((r) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (r.name || "").toLowerCase().includes(q) ||
+      (r.email || "").toLowerCase().includes(q) ||
+      (ROLE_LABELS[r.role] || r.role || "").toLowerCase().includes(q) ||
+      (r.groups || []).some((g) => g.toLowerCase().includes(q))
+    );
+  });
 
-  const pageRows = rows.slice(page * rowsPerPage, (page + 1) * rowsPerPage);
+  useEffect(() => { setPage(0); }, [rows, search]);
+
+  const pageRows = filteredRows.slice(page * rowsPerPage, (page + 1) * rowsPerPage);
 
   return (
     <div className="flex flex-col gap-5">
@@ -1611,7 +1685,9 @@ function InactiveSeatsTab({
             <p className="text-xs text-slate-500 dark:text-zinc-400">
               {loading
                 ? "Scanning learner activity…"
-                : `${rows.length} of ${total} learners idle ≥ ${days} days`}
+                : search.trim()
+                  ? `${filteredRows.length} of ${rows.length} idle learners match`
+                  : `${rows.length} of ${total} learners idle ≥ ${days} days`}
             </p>
           </div>
         </div>
@@ -1671,6 +1747,14 @@ function InactiveSeatsTab({
         </span>
       </div>
 
+      {!loading && !error && rows.length > 0 && (
+        <TableSearch
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by name, email, role, group…"
+        />
+      )}
+
       {loading ? (
         <TableSkeleton />
       ) : error ? (
@@ -1685,6 +1769,13 @@ function InactiveSeatsTab({
           </div>
           <p className="text-sm font-bold">No learners idle for {days}+ days. Every active seat is in use.</p>
         </div>
+      ) : filteredRows.length === 0 ? (
+        <TableEmpty
+          className="rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60"
+          icon={<Search className="w-7 h-7" />}
+        >
+          <span className="text-sm font-bold">No idle learners match "{search.trim()}".</span>
+        </TableEmpty>
       ) : (
         <>
           {/* Desktop Table View */}
@@ -1811,7 +1902,7 @@ function InactiveSeatsTab({
               </table>
             </div>
             <TablePagination
-              total={rows.length}
+              total={filteredRows.length}
               page={page}
               rowsPerPage={rowsPerPage}
               onPage={setPage}
@@ -1834,7 +1925,7 @@ function InactiveSeatsTab({
               />
             ))}
             <TablePagination
-              total={rows.length}
+              total={filteredRows.length}
               page={page}
               rowsPerPage={rowsPerPage}
               onPage={setPage}
@@ -1851,6 +1942,7 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1895,6 +1987,8 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     );
   }
 
+  const filteredRows = rows.filter((r) => matchesQuery(r, search.trim()));
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1904,7 +1998,9 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           </div>
           <div>
             <p className="text-sm font-extrabold text-slate-800 dark:text-white">Learner Activity</p>
-            <p className="text-xs text-slate-500 dark:text-zinc-400">{rows.length} record(s)</p>
+            <p className="text-xs text-slate-500 dark:text-zinc-400">
+              {search.trim() ? `${filteredRows.length} of ${rows.length}` : `${rows.length} record(s)`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
@@ -1918,7 +2014,21 @@ function ActivityTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           </button>
         </div>
       </div>
-      <ResponsiveTable rows={rows} type="activity" />
+      <TableSearch
+        value={search}
+        onChange={setSearch}
+        placeholder="Search by learner, email, course…"
+      />
+      {filteredRows.length === 0 ? (
+        <TableEmpty
+          className="rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60"
+          icon={<Search className="w-7 h-7" />}
+        >
+          <span className="text-sm font-bold">No records match "{search.trim()}".</span>
+        </TableEmpty>
+      ) : (
+        <ResponsiveTable rows={filteredRows} type="activity" />
+      )}
     </div>
   );
 }

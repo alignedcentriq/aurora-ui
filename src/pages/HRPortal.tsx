@@ -36,6 +36,33 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -197,6 +224,12 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<RequestType | "all">("all");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [typeFilter]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -348,16 +381,22 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     { key: "grievance", label: `Grievances (${counts.grievance})` },
   ];
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const paginatedItems = filtered.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
   const tableRows: React.ReactNode[] = [];
-  filtered.forEach((item) => {
+  paginatedItems.forEach((item) => {
     const isExpanded = expanded === item.key;
     tableRows.push(
-      <tr
+      <TableRow
         key={item.key}
         onClick={() => setExpanded(isExpanded ? null : item.key)}
-        className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors cursor-pointer"
+        className="cursor-pointer"
       >
-        <td className="py-3.5 pr-4">
+        <TableCell className="py-3.5 pr-4">
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-[11px] font-semibold",
@@ -366,25 +405,25 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           >
             {TYPE_LABEL[item.type]}
           </span>
-        </td>
-        <td className="py-3.5 pr-4 text-[12px] text-foreground/60 font-mono whitespace-nowrap">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4 text-[12px] text-foreground/60 font-mono whitespace-nowrap">
           {item.reference_id}
-        </td>
-        <td className="py-3.5 pr-4">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4">
           <div className="text-[13px] font-medium text-foreground leading-tight">
             {item.from_name}
           </div>
           {item.from_email && (
             <div className="text-[11px] text-muted-foreground">{item.from_email}</div>
           )}
-        </td>
-        <td className="py-3.5 pr-4 max-w-[220px]">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4 max-w-[220px]">
           <div className="text-[13px] text-foreground truncate">{item.subject}</div>
           {item.description && (
             <div className="text-[11px] text-muted-foreground truncate">{item.description}</div>
           )}
-        </td>
-        <td className="py-3.5 pr-4">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4">
           {item.priority ? (
             <span
               className={cn(
@@ -397,30 +436,30 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           ) : (
             <span className="text-muted-foreground/30 text-[13px]">—</span>
           )}
-        </td>
-        <td className="py-3.5 pr-4">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4">
           <StatusBadge status={item.status} />
-        </td>
-        <td className="py-3.5 pr-4 text-[12px] text-muted-foreground/60 whitespace-nowrap">
+        </TableCell>
+        <TableCell className="py-3.5 pr-4 text-[12px] text-muted-foreground/60 whitespace-nowrap">
           {item.created_at ? item.created_at.slice(0, 10) : "—"}
-        </td>
-        <td className="py-3.5 pr-2 text-muted-foreground/50">
+        </TableCell>
+        <TableCell className="py-3.5 pr-2 text-muted-foreground/50">
           <ChevronDown
             className={cn(
               "h-3.5 w-3.5 transition-transform duration-150",
               isExpanded && "rotate-180",
             )}
           />
-        </td>
-      </tr>,
+        </TableCell>
+      </TableRow>,
     );
     if (isExpanded) {
       tableRows.push(
-        <tr key={`${item.key}-panel`}>
-          <td colSpan={8} className="p-0">
+        <TableRow key={`${item.key}-panel`}>
+          <TableCell colSpan={8} className="p-0 border-b-0">
             <ActionPanel item={item} authHeaders={authHeaders} onDone={handleDone} />
-          </td>
-        </tr>,
+          </TableCell>
+        </TableRow>,
       );
     }
   });
@@ -453,27 +492,25 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-8 pb-3 shrink-0">
         <div className="flex gap-1.5 flex-wrap">
           {FILTER_PILLS.map(({ key, label }) => (
-            <button
+            <Button
               key={key}
+              variant={typeFilter === key ? "default" : "secondary"}
               onClick={() => setTypeFilter(key)}
-              className={cn(
-                "rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
-                typeFilter === key
-                  ? "bg-primary/15 text-primary"
-                  : "bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground",
-              )}
+              className="rounded-full h-7 px-3 text-[12px]"
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={fetchAll}
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-muted-foreground hover:bg-secondary transition-colors shrink-0"
+          className="flex items-center gap-2 text-muted-foreground"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* Table */}
@@ -483,23 +520,50 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         ) : filtered.length === 0 ? (
           <TableEmpty label="requests" icon={<Inbox className="h-4 w-4" />} />
         ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {["Type", "Reference", "From", "Subject", "Priority", "Status", "Date", ""].map(
-                  (h) => (
-                    <th
-                      key={h}
-                      className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
-                    >
-                      {h}
-                    </th>
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>{tableRows}</tbody>
-          </table>
+          <div className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {["Type", "Reference", "From", "Subject", "Priority", "Status", "Date", ""].map(
+                    (h) => (
+                      <TableHead key={h}>{h}</TableHead>
+                    ),
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>{tableRows}</TableBody>
+            </Table>
+            
+            {totalPages > 1 && (
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.max(1, p - 1));
+                      }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <span className="text-sm text-muted-foreground px-4">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.min(totalPages, p + 1));
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -724,23 +788,24 @@ function ActionPanel({
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Update Status
                 </label>
-                <select
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                >
-                  {item.status === "Open" && <option value="Acknowledged">Acknowledged</option>}
-                  <option value="Resolved">Resolved</option>
-                </select>
+                <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {item.status === "Open" && <SelectItem value="Acknowledged">Acknowledged</SelectItem>}
+                    <SelectItem value="Resolved">Resolved</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <button
+              <Button
                 onClick={() => act("esc-status")}
                 disabled={acting}
-                className="flex items-center justify-center gap-1.5 w-full rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                className="w-full"
               >
-                {acting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {acting && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
                 Update Status
-              </button>
+              </Button>
             </>
           ))}
 
@@ -761,60 +826,62 @@ function ActionPanel({
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Reason for rejection
                 </label>
-                <textarea
+                <Textarea
                   rows={3}
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   placeholder="Optional — will be included in the notification email"
                 />
               </div>
               <div className="flex gap-2">
-                <button
+                <Button
+                  variant="destructive"
                   onClick={() => {
                     act("doc-reject");
                     setShowRejectForm(false);
                   }}
                   disabled={acting}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+                  className="flex-1"
                 >
                   {acting ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
                   ) : (
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-3.5 w-3.5 mr-1.5" />
                   )}
                   Confirm Reject
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={() => setShowRejectForm(false)}
-                  className="rounded-lg px-3 py-2 text-[13px] text-muted-foreground hover:bg-muted/40 transition-colors"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <div className="flex gap-2">
-              <button
+              <Button
+                variant="outline"
+                className="flex-1 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-400 border-emerald-500/20"
                 onClick={() => act("doc-approve")}
                 disabled={acting}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
               >
                 {acting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
                 ) : (
-                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
                 )}
-                Approve &amp; Release
-              </button>
-              <button
+                Approve & Release
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 hover:text-rose-400 border-rose-500/20 px-3"
                 onClick={() => setShowRejectForm(true)}
                 disabled={acting}
-                className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-[13px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5 mr-1.5" />
                 Reject
-              </button>
+              </Button>
             </div>
           ))}
 
@@ -831,33 +898,33 @@ function ActionPanel({
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   {raw.response ? "Update Response" : "Response"}
                 </label>
-                <textarea
+                <Textarea
                   rows={4}
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                   value={responseText}
                   onChange={(e) => setResponseText(e.target.value)}
                   placeholder="Type your response to the employee…"
                 />
               </div>
-              <button
+              <Button
                 onClick={() => act("query-respond")}
                 disabled={acting}
-                className="flex items-center justify-center gap-1.5 w-full rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                className="w-full"
               >
                 {acting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
                 ) : (
-                  <Send className="h-3.5 w-3.5" />
+                  <Send className="h-3.5 w-3.5 mr-1.5" />
                 )}
                 Send Response
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => act("query-close")}
                 disabled={acting}
-                className="flex items-center justify-center gap-1.5 w-full rounded-lg px-4 py-2 text-[13px] font-medium text-muted-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                className="w-full"
               >
                 Close Query
-              </button>
+              </Button>
             </>
           ))}
 
@@ -874,36 +941,36 @@ function ActionPanel({
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Update Status
                 </label>
-                <select
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                >
-                  <option value="Under Review">Under Review</option>
-                  <option value="Resolved">Resolved</option>
-                  <option value="Closed">Closed</option>
-                </select>
+                <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Under Review">Under Review</SelectItem>
+                    <SelectItem value="Resolved">Resolved</SelectItem>
+                    <SelectItem value="Closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Resolution Notes
                 </label>
-                <textarea
+                <Textarea
                   rows={3}
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Add resolution notes…"
                 />
               </div>
-              <button
+              <Button
                 onClick={() => act("grv-update")}
                 disabled={acting}
-                className="flex items-center justify-center gap-1.5 w-full rounded-lg px-4 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                className="w-full"
               >
-                {acting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {acting && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
                 Update Grievance
-              </button>
+              </Button>
             </>
           ))}
       </div>
@@ -917,6 +984,8 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
   const [logs, setLogs] = useState<WelcomeLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [resending, setResending] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -995,13 +1064,15 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
           HR receives an email when a new employee is detected. Click Yes in that email to send them
           the welcome package.
         </p>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={fetchLogs}
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-muted-foreground hover:bg-secondary transition-colors shrink-0"
+          className="flex items-center gap-2 text-muted-foreground"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 overflow-auto px-8 pb-8">
@@ -1012,58 +1083,84 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
             <span>No welcome logs yet — they appear when new employees are detected</span>
           </TableEmpty>
         ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {["Employee", "Detected On", "Status", "Acted", "Actions"].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((l) => (
-                <tr
-                  key={l.id}
-                  className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
-                >
-                  <td className="py-3.5 pr-4">
-                    <div className="font-medium text-foreground">{l.employee_name}</div>
-                    <div className="text-[11px] text-muted-foreground">{l.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/60">{l.created_at.slice(0, 10)}</td>
-                  <td className="py-3.5 pr-4">
-                    <StatusBadge status={l.status} />
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/50 text-[12px]">
-                    {l.acted_at ? (
-                      <span title={l.acted_by ?? ""}>{l.acted_at.slice(0, 10)}</span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="py-3.5 pr-4">
-                    <button
-                      onClick={() => handleResend(l.id, l.employee_name)}
-                      disabled={resending === l.id}
-                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-                    >
-                      {resending === l.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
+          <div className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {["Employee", "Detected On", "Status", "Acted", "Actions"].map((h) => (
+                    <TableHead key={h}>{h}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {logs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell className="py-3.5 pr-4">
+                      <div className="font-medium text-foreground">{l.employee_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{l.employee_email}</div>
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/60">{l.created_at.slice(0, 10)}</TableCell>
+                    <TableCell className="py-3.5 pr-4">
+                      <StatusBadge status={l.status} />
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/50 text-[12px]">
+                      {l.acted_at ? (
+                        <span title={l.acted_by ?? ""}>{l.acted_at.slice(0, 10)}</span>
                       ) : (
-                        <RotateCcw className="h-3 w-3" />
+                        "—"
                       )}
-                      {l.status === "welcome_sent" ? "Resend" : "Send Now"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleResend(l.id, l.employee_name)}
+                        disabled={resending === l.id}
+                        className="bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary border-primary/20"
+                      >
+                        {resending === l.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
+                        ) : (
+                          <RotateCcw className="h-3 w-3 mr-1.5" />
+                        )}
+                        {l.status === "welcome_sent" ? "Resend" : "Send Now"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            
+            {Math.ceil(logs.length / itemsPerPage) > 1 && (
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.max(1, p - 1));
+                      }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <span className="text-sm text-muted-foreground px-4">
+                      Page {currentPage} of {Math.ceil(logs.length / itemsPerPage)}
+                    </span>
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.min(Math.ceil(logs.length / itemsPerPage), p + 1));
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -1239,52 +1336,56 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
             </p>
           </div>
           {!messageEditing && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setMessageEditing(true)}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary transition-colors shrink-0"
+              className="flex items-center gap-1.5 text-muted-foreground"
             >
               <Pencil className="h-3 w-3" />
               Edit
-            </button>
+            </Button>
           )}
         </div>
         <div className="px-5 py-4">
           {messageEditing ? (
             <div className="space-y-3">
-              <textarea
+              <Textarea
                 rows={5}
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2.5 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary resize-none leading-relaxed"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="Welcome to the team, {name}!…"
               />
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <button
+                <Button
+                  variant="link"
+                  size="sm"
                   onClick={() => {
                     setMessage(DEFAULT_WELCOME_MESSAGE);
                   }}
-                  className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                  className="text-muted-foreground hover:text-foreground"
                 >
                   Reset to default
-                </button>
+                </Button>
                 <div className="flex gap-2">
-                  <button
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => {
                       setMessageEditing(false);
                       fetchMessage();
                     }}
-                    className="rounded-lg px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-secondary transition-colors"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    size="sm"
                     onClick={saveMessage}
                     disabled={messageSaving}
-                    className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[12px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                   >
-                    {messageSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {messageSaving && <Loader2 className="h-3 w-3 animate-spin mr-1.5" />}
                     Save
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1300,13 +1401,13 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
         <p className="text-[13px] text-muted-foreground">
           Resources below appear in the email. Supports links, videos, and slide decks.
         </p>
-        <button
+        <Button
           onClick={startNew}
-          className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0"
+          className="flex items-center gap-1.5 bg-primary/10 text-primary hover:bg-primary/20 shrink-0"
         >
           <Plus className="h-3.5 w-3.5" />
           Add Resource
-        </button>
+        </Button>
       </div>
 
       {/* Inline editor */}
@@ -1321,8 +1422,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Name *
                 </label>
-                <input
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
+                <Input
                   value={form.name ?? ""}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. Onboarding Video, Policy Deck"
@@ -1332,8 +1432,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                 <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                   Icon
                 </label>
-                <input
-                  className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
+                <Input
                   value={form.icon ?? ""}
                   onChange={(e) => setForm((f) => ({ ...f, icon: e.target.value }))}
                   placeholder="🎬"
@@ -1344,11 +1443,9 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
               <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                 Type / Category
               </label>
-              <select
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
-                value={form.category ?? "App Guide"}
-                onChange={(e) => {
-                  const cat = e.target.value;
+              <Select 
+                value={form.category ?? "App Guide"} 
+                onValueChange={(cat) => {
                   setForm((f) => ({
                     ...f,
                     category: cat,
@@ -1356,17 +1453,21 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                   }));
                 }}
               >
-                {CATEGORY_OPTIONS.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                 URL (link, YouTube, Google Slides…)
               </label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
+              <Input
                 value={form.url ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
                 placeholder="https://…"
@@ -1376,8 +1477,7 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
               <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
                 Description
               </label>
-              <input
-                className="w-full rounded-lg border border-[var(--border)] bg-background px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-primary"
+              <Input
                 value={form.description ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                 placeholder="Brief description shown in the email"
@@ -1385,20 +1485,19 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
             </div>
           </div>
           <div className="flex justify-end gap-2 mt-4">
-            <button
+            <Button
+              variant="secondary"
               onClick={cancelEdit}
-              className="rounded-lg px-4 py-2 text-[13px] text-muted-foreground hover:bg-secondary transition-colors"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={saveResource}
               disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
               Save
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -1471,35 +1570,41 @@ function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string>
                 </div>
 
                 {/* Toggle */}
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => toggleActive(r)}
                   className={cn(
-                    "text-[11px] font-medium rounded-full px-3 py-1 transition-colors shrink-0",
+                    "h-7 text-[11px] px-3",
                     r.is_active
-                      ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                      : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20",
+                      ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-400 border-emerald-500/20"
+                      : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 hover:text-zinc-400 border-zinc-500/20",
                   )}
                 >
                   {r.is_active ? "Active" : "Inactive"}
-                </button>
+                </Button>
 
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => startEdit(r)}
-                  className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+                  className="h-8 w-8 text-muted-foreground"
                 >
                   <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => setResourceToDelete({ id: r.id, name: r.name })}
                   disabled={deleting === r.id}
-                  className="rounded-lg p-1.5 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400 transition-colors shrink-0"
+                  className="h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400"
                 >
                   {deleting === r.id ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Trash2 className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </Button>
               </div>
             ))}
           </div>

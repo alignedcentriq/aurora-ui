@@ -9,6 +9,8 @@
  * back is always available.
  */
 
+import { API_PREFIX } from "./api-base";
+
 const STORAGE_KEY = "centriq-impersonate-role";
 
 /** Lower-cased role slug currently being impersonated, or null. */
@@ -43,8 +45,17 @@ export function installImpersonationFetch(): void {
       // Only string URLs (the app's calling convention) and only our own API surface —
       // never attach the header to cross-origin calls (e.g. MS Graph).
       if (imp && typeof input === "string") {
+        // Match the bare "/api/..." form AND the "/centriq/api/..." form produced by the
+        // api-base fetch shim on the path-prefixed deploy — whichever shim wraps the other,
+        // one of these two forms is what we see here. Missing the prefixed form silently
+        // drops the header and makes role-switching a no-op on the shared host.
+        const origin = window.location.origin;
+        const prefix = API_PREFIX; // "" on root deploy, "/centriq" on the shared host
         const isApi =
-          input.startsWith("/api") || input.startsWith(`${window.location.origin}/api`);
+          input.startsWith("/api") ||
+          input.startsWith(`${origin}/api`) ||
+          (!!prefix &&
+            (input.startsWith(`${prefix}/api`) || input.startsWith(`${origin}${prefix}/api`)));
         if (isApi) {
           const headers = new Headers(init?.headers || {});
           headers.set("x-impersonate-role", imp);

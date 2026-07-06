@@ -36,6 +36,8 @@ import {
   Clock,
   ShieldCheck,
   PenLine,
+  Link2,
+  ExternalLink,
   X as XIcon,
 } from "lucide-react";
 import { Fragment } from "react";
@@ -103,6 +105,13 @@ interface InductionDocView {
   url: string;
   uploaded_filename?: string | null;
 }
+interface QuickLinkView {
+  id: string;
+  title: string;
+  description?: string;
+  url: string;
+  category?: string;
+}
 
 const STATUS_PILL: Record<string, string> = {
   done: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
@@ -134,6 +143,7 @@ export function OnboardingJourney() {
   const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
   const [videos, setVideos] = useState<VideoView[]>([]);
   const [inductionDocs, setInductionDocs] = useState<InductionDocView[]>([]);
+  const [quickLinks, setQuickLinks] = useState<QuickLinkView[]>([]);
   const [activeVideo, setActiveVideo] = useState<VideoView | null>(null);
   const [managerCall, setManagerCall] = useState<ManagerCallView | null>(null);
 
@@ -220,6 +230,10 @@ export function OnboardingJourney() {
         fetch("/api/onboard/induction-documents", { headers: authHeaders })
           .then((r) => r.json())
           .then((list: InductionDocView[]) => setInductionDocs(Array.isArray(list) ? list : []))
+          .catch(() => { });
+        fetch("/api/onboard/quick-links", { headers: authHeaders })
+          .then((r) => r.json())
+          .then((list: QuickLinkView[]) => setQuickLinks(Array.isArray(list) ? list : []))
           .catch(() => { });
         return;
       }
@@ -961,6 +975,7 @@ export function OnboardingJourney() {
                     <VideoLibraryPanel
                       videos={videos}
                       documents={inductionDocs}
+                      quickLinks={quickLinks}
                       onSelect={(v) => { setActiveVideo(v); setPanel("video"); }}
                     />
                   </motion.div>
@@ -1549,13 +1564,15 @@ function DocumentsPanel({
 function VideoLibraryPanel({
   videos,
   documents = [],
+  quickLinks = [],
   onSelect,
 }: {
   videos: VideoView[];
   documents?: InductionDocView[];
+  quickLinks?: QuickLinkView[];
   onSelect: (v: VideoView) => void;
 }) {
-  if (videos.length === 0 && documents.length === 0) {
+  if (videos.length === 0 && documents.length === 0 && quickLinks.length === 0) {
     return (
       <div className="rounded-3xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-xl p-8 shadow-xl flex items-center gap-3 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin text-violet-500 shrink-0" />
@@ -1626,6 +1643,49 @@ function VideoLibraryPanel({
                   )}
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-500 mt-1">
                     <Download className="h-3 w-3" /> Open
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {quickLinks.length > 0 && (
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center gap-2">
+            <Link2 className="h-4.5 w-4.5 text-teal-500" />
+            <h3 className="text-[14px] font-black text-foreground">Quick Links</h3>
+            <span className="ml-auto text-[12px] text-muted-foreground font-medium">
+              {quickLinks.length} link{quickLinks.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {quickLinks.map((l) => (
+              <a
+                key={l.id}
+                href={l.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex items-start gap-3 rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-zinc-900/50 p-4 hover:border-teal-400/60 hover:bg-teal-50/40 dark:hover:bg-teal-950/20 transition-all shadow-sm hover:shadow-md"
+              >
+                <div className="mt-0.5 h-9 w-9 rounded-xl bg-gradient-to-tr from-teal-500 to-emerald-600 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                  <Link2 className="h-4.5 w-4.5 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[13.5px] font-bold text-foreground leading-snug truncate">{l.title}</p>
+                    {l.category && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 shrink-0">
+                        {l.category}
+                      </span>
+                    )}
+                  </div>
+                  {l.description && (
+                    <p className="text-[11.5px] text-muted-foreground mt-0.5 line-clamp-2">{l.description}</p>
+                  )}
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-500 mt-1">
+                    <ExternalLink className="h-3 w-3" /> Open
                   </span>
                 </div>
               </a>

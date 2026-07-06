@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import {
   Loader2,
   RefreshCw,
@@ -23,6 +23,12 @@ import {
   Video,
   ShieldOff,
   ShieldCheck,
+  Eye,
+  ListChecks,
+  PlayCircle,
+  Link2,
+  ExternalLink,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -65,6 +71,23 @@ interface DetailView {
   status: string;
   steps: StepView[];
   documents: { name: string; submitted: boolean; status: string }[];
+}
+interface PreviewStep {
+  key: string;
+  title: string;
+  description: string;
+  category: string;
+  cta_label: string;
+  kind: string;
+  auto: boolean;
+  required: boolean;
+}
+interface PreviewData {
+  steps: PreviewStep[];
+  documents: { doc_key: string; name: string; description: string; required: boolean; has_template_file: boolean }[];
+  videos: { id?: string; title: string; description?: string }[];
+  induction_documents: { id: string; title: string; description?: string; url: string }[];
+  quick_links: { id: string; title: string; description?: string; url: string; category?: string }[];
 }
 
 function StatCard({
@@ -152,7 +175,9 @@ export function OnboardingTracker() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "completed" | "stalled">("all");
-  const [view, setView] = useState<"tracker" | "content">("tracker");
+  const [view, setView] = useState<"tracker" | "content" | "preview">("tracker");
+  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [deviceInput, setDeviceInput] = useState("");
   const [savingDevice, setSavingDevice] = useState(false);
   const [offStatus, setOffStatus] = useState<{ offboarded: boolean; status: string } | null>(null);
@@ -204,6 +229,17 @@ export function OnboardingTracker() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load the new-hire preview lazily the first time HR opens the Preview view.
+  useEffect(() => {
+    if (view !== "preview" || preview) return;
+    setPreviewLoading(true);
+    fetch("/api/onboard/admin/preview", { headers: authHeaders })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: PreviewData) => setPreview(d))
+      .catch(() => toast.error("Couldn't load the preview."))
+      .finally(() => setPreviewLoading(false));
+  }, [view, preview, authHeaders]);
 
   const openDetail = useCallback(
     async (email: string) => {
@@ -365,6 +401,17 @@ export function OnboardingTracker() {
               >
                 <Video className="h-3.5 w-3.5" /> Content
               </button>
+              <button
+                onClick={() => setView("preview")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all",
+                  view === "preview"
+                    ? "bg-violet-600 text-white shadow-sm shadow-violet-600/30"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Eye className="h-3.5 w-3.5" /> Preview
+              </button>
             </div>
             {view === "tracker" && (
               <button
@@ -419,6 +466,11 @@ export function OnboardingTracker() {
 
       {/* ── Content management view ── */}
       {view === "content" && <OnboardingContentAdmin authHeaders={authHeaders} />}
+
+      {/* ── Preview view (what a new hire sees) ── */}
+      {view === "preview" && (
+        <PreviewPanel data={preview} loading={previewLoading} />
+      )}
 
       {/* ── Search & Filter bar ── */}
       {view === "tracker" && data && data.journeys.length > 0 && (
@@ -851,5 +903,199 @@ export function OnboardingTracker() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ── Preview: the onboarding flow exactly as a new hire first sees it (read-only) ──
+function PreviewPanel({ data, loading }: { data: PreviewData | null; loading: boolean }) {
+  if (loading || !data) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground gap-2">
+        <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+        <span className="text-[13px]">Loading preview…</span>
+      </div>
+    );
+  }
+
+  const catColor: Record<string, string> = {
+    manual: "bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400",
+    deeplink: "bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400",
+  };
+
+  return (
+    <div className="flex-1 overflow-auto px-6 sm:px-8 py-6">
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* Banner */}
+        <div className="flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/30 dark:to-indigo-950/30 border border-violet-100 dark:border-violet-900/30">
+          <ProgressRing pct={0} size={52} stroke={5} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Eye className="h-4 w-4 text-violet-500" />
+              <h3 className="text-[15px] font-black text-foreground">New-hire preview</h3>
+            </div>
+            <p className="text-[12.5px] text-muted-foreground mt-0.5">
+              This is the journey a brand-new joiner sees on day one — every step still to do.
+              Edits in <span className="font-semibold">Content</span> show up here instantly.
+            </p>
+          </div>
+        </div>
+
+        {/* Steps */}
+        <section className="rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-900/40 backdrop-blur-xl overflow-hidden shadow-sm">
+          <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.05] bg-white/50 dark:bg-zinc-950/20">
+            <div className="h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br from-fuchsia-500 to-purple-600">
+              <ListChecks className="h-4 w-4 text-white" />
+            </div>
+            <h3 className="text-[14.5px] font-black text-foreground">Your onboarding steps</h3>
+            <span className="ml-auto text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800 text-muted-foreground tabular-nums">
+              {data.steps.length}
+            </span>
+          </div>
+          <ol className="p-4 space-y-2">
+            {data.steps.map((s, i) => (
+              <li
+                key={s.key}
+                className="flex items-start gap-3.5 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-3"
+              >
+                <div className="h-7 w-7 rounded-full border-2 border-slate-300 dark:border-zinc-700 flex items-center justify-center shrink-0 text-[12px] font-black text-muted-foreground tabular-nums">
+                  {i + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13.5px] font-bold text-foreground">{s.title}</span>
+                    {s.category && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400">
+                        {s.category}
+                      </span>
+                    )}
+                    {s.auto ? (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">
+                        <Zap className="h-2.5 w-2.5" /> AUTO
+                      </span>
+                    ) : null}
+                    {!s.required && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-400">
+                        OPTIONAL
+                      </span>
+                    )}
+                  </div>
+                  {s.description && (
+                    <p className="text-[11.5px] text-muted-foreground mt-0.5 leading-relaxed">{s.description}</p>
+                  )}
+                </div>
+                {s.cta_label && (
+                  <span
+                    className={cn(
+                      "shrink-0 text-[10.5px] font-semibold px-2.5 py-1 rounded-lg",
+                      catColor[s.kind] || "bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400",
+                    )}
+                  >
+                    {s.cta_label}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        {/* Documents */}
+        {data.documents.length > 0 && (
+          <PreviewSection icon={<FileText className="h-4 w-4 text-white" />} gradient="from-sky-500 to-blue-600" title="Joining documents" count={data.documents.length}>
+            {data.documents.map((d) => (
+              <div key={d.doc_key} className="flex items-center gap-3 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-2.5">
+                <div className="h-4 w-4 rounded-full border-2 border-slate-300 dark:border-zinc-700 shrink-0" />
+                <span className="text-[13px] font-semibold text-foreground flex-1 min-w-0 truncate">{d.name}</span>
+                {d.required && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">
+                    MANDATORY
+                  </span>
+                )}
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-slate-400">
+                  {d.has_template_file ? "TEMPLATE" : "AUTO FORM"}
+                </span>
+              </div>
+            ))}
+          </PreviewSection>
+        )}
+
+        {/* Induction videos */}
+        {data.videos.length > 0 && (
+          <PreviewSection icon={<PlayCircle className="h-4 w-4 text-white" />} gradient="from-violet-500 to-indigo-600" title="Induction videos" count={data.videos.length}>
+            {data.videos.map((v, i) => (
+              <div key={v.id ?? i} className="flex items-center gap-3 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-2.5">
+                <PlayCircle className="h-4 w-4 text-violet-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-foreground truncate">{v.title}</p>
+                  {v.description && <p className="text-[11px] text-muted-foreground truncate">{v.description}</p>}
+                </div>
+              </div>
+            ))}
+          </PreviewSection>
+        )}
+
+        {/* Reference documents */}
+        {data.induction_documents.length > 0 && (
+          <PreviewSection icon={<FileText className="h-4 w-4 text-white" />} gradient="from-indigo-500 to-violet-600" title="Reference documents" count={data.induction_documents.length}>
+            {data.induction_documents.map((d) => (
+              <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-2.5 hover:border-indigo-400/60 transition-colors">
+                <FileText className="h-4 w-4 text-indigo-500 shrink-0" />
+                <span className="text-[13px] font-semibold text-foreground flex-1 min-w-0 truncate">{d.title}</span>
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              </a>
+            ))}
+          </PreviewSection>
+        )}
+
+        {/* Quick links */}
+        {data.quick_links.length > 0 && (
+          <PreviewSection icon={<Link2 className="h-4 w-4 text-white" />} gradient="from-teal-500 to-emerald-600" title="Day-1 quick links" count={data.quick_links.length}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {data.quick_links.map((l) => (
+                <a key={l.id} href={l.url} target="_blank" rel="noreferrer" className="flex items-start gap-3 rounded-xl border border-slate-200/70 dark:border-white/[0.06] bg-white/70 dark:bg-zinc-900/50 px-3.5 py-2.5 hover:border-teal-400/60 transition-colors">
+                  <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center shrink-0">
+                    <Link2 className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold text-foreground truncate">{l.title}</p>
+                    {(l.description || l.category) && (
+                      <p className="text-[11px] text-muted-foreground truncate">{l.description || l.category}</p>
+                    )}
+                  </div>
+                </a>
+              ))}
+            </div>
+          </PreviewSection>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviewSection({
+  icon,
+  gradient,
+  title,
+  count,
+  children,
+}: {
+  icon: ReactNode;
+  gradient: string;
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-slate-200/70 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-900/40 backdrop-blur-xl overflow-hidden shadow-sm">
+      <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.05] bg-white/50 dark:bg-zinc-950/20">
+        <div className={cn("h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br", gradient)}>
+          {icon}
+        </div>
+        <h3 className="text-[14.5px] font-black text-foreground">{title}</h3>
+        <span className="ml-auto text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800 text-muted-foreground tabular-nums">
+          {count}
+        </span>
+      </div>
+      <div className="p-4 space-y-2">{children}</div>
+    </section>
   );
 }
