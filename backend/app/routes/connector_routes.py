@@ -7,6 +7,7 @@ via ConnectorRegistry scope rules.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Optional
 
@@ -17,6 +18,7 @@ from app.auth import CurrentUser, require_admin, require_super_admin, get_curren
 from app.database import SessionLocal
 from app.models import (
     Connector, ConnectorAuth, ConnectorUserAuth, ConnectorOperation, ConnectorCallLog, ConnectorScope,
+    RouterExample,
 )
 from app.connectors.registry import ConnectorRegistry, invalidate
 from app.connectors.executor import execute_operation
@@ -80,6 +82,21 @@ class InvokePayload(BaseModel):
 class MyConnectionPayload(BaseModel):
     """A user's own credential for a per_user connector (plain — Fernet-encrypted server-side)."""
     config: dict = {}
+
+
+class RouterExampleCreate(BaseModel):
+    utterance: str
+    operation_id: int
+
+
+class RouterExampleUpdate(BaseModel):
+    utterance: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class OpRolesPayload(BaseModel):
+    """App-role slugs allowed to invoke one operation. Empty = everyone (global)."""
+    roles: list[str] = []
 
 
 # ── Connector CRUD ────────────────────────────────────────────────────────────
@@ -444,14 +461,14 @@ async def connector_usage(
     user: CurrentUser = Depends(require_admin),
 ):
     with SessionLocal() as db:
-        from sqlalchemy import func as sqlfunc
+        from sqlalchemy import func as sqlfunc, cast, Integer
         rows = (
             db.query(
                 ConnectorCallLog.operation_id,
                 sqlfunc.count(ConnectorCallLog.id).label("calls"),
                 sqlfunc.avg(ConnectorCallLog.latency_ms).label("avg_latency_ms"),
                 sqlfunc.sum(
-                    sqlfunc.cast(ConnectorCallLog.status == "success", sqlfunc.Integer)
+                    cast(ConnectorCallLog.status == "success", Integer)
                 ).label("successes"),
             )
             .filter(ConnectorCallLog.connector_id == connector_id)
@@ -478,6 +495,181 @@ async def connector_usage(
             for r in rows
         ],
     }
+
+
+# ── Router examples (seeded questions) + per-operation access ─────────────────
+
+@router.get("/{connector_id}/router-examples")
+async def list_router_examples(connector_id: int, user: CurrentUser = Depends(require_admin)):
+    """The router-seeded questions attached to this connector, grouped by operation,
+    plus the app-roles allowed to invoke each operation."""
+    from sqlalchemy import or_
+    with SessionLocal() as db:
+        conn = db.query(Connector).filter(Connector.id == connector_id).first()
+        if not conn:
+            raise HTTPException(404, "Connector not found")
+        ops = db.query(ConnectorOperation).filter(
+            ConnectorOperation.connector_id == connector_id
+        ).all()
+        op_ids = [o.id for o in ops]
+        domain = f"connector:{conn.slug}"
+
+        rows = db.query(RouterExample).filter(
+            or_(
+                RouterExample.domain == domain,
+                RouterExample.connector_operation_id.in_(op_ids) if op_ids else False,
+            )
+        ).order_by(RouterExample.created_at).all()
+
+        # Operation-level role scopes (operation_id set, role not null).
+        role_scopes = db.query(ConnectorScope).filter(
+            ConnectorScope.connector_id == connector_id,
+            ConnectorScope.operation_id.isnot(None),
+            ConnectorScope.role.isnot(None),
+        ).all()
+        roles_by_op: dict[int, list[str]] = {}
+        for s in role_scopes:
+            roles_by_op.setdefault(s.operation_id, []).append(s.role)
+
+        operations = [
+            {
+                "id": o.id,
+                "name": o.name,
+                "display_name": o.display_name,
+                "allowed_roles": sorted(roles_by_op.get(o.id, [])),
+            }
+            for o in ops
+        ]
+        examples = [
+            {
+                "id": r.id,
+                "utterance": r.utterance,
+                "operation_id": r.connector_operation_id,
+                "is_active": r.is_active,
+                "source": r.source,
+            }
+            for r in rows
+        ]
+    return {"operations": operations, "examples": examples, "seeding_status": conn.seeding_status}
+
+
+@router.post("/{connector_id}/router-examples")
+async def add_router_example(
+    connector_id: int,
+    payload: RouterExampleCreate,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    """Manually add one router question for an operation."""
+    from app.services.semantic_router_service import SemanticRouterService
+    with SessionLocal() as db:
+        conn = db.query(Connector).filter(Connector.id == connector_id).first()
+        if not conn:
+            raise HTTPException(404, "Connector not found")
+        op = db.query(ConnectorOperation).filter(
+            ConnectorOperation.id == payload.operation_id,
+            ConnectorOperation.connector_id == connector_id,
+        ).first()
+        if not op:
+            raise HTTPException(404, "Operation not found")
+        slug, op_name = conn.slug, op.name
+    try:
+        ok = await asyncio.to_thread(
+            SemanticRouterService.add_example,
+            payload.utterance, f"connector:{slug}", op_name, None, "manual", None,
+            payload.operation_id, True,  # raise_on_error → surface the real DB reason
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"Could not add example: {exc}")
+    if not ok:
+        raise HTTPException(400, "Could not add example (empty utterance or missing label)")
+    return {"ok": True}
+
+
+@router.patch("/{connector_id}/router-examples/{example_id}")
+async def update_router_example(
+    connector_id: int,
+    example_id: int,
+    payload: RouterExampleUpdate,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    """Edit a question's text and/or enable/disable it."""
+    from app.services.semantic_router_service import SemanticRouterService
+    if payload.is_active is not None:
+        if not await asyncio.to_thread(SemanticRouterService.set_example_active, example_id, payload.is_active):
+            raise HTTPException(404, "Example not found")
+    if payload.utterance is not None:
+        if not await asyncio.to_thread(SemanticRouterService.edit_example, example_id, payload.utterance):
+            raise HTTPException(400, "Could not update phrasing (duplicate or not found)")
+    return {"ok": True}
+
+
+@router.delete("/{connector_id}/router-examples/{example_id}")
+async def delete_router_example(
+    connector_id: int,
+    example_id: int,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    from app.services.semantic_router_service import SemanticRouterService
+    if not await asyncio.to_thread(SemanticRouterService.delete_example, example_id):
+        raise HTTPException(404, "Example not found")
+    return {"ok": True}
+
+
+@router.put("/{connector_id}/operations/{op_id}/roles")
+async def set_operation_roles(
+    connector_id: int,
+    op_id: int,
+    payload: OpRolesPayload,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    """Replace the app-roles allowed to invoke one operation. Empty list = everyone."""
+    with SessionLocal() as db:
+        op = db.query(ConnectorOperation).filter(
+            ConnectorOperation.id == op_id,
+            ConnectorOperation.connector_id == connector_id,
+        ).first()
+        if not op:
+            raise HTTPException(404, "Operation not found")
+        # Clear existing operation-level ROLE scopes for this op, then re-add.
+        db.query(ConnectorScope).filter(
+            ConnectorScope.connector_id == connector_id,
+            ConnectorScope.operation_id == op_id,
+            ConnectorScope.role.isnot(None),
+        ).delete(synchronize_session=False)
+        for r in payload.roles:
+            r = (r or "").strip().lower()
+            if r:
+                db.add(ConnectorScope(connector_id=connector_id, operation_id=op_id, role=r))
+        db.commit()
+    await invalidate()
+    return {"ok": True, "restricted": bool(payload.roles)}
+
+
+@router.post("/{connector_id}/reseed")
+async def reseed_router_examples(
+    connector_id: int,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    """Re-run the LLM seeding pass to regenerate router questions for this connector."""
+    from app.connectors.seeder import seed_router_examples
+    with SessionLocal() as db:
+        conn = db.query(Connector).filter(Connector.id == connector_id).first()
+        if not conn:
+            raise HTTPException(404, "Connector not found")
+        ops_rows = db.query(ConnectorOperation).filter(
+            ConnectorOperation.connector_id == connector_id,
+            ConnectorOperation.enabled == True,
+        ).all()
+        ops = [
+            {"id": o.id, "name": o.name, "description": o.description,
+             "display_name": o.display_name, "enabled": o.enabled}
+            for o in ops_rows
+        ]
+        slug, name = conn.slug, conn.name
+        conn.seeding_status = "seeding"
+        db.commit()
+    asyncio.create_task(seed_router_examples(connector_id, slug, name, ops))
+    return {"ok": True, "operations": len(ops)}
 
 
 # ── User-facing invoke endpoint ───────────────────────────────────────────────

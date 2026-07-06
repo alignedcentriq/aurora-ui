@@ -21,6 +21,9 @@ import {
   BarChart2,
   AlertCircle,
   CheckCircle2,
+  MessageSquareText,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -48,6 +51,17 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -374,7 +388,7 @@ export default function ConnectorStudio() {
   };
 
   return (
-    <div className="flex h-full min-h-[calc(100dvh-64px)] bg-gray-50 dark:bg-gray-950">
+    <div className="flex h-[calc(100dvh-64px)] overflow-hidden bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
       <aside className={cn(
         "w-full md:w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col",
@@ -439,7 +453,7 @@ export default function ConnectorStudio() {
 
       {/* Main content */}
       <main className={cn(
-        "flex-1 overflow-y-auto p-4 sm:p-6",
+        "flex-1 min-w-0 overflow-y-auto p-4 sm:p-6",
         selected ? "block" : "hidden md:block"
       )}>
         {!selected ? (
@@ -527,6 +541,7 @@ export default function ConnectorStudio() {
                 <TabsTrigger value="operations">
                   Operations ({selected.operations.length})
                 </TabsTrigger>
+                <TabsTrigger value="questions">Questions & Access</TabsTrigger>
                 <TabsTrigger value="usage">Usage & ROI</TabsTrigger>
               </TabsList>
 
@@ -648,6 +663,10 @@ export default function ConnectorStudio() {
                     ))}
                   </div>
                 )}
+              </TabsContent>
+
+              <TabsContent value="questions">
+                <QuestionsTab connectorId={selected.id} />
               </TabsContent>
 
               <TabsContent value="usage">
@@ -903,6 +922,398 @@ function CreateConnectorDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Questions & Access tab ──────────────────────────────────────────────────
+
+interface RouterExampleRow {
+  id: number;
+  utterance: string;
+  operation_id: number | null;
+  is_active: boolean;
+  source: string;
+}
+interface QOperation {
+  id: number;
+  name: string;
+  display_name: string | null;
+  allowed_roles: string[];
+}
+interface AppRoleOpt {
+  slug: string;
+  name: string;
+}
+
+// How each RouterExample got there — shown as a chip on every question.
+const SOURCE_LABELS: Record<string, string> = {
+  connector: "AI-generated",
+  manual: "Manual",
+  feedback: "Learned",
+  kw: "Keyword",
+  seed: "Default",
+  prompt: "Prompt",
+};
+
+/** Popover multi-select of app-roles. Empty selection = everyone. */
+function RoleMultiSelect({
+  roles,
+  selected,
+  onChange,
+}: {
+  roles: AppRoleOpt[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const toggle = (slug: string) =>
+    onChange(selected.includes(slug) ? selected.filter((s) => s !== slug) : [...selected, slug]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          {selected.length === 0 ? "Everyone" : `${selected.length} role${selected.length > 1 ? "s" : ""}`}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-60 p-2" align="start">
+        <p className="px-1 pb-1.5 text-[11px] text-muted-foreground">
+          Pick who can get answers. Empty = everyone with access.
+        </p>
+        <div className="max-h-56 space-y-0.5 overflow-y-auto">
+          {roles.length === 0 && (
+            <p className="px-1.5 py-2 text-xs text-muted-foreground">No roles defined.</p>
+          )}
+          {roles.map((r) => (
+            <label
+              key={r.slug}
+              className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-muted"
+            >
+              <Checkbox
+                checked={selected.includes(r.slug)}
+                onCheckedChange={() => toggle(r.slug)}
+              />
+              <span className="truncate">{r.name}</span>
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function QuestionsTab({ connectorId }: { connectorId: number }) {
+  const [ops, setOps] = useState<QOperation[]>([]);
+  const [examples, setExamples] = useState<RouterExampleRow[]>([]);
+  const [roles, setRoles] = useState<AppRoleOpt[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [reseeding, setReseeding] = useState(false);
+  const [seedingStatus, setSeedingStatus] = useState("");
+  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
+  const [draft, setDraft] = useState<Record<number, string>>({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [data, rolesData] = await Promise.all([
+        apiFetch(`/api/admin/connectors/${connectorId}/router-examples`),
+        apiFetch(`/api/access/roles`).catch(() => []),
+      ]);
+      setOps(data.operations ?? []);
+      setExamples(data.examples ?? []);
+      setSeedingStatus(data.seeding_status ?? "");
+      const rlist = Array.isArray(rolesData) ? rolesData : (rolesData.roles ?? []);
+      setRoles(rlist.map((r: any) => ({ slug: r.slug, name: r.name ?? r.slug })));
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [connectorId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const setRolesForOp = async (opId: number, next: string[]) => {
+    setOps((prev) => prev.map((o) => (o.id === opId ? { ...o, allowed_roles: next } : o)));
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/operations/${opId}/roles`, {
+        method: "PUT",
+        body: JSON.stringify({ roles: next }),
+      });
+    } catch (e: any) {
+      toast.error(e.message);
+      load();
+    }
+  };
+
+  const toggleActive = async (ex: RouterExampleRow) => {
+    setExamples((prev) => prev.map((e) => (e.id === ex.id ? { ...e, is_active: !e.is_active } : e)));
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/router-examples/${ex.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !ex.is_active }),
+      });
+    } catch (e: any) {
+      toast.error(e.message);
+      load();
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    const text = editing.text.trim();
+    const orig = examples.find((e) => e.id === editing.id);
+    if (!text || text === orig?.utterance) {
+      setEditing(null);
+      return;
+    }
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/router-examples/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ utterance: text }),
+      });
+      setExamples((prev) => prev.map((e) => (e.id === editing.id ? { ...e, utterance: text } : e)));
+      setEditing(null);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const removeExample = async (id: number) => {
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/router-examples/${id}`, {
+        method: "DELETE",
+      });
+      setExamples((prev) => prev.filter((e) => e.id !== id));
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const addExample = async (opId: number) => {
+    const text = (draft[opId] || "").trim();
+    if (!text) return;
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/router-examples`, {
+        method: "POST",
+        body: JSON.stringify({ utterance: text, operation_id: opId }),
+      });
+      setDraft((d) => ({ ...d, [opId]: "" }));
+      load();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const reseed = async () => {
+    setReseeding(true);
+    try {
+      await apiFetch(`/api/admin/connectors/${connectorId}/reseed`, { method: "POST" });
+      setSeedingStatus("seeding");
+      toast.success("Regenerating questions — this runs in the background. Refresh in a moment.");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setReseeding(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-2 py-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  const byOp = (opId: number) => examples.filter((e) => e.operation_id === opId);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Questions that route users to this connector — <strong>AI-generated</strong> when you
+          publish (or Regenerate), plus any you add. Edit, disable, or add phrasings, and set which
+          roles can get answers.
+        </p>
+        <div className="flex items-center gap-2">
+          {seedingStatus === "seeding" && (
+            <Badge variant="secondary" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> Seeding
+            </Badge>
+          )}
+          <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5">
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </Button>
+          <Button variant="outline" size="sm" onClick={reseed} disabled={reseeding} className="h-8 gap-1.5">
+            {reseeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Regenerate
+          </Button>
+        </div>
+      </div>
+
+      {ops.length === 0 ? (
+        <div className="rounded-lg border-2 border-dashed border-gray-200 dark:border-gray-800 p-12 text-center">
+          <MessageSquareText className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+          <p className="text-sm text-gray-500">No operations yet — import a spec first.</p>
+        </div>
+      ) : (
+        <Accordion type="multiple" className="space-y-2">
+          {ops.map((op) => {
+            const rows = byOp(op.id);
+            return (
+              <AccordionItem
+                key={op.id}
+                value={String(op.id)}
+                className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-0"
+              >
+                <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                  <div className="flex flex-1 items-center gap-2.5 pr-2 text-left">
+                    <MessageSquareText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="font-mono text-sm text-foreground">{op.display_name || op.name}</span>
+                    <Badge variant="secondary" className="ml-1">
+                      {rows.length} {rows.length === 1 ? "question" : "questions"}
+                    </Badge>
+                    <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      {op.allowed_roles.length === 0
+                        ? "Everyone"
+                        : `${op.allowed_roles.length} role${op.allowed_roles.length > 1 ? "s" : ""}`}
+                    </span>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="px-4 pb-4">
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      <span>Who can get answers</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {op.allowed_roles.map((r) => (
+                        <Badge key={r} variant="outline" className="text-[11px]">
+                          {roles.find((x) => x.slug === r)?.name ?? r}
+                        </Badge>
+                      ))}
+                      <RoleMultiSelect
+                        roles={roles}
+                        selected={op.allowed_roles}
+                        onChange={(next) => setRolesForOp(op.id, next)}
+                      />
+                    </div>
+                  </div>
+
+                  <Separator className="mb-3" />
+
+                  <div className="space-y-1.5">
+                    {rows.length === 0 && (
+                      <p className="py-2 text-xs text-muted-foreground">
+                        No questions yet — add one below or click Regenerate.
+                      </p>
+                    )}
+                    {rows.map((ex) => (
+                      <div
+                        key={ex.id}
+                        className="group flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 hover:border-gray-200 dark:hover:border-gray-700"
+                      >
+                        {editing?.id === ex.id ? (
+                          <>
+                            <Input
+                              autoFocus
+                              value={editing.text}
+                              onChange={(e) => setEditing({ id: ex.id, text: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveEdit();
+                                if (e.key === "Escape") setEditing(null);
+                              }}
+                              className="h-8 text-sm"
+                            />
+                            <Button size="sm" className="h-7" onClick={saveEdit}>
+                              Save
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7"
+                              onClick={() => setEditing(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              className={cn(
+                                "flex-1 text-sm",
+                                ex.is_active ? "text-foreground" : "text-muted-foreground line-through",
+                              )}
+                            >
+                              {ex.utterance}
+                            </span>
+                            <Badge
+                              variant={ex.source === "connector" ? "secondary" : "outline"}
+                              className="gap-1 text-[10px]"
+                            >
+                              {ex.source === "connector" && <Sparkles className="h-2.5 w-2.5" />}
+                              {SOURCE_LABELS[ex.source] ?? ex.source}
+                            </Badge>
+                            <Switch
+                              checked={ex.is_active}
+                              onCheckedChange={() => toggleActive(ex)}
+                              className="scale-90"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                              onClick={() => setEditing({ id: ex.id, text: ex.utterance })}
+                              title="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-500 opacity-0 group-hover:opacity-100"
+                              onClick={() => removeExample(ex.id)}
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    <Input
+                      placeholder="Add a question users might ask…"
+                      value={draft[op.id] || ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, [op.id]: e.target.value }))}
+                      onKeyDown={(e) => e.key === "Enter" && addExample(op.id)}
+                      className="h-8 text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => addExample(op.id)}
+                      disabled={!(draft[op.id] || "").trim()}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add
+                    </Button>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+      )}
+    </div>
   );
 }
 

@@ -14,6 +14,7 @@ capability without a second registry drifting out of sync.
 from dataclasses import dataclass, field
 from typing import Optional
 import re
+import time
 
 # Roles in the system. A capability with roles=None is visible to everyone.
 ALL_ROLES = {"employee", "manager", "hr", "it", "pmo", "admin"}
@@ -449,9 +450,64 @@ def all_capabilities() -> tuple[Capability, ...]:
     return CAPABILITIES
 
 
+# ── Published connectors as capabilities (discovery only — NOT the adoption denominator) ──
+# Each published connector surfaces as one "agent" in discovery, with its top seeded questions
+# as starters and role visibility derived from its ConnectorScope role rows. Cached briefly so
+# greetings / GET /api/capabilities don't hit the DB on every call.
+_CONN_CACHE: tuple[float, tuple[Capability, ...]] = (0.0, ())
+_CONN_CACHE_TTL = 60.0
+
+
+def _connector_capabilities() -> tuple[Capability, ...]:
+    global _CONN_CACHE
+    now = time.monotonic()
+    if now - _CONN_CACHE[0] < _CONN_CACHE_TTL:
+        return _CONN_CACHE[1]
+    caps: list[Capability] = []
+    try:
+        from app.database import SessionLocal
+        from app.models import Connector, ConnectorScope, RouterExample
+        with SessionLocal() as db:
+            conns = db.query(Connector).filter(Connector.status == "published").all()
+            if conns:
+                conn_ids = [c.id for c in conns]
+                # Role scopes at connector OR operation level → who may see this connector.
+                role_scopes = db.query(ConnectorScope).filter(
+                    ConnectorScope.connector_id.in_(conn_ids),
+                    ConnectorScope.role.isnot(None),
+                ).all()
+                roles_by_conn: dict[int, set] = {}
+                for s in role_scopes:
+                    roles_by_conn.setdefault(s.connector_id, set()).add((s.role or "").strip().lower())
+                for c in conns:
+                    domain = f"connector:{c.slug}"
+                    exs = db.query(RouterExample).filter(
+                        RouterExample.domain == domain,
+                        RouterExample.is_active == True,
+                    ).order_by(RouterExample.created_at).limit(4).all()
+                    roles = roles_by_conn.get(c.id)
+                    caps.append(Capability(
+                        key=f"connector_{c.slug}",
+                        title=c.name,
+                        description=(c.description or f"Ask about {c.name}.")[:140],
+                        category="Connected apps",
+                        examples=tuple(e.utterance for e in exs),
+                        domain=domain,
+                        usage=((domain, "*"),),
+                        roles=frozenset(roles) if roles else None,
+                    ))
+    except Exception:
+        return _CONN_CACHE[1]  # serve last-known on any error — never break discovery
+    result = tuple(caps)
+    _CONN_CACHE = (now, result)
+    return result
+
+
 def capabilities_for_role(role: Optional[str]) -> list[Capability]:
-    """All capabilities visible to a role, in catalog order."""
-    return [c for c in CAPABILITIES if c.visible_to(role)]
+    """All capabilities visible to a role, in catalog order — including published connectors."""
+    static = [c for c in CAPABILITIES if c.visible_to(role)]
+    connectors = [c for c in _connector_capabilities() if c.visible_to(role)]
+    return static + connectors
 
 
 def nearest_capabilities(query: str, role: Optional[str] = None,
@@ -462,7 +518,8 @@ def nearest_capabilities(query: str, role: Optional[str] = None,
     Falls back to the role's most common capabilities when nothing overlaps."""
     q = _tokens(query)
     scored: list[tuple[float, int, Capability]] = []
-    for idx, c in enumerate(CAPABILITIES):
+    catalog = CAPABILITIES + _connector_capabilities()
+    for idx, c in enumerate(catalog):
         if not c.visible_to(role):
             continue
         hay = _tokens(" ".join((c.title, c.description) + c.examples))

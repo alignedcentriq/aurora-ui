@@ -4835,10 +4835,17 @@ def _greeting_response(state: AgentState) -> str:
         except Exception:
             pass
 
-    # Lead with a few role-appropriate capabilities rather than a fixed menu.
-    visible = _caps.capabilities_for_role(role)[:4]
+    # Lead with a few role-appropriate capabilities rather than a fixed menu, and
+    # surface one connected app (connector) if any are published + visible to this role.
+    all_caps = _caps.capabilities_for_role(role)
+    statics = [c for c in all_caps if not c.key.startswith("connector_")]
+    conns = [c for c in all_caps if c.key.startswith("connector_")]
+    visible = (statics[:3] + conns[:1]) if conns else statics[:4]
     if visible:
-        bullets = "\n".join(f"- {c.title} — _e.g. \"{c.examples[0]}\"_" for c in visible)
+        bullets = "\n".join(
+            (f"- {c.title} — _e.g. \"{c.examples[0]}\"_" if c.examples else f"- {c.title}")
+            for c in visible
+        )
         body = (
             f" I'm Centriq, your workplace assistant. Here are a few things I can help you with:\n\n"
             f"{bullets}\n\nWhat would you like to do?"

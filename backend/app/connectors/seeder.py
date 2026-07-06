@@ -18,8 +18,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-_UTTERANCE_PROMPT = """
-You are seeding example phrases for a semantic intent router.
+_UTTERANCE_PROMPT = """You are seeding example phrases for a semantic intent router.
 For the operation below, generate {n} distinct natural-language questions or commands
 that a user might say to invoke this operation. Each utterance should be different in
 wording and cover different phrasings (casual, formal, short, long).
@@ -28,11 +27,96 @@ Operation name: {name}
 Description: {description}
 System: {connector_name}
 
-Return ONLY a JSON array of strings, e.g. ["phrase 1", "phrase 2", ...]
-"""
+Respond with ONLY a raw JSON array of {n} strings and nothing else — no prose, no
+markdown fences, no explanation. Example: ["show me the categories", "list categories"]"""
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0  # seconds; doubles each retry (2, 4, 8)
+
+# Enough headroom for ~12 utterances so the array is never truncated mid-string.
+_GEN_MAX_TOKENS = 1024
+
+
+def _extract_json_array(content: str) -> Optional[list]:
+    """Best-effort extraction of a JSON array of strings from a raw LLM response.
+
+    Small/local models wrap output in markdown fences, reasoning tags, or stray
+    prose containing bracket tokens (``[INST]``, ``[1]``). A naive non-greedy
+    ``\\[.*?\\]`` grabs the first tiny pair and blows up in json.loads. Instead we
+    strip the noise, then scan for the first *balanced* bracket span (quote-aware so
+    brackets inside strings don't confuse the depth counter).
+    """
+    if not content:
+        return None
+
+    # Drop reasoning/thinking blocks emitted by reasoning-tuned models.
+    text = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    # Drop markdown code fences (```json ... ``` or bare ```).
+    text = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE)
+
+    def _coerce(obj) -> Optional[list]:
+        return obj if isinstance(obj, list) else None
+
+    # 1) Cleaned text may already be exactly the array.
+    stripped = text.strip()
+    try:
+        arr = _coerce(json.loads(stripped))
+        if arr is not None:
+            return arr
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2) Scan for the first balanced [...] span, respecting string literals.
+    start = stripped.find("[")
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(stripped)):
+            ch = stripped[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    candidate = stripped[start:i + 1]
+                    try:
+                        arr = _coerce(json.loads(candidate))
+                        if arr is not None:
+                            return arr
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    break  # this span didn't parse; try the next '['
+        start = stripped.find("[", start + 1)
+
+    return None
+
+
+def _fallback_utterances(op: dict, connector_name: str) -> list[str]:
+    """Deterministic starter phrasings, used when the LLM is unavailable so a connector
+    is still routable + discoverable even if the model can't be reached at seed time."""
+    label = (op.get("display_name") or op.get("name") or "").replace("_", " ").strip()
+    desc = (op.get("description") or "").strip()
+    candidates = []
+    if label:
+        candidates += [label, f"{label} in {connector_name}", f"use {connector_name} to {label.lower()}"]
+    if desc:
+        candidates.append(desc)
+    seen, result = set(), []
+    for c in candidates:
+        k = c.lower()
+        if c and k not in seen:
+            seen.add(k)
+            result.append(c)
+    return result[:4]
 
 
 def _update_seeding_status(connector_id: int, status: str) -> None:
@@ -58,16 +142,16 @@ async def _generate_utterances_with_retry(llm, prompt: str, op_name: str, connec
         try:
             resp = await llm.ainvoke(prompt)
             content = resp.content if hasattr(resp, "content") else str(resp)
-            match = re.search(r"\[.*?\]", content, re.DOTALL)
-            if not match:
+            arr = _extract_json_array(content)
+            if arr is None:
                 log.warning(
-                    "Attempt %d/%d for %s.%s: LLM returned no JSON array",
-                    attempt, MAX_RETRIES, connector_slug, op_name,
+                    "Attempt %d/%d for %s.%s: LLM returned no JSON array (got: %r)",
+                    attempt, MAX_RETRIES, connector_slug, op_name, (content or "")[:200],
                 )
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(RETRY_BASE_DELAY * (2 ** (attempt - 1)))
                 continue
-            return json.loads(match.group())
+            return arr
         except Exception as exc:
             log.warning(
                 "Attempt %d/%d for %s.%s failed: %s",
@@ -100,9 +184,18 @@ async def seed_router_examples(
     try:
         from app.services.llm_controls_service import get_llm
         from app.services.semantic_router_service import SemanticRouterService
-        from app.config import settings
 
-        llm = get_llm(settings.ROUTER_MODEL_NAME)
+        # get_llm expects a TIER name (agent/service/router/general/summarizer), not a
+        # model id. Use the "general" tier for this — the "router" tier is a tiny,
+        # temperature-0 model tuned for intent *classification* (bind_tools), and is
+        # unreliable at freely generating a JSON array of phrases. If the tier can't be
+        # built (misconfig / model down) we still seed deterministic fallbacks below
+        # rather than failing the whole connector.
+        try:
+            llm = get_llm("general", default_max_tokens=_GEN_MAX_TOKENS)
+        except Exception as exc:
+            log.warning("general LLM unavailable (%s) — seeding %s with deterministic fallbacks", exc, connector_slug)
+            llm = None
 
         for op in ops:
             if not op.get("enabled", True):
@@ -117,11 +210,20 @@ async def seed_router_examples(
                 connector_name=connector_name,
             )
 
-            utterances = await _generate_utterances_with_retry(llm, prompt, op["name"], connector_slug)
+            utterances = (
+                await _generate_utterances_with_retry(llm, prompt, op["name"], connector_slug)
+                if llm is not None else None
+            )
 
+            # LLM unavailable → fall back to deterministic phrasings so the op is never
+            # left with zero examples (which would make it unroutable + undiscoverable).
+            source = "connector"
             if utterances is None:
                 failed_ops.append(op["name"])
-                continue
+                utterances = _fallback_utterances(op, connector_name)
+                source = "kw"
+                if not utterances:
+                    continue
 
             added = 0
             for utt in utterances[:n_per_op]:
@@ -131,7 +233,7 @@ async def seed_router_examples(
                     ok = await asyncio.to_thread(
                         SemanticRouterService.add_example,
                         utt.strip(), domain, sub_intent,
-                        None, "connector", None, op.get("id"),
+                        None, source, None, op.get("id"),
                     )
                     if ok:
                         added += 1
@@ -139,7 +241,7 @@ async def seed_router_examples(
                     log.debug("add_example failed for %r: %s", utt[:60], exc)
 
             seeded_total += added
-            log.info("Seeded %d utterances for %s.%s", added, connector_slug, op["name"])
+            log.info("Seeded %d utterances (%s) for %s.%s", added, source, connector_slug, op["name"])
 
     except Exception as exc:
         log.error("seed_router_examples failed for connector %s: %s", connector_slug, exc)
