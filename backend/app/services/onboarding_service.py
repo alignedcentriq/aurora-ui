@@ -117,6 +117,84 @@ def required_doc_keys() -> set:
     return {d.doc_key for d in _merged_docs_list() if d.required}
 
 
+# ── Step catalog (built-in journey + HR-managed custom steps/overrides) ───────────
+# The built-in journey lives in onboarding_template (code). HR can add new steps, retitle/
+# reorder/hide any step, and toggle "required" via OnboardingStepOverride rows, merged over
+# the built-ins here so the whole app (journey view, progress, next-step) sees one sequence.
+
+def _merged_steps_list() -> list:
+    """Effective ordered step list = built-ins overridden/extended by DB rows, with
+    soft-removed (is_active=False) steps dropped. Items are tmpl.OnboardingStep instances."""
+    from app.models import OnboardingStepOverride
+
+    order: list[str] = []
+    by_key: dict[str, tmpl.OnboardingStep] = {}
+    sort_hint: dict[str, int] = {}
+    for i, s in enumerate(tmpl.STEPS):
+        by_key[s.key] = s
+        sort_hint[s.key] = s.order if s.order is not None else i
+        order.append(s.key)
+
+    db = SessionLocal()
+    try:
+        rows = db.query(OnboardingStepOverride).all()
+    finally:
+        db.close()
+
+    hidden: set[str] = set()
+    for r in rows:
+        if not r.is_active:
+            hidden.add(r.step_key)
+            continue
+        base = by_key.get(r.step_key)
+        # Built-in kind/auto behavior is preserved (documents/video sub-flows can't be
+        # retargeted); custom steps are manual/deeplink and never auto-complete.
+        kind = base.kind if base else (r.kind or "manual")
+        auto_signal = base.auto_signal if base else None
+        sort_val = r.sort_order if r.sort_order is not None else (base.order if base else 100)
+        by_key[r.step_key] = tmpl.OnboardingStep(
+            key=r.step_key,
+            title=(r.title if r.title is not None else (base.title if base else r.step_key)),
+            description=(r.description if r.description is not None
+                        else (base.description if base else "")) or "",
+            category=(r.category if r.category is not None
+                      else (base.category if base else "General")) or "General",
+            order=sort_val,
+            kind=kind,
+            cta_label=(r.cta_label if r.cta_label is not None
+                       else (base.cta_label if base else "Mark done")) or "Mark done",
+            action_payload=(r.action_payload if r.action_payload is not None
+                            else (dict(base.action_payload) if base else {})) or {},
+            auto_signal=auto_signal,
+            required=bool(r.required) if r.required is not None else (base.required if base else True),
+        )
+        sort_hint[r.step_key] = sort_val
+        if r.step_key not in order:
+            order.append(r.step_key)
+
+    keys = [k for k in order if k not in hidden]
+    keys.sort(key=lambda k: (sort_hint.get(k, 100), k))
+    return [by_key[k] for k in keys]
+
+
+def all_steps() -> tuple:
+    """Effective onboarding steps (built-in + HR customizations), in display order."""
+    return tuple(_merged_steps_list())
+
+
+def get_step(step_key: str):
+    """Effective step definition for a key (built-in or HR-managed), or None if unknown/hidden."""
+    for s in _merged_steps_list():
+        if s.key == step_key:
+            return s
+    return None
+
+
+def required_step_keys() -> set:
+    """keys of every effective required step."""
+    return {s.key for s in _merged_steps_list() if s.required}
+
+
 # ── New-hire detection ─────────────────────────────────────────────────────────
 
 def is_new_hire(emp: Employee) -> bool:
@@ -135,7 +213,7 @@ def _seed_steps(db, journey: OnboardingJourney) -> None:
     """Create one OnboardingStepProgress row per template step that's missing (idempotent —
     safe to call again after the template grows a new step)."""
     have = {s.step_key for s in journey.steps}
-    for step in tmpl.all_steps():
+    for step in all_steps():
         if step.key not in have:
             db.add(OnboardingStepProgress(journey_id=journey.id, step_key=step.key, status="pending"))
 
@@ -211,7 +289,7 @@ def recompute(db, journey: OnboardingJourney) -> OnboardingJourney:
     to completed once all required steps are done. Manual steps are untouched."""
     steps = _step_map(journey)
     changed = False
-    for step in tmpl.all_steps():
+    for step in all_steps():
         if not step.auto_signal:
             continue
         row = steps.get(step.key)
@@ -223,7 +301,7 @@ def recompute(db, journey: OnboardingJourney) -> OnboardingJourney:
             changed = True
 
     # Journey completion: all REQUIRED steps done.
-    required = tmpl.required_step_keys()
+    required = required_step_keys()
     done = {k for k, s in steps.items() if s.status in ("done", "skipped")}
     all_required_done = required.issubset(done)
     if all_required_done and journey.status != "completed":
@@ -247,7 +325,7 @@ def mark_step(db, journey: OnboardingJourney, step_key: str, status: str,
               actor_email: str) -> OnboardingStepProgress:
     """Set a single step's status. Raises ValueError on an unknown step. Recomputes the
     journey afterwards so completion reflects the change."""
-    if tmpl.get_step(step_key) is None:
+    if get_step(step_key) is None:
         raise ValueError(f"Unknown onboarding step: {step_key}")
     row = (
         db.query(OnboardingStepProgress)
@@ -606,7 +684,7 @@ def _email_doc_to_hr(emp: Optional[Employee], doc: "tmpl.OnboardingDoc", content
 # ── Read models (for routes) ─────────────────────────────────────────────────────
 
 def _progress_pct(steps: dict[str, OnboardingStepProgress]) -> int:
-    required = tmpl.required_step_keys()
+    required = required_step_keys()
     if not required:
         return 100
     done = sum(1 for k in required if steps.get(k) and steps[k].status in ("done", "skipped"))
@@ -614,7 +692,7 @@ def _progress_pct(steps: dict[str, OnboardingStepProgress]) -> int:
 
 
 def _next_step_key(steps: dict[str, OnboardingStepProgress]) -> Optional[str]:
-    for step in tmpl.all_steps():
+    for step in all_steps():
         row = steps.get(step.key)
         if row is None or row.status not in ("done", "skipped"):
             return step.key
@@ -688,7 +766,7 @@ def get_for_employee(email: str) -> Optional[dict]:
         steps = _step_map(journey)
 
         step_views = []
-        for step in tmpl.all_steps():
+        for step in all_steps():
             row = steps.get(step.key)
             view = step.to_dict()
             view.update({
@@ -1051,6 +1129,456 @@ def save_induction_doc_upload(content: bytes, original_name: str) -> dict:
     return {"url": f"/uploads/induction_docs/{safe}", "uploaded_filename": original_name or safe}
 
 
+# ── Day-1 quick links (curated apps/portals a new hire needs early) ────────────────
+
+def _serialize_quick_link(l) -> dict:
+    return {
+        "id": str(l.id),
+        "title": l.title,
+        "url": l.url,
+        "description": l.description or "",
+        "category": l.category or "",
+        "sort_order": l.sort_order or 0,
+        "is_active": bool(l.is_active),
+    }
+
+
+def quick_links() -> list[dict]:
+    """Active quick links for new hires (opened from the onboarding journey)."""
+    from app.models import OnboardingQuickLink
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(OnboardingQuickLink)
+            .filter(OnboardingQuickLink.is_active == True)  # noqa: E712
+            .order_by(OnboardingQuickLink.sort_order, OnboardingQuickLink.id)
+            .all()
+        )
+        return [_serialize_quick_link(l) for l in rows]
+    finally:
+        db.close()
+
+
+def list_quick_links_admin() -> list[dict]:
+    from app.models import OnboardingQuickLink
+    db = SessionLocal()
+    try:
+        rows = (db.query(OnboardingQuickLink)
+                .order_by(OnboardingQuickLink.sort_order, OnboardingQuickLink.id).all())
+        return [_serialize_quick_link(l) for l in rows]
+    finally:
+        db.close()
+
+
+def create_quick_link(data: dict, actor_email: str | None = None) -> dict:
+    from app.models import OnboardingQuickLink
+    db = SessionLocal()
+    try:
+        l = OnboardingQuickLink(
+            title=(data.get("title") or "").strip(),
+            url=(data.get("url") or "").strip(),
+            description=(data.get("description") or "").strip() or None,
+            category=(data.get("category") or "").strip() or None,
+            sort_order=int(data.get("sort_order") or 0),
+            is_active=bool(data.get("is_active", True)),
+            created_by=actor_email,
+        )
+        db.add(l)
+        db.commit()
+        db.refresh(l)
+        return _serialize_quick_link(l)
+    finally:
+        db.close()
+
+
+def update_quick_link(link_id: int, data: dict) -> dict | None:
+    from app.models import OnboardingQuickLink
+    db = SessionLocal()
+    try:
+        l = db.query(OnboardingQuickLink).filter(OnboardingQuickLink.id == link_id).first()
+        if l is None:
+            return None
+        if "title" in data:
+            l.title = (data.get("title") or "").strip()
+        if "url" in data:
+            l.url = (data.get("url") or "").strip()
+        if "description" in data:
+            l.description = (data.get("description") or "").strip() or None
+        if "category" in data:
+            l.category = (data.get("category") or "").strip() or None
+        if "sort_order" in data:
+            l.sort_order = int(data.get("sort_order") or 0)
+        if "is_active" in data:
+            l.is_active = bool(data.get("is_active"))
+        db.commit()
+        db.refresh(l)
+        return _serialize_quick_link(l)
+    finally:
+        db.close()
+
+
+def delete_quick_link(link_id: int) -> bool:
+    from app.models import OnboardingQuickLink
+    db = SessionLocal()
+    try:
+        l = db.query(OnboardingQuickLink).filter(OnboardingQuickLink.id == link_id).first()
+        if l is None:
+            return False
+        db.delete(l)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+# ── Stalled-joiner reminder settings (runtime-editable, stored in CompanySettings) ──
+# The cadence detector lives in nudge_service.detect_stalled_onboarding; HR tunes it here
+# rather than via env vars, so no redeploy is needed. Defaults fall back to config.
+
+_REMINDER_KEY = "onboarding_reminders"
+
+
+def _reminder_defaults() -> dict:
+    return {
+        "enabled": True,
+        "stall_days": int(settings.ONBOARDING_STALL_DAYS),
+        "remind_hire": True,        # nudge the new hire about their next step
+        "remind_manager": True,     # nudge the hire's manager to follow up
+        "remind_hr": False,         # also nudge the HR mailbox
+        "hr_email": settings.ONBOARDING_HR_EMAIL or "",
+    }
+
+
+def get_reminder_settings() -> dict:
+    """Current stalled-joiner reminder config, merged over defaults."""
+    import json
+    from app.services.company_settings_service import CompanySettingsService
+
+    cfg = _reminder_defaults()
+    raw = CompanySettingsService.get(_REMINDER_KEY)
+    if raw:
+        try:
+            stored = json.loads(raw)
+            if isinstance(stored, dict):
+                cfg.update({k: stored[k] for k in cfg if k in stored})
+        except Exception:
+            pass
+    # Coerce types defensively (the store is text).
+    cfg["enabled"] = bool(cfg["enabled"])
+    cfg["remind_hire"] = bool(cfg["remind_hire"])
+    cfg["remind_manager"] = bool(cfg["remind_manager"])
+    cfg["remind_hr"] = bool(cfg["remind_hr"])
+    try:
+        cfg["stall_days"] = max(1, int(cfg["stall_days"]))
+    except (TypeError, ValueError):
+        cfg["stall_days"] = int(settings.ONBOARDING_STALL_DAYS)
+    cfg["hr_email"] = (cfg.get("hr_email") or "").strip()
+    return cfg
+
+
+def set_reminder_settings(data: dict, actor_email: str = "") -> dict:
+    """Persist (partial) reminder config; returns the full merged, validated config."""
+    import json
+    from app.services.company_settings_service import CompanySettingsService
+
+    cfg = get_reminder_settings()
+    for key in ("enabled", "remind_hire", "remind_manager", "remind_hr"):
+        if key in data:
+            cfg[key] = bool(data[key])
+    if "stall_days" in data:
+        try:
+            cfg["stall_days"] = max(1, int(data["stall_days"]))
+        except (TypeError, ValueError):
+            pass
+    if "hr_email" in data:
+        cfg["hr_email"] = (data.get("hr_email") or "").strip()
+    CompanySettingsService.set(_REMINDER_KEY, json.dumps(cfg), updated_by=actor_email)
+    return cfg
+
+
+# ── Journey step admin (HR adds/edits/hides/reorders onboarding steps) ────────────
+
+def list_steps_admin() -> list[dict]:
+    """Full HR management view of the journey: every step — built-in and HR-added, incl.
+    soft-removed ones — with its effective title/description/category/CTA/required, whether
+    it's active, whether it's a built-in, its kind, and whether it auto-completes."""
+    from app.models import OnboardingStepOverride
+
+    builtin_keys = {s.key for s in tmpl.STEPS}
+    builtins = {s.key: s for s in tmpl.STEPS}
+    builtin_order = {s.key: s.order for s in tmpl.STEPS}
+
+    db = SessionLocal()
+    try:
+        rows = {r.step_key: r for r in db.query(OnboardingStepOverride).all()}
+    finally:
+        db.close()
+
+    out = []
+    seen = set()
+    for key in list(builtins.keys()) + [k for k in rows.keys() if k not in builtin_keys]:
+        if key in seen:
+            continue
+        seen.add(key)
+        row = rows.get(key)
+        base = builtins.get(key)
+        title = (row.title if row and row.title is not None else (base.title if base else key)) or key
+        description = (row.description if row and row.description is not None
+                       else (base.description if base else "")) or ""
+        category = (row.category if row and row.category is not None
+                    else (base.category if base else "General")) or "General"
+        kind = base.kind if base else ((row.kind if row else None) or "manual")
+        cta_label = (row.cta_label if row and row.cta_label is not None
+                     else (base.cta_label if base else "Mark done")) or "Mark done"
+        action_payload = (row.action_payload if row and row.action_payload is not None
+                          else (dict(base.action_payload) if base else {})) or {}
+        required = bool(row.required) if (row and row.required is not None) else (base.required if base else True)
+        is_active = bool(row.is_active) if row else True
+        sort_order = (row.sort_order if row and row.sort_order is not None
+                      else (builtin_order.get(key, 100)))
+        auto = bool(base.auto_signal) if base else False
+        out.append({
+            "step_key": key,
+            "title": title,
+            "description": description,
+            "category": category,
+            "kind": kind,
+            "cta_label": cta_label,
+            "action_payload": action_payload,
+            "required": required,
+            "is_active": is_active,
+            "is_builtin": key in builtin_keys,
+            "auto": auto,
+            "sort_order": sort_order,
+        })
+    out.sort(key=lambda s: (s["sort_order"], s["title"]))
+    return out
+
+
+def _slugify_step_key(title: str) -> str:
+    import re
+    base = re.sub(r"[^a-z0-9]+", "_", (title or "").lower()).strip("_") or "step"
+    return f"custom_{base}"[:60]
+
+
+def _clean_action_payload(kind: str, data: dict) -> dict:
+    """Build a valid action_payload for a custom step from the submitted data.
+    deeplink → {"prompt": ...} or {"route": ...}; manual → {}."""
+    if kind != "deeplink":
+        return {}
+    ap = data.get("action_payload")
+    if isinstance(ap, dict) and (ap.get("prompt") or ap.get("route")):
+        return {k: v for k, v in ap.items() if k in ("prompt", "route") and v}
+    prompt = (data.get("prompt") or "").strip()
+    route = (data.get("route") or "").strip()
+    if prompt:
+        return {"prompt": prompt}
+    if route:
+        return {"route": route}
+    return {}
+
+
+def create_step(data: dict, actor_email: str | None = None) -> dict:
+    """HR adds a brand-new custom journey step. step_key is derived from the title (uniquified).
+    Custom steps are manual or deeplink and never auto-complete."""
+    from app.models import OnboardingStepOverride
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        raise ValueError("A step title is required.")
+    kind = (data.get("kind") or "manual").strip().lower()
+    if kind not in ("manual", "deeplink"):
+        kind = "manual"
+    db = SessionLocal()
+    try:
+        base_key = _slugify_step_key(title)
+        key = base_key
+        existing = {s.key for s in tmpl.STEPS} | {
+            r.step_key for r in db.query(OnboardingStepOverride).all()
+        }
+        n = 2
+        while key in existing:
+            key = f"{base_key}_{n}"
+            n += 1
+        row = OnboardingStepOverride(
+            step_key=key,
+            title=title,
+            description=(data.get("description") or "").strip() or None,
+            category=(data.get("category") or "").strip() or "General",
+            kind=kind,
+            cta_label=(data.get("cta_label") or "").strip() or ("Open" if kind == "deeplink" else "Mark done"),
+            action_payload=_clean_action_payload(kind, data),
+            required=bool(data.get("required", True)),
+            is_active=bool(data.get("is_active", True)),
+            sort_order=int(data.get("sort_order") or 100),
+            created_by=actor_email,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return {"step_key": row.step_key, "id": row.id}
+    finally:
+        db.close()
+
+
+def update_step(step_key: str, data: dict) -> dict | None:
+    """Update a step. For built-ins this creates/updates an override row (title/description/
+    category/cta_label/required/is_active/sort_order, and the deeplink prompt). Returns the
+    effective row info, or None if the key is unknown."""
+    from app.models import OnboardingStepOverride
+
+    base = next((s for s in tmpl.STEPS if s.key == step_key), None)
+    is_builtin = base is not None
+    db = SessionLocal()
+    try:
+        row = db.query(OnboardingStepOverride).filter(
+            OnboardingStepOverride.step_key == step_key
+        ).first()
+        if row is None:
+            if not is_builtin:
+                return None
+            # First edit of a built-in → seed an override row from its current definition.
+            row = OnboardingStepOverride(
+                step_key=step_key, title=base.title, description=base.description or None,
+                category=base.category, kind=base.kind, cta_label=base.cta_label,
+                action_payload=dict(base.action_payload), required=base.required,
+                is_active=True, sort_order=base.order,
+            )
+            db.add(row)
+        if "title" in data and data["title"] is not None:
+            row.title = str(data["title"]).strip() or row.title
+        if "description" in data:
+            row.description = (data.get("description") or "").strip() or None
+        if "category" in data:
+            row.category = (data.get("category") or "").strip() or "General"
+        if "cta_label" in data and data["cta_label"] is not None:
+            row.cta_label = str(data["cta_label"]).strip() or row.cta_label
+        if "required" in data:
+            row.required = bool(data["required"])
+        if "is_active" in data:
+            row.is_active = bool(data["is_active"])
+        if "sort_order" in data:
+            row.sort_order = int(data.get("sort_order") or 100)
+        # Custom steps: allow retargeting kind + deeplink prompt/route. Built-in kinds are fixed.
+        if not is_builtin:
+            if "kind" in data:
+                k = (data.get("kind") or "manual").strip().lower()
+                row.kind = k if k in ("manual", "deeplink") else "manual"
+            if any(x in data for x in ("action_payload", "prompt", "route")):
+                row.action_payload = _clean_action_payload(row.kind or "manual", data)
+        elif "prompt" in data and (base.kind == "deeplink"):
+            # A built-in deeplink's chat prompt is editable.
+            row.action_payload = {**(row.action_payload or {}), "prompt": (data.get("prompt") or "").strip()}
+        db.commit()
+        db.refresh(row)
+        return {"step_key": row.step_key, "id": row.id, "is_active": row.is_active}
+    finally:
+        db.close()
+
+
+def delete_step(step_key: str) -> bool:
+    """Remove a step. Custom steps are hard-deleted; built-ins can't be removed from code, so
+    they're soft-removed (is_active=False override)."""
+    from app.models import OnboardingStepOverride
+
+    is_builtin = any(s.key == step_key for s in tmpl.STEPS)
+    if is_builtin:
+        return update_step(step_key, {"is_active": False}) is not None
+
+    db = SessionLocal()
+    try:
+        row = db.query(OnboardingStepOverride).filter(
+            OnboardingStepOverride.step_key == step_key
+        ).first()
+        if row is None:
+            return False
+        db.delete(row)
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+# ── Bulk reorder (drag-and-drop in the Control Hub) ────────────────────────────────
+# Each takes the desired order as a list of keys/ids and rewrites sort_order to 10,20,30…
+# so the whole app renders the new sequence. Steps/doc-sections route through update_*
+# so a first-time reorder of a built-in seeds its override row.
+
+def reorder_steps(order: list) -> None:
+    for i, key in enumerate(order):
+        update_step(str(key), {"sort_order": (i + 1) * 10})
+
+
+def reorder_doc_sections(order: list) -> None:
+    for i, key in enumerate(order):
+        update_doc_section(str(key), {"sort_order": (i + 1) * 10})
+
+
+def _reorder_rows(model, order: list) -> None:
+    db = SessionLocal()
+    try:
+        rows = {r.id: r for r in db.query(model).all()}
+        for i, rid in enumerate(order):
+            try:
+                r = rows.get(int(rid))
+            except (TypeError, ValueError):
+                r = None
+            if r is not None:
+                r.sort_order = (i + 1) * 10
+        db.commit()
+    finally:
+        db.close()
+
+
+def reorder_quick_links(order: list) -> None:
+    from app.models import OnboardingQuickLink
+    _reorder_rows(OnboardingQuickLink, order)
+
+
+def reorder_induction_videos(order: list) -> None:
+    from app.models import InductionVideo
+    _reorder_rows(InductionVideo, order)
+
+
+def reorder_induction_docs(order: list) -> None:
+    from app.models import InductionDocument
+    _reorder_rows(InductionDocument, order)
+
+
+# ── HR preview of the new-hire journey (no employee, all steps pending) ────────────
+
+def preview_journey() -> dict:
+    """The effective onboarding flow exactly as a brand-new hire would first see it — every
+    step pending, no documents submitted — plus the induction videos, reference documents, and
+    Day-1 quick links. Powers the HR 'Preview' mode in the tracker (read-only, no employee)."""
+    step_views = []
+    for step in all_steps():
+        v = step.to_dict()
+        v.update({"status": "pending", "completed_at": None})
+        step_views.append(v)
+
+    doc_views = []
+    for doc in all_docs():
+        d = doc.to_dict()
+        d.update({
+            "submitted": False,
+            "status": "not_started",
+            "has_template_file": template_file_path(doc.doc_key) is not None,
+        })
+        doc_views.append(d)
+
+    return {
+        "status": "active",
+        "progress_pct": 0,
+        "next_step": step_views[0]["key"] if step_views else None,
+        "steps": step_views,
+        "documents": doc_views,
+        "videos": induction_videos(),
+        "induction_documents": induction_documents(),
+        "quick_links": quick_links(),
+    }
+
+
 # ── Document template admin (HR uploads blank templates to download/fill/upload) ──
 
 def list_doc_templates_admin() -> list[dict]:
@@ -1292,7 +1820,7 @@ def overview() -> dict:
             .order_by(OnboardingJourney.started_at.desc())
             .all()
         )
-        stall_cutoff = _now() - datetime.timedelta(days=settings.ONBOARDING_STALL_DAYS)
+        stall_cutoff = _now() - datetime.timedelta(days=get_reminder_settings()["stall_days"])
         rows = []
         completed = 0
         for journey, emp in journeys:

@@ -1182,6 +1182,24 @@ _REFUSAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Self-generated "generation failed" sentinels — the assistant finished WITHOUT
+# raising an exception but produced no usable output, so a hardcoded apology was
+# served instead. These are soft failures: without this matcher they log with
+# error=None and get counted as "success" in observability. This is deliberately
+# NARROW — it matches only our own can't-generate/can't-connect fallbacks, never
+# legitimate abstentions/refusals (those are designed behavior, matched by
+# _REFUSAL_RE, and must stay out of the error rate).
+_GENERATION_FAILURE_RE = re.compile(
+    r"("
+    r"i'?m sorry,? i wasn'?t able to generate a response|"
+    r"i'?m sorry,? i'?m having trouble connecting|"
+    r"sorry,? failed to generate an agentic response|"
+    r"couldn'?t generate questions — the ai model didn'?t return usable content|"
+    r"i can'?t reach the ai model server right now"
+    r")",
+    re.IGNORECASE,
+)
+
 _policy_img_re = re.compile(r'\[POLICY_IMG:([^\]]+)\]')
 _email_draft_re = re.compile(r'\[EMAIL_DRAFT_START\](.*?)\[EMAIL_DRAFT_END\]', re.DOTALL)
 _dynamic_form_re = re.compile(r'\[DYNAMIC_FORM_START\](.*?)\[DYNAMIC_FORM_END\]', re.DOTALL)
@@ -1849,6 +1867,13 @@ async def chat(
             tracing.finalize(output=final_message, domain=routed_domain, latency_ms=latency_ms)
         except Exception:
             logger.exception("[chat] tracing.finalize failed")
+
+        # A graceful "couldn't generate" fallback means the request soft-failed:
+        # the agent finished without raising, so error_msg is still None and the
+        # request would otherwise be counted as a success. Flag it so observability
+        # sees it as an error. Legitimate abstentions/refusals are NOT flagged.
+        if not error_msg and final_message and _GENERATION_FAILURE_RE.search(final_message):
+            error_msg = "generation_failed: fallback response served (no usable model output)"
 
         # PostgreSQL: insert request log + LLM call logs
         if not request.is_private:

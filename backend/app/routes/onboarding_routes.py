@@ -44,7 +44,7 @@ def my_journey(user: CurrentUser = Depends(get_current_user)):
 @router.post("/me/steps/{step_key}/complete")
 def complete_step(step_key: str, user: CurrentUser = Depends(get_current_user)):
     """Mark one of MY steps done (via the action registry → receipt + undo)."""
-    if tmpl.get_step(step_key) is None:
+    if svc.get_step(step_key) is None:
         raise HTTPException(status_code=404, detail=f"Unknown onboarding step: {step_key}")
     result = actions.run(
         "onboarding_complete_step",
@@ -405,3 +405,171 @@ def admin_delete_doc_template(doc_key: str, _: CurrentUser = Depends(require_hr)
     if not svc.delete_doc_template(doc_key):
         raise HTTPException(status_code=404, detail="No template found for that document.")
     return {"ok": True}
+
+
+# ── Day-1 quick links ─────────────────────────────────────────────────────────────
+
+@router.get("/quick-links")
+def new_hire_quick_links(_: CurrentUser = Depends(get_current_user)):
+    """Active Day-1 quick links (useful apps/portals) shown to new hires in their journey."""
+    return svc.quick_links()
+
+
+class QuickLinkBody(BaseModel):
+    title: str
+    url: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    sort_order: Optional[int] = 0
+    is_active: Optional[bool] = True
+
+
+@router.get("/admin/quick-links")
+def admin_list_quick_links(_: CurrentUser = Depends(require_hr)):
+    """HR/Admin: all quick links (active + inactive)."""
+    return svc.list_quick_links_admin()
+
+
+@router.post("/admin/quick-links")
+def admin_create_quick_link(body: QuickLinkBody, user: CurrentUser = Depends(require_hr)):
+    """HR/Admin: add a Day-1 quick link."""
+    if not body.title.strip() or not body.url.strip():
+        raise HTTPException(status_code=400, detail="Title and a URL are required.")
+    return svc.create_quick_link(body.model_dump(), actor_email=user.email)
+
+
+@router.put("/admin/quick-links/{link_id}")
+def admin_update_quick_link(link_id: int, body: QuickLinkBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: update a quick link."""
+    updated = svc.update_quick_link(link_id, body.model_dump(exclude_unset=True))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Quick link not found.")
+    return updated
+
+
+@router.delete("/admin/quick-links/{link_id}")
+def admin_delete_quick_link(link_id: int, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: delete a quick link."""
+    if not svc.delete_quick_link(link_id):
+        raise HTTPException(status_code=404, detail="Quick link not found.")
+    return {"ok": True}
+
+
+# ── Stalled-joiner reminder settings ───────────────────────────────────────────────
+
+class ReminderSettingsBody(BaseModel):
+    enabled: Optional[bool] = None
+    stall_days: Optional[int] = None
+    remind_hire: Optional[bool] = None
+    remind_manager: Optional[bool] = None
+    remind_hr: Optional[bool] = None
+    hr_email: Optional[str] = None
+
+
+@router.get("/admin/reminder-settings")
+def admin_get_reminder_settings(_: CurrentUser = Depends(require_hr)):
+    """HR/Admin: current stalled-joiner reminder cadence config."""
+    return svc.get_reminder_settings()
+
+
+@router.put("/admin/reminder-settings")
+def admin_set_reminder_settings(body: ReminderSettingsBody, user: CurrentUser = Depends(require_hr)):
+    """HR/Admin: update the stalled-joiner reminder cadence (who gets pinged, after how long)."""
+    return svc.set_reminder_settings(body.model_dump(exclude_unset=True), actor_email=user.email)
+
+
+# ── Journey step admin (add/edit/hide/reorder onboarding steps) ─────────────────────
+
+class StepBody(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    kind: Optional[str] = None                 # manual | deeplink (custom steps only)
+    cta_label: Optional[str] = None
+    prompt: Optional[str] = None               # deeplink chat prompt
+    route: Optional[str] = None                # deeplink navigation route
+    action_payload: Optional[dict] = None
+    required: Optional[bool] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+@router.get("/admin/steps")
+def admin_list_steps(_: CurrentUser = Depends(require_hr)):
+    """HR/Admin: the full journey — every step (built-in + custom, incl. hidden) with control metadata."""
+    return svc.list_steps_admin()
+
+
+@router.post("/admin/steps")
+def admin_create_step(body: StepBody, user: CurrentUser = Depends(require_hr)):
+    """HR/Admin: add a new custom journey step (manual card or a deeplink that opens chat/a route)."""
+    if not (body.title or "").strip():
+        raise HTTPException(status_code=400, detail="A step title is required.")
+    return svc.create_step(body.model_dump(exclude_unset=True), actor_email=user.email)
+
+
+@router.put("/admin/steps/{step_key}")
+def admin_update_step(step_key: str, body: StepBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: edit any step (built-in or custom) — title, description, order, CTA, required, active."""
+    updated = svc.update_step(step_key, body.model_dump(exclude_unset=True))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Step not found.")
+    return updated
+
+
+@router.delete("/admin/steps/{step_key}")
+def admin_delete_step(step_key: str, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: remove a step. Custom steps are deleted; built-ins are hidden (deactivated)."""
+    if not svc.delete_step(step_key):
+        raise HTTPException(status_code=404, detail="Step not found.")
+    return {"ok": True}
+
+
+# ── Bulk reorder (drag-and-drop) ────────────────────────────────────────────────────
+
+class ReorderBody(BaseModel):
+    order: list = []
+
+
+@router.post("/admin/steps/reorder")
+def admin_reorder_steps(body: ReorderBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: persist a new step order (list of step_keys, top to bottom)."""
+    svc.reorder_steps(body.order or [])
+    return {"ok": True}
+
+
+@router.post("/admin/doc-sections/reorder")
+def admin_reorder_doc_sections(body: ReorderBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: persist a new document order (list of doc_keys, top to bottom)."""
+    svc.reorder_doc_sections(body.order or [])
+    return {"ok": True}
+
+
+@router.post("/admin/quick-links/reorder")
+def admin_reorder_quick_links(body: ReorderBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: persist a new quick-link order (list of ids, top to bottom)."""
+    svc.reorder_quick_links(body.order or [])
+    return {"ok": True}
+
+
+@router.post("/admin/videos/reorder")
+def admin_reorder_videos(body: ReorderBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: persist a new induction-video order (list of ids, top to bottom)."""
+    svc.reorder_induction_videos(body.order or [])
+    return {"ok": True}
+
+
+@router.post("/admin/induction-docs/reorder")
+def admin_reorder_induction_docs(body: ReorderBody, _: CurrentUser = Depends(require_hr)):
+    """HR/Admin: persist a new reference-document order (list of ids, top to bottom)."""
+    svc.reorder_induction_docs(body.order or [])
+    return {"ok": True}
+
+
+# ── HR preview of the new-hire journey ──────────────────────────────────────────────
+
+@router.get("/admin/preview")
+def admin_preview_journey(_: CurrentUser = Depends(require_hr)):
+    """HR/Admin: the effective onboarding flow exactly as a new hire first sees it — every step
+    pending, no docs submitted — plus induction videos, reference docs, and Day-1 quick links."""
+    return svc.preview_journey()

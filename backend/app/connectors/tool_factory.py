@@ -51,7 +51,8 @@ def _build_args_model(op: dict) -> Type[BaseModel]:
         else:
             fields[name] = (Optional[raw_type], Field(None, description=description))
     if not fields:
-        fields["__dummy"] = (Optional[str], Field(None, description="(no parameters)"))
+        # Pydantic v2 forbids leading-underscore field names, so use a plain name.
+        fields["no_params"] = (Optional[str], Field(None, description="(no parameters)"))
     return create_model(f"Op{op['id']}Args", **fields)
 
 
@@ -73,7 +74,7 @@ def build_tool(op: dict, user_email: str, request_log_id: Optional[int] = None) 
     async def _run(**kwargs) -> str:
         result = await execute_operation(
             operation_id=op_id,
-            call_args={k: v for k, v in kwargs.items() if v is not None and k != "__dummy"},
+            call_args={k: v for k, v in kwargs.items() if v is not None and k != "no_params"},
             user_email=user_email,
             request_log_id=request_log_id,
         )

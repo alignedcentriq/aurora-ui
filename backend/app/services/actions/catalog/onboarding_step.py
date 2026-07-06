@@ -15,7 +15,6 @@ from typing import Optional
 
 from app.services.actions.registry import ActionContext, ActionResult, ActionSpec, register
 from app.services import onboarding_service
-from app.services import onboarding_template as tmpl
 
 
 @dataclass
@@ -27,7 +26,7 @@ class OnboardingStepParams:
         self.step_key = (self.step_key or "").strip()
         if not self.step_key:
             raise ValueError("onboarding_complete_step: 'step_key' is required")
-        if tmpl.get_step(self.step_key) is None:
+        if onboarding_service.get_step(self.step_key) is None:
             raise ValueError(f"onboarding_complete_step: unknown step '{self.step_key}'")
         self.employee_email = (self.employee_email or "").strip().lower()
 
@@ -57,7 +56,7 @@ def _execute(ctx: ActionContext) -> ActionResult:
                             human_message=f"No employee found for {target}.")
     try:
         row = onboarding_service.mark_step(db, journey, p.step_key, "done", actor_email=ctx.actor_email)
-        step = tmpl.get_step(p.step_key)
+        step = onboarding_service.get_step(p.step_key)
         title = step.title if step else p.step_key
         return ActionResult(
             success=True,
@@ -100,7 +99,7 @@ def _undo(r) -> dict:
 
 def _preview(ctx: ActionContext) -> str:
     p: OnboardingStepParams = ctx.params
-    step = tmpl.get_step(p.step_key)
+    step = onboarding_service.get_step(p.step_key)
     return f"Mark onboarding step **{step.title if step else p.step_key}** as done for {_target_email(ctx)}."
 
 

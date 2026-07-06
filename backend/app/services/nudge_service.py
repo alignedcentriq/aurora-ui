@@ -232,6 +232,101 @@ def detect_onboarding_next_step(db, emp: Employee) -> list[NudgeSpec]:
     )]
 
 
+def detect_stalled_onboarding(db, now: Optional[datetime.datetime] = None) -> list[NudgeSpec]:
+    """Onboarding journeys with no activity beyond the configured stall window → remind the
+    hire, their manager, and/or HR, per the HR-tuned cadence.
+
+    Config comes from onboarding_service.get_reminder_settings() (runtime-editable in the
+    Onboarding Tracker, not env vars). Weekly dedup bucket so a stalled journey nudges at most
+    once per recipient per week; a dismissal sticks for that week and the reminder re-arms next
+    week if still stalled. Distinct from detect_onboarding_next_step, which nudges the hire
+    about their next step regardless of stall — this one escalates a genuinely stuck journey.
+    """
+    from app.services import onboarding_service as ob
+    from app.models import OnboardingJourney
+
+    cfg = ob.get_reminder_settings()
+    if not cfg.get("enabled"):
+        return []
+    now = now or _now()
+    cutoff = now - datetime.timedelta(days=cfg["stall_days"])
+    week = now.strftime("%Y-W%W")
+
+    journeys = (
+        db.query(OnboardingJourney, Employee)
+        .join(Employee, OnboardingJourney.employee_id == Employee.id)
+        .filter(OnboardingJourney.status == "active")
+        .all()
+    )
+    tracker_route = "/control-hub?tab=onboarding-tracker"
+
+    specs: list[NudgeSpec] = []
+    for journey, emp in journeys:
+        if not emp or not emp.email:
+            continue
+        last_activity = max(
+            [s.updated_at or s.created_at for s in journey.steps]
+            + [journey.started_at or journey.created_at],
+            default=journey.created_at,
+        )
+        if last_activity is None or last_activity >= cutoff:
+            continue  # not stalled
+
+        view = ob.get_for_employee(emp.email)
+        if view and view.get("status") == "completed":
+            continue
+        pct = view.get("progress_pct", 0) if view else 0
+        days_idle = (now - last_activity).days
+        name = emp.name or emp.email
+
+        if cfg.get("remind_hire"):
+            specs.append(NudgeSpec(
+                user_email=emp.email,
+                nudge_type="onboarding_stalled",
+                dedup_key=f"onboarding_stalled:hire:{emp.email}:{week}",
+                title="Your onboarding is waiting for you",
+                body=(f"You're {pct}% through onboarding and it's been {days_idle} days since your "
+                      f"last step. Pick up where you left off — it only takes a few minutes."),
+                severity="action",
+                action_type="open_onboarding",
+                action_payload={"route": "/onboarding"},
+                entity_type="onboarding_journey",
+                entity_id=str(journey.id),
+            ))
+        if cfg.get("remind_manager"):
+            mgr = _resolve_manager_email(db, emp)
+            if mgr and "@" in mgr and mgr.lower() != emp.email.lower():
+                specs.append(NudgeSpec(
+                    user_email=mgr,
+                    nudge_type="onboarding_stalled",
+                    dedup_key=f"onboarding_stalled:mgr:{emp.email}:{week}",
+                    title=f"{name}'s onboarding has stalled",
+                    body=(f"{name} is {pct}% through onboarding with no activity for {days_idle} days. "
+                          f"A quick check-in could help them get unstuck."),
+                    severity="action",
+                    action_type="open_onboarding_tracker",
+                    action_payload={"route": tracker_route},
+                    entity_type="onboarding_journey",
+                    entity_id=str(journey.id),
+                ))
+        hr_email = (cfg.get("hr_email") or "").strip()
+        if cfg.get("remind_hr") and "@" in hr_email:
+            specs.append(NudgeSpec(
+                user_email=hr_email,
+                nudge_type="onboarding_stalled",
+                dedup_key=f"onboarding_stalled:hr:{emp.email}:{week}",
+                title=f"Onboarding stalled: {name}",
+                body=(f"{name} ({emp.email}) is {pct}% through onboarding with no activity for "
+                      f"{days_idle} days. Consider following up."),
+                severity="action",
+                action_type="open_onboarding_tracker",
+                action_payload={"route": tracker_route},
+                entity_type="onboarding_journey",
+                entity_id=str(journey.id),
+            ))
+    return specs
+
+
 def detect_bench_reports(db, today: Optional[datetime.date] = None) -> list[NudgeSpec]:
     """For each manager, fire ONE nudge when ≥2 of their direct reports are on the
     bench or rolling off within the rolloff horizon — capacity they should act on.
@@ -484,6 +579,15 @@ def run_due() -> int:
             db.rollback()
             log.warning("[nudge] bench-reports detector failed: %s", exc)
 
+        # Stalled onboarding journeys: remind hire/manager/HR per the HR-tuned cadence.
+        try:
+            for spec in detect_stalled_onboarding(db):
+                if upsert(db, spec) == "created":
+                    created += 1
+        except Exception as exc:
+            db.rollback()
+            log.warning("[nudge] stalled-onboarding detector failed: %s", exc)
+
         # New mail / new community posts: only for users with a connected Microsoft
         # account (no point hitting Graph/Yammer for accounts that aren't linked).
         # Window padded past the scan interval so a slow tick can't drop an email.
@@ -674,7 +778,7 @@ def act(email: str, nudge_id: int) -> dict:
             result = _act_nudge_manager(db, row)
         elif row.action_type == "open_onboarding":
             result = _act_open_onboarding(row)
-        elif row.action_type == "open_team_digest":
+        elif row.action_type in ("open_team_digest", "open_onboarding_tracker"):
             result = _act_navigate(row)
         else:
             return {"success": False, "error": "no_action"}

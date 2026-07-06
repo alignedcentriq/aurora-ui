@@ -2299,6 +2299,29 @@ class InductionDocument(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class OnboardingQuickLink(Base):
+    """A Day-1 quick link (useful app/portal/page) shown to new hires in their journey.
+
+    Admin-managed like InductionDocument, but link-only (no file upload): HR curates the
+    handful of destinations a new joiner needs early — HRMS, IT service desk, learning
+    portal, org directory, etc. `category` is an optional grouping label ("Tools", "HR",
+    "Learning") rendered as a small tag; `is_active` hides a link without deleting it.
+    """
+    __tablename__ = "onboarding_quick_links"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=False)                     # external link
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True)                 # optional grouping label
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class OnboardingDocSection(Base):
     """HR-managed onboarding document section — gives HR full control over the joining-document
     checklist beyond the built-in set (services/onboarding_template.py).
@@ -2315,6 +2338,38 @@ class OnboardingDocSection(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     fields = Column(JSON, nullable=True)                     # list[str] of field labels
+    required = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=100)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class OnboardingStepOverride(Base):
+    """HR-managed onboarding journey step — full control over the step sequence beyond the
+    built-in journey (services/onboarding_template.py).
+
+    Like OnboardingDocSection: a row is either a brand-new custom step OR an override of a
+    built-in step that shares its step_key (to retitle it, re-order it, change its CTA/category,
+    toggle required, or hide it via is_active=False). onboarding_service merges these over the
+    code-defined built-ins so the whole app sees one ordered journey.
+
+    Custom (non-built-in) steps are `manual` (a "Mark done" card) or `deeplink` (drops a chat
+    prompt / navigates a route via action_payload). They carry no auto_signal — only built-in
+    steps auto-complete from real signals (an IT ticket resolved, all docs submitted).
+    """
+    __tablename__ = "onboarding_step_overrides"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    step_key = Column(String, unique=True, index=True, nullable=False)
+    title = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    category = Column(String, nullable=True)
+    kind = Column(String, nullable=True)                     # manual | deeplink (custom steps)
+    cta_label = Column(String, nullable=True)
+    action_payload = Column(JSON, nullable=True)             # {"prompt": ...} or {"route": ...}
     required = Column(Boolean, default=True)
     is_active = Column(Boolean, default=True)
     sort_order = Column(Integer, default=100)
