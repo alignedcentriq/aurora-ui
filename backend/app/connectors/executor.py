@@ -22,7 +22,7 @@ import httpx
 
 from app.database import SessionLocal
 from app.models import ConnectorCallLog, ConnectorOperation, ConnectorAuth as ConnectorAuthModel
-from .auth import inject_auth
+from .auth import has_credential, apply_auth
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +137,80 @@ def _split_params(call_args: dict, params_schema: Optional[list]) -> tuple[dict,
     return path_vars, query_params, body_params
 
 
+def _write_call_log(
+    connector_id: Optional[int],
+    operation_id: int,
+    user_email: str,
+    request_log_id: Optional[int],
+    flow_run_id: Optional[int],
+    status: str,
+    latency_ms: int,
+    error_msg: Optional[str],
+) -> None:
+    """Best-effort insert of a ConnectorCallLog row (never raises)."""
+    try:
+        with SessionLocal() as db:
+            db.add(ConnectorCallLog(
+                connector_id=connector_id,
+                operation_id=operation_id,
+                user_email=user_email,
+                request_log_id=request_log_id,
+                flow_run_id=flow_run_id,
+                status=status,
+                latency_ms=latency_ms,
+                error=error_msg,
+            ))
+            db.commit()
+    except Exception as log_exc:
+        log.warning("Failed to write ConnectorCallLog: %s", log_exc)
+
+
+def _notify_reauth(
+    connector_id: int,
+    connector_name: str,
+    created_by: Optional[str],
+    auth_mode: str,
+    failing_user: str,
+) -> None:
+    """Alert the connector's creator that its stored credential was rejected (best-effort).
+
+    For per_user connectors the rejected credential belongs to the individual caller, so
+    that user is nudged too. Deduped per connector per day so repeated 401s don't spam.
+    """
+    import datetime as _dt
+
+    targets = set()
+    if created_by:
+        targets.add(created_by)
+    if auth_mode == "per_user" and failing_user:
+        targets.add(failing_user)
+    if not targets:
+        return
+
+    period = _dt.date.today().isoformat()
+    whose = "your linked account" if auth_mode == "per_user" else "the stored credential"
+    try:
+        from app.services import nudge_service
+        with SessionLocal() as db:
+            for email in targets:
+                nudge_service.upsert(db, {
+                    "user_email": email,
+                    "nudge_type": "connector_reauth",
+                    "dedup_key": f"connector_reauth:{connector_id}:{email}:{period}",
+                    "title": f"Reconnect “{connector_name}”",
+                    "body": (
+                        f"{whose.capitalize()} for {connector_name} was rejected (authentication "
+                        f"error). Update the token in Connector Studio to restore it."
+                    ),
+                    "severity": "action",
+                    "entity_type": "connector",
+                    "entity_id": str(connector_id),
+                })
+            db.commit()
+    except Exception as exc:
+        log.warning("Failed to emit connector reauth nudge for %s: %s", connector_id, exc)
+
+
 async def execute_operation(
     operation_id: int,
     call_args: dict,
@@ -167,81 +241,104 @@ async def execute_operation(
             ConnectorAuthModel.connector_id == op.connector_id
         ).first()
 
-        base_url_row = db.execute(
+        conn_row = db.execute(
             __import__("sqlalchemy").text(
-                f"SELECT base_url FROM enterprise_ai.connectors WHERE id = :cid"
+                f"SELECT base_url, source_type, created_by, name FROM enterprise_ai.connectors WHERE id = :cid"
             ),
             {"cid": op.connector_id},
         ).fetchone()
-        base_url = base_url_row[0] if base_url_row else ""
+        base_url = conn_row[0] if conn_row else ""
+        source_type = (conn_row[1] if conn_row else "openapi") or "openapi"
+        connector_created_by = conn_row[2] if conn_row else None
+        connector_name = (conn_row[3] if conn_row else None) or f"connector {op.connector_id}"
 
     auth_type = auth_row.auth_type if auth_row else "none"
-    method = (op.method or "GET").upper()
-    path_template = op.path_template or "/"
+    auth_mode = auth_row.auth_mode if auth_row else "service"
 
-    path_vars, query_params, body_params = _split_params(call_args, op.params_schema)
-
-    # Fill path variables
-    try:
-        url_path = path_template.format(**path_vars)
-    except KeyError as exc:
-        return {"ok": False, "error": f"Missing path variable: {exc}"}
-
-    full_url = base_url.rstrip("/") + "/" + url_path.lstrip("/")
-
-    headers: dict = {"Content-Type": "application/json", "Accept": "application/json"}
-    inject_auth(op.connector_id, auth_type, headers, query_params)
-
-    try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
-            if method in ("GET", "DELETE"):
-                resp = await client.request(method, full_url, headers=headers, params=query_params)
+    # ── Native (in-process Python) operations — no HTTP, no auth injection ──────
+    if source_type == "native":
+        from .native import call_native
+        try:
+            result_data = await call_native(op.python_ref or "noop", **call_args)
+            if isinstance(result_data, dict) and result_data.get("ok") is False:
+                status, error_msg = "error", result_data.get("error", "native op failed")
             else:
-                resp = await client.request(
+                status = "success"
+        except Exception as exc:
+            error_msg = str(exc)
+
+    else:
+        # ── HTTP path ───────────────────────────────────────────────────────────
+        method = (op.method or "GET").upper()
+        path_template = op.path_template or "/"
+
+        path_vars, query_params, body_params = _split_params(call_args, op.params_schema)
+
+        # Fill path variables
+        try:
+            url_path = path_template.format(**path_vars)
+        except KeyError as exc:
+            return {"ok": False, "error": f"Missing path variable: {exc}"}
+
+        full_url = base_url.rstrip("/") + "/" + url_path.lstrip("/")
+
+        # Connectors that use the caller's own credential (per_user, or connected_account
+        # SSO) need it linked first — otherwise the call would just 401.
+        needs_link = auth_type == "connected_account" or (auth_mode == "per_user" and auth_type != "none")
+        if needs_link and not has_credential(op.connector_id, auth_type, auth_mode, user_email):
+            error_msg = "No linked account — connect your account for this connector before using it."
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            _write_call_log(op.connector_id, operation_id, user_email, request_log_id, flow_run_id, "error", latency_ms, error_msg)
+            return {"ok": False, "error": error_msg, "latency_ms": latency_ms}
+
+        _token_type = auth_type in ("oauth2", "connected_account")
+
+        async def _send(force_refresh: bool):
+            headers: dict = {"Content-Type": "application/json", "Accept": "application/json"}
+            qp = dict(query_params)
+            await apply_auth(op.connector_id, auth_type, headers, qp, auth_mode, user_email, force_refresh)
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
+                if method in ("GET", "DELETE"):
+                    return await client.request(method, full_url, headers=headers, params=qp)
+                return await client.request(
                     method, full_url, headers=headers,
-                    params=query_params, json=body_params if body_params else None,
+                    params=qp, json=body_params if body_params else None,
                 )
 
-        resp.raise_for_status()
-
         try:
-            result_data = resp.json()
-        except Exception:
-            raw_text = resp.text
-            if _is_html_response(resp, raw_text):
-                raw_text = _strip_html(raw_text)
-                log.info("Stripped HTML response for operation %s", operation_id)
-            result_data = raw_text
+            resp = await _send(force_refresh=False)
+            # Token expired mid-flight → refresh once and retry (oauth2 / connected_account).
+            if resp.status_code == 401 and _token_type:
+                resp = await _send(force_refresh=True)
 
-        result_data = _apply_response_map(result_data, op.response_map)
-        status = "success"
+            resp.raise_for_status()
 
-    except httpx.TimeoutException:
-        error_msg = f"Connector operation timed out after {TIMEOUT}s"
-        status = "timeout"
-    except httpx.HTTPStatusError as exc:
-        error_msg = f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"
-    except Exception as exc:
-        error_msg = str(exc)
+            try:
+                result_data = resp.json()
+            except Exception:
+                raw_text = resp.text
+                if _is_html_response(resp, raw_text):
+                    raw_text = _strip_html(raw_text)
+                    log.info("Stripped HTML response for operation %s", operation_id)
+                result_data = raw_text
+
+            result_data = _apply_response_map(result_data, op.response_map)
+            status = "success"
+
+        except httpx.TimeoutException:
+            error_msg = f"Connector operation timed out after {TIMEOUT}s"
+            status = "timeout"
+        except httpx.HTTPStatusError as exc:
+            error_msg = f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"
+            # A rejected credential (expired/revoked token) → alert the connector's creator.
+            if exc.response.status_code in (401, 403) and auth_type != "none":
+                _notify_reauth(op.connector_id, connector_name, connector_created_by, auth_mode, user_email)
+        except Exception as exc:
+            error_msg = str(exc)
 
     latency_ms = int((time.monotonic() - t0) * 1000)
 
-    # Write call log
-    try:
-        with SessionLocal() as db:
-            db.add(ConnectorCallLog(
-                connector_id=op.connector_id,
-                operation_id=operation_id,
-                user_email=user_email,
-                request_log_id=request_log_id,
-                flow_run_id=flow_run_id,
-                status=status,
-                latency_ms=latency_ms,
-                error=error_msg,
-            ))
-            db.commit()
-    except Exception as log_exc:
-        log.warning("Failed to write ConnectorCallLog: %s", log_exc)
+    _write_call_log(op.connector_id, operation_id, user_email, request_log_id, flow_run_id, status, latency_ms, error_msg)
 
     if status == "success":
         text = json.dumps(result_data, default=str)

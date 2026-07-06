@@ -32,6 +32,7 @@ import { VisitorPassForm } from "./VisitorPassForm";
 import { TravelRequestForm } from "./TravelRequestForm";
 import { TravelExpenseForm } from "./TravelExpenseForm";
 import { DynamicFormWidget } from "./DynamicFormWidget";
+import { ConnectorLinkCard } from "./ConnectorLinkCard";
 import { ChoiceWidget } from "./ChoiceWidget";
 import { QuickChoicePanel } from "./QuickChoicePanel";
 import { FormBuilderWidget } from "./FormBuilderWidget";
@@ -2932,6 +2933,18 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userEmail={user?.email || ""}
                                 userRole={user?.role}
                                 onSubmitted={(msg) =>
+                                  activeId && addTurn(activeId, { role: "ai", text: msg })
+                                }
+                              />
+                            )}
+                            {t.interactive?.type === "connector_link" && t.interactive.data && (
+                              <ConnectorLinkCard
+                                data={
+                                  t.interactive.data as import("@/lib/chat-store").ConnectorLinkData
+                                }
+                                userEmail={user?.email || ""}
+                                userRole={user?.role}
+                                onLinked={(msg) =>
                                   activeId && addTurn(activeId, { role: "ai", text: msg })
                                 }
                               />

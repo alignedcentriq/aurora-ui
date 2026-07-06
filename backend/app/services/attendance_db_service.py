@@ -6,7 +6,10 @@ from the configured view (default: dbo.vbUserTimeEntryLog).
 
 View columns used:
   USERNAME      – employee full name (matched case-insensitively against our Employee.name)
-  CHECKDATE     – date (datetime.date)
+  CHECKDATE     – date, but stored as a SQL datetime that CAN carry a time-of-day. Range
+                  filters therefore use a HALF-OPEN [start, end+1day) window: a plain
+                  `CHECKDATE <= end` bound converts `end` to midnight and silently drops
+                  same-day punches (e.g. today's check-in), making the day read as Absent.
   CHECKINTIME   – check-in timestamp (datetime.datetime, nullable)
   CHECKOUTTIME  – check-out timestamp (datetime.datetime, nullable)
   TIMEINHOURS   – duration in hours (int/float)
@@ -41,8 +44,17 @@ _conn_str: str | None = None
 _conn_str_built = False
 
 # Simple in-process result cache: key → (expires_at, data)
+# The cache only de-dupes redundant round-trips for CLOSED (historical) date ranges, whose
+# data never changes. Any window that includes today is pulled LIVE on every request:
+# punches are still arriving through the day, so a cached "no punch yet" would wrongly read
+# as Absent for someone who just checked in. See _is_live_range().
 _cache: dict = {}
 _CACHE_TTL = 300  # 5 minutes
+
+
+def _is_live_range(end: datetime.date) -> bool:
+    """True when the window includes today (data still changing) → bypass cache, pull live."""
+    return end >= datetime.date.today()
 
 
 def _parse_jdbc_url(raw: str) -> tuple[str, str]:
@@ -165,22 +177,25 @@ def fetch_employee_records(
         return []
 
     name_lower = employee_name.strip().lower()
+    live = _is_live_range(end)
     cache_key = f"emp:{name_lower}:{start}:{end}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
 
     view = (settings.ATTENDANCE_VIEW or "dbo.vbUserTimeEntryLog").strip()
     try:
         conn = _open_conn()
         try:
             cur = conn.cursor()
+            end_exclusive = end + datetime.timedelta(days=1)
             cur.execute(
                 f"SELECT CHECKDATE, CHECKINTIME, CHECKOUTTIME, TIMEINHOURS "
                 f"FROM {view} "
-                f"WHERE LOWER(USERNAME) = ? AND CHECKDATE >= ? AND CHECKDATE <= ? "
+                f"WHERE LOWER(USERNAME) = ? AND CHECKDATE >= ? AND CHECKDATE < ? "
                 f"ORDER BY CHECKDATE",
-                (name_lower, start.isoformat(), end.isoformat()),
+                (name_lower, start.isoformat(), end_exclusive.isoformat()),
             )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -190,7 +205,8 @@ def fetch_employee_records(
         return []
 
     result = [_map_row(r) for r in rows]
-    _cache_set(cache_key, result)
+    if not live:
+        _cache_set(cache_key, result)
     return result
 
 
@@ -206,10 +222,12 @@ def fetch_team_records(
         return {}
 
     names_lower = [n.strip().lower() for n in employee_names]
+    live = _is_live_range(end)
     cache_key = f"team:{','.join(sorted(names_lower))}:{start}:{end}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
 
     view = (settings.ATTENDANCE_VIEW or "dbo.vbUserTimeEntryLog").strip()
     placeholders = ",".join("?" for _ in names_lower)
@@ -217,14 +235,15 @@ def fetch_team_records(
         conn = _open_conn()
         try:
             cur = conn.cursor()
+            end_exclusive = end + datetime.timedelta(days=1)
             cur.execute(
                 f"SELECT LOWER(USERNAME) AS name_lower, CHECKDATE, CHECKINTIME, "
                 f"CHECKOUTTIME, TIMEINHOURS "
                 f"FROM {view} "
                 f"WHERE LOWER(USERNAME) IN ({placeholders}) "
-                f"AND CHECKDATE >= ? AND CHECKDATE <= ? "
+                f"AND CHECKDATE >= ? AND CHECKDATE < ? "
                 f"ORDER BY name_lower, CHECKDATE",
-                (*names_lower, start.isoformat(), end.isoformat()),
+                (*names_lower, start.isoformat(), end_exclusive.isoformat()),
             )
             cols = [d[0] for d in cur.description]
             raw_rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -240,5 +259,6 @@ def fetch_team_records(
             r = {k: v for k, v in raw.items() if k != "name_lower"}
             result[name_key].append(_map_row(r))
 
-    _cache_set(cache_key, result)
+    if not live:
+        _cache_set(cache_key, result)
     return result

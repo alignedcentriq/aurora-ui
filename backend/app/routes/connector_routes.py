@@ -16,11 +16,11 @@ from pydantic import BaseModel
 from app.auth import CurrentUser, require_admin, require_super_admin, get_current_user
 from app.database import SessionLocal
 from app.models import (
-    Connector, ConnectorAuth, ConnectorOperation, ConnectorCallLog, ConnectorScope,
+    Connector, ConnectorAuth, ConnectorUserAuth, ConnectorOperation, ConnectorCallLog, ConnectorScope,
 )
 from app.connectors.registry import ConnectorRegistry, invalidate
 from app.connectors.executor import execute_operation
-from app.connectors.auth import encrypt_config, invalidate_auth_cache
+from app.connectors.auth import encrypt_config, invalidate_auth_cache, invalidate_user_auth_cache
 
 router = APIRouter(prefix="/api/admin/connectors", tags=["connectors"])
 invoke_router = APIRouter(prefix="/api/connectors", tags=["connectors-invoke"])
@@ -75,6 +75,11 @@ class ScopePayload(BaseModel):
 class InvokePayload(BaseModel):
     operation_id: int
     args: dict = {}
+
+
+class MyConnectionPayload(BaseModel):
+    """A user's own credential for a per_user connector (plain — Fernet-encrypted server-side)."""
+    config: dict = {}
 
 
 # ── Connector CRUD ────────────────────────────────────────────────────────────
@@ -506,3 +511,69 @@ async def invoke_operation(
     if not result["ok"]:
         raise HTTPException(502, result.get("error", "Connector operation failed"))
     return {"ok": True, "data": result.get("data"), "text": result.get("text")}
+
+
+# ── Per-user account linking (for connectors with auth_mode='per_user') ────────
+
+@invoke_router.get("/{connector_id}/my-connection")
+async def get_my_connection(connector_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Report whether the caller has linked their own credential for this connector."""
+    with SessionLocal() as db:
+        auth = db.query(ConnectorAuth).filter(ConnectorAuth.connector_id == connector_id).first()
+        conn = db.query(Connector).filter(Connector.id == connector_id).first()
+        linked = db.query(ConnectorUserAuth).filter(
+            ConnectorUserAuth.connector_id == connector_id,
+            ConnectorUserAuth.user_email == user.email,
+        ).first()
+    if conn is None:
+        raise HTTPException(404, "Connector not found")
+    auth_type = auth.auth_type if auth else "none"
+    auth_mode = auth.auth_mode if auth else "service"
+    return {
+        "connector_id": connector_id,
+        "connector_name": conn.name,
+        "auth_type": auth_type,
+        "auth_mode": auth_mode,
+        # Only per_user connectors require an individual link; others run as the service account.
+        "requires_link": auth_mode == "per_user" and auth_type != "none",
+        "connected": linked is not None,
+    }
+
+
+@invoke_router.put("/{connector_id}/my-connection")
+async def set_my_connection(
+    connector_id: int,
+    payload: MyConnectionPayload,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Store (or replace) the caller's own credential for a per_user connector."""
+    config_enc = encrypt_config(payload.config) if payload.config else None
+    with SessionLocal() as db:
+        if db.query(Connector).filter(Connector.id == connector_id).first() is None:
+            raise HTTPException(404, "Connector not found")
+        row = db.query(ConnectorUserAuth).filter(
+            ConnectorUserAuth.connector_id == connector_id,
+            ConnectorUserAuth.user_email == user.email,
+        ).first()
+        if row:
+            row.config_enc = config_enc
+        else:
+            db.add(ConnectorUserAuth(
+                connector_id=connector_id, user_email=user.email, config_enc=config_enc,
+            ))
+        db.commit()
+    invalidate_user_auth_cache(connector_id, user.email)
+    return {"ok": True, "connected": True}
+
+
+@invoke_router.delete("/{connector_id}/my-connection")
+async def delete_my_connection(connector_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Unlink the caller's credential for this connector."""
+    with SessionLocal() as db:
+        db.query(ConnectorUserAuth).filter(
+            ConnectorUserAuth.connector_id == connector_id,
+            ConnectorUserAuth.user_email == user.email,
+        ).delete()
+        db.commit()
+    invalidate_user_auth_cache(connector_id, user.email)
+    return {"ok": True, "connected": False}

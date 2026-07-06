@@ -1844,6 +1844,26 @@ class ConnectorAuth(Base):
     connector = relationship("Connector", back_populates="auth")
 
 
+class ConnectorUserAuth(Base):
+    """Per-user credential for a connector whose auth_mode='per_user'.
+
+    Same encrypted-JSON shape as ConnectorAuth.config_enc, but keyed by
+    (connector_id, user_email) so each user acts under their own credential
+    instead of a shared service account.
+    """
+    __tablename__ = "connector_user_auths"
+    __table_args__ = (
+        UniqueConstraint("connector_id", "user_email", name="uq_connector_user_auth"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    connector_id = Column(Integer, ForeignKey(f"{SCHEMA}.connectors.id", ondelete="CASCADE"), index=True)
+    user_email = Column(String, nullable=False, index=True)
+    config_enc = Column(Text, nullable=True)          # Fernet-encrypted JSON (this user's key/token)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class ConnectorOperation(Base):
     """A single callable operation (tool) exposed by a connector."""
     __tablename__ = "connector_operations"

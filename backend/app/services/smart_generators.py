@@ -92,35 +92,63 @@ def _today_str() -> str:
 
 def gen_leave_balance_report(rule: "AutomationRule") -> tuple[str, str]:
     from app.database import SessionLocal
-    from app.models import Employee
-    from app.services.leave_balance_data import balances_for
+    from app.models import Employee, LeaveBalance, LeaveType
 
     today = _today_str()
+    year = datetime.datetime.now().year
     subject = f"Team Leave Balance Report — {datetime.datetime.now().strftime('%B %Y')}"
 
+    # Source of truth is the LeaveBalance / LeaveType DB tables (same data the chat
+    # `get_leave_balance` tool serves) — one row per employee × leave type for the
+    # current year. LWP is excluded (it's "no limit", nothing to report a balance for).
+    #
+    # Balances are materialised lazily (the chat tool inits a user's rows on first
+    # query), so a team report first ensures every employee has current-year rows —
+    # otherwise the roster reads empty.
     db = SessionLocal()
     try:
-        employees = db.query(Employee.name, Employee.employee_id).filter(
-            Employee.employee_id.isnot(None)
-        ).all()
+        from app.hr_service import HRService
+        for emp in db.query(Employee.id, Employee.joining_date).all():
+            HRService._init_employee_balances(db, emp.id, emp.joining_date)
+        db.commit()
+
+        rows = (
+            db.query(
+                Employee.name,
+                Employee.employee_id,
+                LeaveType.name.label("leave_name"),
+                LeaveType.is_earned,
+                LeaveBalance.balance,
+                LeaveBalance.used,
+                LeaveBalance.earned,
+            )
+            .join(LeaveBalance, LeaveBalance.employee_id == Employee.id)
+            .join(LeaveType, LeaveType.id == LeaveBalance.leave_type_id)
+            .filter(
+                LeaveBalance.year == year,
+                LeaveType.is_active.is_(True),
+                LeaveType.code != "LWP",
+            )
+            .order_by(Employee.name.asc(), LeaveType.name.asc())
+            .all()
+        )
     finally:
         db.close()
 
     flat: list[list[str]] = []
-    emp_count = 0
-    for emp in employees:
-        balances = balances_for(employee_code=emp.employee_id or "", name=emp.name or "")
-        if not balances:
-            continue
-        emp_count += 1
-        for b in balances:
-            flat.append([
-                emp.name or emp.employee_id,
-                emp.employee_id or "—",
-                b.get("type", "—"),
-                str(b.get("balance", 0)),
-                str(b.get("used", 0)),
-            ])
+    seen_emps: set[str] = set()
+    for r in rows:
+        # Show earned credits alongside used for earned types (e.g. Comp Off).
+        used_str = f"{r.used or 0}" + (f" (+{r.earned or 0} earned)" if r.is_earned else "")
+        flat.append([
+            r.name or r.employee_id or "—",
+            r.employee_id or "—",
+            r.leave_name or "—",
+            str(r.balance if r.balance is not None else 0),
+            used_str,
+        ])
+        seen_emps.add(r.employee_id or r.name or "")
+    emp_count = len(seen_emps)
 
     intro = (
         f'<p>{_pill("Team Leave Balance", _C_OK)}</p>'

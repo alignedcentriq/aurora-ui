@@ -106,6 +106,7 @@ const AUTH_TYPE_LABELS: Record<string, string> = {
   bearer: "Bearer Token",
   basic: "Basic Auth",
   oauth2: "OAuth 2.0",
+  connected_account: "Sign-in (SSO)",
 };
 
 const RESPONSE_MODE_LABELS: Record<string, string> = {
@@ -915,16 +916,25 @@ function AuthDialog({
   onClose: () => void;
 }) {
   const [authType, setAuthType] = useState("api_key");
+  const [authMode, setAuthMode] = useState("service");
+  const [provider, setProvider] = useState("microsoft");
   const [config, setConfig] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const AUTH_TYPES = ["none", "api_key", "bearer", "basic", "oauth2"];
+  const AUTH_TYPES = ["none", "api_key", "bearer", "basic", "oauth2", "connected_account"];
 
   const submit = async () => {
     setSaving(true);
     try {
       let parsed: any = {};
-      if (config.trim() && authType !== "none") {
+      // connected_account is inherently per-user SSO — the admin only picks the provider.
+      let effectiveMode = authMode;
+      if (authType === "connected_account") {
+        parsed = { provider };
+        effectiveMode = "per_user";
+      } else if (config.trim() && authType !== "none" && authMode === "service") {
+        // In per-user mode, each user supplies their own credential later — the admin
+        // only sets the auth type here, so no service-level config is required.
         try {
           parsed = JSON.parse(config);
         } catch {
@@ -935,7 +945,7 @@ function AuthDialog({
       }
       await apiFetch(`/api/admin/connectors/${connectorId}/auth`, {
         method: "PUT",
-        body: JSON.stringify({ auth_type: authType, config: parsed }),
+        body: JSON.stringify({ auth_type: authType, auth_mode: effectiveMode, config: parsed }),
       });
       toast.success("Auth saved");
       onClose();
@@ -950,8 +960,10 @@ function AuthDialog({
     api_key: '{"api_key": "your-key", "header_name": "X-Api-Key"}',
     bearer: '{"token": "your-bearer-token"}',
     basic: '{"username": "user", "password": "pass"}',
-    oauth2: '{"access_token": "your-access-token"}',
+    oauth2:
+      '{"token_url": "https://.../oauth/token", "client_id": "...", "client_secret": "...", "refresh_token": "...", "scope": "..."}',
     none: "",
+    connected_account: "",
   };
 
   return (
@@ -980,7 +992,46 @@ function AuthDialog({
               ))}
             </select>
           </div>
-          {authType !== "none" && (
+          {authType === "connected_account" && (
+            <div>
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                SSO Provider
+              </label>
+              <select
+                className="mt-1 w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm px-3 py-2"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+              >
+                <option value="microsoft">Microsoft 365</option>
+                <option value="zoho">Zoho</option>
+              </select>
+              <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                Each user signs in with their own {provider === "zoho" ? "Zoho" : "Microsoft"} account
+                (one-click, no token to paste). Tokens refresh automatically.
+              </p>
+            </div>
+          )}
+          {authType !== "none" && authType !== "connected_account" && (
+            <div>
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                Credential ownership
+              </label>
+              <select
+                className="mt-1 w-full rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm px-3 py-2"
+                value={authMode}
+                onChange={(e) => setAuthMode(e.target.value)}
+              >
+                <option value="service">Use one shared token (you provide it)</option>
+                <option value="per_user">Each user connects their own account</option>
+              </select>
+              <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                {authMode === "service"
+                  ? "Everyone with access calls the API under the token you enter below."
+                  : "Users are prompted to link their own credential the first time they use it — you don't enter a token here."}
+              </p>
+            </div>
+          )}
+          {authType !== "none" && authType !== "connected_account" && authMode === "service" && (
             <div>
               <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
                 Config (JSON)
@@ -992,6 +1043,12 @@ function AuthDialog({
                 value={config}
                 onChange={(e) => setConfig(e.target.value)}
               />
+              {authType === "oauth2" && (
+                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  Provide a refresh_token (+ client_id/secret + token_url) and the access token is
+                  refreshed automatically. A bare access_token also works but will expire.
+                </p>
+              )}
             </div>
           )}
         </div>
