@@ -106,6 +106,18 @@ def get_team_attendance(
     return report
 
 
+@router.get("/attendance/calendar")
+def get_team_member_calendar(
+    email: str,
+    month: Optional[str] = "",
+    year: Optional[str] = "",
+    user: CurrentUser = Depends(require_has_reports),
+):
+    """Day-by-day calendar for one team member (drill-down from a report row).
+    Authorized to the caller's own org branch (self or any report)."""
+    return attendance_service.team_member_calendar(user.email, email, month or "", year or "")
+
+
 class EmailNowRequest(BaseModel):
     month: Optional[str] = ""
     year: Optional[str] = ""
@@ -327,6 +339,23 @@ def get_team_digest(user: CurrentUser = Depends(require_has_reports)):
     try:
         from app.services import team_readiness_service
         return team_readiness_service.weekly_digest(db, team)
+    finally:
+        db.close()
+
+
+@router.get("/team/readiness-insights")
+def get_team_readiness_insights(user: CurrentUser = Depends(require_has_reports)):
+    """Proactive readiness intelligence: capacity + availability forecast, skill
+    coverage & single-points-of-failure, a prioritised attention roll-up, and a
+    per-person readiness-score leaderboard — across the manager's hierarchy."""
+    manager, team = _get_team(user.email)
+    if not manager or not team:
+        return {"ok": True, "team_size": 0, "capacity": {}, "skills": {},
+                "attention": [], "readiness_score": []}
+    db = SessionLocal()
+    try:
+        from app.services import team_readiness_service
+        return team_readiness_service.team_readiness_insights(db, team)
     finally:
         db.close()
 

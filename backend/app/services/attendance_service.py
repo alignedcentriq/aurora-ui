@@ -60,24 +60,30 @@ def resolve_employee(db, query: str):
     return db.query(Employee).filter(Employee.name.ilike(f"%{q}%")).first()
 
 
-def _essl_records(emp_name: str, start: datetime.date, end: datetime.date):
+def _org_roster(db) -> list[str]:
+    """All employee names in the org — passed to the eSSL name resolver so its fuzzy
+    first+last fallback can detect global name collisions (see attendance_db_service)."""
+    return [n for (n,) in db.query(Employee.name).all() if n]
+
+
+def _essl_records(emp_name: str, start: datetime.date, end: datetime.date, roster=None):
     """Return eSSL records list or None if eSSL is not configured."""
     try:
         from app.services.attendance_db_service import is_configured, fetch_employee_records
         if not is_configured():
             return None
-        return fetch_employee_records(emp_name, start, end)
+        return fetch_employee_records(emp_name, start, end, roster)
     except Exception:
         return None
 
 
-def _essl_team_records(emp_names: list[str], start: datetime.date, end: datetime.date):
+def _essl_team_records(emp_names: list[str], start: datetime.date, end: datetime.date, roster=None):
     """Batch eSSL fetch for a team; returns {} if not configured or on error."""
     try:
         from app.services.attendance_db_service import is_configured, fetch_team_records
         if not is_configured():
             return {}
-        return fetch_team_records(emp_names, start, end)
+        return fetch_team_records(emp_names, start, end, roster)
     except Exception:
         return {}
 
@@ -113,7 +119,7 @@ def _summary_for_employee(db, emp: Employee, month: str = "", year: str = "") ->
     start, end = _month_bounds(y, m)
     end = min(end, today)
 
-    essl_rows = _essl_records(emp.name, start, end)
+    essl_rows = _essl_records(emp.name, start, end, _org_roster(db))
 
     if essl_rows is not None:
         counts = _summarise_essl(essl_rows, start, end)
@@ -220,6 +226,73 @@ def descendants(db, manager_id: int) -> list[Employee]:
     return sorted(found.values(), key=lambda e: ((e.department or "").lower(), (e.name or "").lower()))
 
 
+def _calendar_days_for_employee(db, emp: Employee, m: int, y: int) -> list[dict]:
+    """Build the day-by-day attendance list (weekdays up to today) for one employee.
+    Shared by the self-service calendar and the manager drill-down."""
+    today = datetime.date.today()
+    start, end = _month_bounds(y, m)
+
+    essl_rows = _essl_records(emp.name, start, end, _org_roster(db))
+
+    days: list[dict] = []
+    if essl_rows is not None:
+        by_date = {r["date"]: r for r in essl_rows if r.get("date")}
+        d = start
+        while d <= min(end, today):
+            if d.weekday() < 5:
+                r = by_date.get(d)
+                if r:
+                    check_in = r.get("check_in")
+                    check_out = r.get("check_out")
+                    status = r.get("status", "Present")
+                    is_late = (
+                        status == "Present"
+                        and check_in is not None
+                        and check_in.time() > LATE_THRESHOLD
+                    )
+                    days.append({
+                        "date": d.isoformat(),
+                        "status": status,
+                        "check_in": check_in.strftime("%H:%M") if check_in else None,
+                        "check_out": check_out.strftime("%H:%M") if check_out else None,
+                        "late": is_late,
+                    })
+                else:
+                    days.append({
+                        "date": d.isoformat(),
+                        "status": "Absent",
+                        "check_in": None,
+                        "check_out": None,
+                        "late": False,
+                    })
+            d += datetime.timedelta(days=1)
+    else:
+        rows = (
+            db.query(Attendance)
+            .filter(
+                Attendance.employee_id == emp.id,
+                Attendance.date >= start,
+                Attendance.date <= end,
+            )
+            .order_by(Attendance.date)
+            .all()
+        )
+        for r in rows:
+            is_late = (
+                r.status == "Present"
+                and r.check_in is not None
+                and r.check_in.time() > LATE_THRESHOLD
+            )
+            days.append({
+                "date": r.date.isoformat(),
+                "status": r.status or "",
+                "check_in": r.check_in.strftime("%H:%M") if r.check_in else None,
+                "check_out": r.check_out.strftime("%H:%M") if r.check_out else None,
+                "late": is_late,
+            })
+    return days
+
+
 def calendar_records(query: str, month: str = "", year: str = "") -> dict:
     """Day-by-day attendance records for a self-service calendar widget."""
     db = SessionLocal()
@@ -231,66 +304,6 @@ def calendar_records(query: str, month: str = "", year: str = "") -> dict:
         today = datetime.date.today()
         m = int(month) if month else today.month
         y = int(year) if year else today.year
-        start, end = _month_bounds(y, m)
-
-        essl_rows = _essl_records(emp.name, start, end)
-
-        days = []
-        if essl_rows is not None:
-            by_date = {r["date"]: r for r in essl_rows if r.get("date")}
-            d = start
-            while d <= min(end, today):
-                if d.weekday() < 5:
-                    r = by_date.get(d)
-                    if r:
-                        check_in = r.get("check_in")
-                        check_out = r.get("check_out")
-                        status = r.get("status", "Present")
-                        is_late = (
-                            status == "Present"
-                            and check_in is not None
-                            and check_in.time() > LATE_THRESHOLD
-                        )
-                        days.append({
-                            "date": d.isoformat(),
-                            "status": status,
-                            "check_in": check_in.strftime("%H:%M") if check_in else None,
-                            "check_out": check_out.strftime("%H:%M") if check_out else None,
-                            "late": is_late,
-                        })
-                    else:
-                        days.append({
-                            "date": d.isoformat(),
-                            "status": "Absent",
-                            "check_in": None,
-                            "check_out": None,
-                            "late": False,
-                        })
-                d += datetime.timedelta(days=1)
-        else:
-            rows = (
-                db.query(Attendance)
-                .filter(
-                    Attendance.employee_id == emp.id,
-                    Attendance.date >= start,
-                    Attendance.date <= end,
-                )
-                .order_by(Attendance.date)
-                .all()
-            )
-            for r in rows:
-                is_late = (
-                    r.status == "Present"
-                    and r.check_in is not None
-                    and r.check_in.time() > LATE_THRESHOLD
-                )
-                days.append({
-                    "date": r.date.isoformat(),
-                    "status": r.status or "",
-                    "check_in": r.check_in.strftime("%H:%M") if r.check_in else None,
-                    "check_out": r.check_out.strftime("%H:%M") if r.check_out else None,
-                    "late": is_late,
-                })
 
         return {
             "success": True,
@@ -298,7 +311,53 @@ def calendar_records(query: str, month: str = "", year: str = "") -> dict:
             "month": m,
             "year": y,
             "period": datetime.date(y, m, 1).strftime("%B %Y"),
-            "days": days,
+            "days": _calendar_days_for_employee(db, emp, m, y),
+        }
+    finally:
+        db.close()
+
+
+def team_member_calendar(manager_email: str, query: str, month: str = "", year: str = "") -> dict:
+    """
+    Manager drill-down: the day-by-day calendar for one employee in the manager's org
+    branch (self, direct, or transitive report — same scope as team_report). Used when a
+    manager clicks a row in the attendance report to see which specific days were
+    Present/Absent/Half-day.
+
+    Returns the calendar_records shape on success, else:
+      {"success": False, "error": "manager_not_found" | "employee_not_found" | "not_authorized"}
+    """
+    db = SessionLocal()
+    try:
+        manager = resolve_employee(db, manager_email)
+        if not manager:
+            return {"success": False, "error": "manager_not_found"}
+        target = resolve_employee(db, query)
+        if not target:
+            return {"success": False, "error": "employee_not_found", "query": query}
+
+        if target.id != manager.id:
+            team_ids = {e.id for e in descendants(db, manager.id)}
+            if target.id not in team_ids:
+                return {
+                    "success": False,
+                    "error": "not_authorized",
+                    "target": target.name,
+                    "message": f"{target.name} is not in your team.",
+                }
+
+        today = datetime.date.today()
+        m = int(month) if month else today.month
+        y = int(year) if year else today.year
+
+        return {
+            "success": True,
+            "employee": target.name,
+            "email": target.email,
+            "month": m,
+            "year": y,
+            "period": datetime.date(y, m, 1).strftime("%B %Y"),
+            "days": _calendar_days_for_employee(db, target, m, y),
         }
     finally:
         db.close()
@@ -352,7 +411,7 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
         end_clipped = min(end, today)
 
         # Batch-fetch eSSL records for all team members in one round-trip
-        team_essl = _essl_team_records([e.name for e in team], start, end_clipped)
+        team_essl = _essl_team_records([e.name for e in team], start, end_clipped, _org_roster(db))
         use_essl = bool(team_essl)
 
         members = []
@@ -379,6 +438,21 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
             for k in totals:
                 totals[k] += s.get(k, 0)
 
+        # The manager's OWN attendance — descendants() excludes the manager, so compute
+        # it separately and return it as `self`. Kept OUT of team totals/headcount so the
+        # team stats stay team-only; the UI pins it as a distinct "You" row.
+        self_summary = _summary_for_employee(db, manager, str(m), str(y))
+        self_summary["department"] = manager.department or ""
+        self_summary["designation"] = manager.designation or ""
+        # The manager's OWN manager sits ABOVE the team, so it isn't in name_by_id —
+        # look it up directly.
+        self_manager = (
+            db.query(Employee).filter(Employee.id == manager.manager_id).first()
+            if manager.manager_id
+            else None
+        )
+        self_summary["reports_to"] = self_manager.name if self_manager else ""
+
         return {
             "success": True,
             "manager": manager.name,
@@ -388,6 +462,7 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
             "year": y,
             "headcount": len(members),
             "members": members,
+            "self": self_summary,
             "totals": totals,
         }
     finally:

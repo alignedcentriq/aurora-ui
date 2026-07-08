@@ -486,9 +486,33 @@ def get_profile(slug: str) -> dict | None:
         db.close()
 
 
-def find_similar_projects(query_text: str, limit: int = 3,
-                          reviewed_only: bool = False) -> list[dict]:
-    """Rank past projects by semantic similarity to a need/description."""
+# Common glue words to drop so the keyword fallback scores on meaningful terms.
+_SEARCH_STOPWORDS = {
+    "the", "a", "an", "and", "or", "for", "with", "to", "of", "in", "on", "at",
+    "by", "from", "is", "are", "be", "that", "this", "it", "as", "we", "our",
+    "using", "use", "used", "via", "into", "over", "new", "need", "build",
+    "built", "develop", "developed", "project", "projects", "solution",
+    "solutions", "system", "platform", "app", "application", "something",
+    "similar", "before", "have", "has",
+}
+
+
+def _search_terms(text: str) -> list[str]:
+    """Meaningful lowercased tokens (len > 2, not a stopword) for term-overlap."""
+    return [t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(t) > 2 and t not in _SEARCH_STOPWORDS]
+
+
+def search_projects(query_text: str, limit: int = 3,
+                    reviewed_only: bool = False) -> dict:
+    """Rank past projects by similarity to a description.
+
+    Returns ``{"results": [...], "mode": "semantic" | "keyword"}``. Prefers
+    vector similarity; when the embedding model is unreachable (ml01 saturated)
+    or no profile has been vectorized yet, degrades to a multi-field term-overlap
+    scan so search still returns useful matches instead of silently finding
+    nothing. ``mode`` lets the UI tell the user which path produced the results.
+    """
     emb = PolicyService._get_embedding(query_text or "")
     db = SessionLocal()
     try:
@@ -498,17 +522,43 @@ def find_similar_projects(query_text: str, limit: int = 3,
             if reviewed_only:
                 q = q.filter(ProjectProfile.review_status == "reviewed")
             rows = q.order_by("dist").limit(limit).all()
-            return [_profile_to_dict(p, similarity=max(0.0, 1.0 - float(dist))) for p, dist in rows]
-        # No embedding service — fall back to a keyword scan over name/summary.
-        like = f"%{(query_text or '')[:60]}%"
-        q = db.query(ProjectProfile).filter(
-            (ProjectProfile.name.ilike(like)) | (ProjectProfile.dna_summary.ilike(like))
-        )
+            hits = [_profile_to_dict(p, similarity=max(0.0, 1.0 - float(dist))) for p, dist in rows]
+            if hits:
+                return {"results": hits, "mode": "semantic"}
+            # Query embedded fine, but no profile has a stored vector yet —
+            # fall through to keyword rather than return an empty list.
+
+        # Keyword fallback: term overlap across every searchable text field.
+        terms = set(_search_terms(query_text))
+        q = db.query(ProjectProfile)
         if reviewed_only:
             q = q.filter(ProjectProfile.review_status == "reviewed")
-        return [_profile_to_dict(p) for p in q.limit(limit).all()]
+        scored: list[tuple[float, ProjectProfile]] = []
+        for p in q.all():
+            haystack = " ".join(filter(None, [
+                p.name, p.dna_summary, p.business_problem, p.solution_summary,
+                p.business_outcomes, p.architecture_summary, p.client_industry,
+                " ".join(p.technology_stack or []),
+                " ".join(p.complexity_drivers or []),
+            ])).lower()
+            if not terms:
+                scored.append((0.0, p))
+            else:
+                matched = sum(1 for t in terms if t in haystack)
+                if matched:
+                    scored.append((matched / len(terms), p))
+        scored.sort(key=lambda s: s[0], reverse=True)
+        hits = [_profile_to_dict(p, similarity=round(score, 3) if score else None)
+                for score, p in scored[:limit]]
+        return {"results": hits, "mode": "keyword"}
     finally:
         db.close()
+
+
+def find_similar_projects(query_text: str, limit: int = 3,
+                          reviewed_only: bool = False) -> list[dict]:
+    """Back-compat wrapper (lessons/experts/assets callers): just the ranked list."""
+    return search_projects(query_text, limit=limit, reviewed_only=reviewed_only)["results"]
 
 
 def lessons_for(topic: str, limit_projects: int = 6) -> list[dict]:
