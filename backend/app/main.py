@@ -1624,6 +1624,7 @@ async def chat(
         tracing = TracingContext(
             session_id=request.session_id,
             user_id=user_email,
+            input=request.message,
             metadata={"message": request.message},
             tags=["chat"],
             is_private=bool(request.is_private),

@@ -1,5 +1,4 @@
 import { useAuth } from "@/lib/auth-store";
-import { getApiToken } from "@/lib/api-token";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   XAxis,
@@ -43,6 +42,7 @@ import { FeedbackTriageTab } from "./FeedbackTriageTab";
 import { AdoptionTab } from "./AdoptionTab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {
@@ -88,13 +88,6 @@ interface LogEntry {
   error: string | null;
 }
 
-interface RevealedContent {
-  id: number;
-  user_email: string;
-  user_message: string;
-  response_text: string | null;
-}
-
 interface LogDetail {
   id: number;
   created_at: string;
@@ -111,6 +104,10 @@ interface LogDetail {
   model_name: string | null;
   error: string | null;
   langfuse_trace_id: string | null;
+  user_email: string | null;
+  user_message: string | null;
+  response_text: string | null;
+  pii_redacted?: boolean;
   llm_calls: {
     id: number;
     node: string;
@@ -123,6 +120,33 @@ interface LogDetail {
     tool_names: string | null;
     error: string | null;
   }[];
+}
+
+interface TraceStep {
+  id: string | null;
+  type: string | null;
+  name: string | null;
+  model: string | null;
+  duration_ms: number | null;
+  level: string | null;
+  status_message: string | null;
+  input: string | null;
+  output: string | null;
+  usage: { input: number | null; output: number | null; total: number | null } | null;
+}
+
+interface TraceData {
+  available: boolean;
+  reason?: string;
+  trace?: {
+    id: string;
+    name: string | null;
+    input: string | null;
+    output: string | null;
+    latency_ms: number | null;
+  };
+  steps?: TraceStep[];
+  pii_redacted?: boolean;
 }
 
 interface Summary {
@@ -303,10 +327,9 @@ function LogsTab() {
   const [detail, setDetail] = useState<LogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Content reveal (super admin only, audited) — scoped to the currently expanded row
-  const [revealed, setRevealed] = useState<RevealedContent | null>(null);
-  const [revealLoading, setRevealLoading] = useState(false);
-  const [revealError, setRevealError] = useState<string | null>(null);
+  // In-app trace view (fetched server-side via Langfuse API — no Langfuse login needed)
+  const [trace, setTrace] = useState<TraceData | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -331,11 +354,26 @@ function LogsTab() {
     fetchLogs();
   }, [fetchLogs]);
 
+  const loadTrace = async (id: number) => {
+    setTraceLoading(true);
+    try {
+      const res = await fetch(`/api/observability/logs/${id}/trace`, { headers: authHeaders });
+      setTrace(await res.json());
+    } catch {
+      setTrace({ available: false, reason: "network_error" });
+    } finally {
+      setTraceLoading(false);
+    }
+  };
+
   const loadDetail = async (id: number) => {
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/observability/logs/${id}`, { headers: authHeaders });
-      setDetail(await res.json());
+      const data = await res.json();
+      setDetail(data);
+      // Auto-load the enriched per-step trace when this request has one.
+      if (data?.langfuse_trace_id) loadTrace(id);
     } catch {
       setDetail(null);
     } finally {
@@ -344,48 +382,15 @@ function LogsTab() {
   };
 
   const handleExpand = async (id: number) => {
-    // collapsing or switching rows clears any revealed content
-    setRevealed(null);
-    setRevealError(null);
     if (expandedId === id) {
       setExpandedId(null);
       setDetail(null);
+      setTrace(null);
       return;
     }
     setExpandedId(id);
+    setTrace(null);
     await loadDetail(id);
-  };
-
-  // Reveal content — super admin only, audited.
-  const handleReveal = async (id: number) => {
-    setRevealLoading(true);
-    setRevealError(null);
-    try {
-      const token = await getApiToken();
-      const res = await fetch(`/api/observability/logs/${id}/reveal`, {
-        method: "POST",
-        headers: { ...authHeaders, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          const err = await res.json();
-          if (typeof err?.detail === "string") detail = err.detail;
-          else if (Array.isArray(err?.detail))
-            detail = err.detail.map((d: any) => d?.msg || String(d)).join("; ");
-        } catch {
-          // non-JSON error body — keep the HTTP status as the message
-        }
-        setRevealError(detail);
-        return;
-      }
-      setRevealed(await res.json());
-    } catch (err: any) {
-      setRevealError(err?.message || "Network error — could not reach the server.");
-    } finally {
-      setRevealLoading(false);
-    }
   };
 
   return (
@@ -545,60 +550,35 @@ function LogsTab() {
                           />
                         </div>
 
-                        {/* Conversation content — hidden until revealed (audited, domain-scoped) */}
-                        {revealed && revealed.id === detail.id ? (
-                          <div className="space-y-3">
-                            <div className="flex items-center gap-2 text-[11px] text-amber-400">
+                        {/* Conversation content — always shown (PII masked per policy) */}
+                        <div className="space-y-3">
+                          {(detail.user_message || detail.response_text) && (
+                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
                               <Eye className="h-3.5 w-3.5" />
                               <span>
-                                Content revealed for {revealed.user_email} — this access has been
-                                logged. IDs, contact details, and money amounts are masked.
+                                IDs, contact details, and money amounts are masked.
                               </span>
                             </div>
+                          )}
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                              User Message
+                            </p>
+                            <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 whitespace-pre-wrap">
+                              {detail.user_message || "—"}
+                            </p>
+                          </div>
+                          {detail.response_text && (
                             <div>
                               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                                User Message
+                                AI Response
                               </p>
-                              <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 whitespace-pre-wrap">
-                                {revealed.user_message}
+                              <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
+                                {detail.response_text}
                               </p>
                             </div>
-                            {revealed.response_text && (
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                                  AI Response
-                                </p>
-                                <p className="text-[13px] text-foreground bg-[var(--muted)]/30 rounded-xl px-4 py-3 max-h-[200px] overflow-y-auto whitespace-pre-wrap">
-                                  {revealed.response_text}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-4 py-3 space-y-2">
-                            <p className="text-[12px] text-muted-foreground">
-                              Conversation content is hidden to protect employee privacy. Revealing
-                              it is logged against your name (IDs and money amounts are masked).
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleReveal(detail.id)}
-                                disabled={revealLoading}
-                                className="flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-3.5 py-2 text-[12px] font-medium hover:bg-primary/20 disabled:opacity-40 transition-colors"
-                              >
-                                {revealLoading ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Eye className="h-3.5 w-3.5" />
-                                )}
-                                Reveal content
-                              </button>
-                            </div>
-                            {revealError && (
-                              <p className="text-[11px] text-rose-400">{revealError}</p>
-                            )}
-                          </div>
-                        )}
+                          )}
+                        </div>
 
                         {/* LLM Calls Timeline */}
                         {detail.llm_calls.length > 0 && (
@@ -651,17 +631,112 @@ function LogsTab() {
                           </div>
                         )}
 
-                        {/* Langfuse link */}
+                        {/* In-app trace — per-step inputs/outputs pulled from Langfuse
+                            server-side (no Langfuse login needed) */}
                         {detail.langfuse_trace_id && (
-                          <a
-                            href={`/api/observability/langfuse-redirect/${detail.langfuse_trace_id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-[12px] text-primary hover:underline"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Open in Langfuse
-                          </a>
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                              Trace
+                            </p>
+                            {traceLoading ? (
+                              <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading trace steps…
+                              </div>
+                            ) : trace?.available && trace.steps ? (
+                              <div className="space-y-1.5">
+                                {trace.steps.length === 0 && (
+                                  <p className="text-[12px] text-muted-foreground">
+                                    No steps recorded for this trace.
+                                  </p>
+                                )}
+                                {trace.steps.map((step, i) => (
+                                  <details
+                                    key={step.id || i}
+                                    className="rounded-xl border border-[var(--border)] bg-card overflow-hidden"
+                                  >
+                                    <summary className="flex items-center gap-3 px-4 py-2.5 cursor-pointer list-none">
+                                      <span className="rounded-full bg-indigo-500/15 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase">
+                                        {step.type || "step"}
+                                      </span>
+                                      <span className="text-[12px] font-medium text-foreground min-w-[120px]">
+                                        {step.name || "—"}
+                                      </span>
+                                      {step.model && (
+                                        <span className="text-[11px] text-muted-foreground min-w-[120px]">
+                                          {step.model}
+                                        </span>
+                                      )}
+                                      {step.duration_ms != null && <LatencyBadge ms={step.duration_ms} />}
+                                      {step.usage?.total != null && (
+                                        <span className="text-[11px] font-mono text-muted-foreground">
+                                          {step.usage.total} tok
+                                        </span>
+                                      )}
+                                      {step.level && step.level !== "DEFAULT" && (
+                                        <span className="rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/20 px-2 py-0.5 text-[10px] font-medium">
+                                          {step.level}
+                                        </span>
+                                      )}
+                                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-auto" />
+                                    </summary>
+                                    <div className="border-t border-[var(--border)] px-4 py-3 space-y-3">
+                                      {step.input && (
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">
+                                            Input
+                                          </p>
+                                          <pre className="text-[12px] text-foreground bg-[var(--muted)]/30 rounded-lg px-3 py-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words">
+                                            {step.input}
+                                          </pre>
+                                        </div>
+                                      )}
+                                      {step.output && (
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">
+                                            Output
+                                          </p>
+                                          <pre className="text-[12px] text-foreground bg-[var(--muted)]/30 rounded-lg px-3 py-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words">
+                                            {step.output}
+                                          </pre>
+                                        </div>
+                                      )}
+                                      {step.status_message && (
+                                        <p className="text-[11px] text-rose-300">{step.status_message}</p>
+                                      )}
+                                      {!step.input && !step.output && (
+                                        <p className="text-[11px] text-muted-foreground">No input/output captured.</p>
+                                      )}
+                                    </div>
+                                  </details>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[12px] text-muted-foreground">
+                                {trace?.reason === "not_found_or_unreachable"
+                                  ? "This trace isn't in Langfuse (it predates tracing, or Langfuse is unreachable)."
+                                  : trace?.reason === "langfuse_not_configured"
+                                    ? "Langfuse isn't configured on this environment."
+                                    : "Trace steps unavailable."}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Direct Langfuse UI — disabled until SSO is configured */}
+                        {detail.langfuse_trace_id && (
+                          <div className="flex items-center gap-2 flex-wrap pt-1">
+                            <span
+                              className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground/50 cursor-not-allowed"
+                              title="Opening the Langfuse UI directly requires SSO setup"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              Open in Langfuse
+                            </span>
+                            <span className="text-[11px] text-amber-400">
+                              Needs SSO setup — use the trace above for now.
+                            </span>
+                          </div>
                         )}
                       </>
                     ) : (
@@ -1038,39 +1113,39 @@ function ChartsTab() {
           <p className="text-[13px] text-muted-foreground text-center py-10">No data yet</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-[var(--border)]">
+            <Table paginate itemsPerPage={10} className="w-full text-left">
+              <TableHeader>
+                <TableRow className="border-b border-[var(--border)]">
                   {["Node", "Calls", "Avg Latency", "P95 Latency", "Avg Tokens", "Errors"].map(
                     (h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ),
                   )}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {nodeData.map((n: any) => (
-                  <tr
+                  <TableRow
                     key={n.node}
                     className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--muted)]/30 transition-colors"
                   >
-                    <td className="px-4 py-3 text-[13px] font-medium text-foreground">{n.node}</td>
-                    <td className="px-4 py-3 text-[13px] text-muted-foreground">{n.calls}</td>
-                    <td className="px-4 py-3">
+                    <TableCell className="px-4 py-3 text-[13px] font-medium text-foreground">{n.node}</TableCell>
+                    <TableCell className="px-4 py-3 text-[13px] text-muted-foreground">{n.calls}</TableCell>
+                    <TableCell className="px-4 py-3">
                       <LatencyBadge ms={n.avg_ms} />
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       <LatencyBadge ms={n.p95_ms} />
-                    </td>
-                    <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
                       {n.avg_tokens}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       {n.errors > 0 ? (
                         <span className="rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/20 px-2 py-0.5 text-[10px] font-medium">
                           {n.errors}
@@ -1078,11 +1153,11 @@ function ChartsTab() {
                       ) : (
                         <span className="text-[11px] text-muted-foreground/40">0</span>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>

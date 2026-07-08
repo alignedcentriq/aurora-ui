@@ -6,8 +6,10 @@ All endpoints require IT or Admin role.
 import datetime
 import hashlib
 import logging
+import os
 import re
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, case, desc
 from sqlalchemy.orm import Session
@@ -88,6 +90,100 @@ def _period_cutoff(period: str) -> datetime.datetime:
         return now - datetime.timedelta(hours=24)
 
 
+# ── Langfuse deep-link redirect ───────────────────────────────────────────────
+# The observability dashboard's "Open in Langfuse" link points here. It resolves a
+# stored langfuse_trace_id into the browser-facing Langfuse UI URL and 302-redirects.
+#
+# This endpoint is intentionally NOT gated by get_current_user: it is opened as a plain
+# browser navigation (<a target="_blank">), which cannot carry the x-user-* auth headers
+# the SPA attaches to fetch calls. It leaks nothing on its own — the target Langfuse
+# instance enforces its own login, and the trace_id is already visible to the reviewer.
+
+_langfuse_project_id_cache: Optional[str] = None
+
+
+def _langfuse_ui_base(request: Request) -> str:
+    """Browser-reachable base URL of the Langfuse UI.
+
+    Langfuse runs on the SAME hostname the user is already on, just a different port
+    (3003) — so we mirror the request's host and only swap the port. This makes the
+    deep link environment-correct with no per-env config: a browser on localhost is
+    sent to localhost:3003, and one on hackathon.alignedautomation.com is sent to
+    hackathon.alignedautomation.com:3003. (Deriving from LANGFUSE_HOST would be wrong —
+    that's the internal server-to-server address for pushing traces, not browser-reachable.)
+
+    LANGFUSE_PUBLIC_URL is an optional hard override for setups where Langfuse lives on
+    a different host/scheme entirely. LANGFUSE_PUBLIC_PORT / LANGFUSE_PUBLIC_SCHEME tune
+    the derived URL (default port 3003, scheme http — the :3003 listener is plain HTTP)."""
+    override = os.environ.get("LANGFUSE_PUBLIC_URL")
+    if override:
+        return override.rstrip("/")
+
+    # Prefer the proxy-forwarded host, then the Host header, then the raw netloc.
+    host_header = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    hostname = host_header.split(",")[0].strip().split(":")[0]
+    scheme = os.environ.get("LANGFUSE_PUBLIC_SCHEME", "http")
+    port = os.environ.get("LANGFUSE_PUBLIC_PORT", "3003")
+    return f"{scheme}://{hostname}:{port}"
+
+
+def _langfuse_project_id() -> Optional[str]:
+    """Resolve the Langfuse project id (needed for the /project/{id}/traces/{id} URL).
+
+    Prefers the LANGFUSE_PROJECT_ID env override; otherwise asks the configured Langfuse
+    client — the SAME host+keys used to push traces — so resolution succeeds exactly when
+    tracing itself is authenticated. A 401 here therefore means the LANGFUSE_PUBLIC_KEY /
+    LANGFUSE_SECRET_KEY in the environment don't match this Langfuse instance (in which
+    case traces aren't landing either). Cached after the first successful lookup."""
+    global _langfuse_project_id_cache
+    if _langfuse_project_id_cache:
+        return _langfuse_project_id_cache
+
+    env_pid = os.environ.get("LANGFUSE_PROJECT_ID")
+    if env_pid:
+        _langfuse_project_id_cache = env_pid
+        return env_pid
+
+    from app.langfuse_tracing import get_langfuse_client
+
+    client = get_langfuse_client()
+    if client is None:
+        return None
+    try:
+        pid = client._get_project_id()
+        if pid:
+            _langfuse_project_id_cache = pid
+        return pid
+    except Exception as e:
+        logging.warning(
+            "Could not resolve Langfuse project id (keys likely don't match this "
+            "Langfuse instance — traces may not be landing either): %s", e
+        )
+    return None
+
+
+@router.get("/langfuse-redirect/{trace_id}")
+def langfuse_redirect(trace_id: str, request: Request):
+    """302-redirect to the Langfuse trace view for the given trace id."""
+    base = _langfuse_ui_base(request)
+    project_id = _langfuse_project_id()
+    if project_id:
+        target = f"{base}/project/{project_id}/traces/{trace_id}"
+    else:
+        # No project id resolvable — land on the Langfuse home (it resolves to the
+        # user's project after login) rather than dead-ending on a 404.
+        target = base
+        logging.warning(
+            "langfuse-redirect: no project id resolvable; sending %s to Langfuse home",
+            trace_id,
+        )
+    return RedirectResponse(url=target)
+
+
 # ── Logs Endpoints (CloudTrail viewer) ────────────────────────────────────────
 
 @router.get("/logs")
@@ -153,8 +249,9 @@ def get_log_detail(
     _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
-    """Full log detail with LLM call breakdown (for expanded row). Operational only —
-    content reveal is gated separately via /reveal."""
+    """Full log detail with LLM call breakdown (for expanded row). Conversation content
+    is always included (PII-masked) — no separate reveal step. PII is still redacted per
+    the sensitive-data policy, even for this Super-Admin-only view."""
     req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
     if not req:
         raise HTTPException(404, "Log entry not found")
@@ -171,6 +268,7 @@ def get_log_detail(
         "created_at": _iso_utc(req.created_at),
         "session_id": req.session_id,
         "user_label": _pseudonym(req.user_email),
+        "user_email": req.user_email,
         "domain": req.domain,
         "sub_intent": req.sub_intent,
         "route_method": req.route_method,
@@ -182,6 +280,10 @@ def get_log_detail(
         "model_name": req.model_name,
         "error": req.error,
         "langfuse_trace_id": req.langfuse_trace_id,
+        # Content always present (PII-masked); the old /reveal gate is retired.
+        "user_message": _redact_pii(req.user_message),
+        "response_text": _redact_pii(req.response_text),
+        "pii_redacted": True,
         "llm_calls": [
             {
                 "id": c.id,
@@ -200,44 +302,107 @@ def get_log_detail(
     }
 
 
-# ── Content Reveal — Super admin only, audited ──────────────────────────────────
+# Content is now always included (PII-masked) in /logs/{id} — the old gated /reveal
+# endpoint has been retired. The ContentRevealAudit model + /audit history are kept
+# for the record of past reveals.
 
-class RevealRequest(BaseModel):
-    reason: Optional[str] = None
+
+def _stringify_redacted(val, limit: int = 4000) -> Optional[str]:
+    """Turn a Langfuse observation input/output (str | dict | list | None) into a
+    PII-masked, length-capped string for the in-app trace view."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        text = val
+    else:
+        import json as _json
+        try:
+            text = _json.dumps(val, ensure_ascii=False, default=str, indent=2)
+        except Exception:
+            text = str(val)
+    text = _redact_pii(text) or ""
+    if len(text) > limit:
+        text = text[:limit] + "…"
+    return text or None
 
 
-@router.post("/logs/{log_id}/reveal")
-def reveal_log_content(
+@router.get("/logs/{log_id}/trace")
+def get_log_trace(
     log_id: int,
-    body: RevealRequest,
-    user: CurrentUser = Depends(_require_super_admin),
+    _: CurrentUser = Depends(_require_super_admin),
     db: Session = Depends(get_db),
 ):
-    """Reveal a single conversation's content. Super admin only; writes a ContentRevealAudit row.
-    Content PII is masked even for the authorized viewer."""
+    """In-app trace view: fetch the Langfuse trace for this log using the SERVER keys and
+    return a normalized, PII-masked step list. Keeps trace viewing behind the app's own
+    Super-Admin gate — no one ever needs a Langfuse login."""
     req = db.query(AiRequestLog).filter(AiRequestLog.id == log_id).first()
     if not req:
         raise HTTPException(404, "Log entry not found")
+    if not req.langfuse_trace_id:
+        return {"available": False, "reason": "no_trace"}
+
+    from app.langfuse_tracing import get_langfuse_client
+    client = get_langfuse_client()
+    if client is None:
+        return {"available": False, "reason": "langfuse_not_configured"}
 
     try:
-        db.add(ContentRevealAudit(
-            request_log_id=req.id,
-            viewer_email=user.email,
-            domain=req.domain,
-            reason=(body.reason or "").strip() or None,
-        ))
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logging.getLogger(__name__).error("ContentRevealAudit insert failed: %s", exc, exc_info=True)
-        # Log the audit failure but don't block the reveal — audit is best-effort
-        pass
+        resp = client.fetch_trace(req.langfuse_trace_id)
+        trace = getattr(resp, "data", None) or resp
+    except Exception as e:
+        logging.warning("fetch_trace(%s) failed: %s", req.langfuse_trace_id, e)
+        return {"available": False, "reason": "not_found_or_unreachable"}
 
+    def _start(o):
+        return getattr(o, "start_time", None) or getattr(o, "timestamp", None)
+
+    def _dur_ms(o):
+        st, en = getattr(o, "start_time", None), getattr(o, "end_time", None)
+        if st and en:
+            try:
+                return int((en - st).total_seconds() * 1000)
+            except Exception:
+                pass
+        lat = getattr(o, "latency", None)
+        return int(lat * 1000) if isinstance(lat, (int, float)) else None
+
+    def _usage(o):
+        u = getattr(o, "usage", None)
+        if not u:
+            return None
+        out = {k: getattr(u, k, None) for k in ("input", "output", "total")}
+        return out if any(v is not None for v in out.values()) else None
+
+    obs = list(getattr(trace, "observations", None) or [])
+    obs.sort(key=lambda o: (_start(o) is None, _start(o)))
+
+    steps = [
+        {
+            "id": getattr(o, "id", None),
+            "type": getattr(o, "type", None),
+            "name": getattr(o, "name", None),
+            "model": getattr(o, "model", None),
+            "duration_ms": _dur_ms(o),
+            "level": getattr(o, "level", None),
+            "status_message": getattr(o, "status_message", None),
+            "input": _stringify_redacted(getattr(o, "input", None)),
+            "output": _stringify_redacted(getattr(o, "output", None)),
+            "usage": _usage(o),
+        }
+        for o in obs
+    ]
+
+    trace_latency = getattr(trace, "latency", None)
     return {
-        "id": req.id,
-        "user_email": req.user_email,
-        "user_message": _redact_pii(req.user_message),
-        "response_text": _redact_pii(req.response_text),
+        "available": True,
+        "trace": {
+            "id": getattr(trace, "id", None),
+            "name": getattr(trace, "name", None),
+            "input": _stringify_redacted(getattr(trace, "input", None)),
+            "output": _stringify_redacted(getattr(trace, "output", None)),
+            "latency_ms": int(trace_latency * 1000) if isinstance(trace_latency, (int, float)) else None,
+        },
+        "steps": steps,
         "pii_redacted": True,
     }
 

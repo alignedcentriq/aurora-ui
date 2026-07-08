@@ -7,9 +7,13 @@ import datetime
 import logging
 from typing import Optional
 from app.database import SessionLocal
-from app.models import Announcement
+from app.models import Announcement, AnnouncementReceipt
 
 logger = logging.getLogger("aurora-logger")
+
+# Engagement mechanics — the fixed reaction set and valid RSVP values.
+ALLOWED_REACTIONS = {"👍", "🎉", "❤️"}
+ALLOWED_RSVP = {"yes", "no", "maybe"}
 
 class AnnouncementService:
 
@@ -25,6 +29,9 @@ class AnnouncementService:
         image_url: Optional[str] = None,
         image_action: Optional[dict] = None,
         email_recipients: Optional[list] = None,
+        allow_reactions: bool = False,
+        allow_rsvp: bool = False,
+        require_ack: bool = False,
     ) -> str:
         db = SessionLocal()
         try:
@@ -43,6 +50,9 @@ class AnnouncementService:
                 image_url=image_url,
                 image_action=image_action,
                 email_recipients=email_recipients or [],
+                allow_reactions=allow_reactions,
+                allow_rsvp=allow_rsvp,
+                require_ack=require_ack,
                 expires_at=expires_at,
             )
             db.add(ann)
@@ -198,7 +208,11 @@ class AnnouncementService:
             db.close()
 
     @staticmethod
-    def list_all(include_inactive: bool = False, user_role: Optional[str] = None) -> list:
+    def list_all(
+        include_inactive: bool = False,
+        user_role: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> list:
         db = SessionLocal()
         try:
             q = db.query(Announcement)
@@ -224,8 +238,25 @@ class AnnouncementService:
                 elif aud == role_lower:
                     filtered_results.append(a)
 
-            return [
-                {
+            # The caller's own receipt for each visible announcement (their reaction /
+            # rsvp / ack state) so the feed can render the right initial UI.
+            my_receipts = {}
+            if user_email and filtered_results:
+                ids = [a.id for a in filtered_results]
+                rows = (
+                    db.query(AnnouncementReceipt)
+                    .filter(
+                        AnnouncementReceipt.user_email == user_email,
+                        AnnouncementReceipt.announcement_id.in_(ids),
+                    )
+                    .all()
+                )
+                my_receipts = {r.announcement_id: r for r in rows}
+
+            out = []
+            for a in filtered_results:
+                mine = my_receipts.get(a.id)
+                out.append({
                     "id": a.id,
                     "title": a.title,
                     "body": a.body,
@@ -237,10 +268,129 @@ class AnnouncementService:
                     "image_url": a.image_url,
                     "image_action": a.image_action,
                     "email_recipients": a.email_recipients or [],
+                    "allow_reactions": bool(a.allow_reactions),
+                    "allow_rsvp": bool(a.allow_rsvp),
+                    "require_ack": bool(a.require_ack),
                     "created_at": a.created_at.isoformat(),
                     "expires_at": a.expires_at.isoformat() if a.expires_at else None,
-                }
-                for a in filtered_results
-            ]
+                    # Caller's own engagement state (null if never seen/interacted).
+                    "my_reaction": mine.reaction if mine else None,
+                    "my_rsvp": mine.rsvp if mine else None,
+                    "my_acknowledged": bool(mine and mine.acknowledged_at) if mine else False,
+                })
+            return out
+        finally:
+            db.close()
+
+    # ── Read-tracking spine ──────────────────────────────────────────────────
+    @staticmethod
+    def _upsert_receipt(db, announcement_id: int, user_email: str) -> "AnnouncementReceipt":
+        """Fetch-or-create the (announcement, user) receipt row. Caller commits."""
+        r = (
+            db.query(AnnouncementReceipt)
+            .filter(
+                AnnouncementReceipt.announcement_id == announcement_id,
+                AnnouncementReceipt.user_email == user_email,
+            )
+            .first()
+        )
+        if r is None:
+            r = AnnouncementReceipt(announcement_id=announcement_id, user_email=user_email)
+            db.add(r)
+        return r
+
+    @staticmethod
+    def record_seen(announcement_id: int, user_email: str) -> dict:
+        """Record that a user has seen an announcement (idempotent)."""
+        if not user_email:
+            return {"ok": False}
+        db = SessionLocal()
+        try:
+            AnnouncementService._upsert_receipt(db, announcement_id, user_email)
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_reaction(announcement_id: int, user_email: str, reaction: Optional[str]) -> dict:
+        """Set or clear (reaction=None / not in set) the caller's reaction."""
+        db = SessionLocal()
+        try:
+            r = AnnouncementService._upsert_receipt(db, announcement_id, user_email)
+            # Tapping the same reaction again toggles it off.
+            if reaction not in ALLOWED_REACTIONS or reaction == r.reaction:
+                r.reaction = None
+            else:
+                r.reaction = reaction
+            db.commit()
+            return {"ok": True, "reaction": r.reaction}
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_rsvp(announcement_id: int, user_email: str, rsvp: Optional[str]) -> dict:
+        db = SessionLocal()
+        try:
+            r = AnnouncementService._upsert_receipt(db, announcement_id, user_email)
+            r.rsvp = rsvp if rsvp in ALLOWED_RSVP else None
+            db.commit()
+            return {"ok": True, "rsvp": r.rsvp}
+        finally:
+            db.close()
+
+    @staticmethod
+    def acknowledge(announcement_id: int, user_email: str) -> dict:
+        db = SessionLocal()
+        try:
+            r = AnnouncementService._upsert_receipt(db, announcement_id, user_email)
+            if r.acknowledged_at is None:
+                r.acknowledged_at = datetime.datetime.utcnow()
+            db.commit()
+            return {"ok": True, "acknowledged_at": r.acknowledged_at.isoformat()}
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_receipts(announcement_id: int) -> dict:
+        """Aggregate roll-up for an announcement — for authors / reach analytics.
+
+        Returns seen count, reaction tallies, the RSVP roster (who said yes/no/maybe),
+        and the acknowledgment list. Names are resolved best-effort from Employee.
+        """
+        from app.models import Employee
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(AnnouncementReceipt)
+                .filter(AnnouncementReceipt.announcement_id == announcement_id)
+                .all()
+            )
+            emails = {r.user_email for r in rows}
+            name_by_email = {}
+            if emails:
+                for e in db.query(Employee.email, Employee.name).filter(Employee.email.in_(emails)).all():
+                    name_by_email[e.email] = e.name or e.email
+
+            reactions: dict = {}
+            rsvp_roster: dict = {"yes": [], "no": [], "maybe": []}
+            acknowledged = []
+            for r in rows:
+                who = {"email": r.user_email, "name": name_by_email.get(r.user_email, r.user_email)}
+                if r.reaction:
+                    reactions[r.reaction] = reactions.get(r.reaction, 0) + 1
+                if r.rsvp in rsvp_roster:
+                    rsvp_roster[r.rsvp].append(who)
+                if r.acknowledged_at:
+                    acknowledged.append({**who, "at": r.acknowledged_at.isoformat()})
+
+            return {
+                "announcement_id": announcement_id,
+                "seen_count": len(rows),
+                "reactions": reactions,
+                "rsvp": rsvp_roster,
+                "acknowledged": acknowledged,
+                "acknowledged_count": len(acknowledged),
+            }
         finally:
             db.close()

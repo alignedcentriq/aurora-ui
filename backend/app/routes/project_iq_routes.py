@@ -14,13 +14,10 @@ Prefix: /api/project-iq
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
 from app.auth import CurrentUser, require_non_employee, require_pmo
-from app.database import SessionLocal
-from app.models import AiRequestLog
 from app.services import project_iq_service as piq
 
 router = APIRouter(prefix="/api/project-iq", tags=["Project IQ"])
@@ -30,24 +27,20 @@ def _log_query(user_email: str, domain: str, route_method: str, query_text: str,
               result_count: int, start: float) -> None:
     """Best-effort Observability log for a Project IQ NL query — these endpoints are
     hit directly from ProjectIQPortal and never touch the /api/chat pipeline, so without
-    this they're invisible in the AI Observability dashboard."""
-    db: Session = SessionLocal()
-    try:
-        db.add(AiRequestLog(
-            session_id=f"project-iq-{user_email}",
-            user_email=user_email,
-            user_message=query_text,
-            domain=domain,
-            route_method=route_method,
-            response_text=f"{result_count} result(s)",
-            response_length=result_count,
-            total_latency_ms=int((time.time() - start) * 1000),
-        ))
-        db.commit()
-    except Exception:
-        db.rollback()
-    finally:
-        db.close()
+    this they're invisible in the AI Observability dashboard. Also opens a Langfuse trace
+    so the row gets an "Open in Langfuse" link (like the main chat path)."""
+    from app.services.observability_log import log_ai_interaction
+    log_ai_interaction(
+        session_id=f"project-iq-{user_email}",
+        user_email=user_email,
+        user_message=query_text,
+        domain=domain,
+        route_method=route_method,
+        response_text=f"{result_count} result(s)",
+        response_length=result_count,
+        start=start,
+        tags=["project-iq", domain],
+    )
 
 
 class SearchRequest(BaseModel):

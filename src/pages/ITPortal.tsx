@@ -33,6 +33,10 @@ import {
   Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -93,28 +97,25 @@ export function ITPortal() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 px-8 py-3 border-b border-[var(--border)] shrink-0">
-        {visibleTabs.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition-colors",
-              tab === id
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <Tabs defaultValue="tickets" value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex flex-col flex-1 h-full overflow-hidden">
+        <TabsList className="w-full justify-start px-8 py-3 h-auto rounded-none border-b border-[var(--border)] bg-transparent gap-1">
+          {visibleTabs.map(({ id, label, icon: Icon }) => (
+            <TabsTrigger 
+              key={id} 
+              value={id} 
+              className="flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-secondary transition-colors"
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
-        {tab === "tickets" && <TicketsTab authHeaders={authHeaders} />}
-        {tab === "software" && <SoftwareTab authHeaders={authHeaders} />}
-      </div>
+        <div className="flex-1 overflow-auto px-8 py-6">
+          <TabsContent value="tickets" className="m-0 h-full data-[state=inactive]:hidden"><TicketsTab authHeaders={authHeaders} /></TabsContent>
+          <TabsContent value="software" className="m-0 h-full data-[state=inactive]:hidden"><SoftwareTab authHeaders={authHeaders} /></TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
@@ -193,96 +194,69 @@ function TicketsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       ) : items.length === 0 ? (
         <TableEmpty label="tickets" />
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {[
-                  "Ticket ID",
-                  "Employee",
-                  "Category",
-                  "Subject",
-                  "Priority",
-                  "Status",
-                  "Raised On",
-                  "Update Status",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((t) => (
-                <tr
-                  key={t.id}
-                  className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
-                >
-                  <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">{t.ticket_id}</td>
-                  <td className="py-3.5 pr-4">
-                    <div className="font-medium text-foreground">{t.employee_name}</div>
-                    <div className="text-[11px] text-muted-foreground">{t.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/80">{t.category}</td>
-                  <td
-                    className="py-3.5 pr-4 text-foreground/80 max-w-[180px] truncate"
-                    title={t.subject}
-                  >
-                    {t.subject}
-                  </td>
-                  <td className="py-3.5 pr-4">
-                    <span
-                      className={cn(
-                        "text-[12px] font-medium",
-                        PRIORITY_COLOR[t.priority] ?? "text-zinc-400",
-                      )}
-                    >
-                      {t.priority}
-                    </span>
-                  </td>
-                  <td className="py-3.5 pr-4">
-                    <StatusBadge status={t.status} />
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/50">{t.created_at.slice(0, 10)}</td>
-                  <td className="py-3.5 relative">
-                    {acting === t.ticket_id ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    ) : (
-                      <div className="relative inline-block">
-                        <button
-                          onClick={() =>
-                            setOpenDropdown(openDropdown === t.ticket_id ? null : t.ticket_id)
-                          }
-                          className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                        >
+        <Table paginate itemsPerPage={10}>
+          <TableHeader>
+            <TableRow>
+              {[
+                "Ticket ID",
+                "Employee",
+                "Category",
+                "Subject",
+                "Priority",
+                "Status",
+                "Raised On",
+                "Update Status",
+              ].map((h) => (
+                <TableHead key={h}>{h}</TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((t) => (
+              <TableRow key={t.id}>
+                <TableCell className="font-mono text-[12px] text-primary">{t.ticket_id}</TableCell>
+                <TableCell>
+                  <div className="font-medium text-foreground">{t.employee_name}</div>
+                  <div className="text-[11px] text-muted-foreground">{t.employee_email}</div>
+                </TableCell>
+                <TableCell className="text-foreground/80">{t.category}</TableCell>
+                <TableCell className="text-foreground/80 max-w-[180px] truncate" title={t.subject}>
+                  {t.subject}
+                </TableCell>
+                <TableCell>
+                  <span className={cn("text-[12px] font-medium", PRIORITY_COLOR[t.priority] ?? "text-zinc-400")}>
+                    {t.priority}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <StatusBadge status={t.status} />
+                </TableCell>
+                <TableCell className="text-foreground/50">{t.created_at.slice(0, 10)}</TableCell>
+                <TableCell>
+                  {acting === t.ticket_id ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]">
                           {t.status}
                           <ChevronDown className="h-3 w-3" />
-                        </button>
-                        {openDropdown === t.ticket_id && (
-                          <div className="absolute right-0 top-8 z-10 w-44 rounded-xl border border-[var(--border)] bg-card shadow-2xl overflow-hidden">
-                            {TICKET_STATUSES.filter((s) => s !== t.status).map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => updateStatus(t.ticket_id, s)}
-                                className="block w-full px-3 py-2 text-left text-[13px] text-foreground/80 hover:bg-secondary transition-colors"
-                              >
-                                {s}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {TICKET_STATUSES.filter((s) => s !== t.status).map((s) => (
+                          <DropdownMenuItem key={s} onClick={() => updateStatus(t.ticket_id, s)}>
+                            {s}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </div>
   );
@@ -357,96 +331,78 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
       ) : items.length === 0 ? (
         <TableEmpty label="software requests" />
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
-          <table className="w-full min-w-[820px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                {[
-                  "Employee",
-                  "Software",
-                  "Version",
-                  "Justification",
-                  "Admin Req.",
-                  "Status",
-                  "Actions",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left py-3 pr-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((sr) => (
-                <tr
-                  key={sr.id}
-                  className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
-                >
-                  <td className="py-3.5 pr-4">
-                    <div className="font-medium text-foreground">{sr.employee_name}</div>
-                    <div className="text-[11px] text-muted-foreground">{sr.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 pr-4 font-medium text-foreground">{sr.software_name}</td>
-                  <td className="py-3.5 pr-4 text-foreground/60 font-mono text-[12px]">
-                    {sr.version || "—"}
-                  </td>
-                  <td
-                    className="py-3.5 pr-4 text-foreground/60 max-w-[200px] truncate"
-                    title={sr.justification}
-                  >
-                    {sr.justification}
-                  </td>
-                  <td className="py-3.5 pr-4 text-center">
-                    <span
-                      className={cn(
-                        "text-[12px] font-medium",
-                        sr.requires_admin ? "text-amber-400" : "text-emerald-400",
-                      )}
-                    >
-                      {sr.requires_admin ? "Yes" : "No"}
-                    </span>
-                  </td>
-                  <td className="py-3.5 pr-4">
-                    <StatusBadge status={sr.status} />
-                  </td>
-                  <td className="py-3.5">
-                    {sr.status === "Pending" ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => act(sr.id, "approve")}
-                          disabled={acting === sr.id}
-                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-                        >
-                          {acting === sr.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Check className="h-3 w-3" />
-                          )}
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => act(sr.id, "reject")}
-                          disabled={acting === sr.id}
-                          className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
-                        >
-                          <X className="h-3 w-3" />
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground/40 text-[12px]">
-                        {sr.approved_by ? `by ${sr.approved_by}` : "—"}
-                      </span>
-                    )}
-                  </td>
-                </tr>
+        <Table paginate itemsPerPage={10}>
+          <TableHeader>
+            <TableRow>
+              {[
+                "Employee",
+                "Software",
+                "Version",
+                "Justification",
+                "Admin Req.",
+                "Status",
+                "Actions",
+              ].map((h) => (
+                <TableHead key={h}>{h}</TableHead>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((sr) => (
+              <TableRow key={sr.id}>
+                <TableCell>
+                  <div className="font-medium text-foreground">{sr.employee_name}</div>
+                  <div className="text-[11px] text-muted-foreground">{sr.employee_email}</div>
+                </TableCell>
+                <TableCell className="font-medium text-foreground">{sr.software_name}</TableCell>
+                <TableCell className="text-foreground/60 font-mono text-[12px]">
+                  {sr.version || "—"}
+                </TableCell>
+                <TableCell className="text-foreground/60 max-w-[200px] truncate" title={sr.justification}>
+                  {sr.justification}
+                </TableCell>
+                <TableCell className="text-center">
+                  <span className={cn("text-[12px] font-medium", sr.requires_admin ? "text-amber-400" : "text-emerald-400")}>
+                    {sr.requires_admin ? "Yes" : "No"}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <StatusBadge status={sr.status} />
+                </TableCell>
+                <TableCell>
+                  {sr.status === "Pending" ? (
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => act(sr.id, "approve")}
+                        disabled={acting === sr.id}
+                        className="h-8 gap-1 border-emerald-500/20 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 hover:text-emerald-600"
+                      >
+                        {acting === sr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        Approve
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => act(sr.id, "reject")}
+                        disabled={acting === sr.id}
+                        className="h-8 gap-1 border-rose-500/20 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 hover:text-rose-600"
+                      >
+                        <X className="h-3 w-3" />
+                        Reject
+                      </Button>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground/40 text-[12px]">
+                      {sr.approved_by ? `by ${sr.approved_by}` : "—"}
+                    </span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </div>
   );

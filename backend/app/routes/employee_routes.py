@@ -1,4 +1,5 @@
 import datetime
+import time
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import Response as RawResponse
 from typing import Optional
@@ -969,8 +970,31 @@ def employee_directory_query(req: DirectoryQueryRequest, user: CurrentUser = Dep
     at fixed fields. Returns {"matched": false} for non-filter queries or when the
     model's SQL doesn't pass validation, so the frontend can fall back further."""
     from app.services import directory_query_service
+    start = time.time()
     employees, _source = _compose_directory()
-    return directory_query_service.run_query(employees, req.query)
+    result = directory_query_service.run_query(employees, req.query)
+
+    # Observability: this NL directory filter bypasses /api/chat, so record it here
+    # (+ a Langfuse trace) — otherwise sidebar /directory queries are invisible.
+    try:
+        from app.services.observability_log import log_ai_interaction
+        matched = bool(result.get("matched")) if isinstance(result, dict) else False
+        codes = (result.get("employee_codes") or result.get("codes") or []) if isinstance(result, dict) else []
+        log_ai_interaction(
+            session_id=f"directory-{user.email}",
+            user_email=user.email,
+            user_message=req.query,
+            domain="directory",
+            route_method="directory_nl_query",
+            response_text=f"{'matched' if matched else 'no match'}: {len(codes)} employee(s)",
+            response_length=len(codes),
+            start=start,
+            tags=["directory"],
+        )
+    except Exception:
+        pass
+
+    return result
 
 
 @router.get("/directory/{employee_code}/enrichment")

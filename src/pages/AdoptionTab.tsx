@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Loader2, RefreshCw, Compass, TrendingUp, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 interface Feature {
   key: string;
@@ -175,31 +176,31 @@ export function AdoptionTab() {
 
       {/* Feature adoption table */}
       <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-        <table className="w-full text-[13px]">
-          <thead className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2.5 font-semibold">Capability</th>
-              <th className="px-4 py-2.5 font-semibold">Category</th>
-              <th className="px-4 py-2.5 font-semibold">Reach (staff)</th>
-              <th className="px-4 py-2.5 font-semibold text-right">Users</th>
-              <th className="px-4 py-2.5 font-semibold text-right">Never used</th>
-              <th className="px-4 py-2.5 font-semibold text-right">Requests</th>
-              <th className="px-4 py-2.5 font-semibold text-right">Last used</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table paginate itemsPerPage={10} className="w-full text-[13px]">
+          <TableHeader className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+            <TableRow>
+              <TableHead className="px-4 py-2.5 font-semibold">Capability</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold">Category</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold">Reach (staff)</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold text-right">Users</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold text-right">Never used</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold text-right">Requests</TableHead>
+              <TableHead className="px-4 py-2.5 font-semibold text-right">Last used</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {data.features.map((f) => (
-              <tr key={f.key} className="border-t border-[var(--border)] hover:bg-muted/20">
-                <td className="px-4 py-2.5 font-medium text-foreground">
+              <TableRow key={f.key} className="border-t border-[var(--border)] hover:bg-muted/20">
+                <TableCell className="px-4 py-2.5 font-medium text-foreground">
                   {f.title}
                   {f.users === 0 && (
                     <span className="ml-2 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold text-rose-400">
                       undiscovered
                     </span>
                   )}
-                </td>
-                <td className="px-4 py-2.5 text-muted-foreground">{f.category}</td>
-                <td className="px-4 py-2.5">
+                </TableCell>
+                <TableCell className="px-4 py-2.5 text-muted-foreground">{f.category}</TableCell>
+                <TableCell className="px-4 py-2.5">
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
                       <div
@@ -211,21 +212,21 @@ export function AdoptionTab() {
                       {f.adoption_pct_staff}%
                     </span>
                   </div>
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{f.users}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-2.5 text-right tabular-nums">{f.users}</TableCell>
+                <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                   {denom ? f.never_used_staff : "—"}
-                </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                   {f.requests}
-                </td>
-                <td className="px-4 py-2.5 text-right text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-2.5 text-right text-muted-foreground">
                   {fmtDate(f.last_used)}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Unmapped traffic — registry blind spots */}
@@ -238,37 +239,37 @@ export function AdoptionTab() {
             </span>
           </h3>
           <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-            <table className="w-full text-[13px]">
-              <thead className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-2.5 font-semibold">Domain</th>
-                  <th className="px-4 py-2.5 font-semibold">Sub-intent</th>
-                  <th className="px-4 py-2.5 font-semibold text-right">Users</th>
-                  <th className="px-4 py-2.5 font-semibold text-right">Requests</th>
-                  <th className="px-4 py-2.5 font-semibold text-right">Last used</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table paginate itemsPerPage={10} className="w-full text-[13px]">
+              <TableHeader className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <TableRow>
+                  <TableHead className="px-4 py-2.5 font-semibold">Domain</TableHead>
+                  <TableHead className="px-4 py-2.5 font-semibold">Sub-intent</TableHead>
+                  <TableHead className="px-4 py-2.5 font-semibold text-right">Users</TableHead>
+                  <TableHead className="px-4 py-2.5 font-semibold text-right">Requests</TableHead>
+                  <TableHead className="px-4 py-2.5 font-semibold text-right">Last used</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {data.unmapped.map((b) => (
-                  <tr
+                  <TableRow
                     key={`${b.domain}:${b.sub_intent}`}
                     className="border-t border-[var(--border)] hover:bg-muted/20"
                   >
-                    <td className="px-4 py-2.5 text-foreground">{b.domain || "—"}</td>
-                    <td className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">
+                    <TableCell className="px-4 py-2.5 text-foreground">{b.domain || "—"}</TableCell>
+                    <TableCell className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">
                       {b.sub_intent}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">{b.users}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="px-4 py-2.5 text-right tabular-nums">{b.users}</TableCell>
+                    <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                       {b.requests}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="px-4 py-2.5 text-right text-muted-foreground">
                       {fmtDate(b.last_used)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </div>
       )}

@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { ChartCanvas, type ChartSpec } from "@/components/analytics/ChartCanvas";
 import { MetricChart, type ChartType } from "@/components/analytics/MetricChart";
 import { MyAnalytics } from "@/components/analytics/MyAnalytics";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -572,34 +573,34 @@ export function AnalyticsBuilder() {
                             Raw Data
                           </h3>
                           <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-                            <table className="w-full text-[12px]">
-                              <thead>
-                                <tr className="border-b border-[var(--border)] bg-muted/40">
-                                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">
+                            <Table paginate itemsPerPage={10} className="w-full text-[12px]">
+                              <TableHeader>
+                                <TableRow className="border-b border-[var(--border)] bg-muted/40">
+                                  <TableHead className="text-left px-4 py-2.5 font-semibold text-muted-foreground">
                                     {activeChart.x_key}
-                                  </th>
+                                  </TableHead>
                                   {activeChart.y_keys.map((k) => (
-                                    <th key={k} className="text-right px-4 py-2.5 font-semibold text-muted-foreground">
+                                    <TableHead key={k} className="text-right px-4 py-2.5 font-semibold text-muted-foreground">
                                       {activeChart.y_labels?.[k] ?? k}
-                                    </th>
+                                    </TableHead>
                                   ))}
-                                </tr>
-                              </thead>
-                              <tbody>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
                                 {activeChart.data.slice(0, 20).map((row, i) => (
-                                  <tr key={i} className="border-b border-[var(--border)]/50 hover:bg-muted/20">
-                                    <td className="px-4 py-2 text-foreground font-medium">
+                                  <TableRow key={i} className="border-b border-[var(--border)]/50 hover:bg-muted/20">
+                                    <TableCell className="px-4 py-2 text-foreground font-medium">
                                       {String(row[activeChart.x_key] ?? "—")}
-                                    </td>
+                                    </TableCell>
                                     {activeChart.y_keys.map((k) => (
-                                      <td key={k} className="px-4 py-2 text-right text-muted-foreground tabular-nums">
+                                      <TableCell key={k} className="px-4 py-2 text-right text-muted-foreground tabular-nums">
                                         {row[k] ?? "—"}
-                                      </td>
+                                      </TableCell>
                                     ))}
-                                  </tr>
+                                  </TableRow>
                                 ))}
-                              </tbody>
-                            </table>
+                              </TableBody>
+                            </Table>
                             {activeChart.data.length > 20 && (
                               <p className="px-4 py-2 text-[11px] text-muted-foreground">
                                 + {activeChart.data.length - 20} more rows — export CSV for full dataset

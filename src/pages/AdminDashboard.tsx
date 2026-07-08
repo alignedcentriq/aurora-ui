@@ -320,22 +320,13 @@ export function AdminDashboard() {
         {showForm && (
           <Card>
             <CardContent className="p-5 space-y-3">
-              <div className="flex gap-2">
-                <Input
-                  type="text"
-                  placeholder="Title"
-                  value={newAnn.title}
-                  onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
-                  className="flex-1"
-                />
-                <Input
-                  type="text"
-                  placeholder="Category"
-                  value={newAnn.category}
-                  onChange={(e) => setNewAnn((p) => ({ ...p, category: e.target.value }))}
-                  className="w-36"
-                />
-              </div>
+              <Input
+                type="text"
+                placeholder="Title"
+                value={newAnn.title}
+                onChange={(e) => setNewAnn((p) => ({ ...p, title: e.target.value }))}
+                className="w-full"
+              />
               <AnnouncementBodyEditor
                 body={newAnn.body}
                 onBodyChange={(v) => setNewAnn((p) => ({ ...p, body: v }))}

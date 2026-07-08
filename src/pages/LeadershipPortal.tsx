@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 interface ReadinessRow {
   function: string;
@@ -425,36 +426,36 @@ export function LeadershipPortal() {
                   {hm && hm.matrix.length > 0 ? (
                     <>
                       <div className="overflow-auto max-h-80 rounded-xl border border-slate-200/50 dark:border-zinc-800/50">
-                        <table className="w-full border-collapse text-[11px]">
-                          <thead className="sticky top-0 z-10">
-                            <tr className="bg-gradient-to-r from-indigo-500/5 to-violet-500/5 border-b border-slate-200/60 dark:border-zinc-800/60">
-                              <th className="text-left py-2 px-3 text-muted-foreground/70 font-bold sticky left-0 bg-white dark:bg-zinc-950 z-20 border-r border-slate-100 dark:border-zinc-800/40">
+                        <Table paginate itemsPerPage={10} className="w-full border-collapse text-[11px]">
+                          <TableHeader className="sticky top-0 z-10">
+                            <TableRow className="bg-gradient-to-r from-indigo-500/5 to-violet-500/5 border-b border-slate-200/60 dark:border-zinc-800/60">
+                              <TableHead className="text-left py-2 px-3 text-muted-foreground/70 font-bold sticky left-0 bg-white dark:bg-zinc-950 z-20 border-r border-slate-100 dark:border-zinc-800/40">
                                 Skill
-                              </th>
+                              </TableHead>
                               {hm.functions.map((f) => (
-                                <th
+                                <TableHead
                                   key={f}
                                   className="py-2 px-2 text-muted-foreground/70 font-semibold text-center"
                                   title={f}
                                 >
                                   <span className="block truncate max-w-[72px] mx-auto">{f}</span>
-                                </th>
+                                </TableHead>
                               ))}
-                            </tr>
-                          </thead>
-                          <tbody>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
                             {hm.matrix.map((row, ri) => (
-                              <tr
+                              <TableRow
                                 key={row.skill}
                                 className={cn(
                                   ri % 2 === 1 && "bg-slate-50/50 dark:bg-zinc-900/20",
                                 )}
                               >
-                                <td className="py-1.5 px-3 font-semibold text-foreground/90 sticky left-0 bg-white dark:bg-zinc-950 truncate max-w-[140px] border-r border-slate-100 dark:border-zinc-800/40">
+                                <TableCell className="py-1.5 px-3 font-semibold text-foreground/90 sticky left-0 bg-white dark:bg-zinc-950 truncate max-w-[140px] border-r border-slate-100 dark:border-zinc-800/40">
                                   {row.skill}
-                                </td>
+                                </TableCell>
                                 {row.cells.map((c) => (
-                                  <td key={c.function} className="py-1 px-1 text-center">
+                                  <TableCell key={c.function} className="py-1 px-1 text-center">
                                     <span
                                       className={cn(
                                         "inline-flex items-center justify-center h-6 w-8 rounded-lg font-bold",
@@ -463,12 +464,12 @@ export function LeadershipPortal() {
                                     >
                                       {c.count || "·"}
                                     </span>
-                                  </td>
+                                  </TableCell>
                                 ))}
-                              </tr>
+                              </TableRow>
                             ))}
-                          </tbody>
-                        </table>
+                          </TableBody>
+                        </Table>
                       </div>
                       {/* Legend */}
                       <div className="flex items-center gap-4 mt-3 flex-wrap">

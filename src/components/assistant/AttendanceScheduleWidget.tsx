@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { flyBanner } from "@/lib/fly-banner";
 import type { AttendanceSchedulePrefill } from "@/lib/chat-store";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -176,41 +177,41 @@ function ReportMode({
             <strong>{report.period}</strong>
           </p>
           <div className="mb-3 overflow-x-auto rounded-xl border border-border">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-muted/50 text-left uppercase text-muted-foreground">
-                  <th className="px-2.5 py-2">Employee</th>
-                  <th className="px-2.5 py-2 text-center">P</th>
-                  <th className="px-2.5 py-2 text-center">A</th>
-                  <th className="px-2.5 py-2 text-center">WFH</th>
-                  <th className="px-2.5 py-2 text-center">Late</th>
-                  <th className="px-2.5 py-2 text-center">Half</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table paginate itemsPerPage={10} className="w-full text-xs">
+              <TableHeader>
+                <TableRow className="bg-muted/50 text-left uppercase text-muted-foreground">
+                  <TableHead className="px-2.5 py-2">Employee</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">P</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">A</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">WFH</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">Late</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">Half</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {report.members!.slice(0, 12).map((m, i) => (
-                  <tr key={i} className={i % 2 ? "bg-muted/20" : ""}>
-                    <td className="px-2.5 py-1.5">
+                  <TableRow key={i} className={i % 2 ? "bg-muted/20" : ""}>
+                    <TableCell className="px-2.5 py-1.5">
                       <div className="font-medium text-foreground">{m.employee}</div>
                       <div className="text-[10px] text-muted-foreground">{m.department}</div>
-                    </td>
-                    <td className="px-2.5 py-1.5 text-center">{m.present}</td>
-                    <td className="px-2.5 py-1.5 text-center">{m.absent}</td>
-                    <td className="px-2.5 py-1.5 text-center">{m.wfh}</td>
-                    <td className="px-2.5 py-1.5 text-center">{m.late}</td>
-                    <td className="px-2.5 py-1.5 text-center">{m.half_day}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{m.present}</TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{m.absent}</TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{m.wfh}</TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{m.late}</TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{m.half_day}</TableCell>
+                  </TableRow>
                 ))}
-                <tr className="border-t border-border bg-muted/40 font-semibold text-foreground">
-                  <td className="px-2.5 py-2">TOTAL</td>
-                  <td className="px-2.5 py-2 text-center">{report.totals!.present}</td>
-                  <td className="px-2.5 py-2 text-center">{report.totals!.absent}</td>
-                  <td className="px-2.5 py-2 text-center">{report.totals!.wfh}</td>
-                  <td className="px-2.5 py-2 text-center">{report.totals!.late}</td>
-                  <td className="px-2.5 py-2 text-center">{report.totals!.half_day}</td>
-                </tr>
-              </tbody>
-            </table>
+                <TableRow className="border-t border-border bg-muted/40 font-semibold text-foreground">
+                  <TableCell className="px-2.5 py-2">TOTAL</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.present}</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.absent}</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.wfh}</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.late}</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.half_day}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </div>
           {report.members!.length > 12 && (
             <p className="mb-2 text-[11px] text-muted-foreground">

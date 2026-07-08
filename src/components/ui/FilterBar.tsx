@@ -2,10 +2,15 @@ import React from "react";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+export interface FilterOption {
+  label: string;
+  value: string;
+}
+
 export interface FilterBarProps {
   filter: string;
   setFilter: (s: string) => void;
-  options: string[];
+  options: (string | FilterOption)[];
   onRefresh: () => void;
   variant?: "pills" | "tabs";
   className?: string;
@@ -27,31 +32,35 @@ export function FilterBar({
           variant === "pills" ? "gap-0.5 bg-[#f1f5f9] dark:bg-white/[0.06] rounded-lg" : "gap-1",
         )}
       >
-        {options.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            type="button"
-            className={cn(
-              "text-[13px] font-medium transition-all cursor-pointer",
-              variant === "pills"
-                ? cn(
-                    "rounded-md px-4 py-1.5",
-                    filter === s
-                      ? "bg-white dark:bg-white/[0.12] text-[#0f172a] dark:text-white shadow-sm"
-                      : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60",
-                  )
-                : cn(
-                    "rounded-lg px-3.5 py-1.5",
-                    filter === s
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  ),
-            )}
-          >
-            {s}
-          </button>
-        ))}
+        {options.map((opt) => {
+          const value = typeof opt === "string" ? opt : opt.value;
+          const label = typeof opt === "string" ? opt : opt.label;
+          return (
+            <button
+              key={value}
+              onClick={() => setFilter(value)}
+              type="button"
+              className={cn(
+                "text-[13px] font-medium transition-all cursor-pointer",
+                variant === "pills"
+                  ? cn(
+                      "rounded-md px-4 py-1.5",
+                      filter === value
+                        ? "bg-white dark:bg-white/[0.12] text-[#0f172a] dark:text-white shadow-sm"
+                        : "text-[#64748b] dark:text-white/40 hover:text-[#334155] dark:hover:text-white/60",
+                    )
+                  : cn(
+                      "rounded-lg px-3.5 py-1.5",
+                      filter === value
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    ),
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       <button
         onClick={onRefresh}

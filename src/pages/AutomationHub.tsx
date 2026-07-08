@@ -1253,7 +1253,7 @@ function HistoryDialog({
           ) : logs.length === 0 ? (
             <div className="text-sm text-muted-foreground py-10 text-center">No sends recorded yet.</div>
           ) : (
-            <Table>
+            <Table paginate itemsPerPage={10}>
               <TableHeader>
                 <TableRow>
                   <TableHead>Sent</TableHead>

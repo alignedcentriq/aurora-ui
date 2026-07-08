@@ -17,6 +17,7 @@ services:
       - centriq-network
     depends_on:
       - backend
+      - langfuse-server
     restart: always
  
   backend:
@@ -30,6 +31,15 @@ services:
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - LANGFUSE_HOST=http://langfuse-server:3000
+      # Keys must match the langfuse-server headless-init keys below. Injected here so
+      # they win over anything (stale) in backend/.env. LANGFUSE_PROJECT_ID lets the
+      # "Open in Langfuse" redirect build deep links without an API lookup.
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-centriq-ai}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-centriq-ai-2026}
+      - LANGFUSE_PROJECT_ID=${LANGFUSE_PROJECT_ID:-centriq-ai}
+      # Browser-facing Langfuse URL (Option 2 subdomain, proxied by nginx). Drives the
+      # "Open in Langfuse" redirect. MUST equal langfuse-server's NEXTAUTH_URL below.
+      - LANGFUSE_PUBLIC_URL=${LANGFUSE_PUBLIC_URL:-http://langfuse.hackathon.alignedautomation.com}
     extra_hosts:
       - "ml01:${ML01_IP}"
     networks:
@@ -81,8 +91,24 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/langfuse
       - NEXTAUTH_SECRET=mysecret
       - SALT=mysalt
-      - NEXTAUTH_URL=http://hackathon.alignedautomation.com:3003
+      # Public URL Langfuse serves under (Option 2 subdomain via nginx). NextAuth is
+      # strict: this MUST match the browser origin exactly, and the backend's
+      # LANGFUSE_PUBLIC_URL. No :3003 anymore — nginx fronts it on port 80.
+      - NEXTAUTH_URL=${LANGFUSE_PUBLIC_URL:-http://langfuse.hackathon.alignedautomation.com}
       - TELEMETRY_ENABLED=false
+      # ── Headless initialization (see docker-compose.infra.yml for the full note) ──
+      # Auto-seeds org + project + login user with FIXED keys, matching the backend
+      # service above. To re-seed after a key change, reset the langfuse_db_data volume.
+      - LANGFUSE_INIT_ORG_ID=centriq
+      - LANGFUSE_INIT_ORG_NAME=Centriq
+      - LANGFUSE_INIT_PROJECT_ID=centriq-ai
+      - LANGFUSE_INIT_PROJECT_NAME=Centriq AI
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-centriq-ai}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-centriq-ai-2026}
+      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-shivam.sharma@alignedautomation.com}
+      - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-Centriq Admin}
+      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-Centriq@2026}
+      - AUTH_DISABLE_SIGNUP=true
     networks:
       - centriq-network
     restart: always

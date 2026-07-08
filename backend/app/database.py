@@ -433,6 +433,14 @@ def init_db():
                 # handles the table; this composite index serves the audit query shape —
                 # filter by category, sorted newest-first).
                 f'CREATE INDEX IF NOT EXISTS idx_activity_log_category_created ON "{SCHEMA}".activity_log_entries(category, created_at DESC)',
+                # Announcement engagement: per-announcement mechanics + read-tracking spine.
+                # create_all makes the announcement_receipts table; these ALTERs add the new
+                # flag columns to the existing announcements table, and the index serves the
+                # per-announcement receipt roll-up (reach %, reactions, RSVP, ack).
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS allow_reactions BOOLEAN DEFAULT FALSE',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS allow_rsvp BOOLEAN DEFAULT FALSE',
+                f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS require_ack BOOLEAN DEFAULT FALSE',
+                f'CREATE INDEX IF NOT EXISTS idx_announcement_receipts_ann ON "{SCHEMA}".announcement_receipts(announcement_id)',
             ]:
                 try:
                     conn.execute(text(stmt))
