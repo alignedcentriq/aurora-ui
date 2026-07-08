@@ -477,7 +477,7 @@ function LogsTab() {
                   {/* Timestamp */}
                   <span className="text-[11px] font-mono text-muted-foreground shrink-0 w-[130px]">
                     {log.created_at
-                      ? new Date(log.created_at).toLocaleString("en-IN", {
+                      ? new Date(log.created_at).toLocaleString(undefined, {
                           month: "short",
                           day: "2-digit",
                           hour: "2-digit",
@@ -876,12 +876,12 @@ function ChartsTab() {
                   tickFormatter={(v) => {
                     const d = new Date(v);
                     return period === "24h"
-                      ? d.toLocaleTimeString("en-IN", {
+                      ? d.toLocaleTimeString(undefined, {
                           hour: "2-digit",
                           minute: "2-digit",
                           hour12: false,
                         })
-                      : d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
+                      : d.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
                   }}
                   tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 />
@@ -915,12 +915,12 @@ function ChartsTab() {
                   tickFormatter={(v) => {
                     const d = new Date(v);
                     return period === "24h"
-                      ? d.toLocaleTimeString("en-IN", {
+                      ? d.toLocaleTimeString(undefined, {
                           hour: "2-digit",
                           minute: "2-digit",
                           hour12: false,
                         })
-                      : d.toLocaleDateString("en-IN", { month: "short", day: "2-digit" });
+                      : d.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
                   }}
                   tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 />

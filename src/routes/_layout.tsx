@@ -26,6 +26,7 @@ import {
   PlayCircle,
   Rocket,
   UserCog,
+  RotateCcw,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,7 +35,13 @@ import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
 import { ActivityBell } from "@/components/assistant/ActivityBell";
 import { EmailAutomationDrawer } from "@/components/EmailAutomationDrawer";
 import { useChatStore } from "@/lib/chat-store";
-import { useSettings, COUNTRIES, detectCountryFromTimezone } from "@/lib/settings-store";
+import {
+  useSettings,
+  detectCountryFromTimezone,
+  clockFromTimezone,
+  listAllTimezones,
+  POPULAR_CLOCK_TZS,
+} from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
 import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
@@ -70,7 +77,13 @@ const NAV_COLORS: Record<string, string> = {
 };
 
 // --- Timezone Clock Card Component with Parallax Hover ---
-function TimezoneOrbitClockCard({ country }: { country: any }) {
+function TimezoneOrbitClockCard({
+  country,
+  onRemove,
+}: {
+  country: any;
+  onRemove?: () => void;
+}) {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0, scale: 1 });
   const [timeData, setTimeData] = useState({
     timeStr: "",
@@ -183,8 +196,18 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
         "bg-gradient-to-br",
         bgGradient,
         borderGlow,
+        "group/clock",
       )}
     >
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          title={`Remove ${country.name}`}
+          className="absolute top-3 left-3 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-background/70 text-muted-foreground opacity-0 group-hover/clock:opacity-100 hover:bg-destructive/15 hover:text-destructive transition-all cursor-pointer"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
       <div className="absolute top-4 right-4 flex items-center gap-1.5">
         <span
           className={cn(
@@ -262,7 +285,10 @@ function TimezoneOrbitClockCard({ country }: { country: any }) {
           <span>{timeLabel}</span>
           <span>•</span>
           <span className="truncate max-w-[80px]">
-            {country.timezone.split("/")[1].replace("_", " ")}
+            {(country.timezone.split("/").slice(1).join("/") || country.timezone).replace(
+              /_/g,
+              " ",
+            )}
           </span>
         </div>
       </div>
@@ -279,12 +305,20 @@ function LayoutComponent() {
   const { threads, activeId, setActiveId, createThread, deleteThread } = useChatStore();
   const activeThread = activeId ? threads[activeId] : null;
   const { user, logout } = useAuth();
-  const { theme, setTheme, country, setCountry, clocks = ["US", "IN", "AE", "IE"] } = useSettings();
+  const { theme, setTheme, country, setCountry } = useSettings();
+  const worldClocks = useSettings((s) => s.worldClocks);
+  const addClock = useSettings((s) => s.addClock);
+  const removeClock = useSettings((s) => s.removeClock);
+  const resetClocks = useSettings((s) => s.resetClocks);
   const openIntro = useIntroStore((s) => s.open);
+  // Intro tour play button is restricted to the app owner only.
+  const canWatchIntro = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [clocksOverlayOpen, setClocksOverlayOpen] = useState(false);
+  const [clockPickerOpen, setClockPickerOpen] = useState(false);
+  const [clockSearch, setClockSearch] = useState("");
   const [copilotOpen, setCopilotOpen] = useState(false);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -688,13 +722,15 @@ function LayoutComponent() {
           {/* Utilities row when expanded */}
           {!sidebarCollapsed && (
             <div className="flex items-center justify-around py-1 bg-[#0c1630]/40 rounded-xl border border-blue-950/40">
-              <button
-                onClick={openIntro}
-                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
-                title="Watch intro tour"
-              >
-                <PlayCircle className="h-4 w-4 text-primary" />
-              </button>
+              {canWatchIntro && (
+                <button
+                  onClick={openIntro}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                  title="Watch intro tour"
+                >
+                  <PlayCircle className="h-4 w-4 text-primary" />
+                </button>
+              )}
 
               <button
                 onClick={() => setClocksOverlayOpen(true)}
@@ -721,13 +757,15 @@ function LayoutComponent() {
           {/* Utilities column when collapsed */}
           {sidebarCollapsed && (
             <div className="flex flex-col items-center gap-1.5 pb-1">
-              <button
-                onClick={openIntro}
-                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
-                title="Watch intro tour"
-              >
-                <PlayCircle className="h-4 w-4 text-primary" />
-              </button>
+              {canWatchIntro && (
+                <button
+                  onClick={openIntro}
+                  className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                  title="Watch intro tour"
+                >
+                  <PlayCircle className="h-4 w-4 text-primary" />
+                </button>
+              )}
               <button
                 onClick={() => setClocksOverlayOpen(true)}
                 className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
@@ -898,16 +936,18 @@ function LayoutComponent() {
               <div className="border-t border-blue-950/60 pt-4 mt-4 space-y-3 px-2 shrink-0">
                 {/* Utilities */}
                 <div className="flex items-center justify-around py-1.5 bg-[#0c1630]/40 rounded-xl border border-blue-950/40">
-                  <button
-                    onClick={() => {
-                      openIntro();
-                      setMobileMenuOpen(false);
-                    }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
-                    title="Watch intro tour"
-                  >
-                    <PlayCircle className="h-4.5 w-4.5 text-primary" />
-                  </button>
+                  {canWatchIntro && (
+                    <button
+                      onClick={() => {
+                        openIntro();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
+                      title="Watch intro tour"
+                    >
+                      <PlayCircle className="h-4.5 w-4.5 text-primary" />
+                    </button>
+                  )}
 
                   <button
                     onClick={() => {
@@ -1027,7 +1067,7 @@ function LayoutComponent() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 15 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
-              className="relative bg-background/85 border border-border/80 shadow-2xl p-6 md:p-8 rounded-3xl max-w-4xl w-full z-10 overflow-hidden"
+              className="relative bg-background/85 border border-border/80 shadow-2xl p-6 md:p-8 rounded-3xl max-w-4xl w-full z-10 max-h-[88vh] overflow-y-auto no-scrollbar"
             >
               <div className="absolute inset-0 bg-radial from-primary/5 via-transparent to-transparent pointer-events-none" />
 
@@ -1050,28 +1090,140 @@ function LayoutComponent() {
                   Global Office Time Orbit
                 </h2>
                 <p className="text-xs md:text-sm text-muted-foreground max-w-md mx-auto mt-1">
-                  Real-time dial sweeping and local timezone gradients across US, Ireland, Dubai,
-                  and India.
+                  Real-time dial sweeping across your pinned offices and cities. Add any timezone in
+                  the world, or remove the ones you don't need.
                 </p>
               </div>
 
-              {/* Clocks Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mt-4">
-                {(() => {
-                  const targetCodes = ["US", "IE", "AE", "IN"];
-                  const targetCountries = COUNTRIES.filter((c) => targetCodes.includes(c.code));
-                  const orderedCountries = [
-                    targetCountries.find((c) => c.code === "US"),
-                    targetCountries.find((c) => c.code === "IE"),
-                    targetCountries.find((c) => c.code === "AE"),
-                    targetCountries.find((c) => c.code === "IN"),
-                  ].filter(Boolean);
-
-                  return orderedCountries.map((c) => (
-                    <TimezoneOrbitClockCard key={c?.code} country={c} />
-                  ));
-                })()}
+              {/* Toolbar */}
+              <div className="flex items-center justify-center gap-2 mb-5">
+                <button
+                  onClick={() => {
+                    setClockSearch("");
+                    setClockPickerOpen((v) => !v);
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer",
+                    clockPickerOpen
+                      ? "bg-primary/15 border-primary/40 text-primary"
+                      : "bg-muted/40 border-border/60 text-foreground hover:bg-muted",
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add clock
+                </button>
+                <button
+                  onClick={resetClocks}
+                  title="Reset to default clocks"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-border/60 bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset
+                </button>
               </div>
+
+              {/* Timezone picker */}
+              <AnimatePresence>
+                {clockPickerOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden mb-5"
+                  >
+                    <div className="rounded-2xl border border-border/60 bg-muted/25 p-3">
+                      <div className="relative mb-3">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <input
+                          autoFocus
+                          value={clockSearch}
+                          onChange={(e) => setClockSearch(e.target.value)}
+                          placeholder="Search any city or timezone (e.g. Tokyo, Paris, GMT)…"
+                          className="w-full rounded-xl border border-border/60 bg-background/70 py-2 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      {(() => {
+                        const pinned = new Set(worldClocks.map((c) => c.id));
+                        const q = clockSearch.trim().toLowerCase();
+                        const source = q ? listAllTimezones() : POPULAR_CLOCK_TZS;
+                        const matches = source
+                          .filter((tz) => !pinned.has(tz))
+                          .filter((tz) => !q || tz.toLowerCase().replace(/_/g, " ").includes(q))
+                          .slice(0, 60);
+
+                        if (matches.length === 0) {
+                          return (
+                            <p className="text-center text-xs text-muted-foreground py-4">
+                              {q ? "No matching timezone found." : "All popular clocks are already pinned."}
+                            </p>
+                          );
+                        }
+
+                        return (
+                          <>
+                            {!q && (
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+                                Popular
+                              </p>
+                            )}
+                            <div className="max-h-56 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 pr-1">
+                              {matches.map((tz) => {
+                                const clock = clockFromTimezone(tz);
+                                return (
+                                  <button
+                                    key={tz}
+                                    onClick={() => {
+                                      addClock(clock);
+                                      setClockSearch("");
+                                    }}
+                                    className="flex items-center gap-2.5 rounded-xl border border-transparent hover:border-primary/30 hover:bg-primary/10 px-2.5 py-2 text-left transition-all cursor-pointer"
+                                  >
+                                    <span className="text-lg shrink-0">{clock.flag}</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block text-xs font-semibold text-foreground truncate">
+                                        {clock.label}
+                                      </span>
+                                      <span className="block text-[10px] text-muted-foreground truncate">
+                                        {tz.replace(/_/g, " ")}
+                                      </span>
+                                    </span>
+                                    <Plus className="h-3.5 w-3.5 text-primary shrink-0" />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Clocks Grid */}
+              {worldClocks.length === 0 ? (
+                <p className="text-center text-sm text-muted-foreground py-10">
+                  No clocks pinned. Use <span className="font-semibold text-foreground">Add clock</span> to
+                  pin any timezone in the world.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mt-4">
+                  {worldClocks.map((c) => (
+                    <TimezoneOrbitClockCard
+                      key={c.id}
+                      country={{
+                        code: c.id,
+                        name: c.label,
+                        office: c.region,
+                        flag: c.flag,
+                        timezone: c.timezone,
+                      }}
+                      onRemove={() => removeClock(c.id)}
+                    />
+                  ))}
+                </div>
+              )}
             </motion.div>
           </div>
         )}

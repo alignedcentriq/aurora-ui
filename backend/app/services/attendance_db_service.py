@@ -45,11 +45,21 @@ builds summary + calendar for the same person).
 """
 
 import datetime
+import logging
 import re
 import threading
 import time
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class AttendanceSourceError(Exception):
+    """The eSSL DB is configured but could not be reached/queried. Raised instead of
+    returning an empty result, so callers can degrade to 'temporarily unavailable'
+    rather than silently reporting every employee Absent."""
+
 
 _lock = threading.Lock()
 _conn_str: str | None = None
@@ -78,6 +88,25 @@ def _parse_jdbc_url(raw: str) -> tuple[str, str]:
     )
 
 
+def _pick_driver() -> str:
+    """Choose the ODBC driver: explicit override, else the newest installed
+    'ODBC Driver NN for SQL Server'. Falls back to Driver 18 (prod image default)."""
+    explicit = (settings.ATTENDANCE_ODBC_DRIVER or "").strip()
+    if explicit:
+        return explicit
+    try:
+        import pyodbc
+        installed = [d for d in pyodbc.drivers() if "SQL Server" in d]
+        for pref in ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"):
+            if pref in installed:
+                return pref
+        if installed:
+            return installed[0]
+    except Exception:
+        pass
+    return "ODBC Driver 18 for SQL Server"
+
+
 def _build_conn_str() -> str | None:
     raw = (settings.ATTENDANCE_DBURL or "").strip()
     if not raw:
@@ -102,11 +131,14 @@ def _build_conn_str() -> str | None:
         return None
 
     parts = [
-        "DRIVER={ODBC Driver 17 for SQL Server}",
+        f"DRIVER={{{_pick_driver()}}}",
         f"SERVER={server}",
         "TrustServerCertificate=yes",
         "LoginTimeout=10",
     ]
+    encrypt = (settings.ATTENDANCE_ODBC_ENCRYPT or "").strip()
+    if encrypt:
+        parts.append(f"Encrypt={encrypt}")
     if database:
         parts.append(f"DATABASE={database}")
     if user:
@@ -261,7 +293,8 @@ def fetch_employee_records(
 ) -> list[dict]:
     """
     Fetch attendance records for one employee from eSSL.
-    Returns [] on error or when not configured.
+    Returns [] when not configured. Raises AttendanceSourceError if the DB is configured
+    but unreachable/query fails (so the caller degrades instead of reporting all-Absent).
     Matched by name via _resolve_usernames (exact, then unambiguous first+last fallback).
     `roster` is the full org employee-name list — required for a safe fuzzy match; pass it.
     """
@@ -301,8 +334,9 @@ def fetch_employee_records(
                 rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         finally:
             conn.close()
-    except Exception:
-        return []
+    except Exception as e:
+        logger.warning("eSSL attendance fetch failed for %r: %s", employee_name, e)
+        raise AttendanceSourceError(str(e)) from e
 
     result = [_map_row(r) for r in rows]
     if not live:
@@ -317,7 +351,8 @@ def fetch_team_records(
     """
     Fetch attendance records for multiple employees in a single SQL round-trip.
     Returns {name_lower: [records]} — empty list for employees with no records.
-    Falls back to {} on any error.
+    Returns {} when not configured. Raises AttendanceSourceError if the DB is configured
+    but unreachable/query fails (so the caller degrades instead of reporting all-Absent).
     `roster` is the full org employee-name list — required for a safe fuzzy match; pass it.
     """
     if not is_configured() or not employee_names:
@@ -368,8 +403,9 @@ def fetch_team_records(
                 raw_rows = []
         finally:
             conn.close()
-    except Exception:
-        return {}
+    except Exception as e:
+        logger.warning("eSSL team attendance fetch failed (%d names): %s", len(names_lower), e)
+        raise AttendanceSourceError(str(e)) from e
 
     for raw in raw_rows:
         essl_key = _norm(raw.get("name_lower"))

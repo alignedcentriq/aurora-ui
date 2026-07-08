@@ -63,6 +63,20 @@ def _redact_pii(text: Optional[str]) -> Optional[str]:
     return text
 
 
+def _iso_utc(dt: Optional[datetime.datetime]) -> Optional[str]:
+    """Serialize a naive-UTC timestamp as an ISO string WITH the UTC marker (+00:00).
+
+    Timestamps are stored as naive UTC (datetime.utcnow). Without an explicit offset,
+    the browser's `new Date(str)` treats the string as local time and skips conversion,
+    so IST users saw UTC clock values mislabeled as local (5.5h behind). Tagging the
+    string as UTC lets the frontend's toLocaleString render true browser-local time."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.isoformat()
+
+
 def _period_cutoff(period: str) -> datetime.datetime:
     """Convert period string to a UTC cutoff datetime."""
     now = datetime.datetime.utcnow()
@@ -116,7 +130,7 @@ def get_logs(
         "data": [
             {
                 "id": r.id,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": _iso_utc(r.created_at),
                 "session_id": r.session_id,
                 "user_label": _pseudonym(r.user_email),
                 "domain": r.domain,
@@ -154,7 +168,7 @@ def get_log_detail(
 
     return {
         "id": req.id,
-        "created_at": req.created_at.isoformat() if req.created_at else None,
+        "created_at": _iso_utc(req.created_at),
         "session_id": req.session_id,
         "user_label": _pseudonym(req.user_email),
         "domain": req.domain,
@@ -251,7 +265,7 @@ def list_reveal_audit(
                 "viewer_oid": a.viewer_oid,
                 "domain": a.domain,
                 "reason": a.reason,
-                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "created_at": _iso_utc(a.created_at),
             }
             for a in rows
         ],
@@ -371,7 +385,7 @@ def get_volume_chart(
 
     return [
         {
-            "time": r.bucket.isoformat() if r.bucket else None,
+            "time": _iso_utc(r.bucket),
             "requests": r.requests,
             "avg_latency": round(r.avg_latency) if r.avg_latency else 0,
         }

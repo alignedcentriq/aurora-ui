@@ -26,6 +26,19 @@ from sqlalchemy import func
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Attendance, Employee
+from app.services.attendance_db_service import AttendanceSourceError
+
+# Shown when eSSL is configured but unreachable — we degrade to this instead of
+# silently reporting every employee Absent.
+_SOURCE_UNAVAILABLE_MSG = (
+    "Couldn't reach the biometric attendance system right now — attendance data is "
+    "temporarily unavailable. Please try again shortly."
+)
+
+
+def _source_unavailable(**extra) -> dict:
+    return {"success": False, "error": "attendance_source_unavailable",
+            "message": _SOURCE_UNAVAILABLE_MSG, **extra}
 
 
 def _parse_cutoff(raw: str) -> datetime.time:
@@ -67,25 +80,22 @@ def _org_roster(db) -> list[str]:
 
 
 def _essl_records(emp_name: str, start: datetime.date, end: datetime.date, roster=None):
-    """Return eSSL records list or None if eSSL is not configured."""
-    try:
-        from app.services.attendance_db_service import is_configured, fetch_employee_records
-        if not is_configured():
-            return None
-        return fetch_employee_records(emp_name, start, end, roster)
-    except Exception:
+    """eSSL records list, or None when eSSL is not configured (→ internal fallback).
+    Propagates AttendanceSourceError if configured but unreachable, so the caller can
+    degrade rather than mistake the failure for 'no punches → Absent'."""
+    from app.services.attendance_db_service import is_configured, fetch_employee_records
+    if not is_configured():
         return None
+    return fetch_employee_records(emp_name, start, end, roster)
 
 
 def _essl_team_records(emp_names: list[str], start: datetime.date, end: datetime.date, roster=None):
-    """Batch eSSL fetch for a team; returns {} if not configured or on error."""
-    try:
-        from app.services.attendance_db_service import is_configured, fetch_team_records
-        if not is_configured():
-            return {}
-        return fetch_team_records(emp_names, start, end, roster)
-    except Exception:
+    """Batch eSSL fetch for a team; {} when not configured. Propagates
+    AttendanceSourceError if configured but unreachable (see _essl_records)."""
+    from app.services.attendance_db_service import is_configured, fetch_team_records
+    if not is_configured():
         return {}
+    return fetch_team_records(emp_names, start, end, roster)
 
 
 def _summarise_essl(rows: list[dict], start: datetime.date, end: datetime.date) -> dict:
@@ -165,6 +175,8 @@ def summary(query: str, month: str = "", year: str = "") -> dict:
         if not emp:
             return {"success": False, "error": "employee_not_found", "query": query}
         return _summary_for_employee(db, emp, month, year)
+    except AttendanceSourceError:
+        return _source_unavailable(query=query)
     finally:
         db.close()
 
@@ -198,6 +210,8 @@ def summary_for_manager(requester_email: str, query: str, month: str = "", year:
             }
 
         return _summary_for_employee(db, target, month, year)
+    except AttendanceSourceError:
+        return _source_unavailable(query=query)
     finally:
         db.close()
 
@@ -313,6 +327,8 @@ def calendar_records(query: str, month: str = "", year: str = "") -> dict:
             "period": datetime.date(y, m, 1).strftime("%B %Y"),
             "days": _calendar_days_for_employee(db, emp, m, y),
         }
+    except AttendanceSourceError:
+        return _source_unavailable(query=query)
     finally:
         db.close()
 
@@ -359,6 +375,8 @@ def team_member_calendar(manager_email: str, query: str, month: str = "", year: 
             "period": datetime.date(y, m, 1).strftime("%B %Y"),
             "days": _calendar_days_for_employee(db, target, m, y),
         }
+    except AttendanceSourceError:
+        return _source_unavailable(query=query)
     finally:
         db.close()
 
@@ -465,5 +483,7 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
             "self": self_summary,
             "totals": totals,
         }
+    except AttendanceSourceError:
+        return _source_unavailable(manager_email=manager_email)
     finally:
         db.close()
