@@ -47,6 +47,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -89,6 +96,7 @@ interface TeamReport {
   year?: number;
   headcount?: number;
   members?: Member[];
+  self?: Member;
   totals?: { present: number; absent: number; wfh: number; late: number; half_day: number };
 }
 interface Schedule {
@@ -336,6 +344,7 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
   const [report, setReport] = useState<TeamReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailing, setEmailing] = useState(false);
+  const [calendarMember, setCalendarMember] = useState<Member | null>(null);
 
   const handleDateSelect = (date: Date | undefined) => {
     if (date) {
@@ -397,7 +406,8 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
       "Employee", "Email", "Department", "Designation", "Reports To",
       "Present", "Absent", "WFH", "Late", "Half-day",
     ];
-    const rows = report.members.map((m) =>
+    const rowSource = report.self ? [report.self, ...report.members] : report.members;
+    const rows = rowSource.map((m) =>
       [m.employee, m.email, m.department, m.designation, m.reports_to,
        m.present, m.absent, m.wfh, m.late, m.half_day]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
@@ -505,40 +515,266 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {report.self && (
+                  <AttendanceRow
+                    member={report.self}
+                    isSelf
+                    className="bg-primary/5 hover:bg-primary/10"
+                    onOpen={() => setCalendarMember(report.self!)}
+                  />
+                )}
                 {report.members!.map((m, i) => (
-                  <TableRow key={m.email || i} className={i % 2 ? "bg-muted/10" : "bg-background/60"}>
-                    <TableCell className="px-4 py-3">
-                      <div className="font-semibold text-foreground">{m.employee}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">{m.designation}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5 md:hidden">{m.department}</div>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 hidden md:table-cell">
-                      <Badge variant="secondary" className="text-xs font-medium">{m.department}</Badge>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-sm text-muted-foreground hidden lg:table-cell">{m.reports_to}</TableCell>
-                    <TableCell className="px-4 py-3 text-center">
-                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{m.present}</span>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-center">
-                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-rose-500/10 text-sm font-bold text-rose-600">{m.absent}</span>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sm font-bold text-sky-600">{m.wfh}</span>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-sm font-bold text-amber-600">{m.late}</span>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-                      <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-orange-500/10 text-sm font-bold text-orange-600">{m.half_day}</span>
-                    </TableCell>
-                  </TableRow>
+                  <AttendanceRow
+                    key={m.email || i}
+                    member={m}
+                    className={i % 2 ? "bg-muted/10 hover:bg-muted/40" : "bg-background/60 hover:bg-muted/40"}
+                    onOpen={() => setCalendarMember(m)}
+                  />
                 ))}
               </TableBody>
             </Table>
+            <p className="px-4 py-2.5 text-[11px] text-muted-foreground border-t border-border">
+              Tip: click any row to see that person's day-by-day calendar.
+            </p>
           </Card>
+
+          <MemberCalendarDialog
+            member={calendarMember}
+            month={month}
+            year={year}
+            auth={auth}
+            onClose={() => setCalendarMember(null)}
+          />
         </>
       )}
     </div>
+  );
+}
+
+// ── Attendance table row (clickable → calendar drill-down) ─────────────────────
+
+function AttendanceRow({
+  member: m,
+  isSelf = false,
+  className = "",
+  onOpen,
+}: {
+  member: Member;
+  isSelf?: boolean;
+  className?: string;
+  onOpen: () => void;
+}) {
+  return (
+    <TableRow
+      className={cn("cursor-pointer transition-colors", className)}
+      onClick={onOpen}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <TableCell className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-foreground">{m.employee}</span>
+          {isSelf && (
+            <Badge className="bg-primary/15 text-primary hover:bg-primary/15 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0">
+              You
+            </Badge>
+          )}
+        </div>
+        <div className="text-[11px] text-muted-foreground mt-0.5">{m.designation}</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5 md:hidden">{m.department}</div>
+      </TableCell>
+      <TableCell className="px-4 py-3 hidden md:table-cell">
+        <Badge variant="secondary" className="text-xs font-medium">{m.department}</Badge>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-sm text-muted-foreground hidden lg:table-cell">{m.reports_to}</TableCell>
+      <TableCell className="px-4 py-3 text-center">
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{m.present}</span>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-center">
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-rose-500/10 text-sm font-bold text-rose-600">{m.absent}</span>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sm font-bold text-sky-600">{m.wfh}</span>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-sm font-bold text-amber-600">{m.late}</span>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-orange-500/10 text-sm font-bold text-orange-600">{m.half_day}</span>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// ── Member attendance calendar drill-down ──────────────────────────────────────
+
+interface CalDay {
+  date: string;
+  status: string;
+  check_in: string | null;
+  check_out: string | null;
+  late: boolean;
+}
+interface MemberCalendar {
+  success: boolean;
+  employee?: string;
+  month?: number;
+  year?: number;
+  period?: string;
+  days?: CalDay[];
+  message?: string;
+}
+
+const CAL_LEGEND = [
+  { color: "bg-emerald-400", label: "Present" },
+  { color: "bg-amber-400", label: "Late" },
+  { color: "bg-purple-400", label: "Half-day" },
+  { color: "bg-red-400", label: "Absent" },
+];
+
+function calDayClass(record: CalDay | undefined, isFuture: boolean, isWeekend: boolean) {
+  if (isFuture || (!record && isWeekend)) return "text-muted-foreground/30";
+  if (!record) return "text-muted-foreground/40";
+  if (record.late) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
+  if (record.status === "Present")
+    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
+  if (record.status === "Absent")
+    return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
+  if (record.status === "WFH")
+    return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200";
+  if (record.status === "Half-day")
+    return "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200";
+  return "text-muted-foreground/40";
+}
+
+function MemberCalendarDialog({
+  member,
+  month,
+  year,
+  auth,
+  onClose,
+}: {
+  member: Member | null;
+  month: number;
+  year: number;
+  auth: Record<string, string>;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<MemberCalendar | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!member) return;
+    setLoading(true);
+    setData(null);
+    fetch(
+      `/api/portal/manager/attendance/calendar?email=${encodeURIComponent(member.email)}&month=${month}&year=${year}`,
+      { headers: auth },
+    )
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData({ success: false, message: "network_error" }))
+      .finally(() => setLoading(false));
+  }, [member, month, year, auth]);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dayMap: Record<string, CalDay> = {};
+  (data?.days ?? []).forEach((d) => {
+    dayMap[d.date] = d;
+  });
+
+  const firstDow = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const periodLabel = new Date(year, month - 1, 1).toLocaleDateString("en-IN", {
+    month: "long",
+    year: "numeric",
+  });
+
+  return (
+    <Dialog open={!!member} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{member?.employee}</DialogTitle>
+          <DialogDescription>
+            {member?.designation ? `${member.designation} · ` : ""}Attendance for {periodLabel}
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            Loading calendar…
+          </div>
+        ) : !data?.success ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <AlertCircle className="h-4 w-4 text-amber-500" />
+            Could not load this person's calendar.
+          </div>
+        ) : (
+          <>
+            {/* Calendar grid */}
+            <div className="overflow-hidden rounded-xl border border-border">
+              <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                  <div key={d} className="py-1.5">{d}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7">
+                {Array.from({ length: firstDow }).map((_, i) => (
+                  <div key={`pre-${i}`} className="aspect-square" />
+                ))}
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+                  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                  const record = dayMap[dateStr];
+                  const isFuture = dateStr > todayStr;
+                  const dow = new Date(dateStr).getDay();
+                  const isWeekend = dow === 0 || dow === 6;
+                  const isToday = dateStr === todayStr;
+                  const tooltip = record
+                    ? [
+                        record.status + (record.late ? " (Late)" : ""),
+                        record.check_in ? `In: ${record.check_in}` : null,
+                        record.check_out ? `Out: ${record.check_out}` : null,
+                      ].filter(Boolean).join(" · ")
+                    : undefined;
+                  return (
+                    <div
+                      key={day}
+                      title={tooltip}
+                      className={cn(
+                        "flex aspect-square items-center justify-center text-[11px] font-medium transition-colors",
+                        calDayClass(record, isFuture, isWeekend),
+                        isToday ? "ring-2 ring-primary ring-inset" : "",
+                      )}
+                    >
+                      {day}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+              {CAL_LEGEND.map(({ color, label }) => (
+                <span key={label} className="flex items-center gap-1">
+                  <span className={`inline-block h-2 w-2 rounded-full ${color}`} />
+                  {label}
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70">
+              Weekends are unshaded. Days with no biometric punch show as Absent.
+            </p>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1691,6 +1927,54 @@ interface ReadinessResult {
   summary?: { ready: number; one_course_away: number; gap: number };
   rows?: ReadinessRow[];
 }
+interface ForecastItem {
+  name: string;
+  date?: string;
+  free?: number;
+  load?: number;
+  projects?: string[];
+}
+interface Insights {
+  ok: boolean;
+  team_size: number;
+  capacity?: {
+    avg_load: number;
+    fully_utilized: number;
+    overloaded: number;
+    on_bench: number;
+    available: number;
+    forecast: {
+      free_now: ForecastItem[];
+      in_30: ForecastItem[];
+      in_60: ForecastItem[];
+      in_90: ForecastItem[];
+    };
+  };
+  skills?: {
+    total_distinct: number;
+    top: { skill: string; count: number; holders: string[] }[];
+    single_points: { skill: string; holder: string }[];
+    single_points_total: number;
+  };
+  attention?: {
+    name: string;
+    severity: number;
+    kind: string;
+    issue: string;
+    detail: string;
+    action: string;
+  }[];
+  readiness_score?: {
+    name: string;
+    email: string | null;
+    score: number;
+    band: "high" | "medium" | "low";
+    free_pct: number;
+    skills_count: number;
+    overdue: number;
+    due_soon: number;
+  }[];
+}
 
 const READINESS_BADGE: Record<string, string> = {
   ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
@@ -1705,6 +1989,7 @@ const READINESS_LABEL: Record<string, string> = {
 
 function ReadinessTab({ auth }: { auth: Record<string, string> }) {
   const [digest, setDigest] = useState<Digest | null>(null);
+  const [insights, setInsights] = useState<Insights | null>(null);
   const [loading, setLoading] = useState(true);
   const [skills, setSkills] = useState("");
   const [result, setResult] = useState<ReadinessResult | null>(null);
@@ -1713,11 +1998,16 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
   const [assignDialogUser, setAssignDialogUser] = useState<ReadinessRow | null>(null);
 
   useEffect(() => {
-    fetch("/api/portal/manager/team/digest", { headers: auth })
-      .then((r) => r.json())
-      .then((d) => setDigest(d))
-      .catch(() => setDigest(null))
-      .finally(() => setLoading(false));
+    Promise.all([
+      fetch("/api/portal/manager/team/digest", { headers: auth })
+        .then((r) => r.json())
+        .then((d) => setDigest(d))
+        .catch(() => setDigest(null)),
+      fetch("/api/portal/manager/team/readiness-insights", { headers: auth })
+        .then((r) => r.json())
+        .then((d) => setInsights(d))
+        .catch(() => setInsights(null)),
+    ]).finally(() => setLoading(false));
   }, [auth]);
 
   const check = useCallback(async () => {
@@ -1772,6 +2062,12 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
 
   return (
     <div className="space-y-6">
+      {/* Capacity health + availability forecast */}
+      <CapacityStrip insights={insights} />
+
+      {/* Attention needed roll-up */}
+      <AttentionRollup insights={insights} />
+
       {/* Weekly digest */}
       <div>
         <h2 className="mb-3 text-sm font-bold text-foreground flex items-center gap-2">
@@ -1816,6 +2112,12 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
           })}
         </div>
       </div>
+
+      {/* Skill coverage & risk */}
+      <SkillCoverage insights={insights} />
+
+      {/* Readiness score leaderboard */}
+      <ReadinessLeaderboard insights={insights} />
 
       {/* Project readiness checker */}
       <Card>
@@ -1926,6 +2228,301 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
         }}
       />
     </div>
+  );
+}
+
+// ── Readiness: capacity health + availability forecast ────────────────────────
+
+function CapacityStrip({ insights }: { insights: Insights | null }) {
+  const c = insights?.capacity;
+  if (!c) return null;
+  const tiles = [
+    { label: "Avg Load", value: `${c.avg_load}%`, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
+    { label: "Fully Utilized", value: c.fully_utilized, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+    { label: "Overloaded", value: c.overloaded, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+    { label: "On Bench", value: c.on_bench, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+    { label: "Available Now", value: c.available, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+  ];
+  const buckets = [
+    { key: "in_30" as const, label: "Next 30 days" },
+    { key: "in_60" as const, label: "31–60 days" },
+    { key: "in_90" as const, label: "61–90 days" },
+  ];
+  const hasForecast = buckets.some((b) => (c.forecast?.[b.key]?.length ?? 0) > 0);
+
+  return (
+    <div>
+      <h2 className="mb-3 text-sm font-bold text-foreground flex items-center gap-2">
+        <Gauge className="h-4 w-4 text-[var(--collaboration)]" />
+        Team Capacity
+      </h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+        {tiles.map((t) => (
+          <div key={t.label} className={cn("rounded-2xl border px-4 py-4 backdrop-blur-sm", t.border, t.bg)}>
+            <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em] mb-2", t.color)}>{t.label}</p>
+            <p className="text-2xl sm:text-3xl font-extrabold text-foreground">{t.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Availability forecast */}
+      <Card className="mt-4 shadow-none">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <CalendarClock className="h-4 w-4 text-[var(--collaboration)]" />
+            <span className="text-xs font-bold text-foreground">Coming available (roll-off forecast)</span>
+          </div>
+          {!hasForecast ? (
+            <p className="text-xs text-muted-foreground/70">
+              No upcoming roll-offs in the next 90 days.
+              {c.available > 0 ? ` ${c.available} people are available right now.` : ""}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {buckets.map((b) => {
+                const items = c.forecast?.[b.key] ?? [];
+                return (
+                  <div key={b.key} className="rounded-xl border border-border bg-background/60 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{b.label}</span>
+                      <span className="text-sm font-black text-foreground">{items.length}</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground/60">—</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {items.slice(0, 6).map((it, i) => (
+                          <li key={i} className="text-[11px] text-foreground/90 flex justify-between gap-2">
+                            <span className="truncate">{it.name}</span>
+                            <span className="text-muted-foreground/70 font-mono text-[10px] whitespace-nowrap">{it.date}</span>
+                          </li>
+                        ))}
+                        {items.length > 6 && (
+                          <li className="text-[10px] text-muted-foreground/60">+{items.length - 6} more</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Readiness: prioritised attention roll-up ──────────────────────────────────
+
+const ATTN_TONE: Record<number, string> = {
+  3: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+  2: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  1: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+};
+const ATTN_DOT: Record<number, string> = { 3: "bg-rose-500", 2: "bg-amber-500", 1: "bg-sky-500" };
+
+function AttentionRollup({ insights }: { insights: Insights | null }) {
+  const [showAll, setShowAll] = useState(false);
+  const items = insights?.attention ?? [];
+  if (!insights) return null;
+
+  const shown = showAll ? items : items.slice(0, 8);
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <span className="text-sm font-bold text-foreground flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-rose-500" />
+            Attention Needed
+          </span>
+          <Badge variant="secondary" className="text-xs">{items.length}</Badge>
+        </div>
+        {items.length === 0 ? (
+          <p className="text-xs text-muted-foreground/70 flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            All clear — nothing needs your attention this week.
+          </p>
+        ) : (
+          <>
+            <ul className="space-y-1.5">
+              {shown.map((a, i) => (
+                <li
+                  key={i}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 rounded-xl border border-border bg-background px-3 py-2"
+                >
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className={cn("mt-1.5 h-1.5 w-1.5 rounded-full shrink-0", ATTN_DOT[a.severity])} />
+                    <div className="min-w-0">
+                      <span className="text-xs font-semibold text-foreground">{a.name}</span>
+                      <span className="text-xs text-foreground/80 ml-2">{a.issue}</span>
+                      <span className="text-[11px] text-muted-foreground/70 ml-2">{a.detail}</span>
+                    </div>
+                  </div>
+                  <Badge className={cn("shrink-0 text-[10px]", ATTN_TONE[a.severity])}>{a.action}</Badge>
+                </li>
+              ))}
+            </ul>
+            {items.length > 8 && (
+              <button
+                onClick={() => setShowAll((s) => !s)}
+                className="mt-2 text-[11px] font-medium text-primary hover:underline"
+              >
+                {showAll ? "Show less" : `Show all ${items.length}`}
+              </button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Readiness: skill coverage & single-points-of-failure ──────────────────────
+
+function SkillCoverage({ insights }: { insights: Insights | null }) {
+  const s = insights?.skills;
+  if (!s || s.total_distinct === 0) return null;
+  const maxCount = Math.max(1, ...s.top.map((t) => t.count));
+
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <span className="text-sm font-bold text-foreground flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-[var(--collaboration)]" />
+            Skill Coverage &amp; Risk
+          </span>
+          <span className="text-xs text-muted-foreground">{s.total_distinct} distinct skills</span>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Coverage bars */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-2">
+              Most-covered skills
+            </p>
+            <div className="space-y-1.5">
+              {s.top.map((t) => (
+                <div key={t.skill} className="flex items-center gap-2" title={t.holders.join(", ")}>
+                  <span className="w-32 shrink-0 truncate text-xs text-foreground/90">{t.skill}</span>
+                  <div className="flex-1 h-4 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[var(--collaboration)]/70"
+                      style={{ width: `${(t.count / maxCount) * 100}%` }}
+                    />
+                  </div>
+                  <span className="w-6 text-right text-xs font-bold text-foreground">{t.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Single points of failure */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400 mb-2 flex items-center gap-1.5">
+              <ShieldX className="h-3.5 w-3.5" />
+              Single points of failure ({s.single_points_total})
+            </p>
+            {s.single_points.length === 0 ? (
+              <p className="text-xs text-muted-foreground/70">
+                No bus-factor risks — every team skill is held by at least two people.
+              </p>
+            ) : (
+              <>
+                <p className="text-[11px] text-muted-foreground/70 mb-2">
+                  Only one person on the team holds each of these — a leave or exit leaves a gap.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {s.single_points.map((sp) => (
+                    <span
+                      key={sp.skill}
+                      title={`Only ${sp.holder} has this`}
+                      className="inline-flex items-center gap-1 rounded-full border border-rose-500/20 bg-rose-500/10 px-2.5 py-0.5 text-[11px] text-rose-600 dark:text-rose-400"
+                    >
+                      {sp.skill}
+                      <span className="text-rose-500/60">· {sp.holder.split(" ")[0]}</span>
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Readiness: per-person readiness-score leaderboard ─────────────────────────
+
+const BAND_TONE: Record<string, string> = {
+  high: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  medium: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  low: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+};
+const BAND_BAR: Record<string, string> = { high: "bg-emerald-500", medium: "bg-amber-500", low: "bg-rose-500" };
+
+function ReadinessLeaderboard({ insights }: { insights: Insights | null }) {
+  const [showAll, setShowAll] = useState(false);
+  const rows = insights?.readiness_score ?? [];
+  if (!insights || rows.length === 0) return null;
+
+  const shown = showAll ? rows : rows.slice(0, 10);
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="text-sm font-bold text-foreground flex items-center gap-2">
+            <Trophy className="h-4 w-4 text-[var(--collaboration)]" />
+            Deployment Readiness
+          </span>
+          <span className="text-xs text-muted-foreground">availability · skills · training</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground/70 mb-3">
+          Composite score of how deployment-ready each person is: capacity to take work, skill
+          breadth, and training currency.
+        </p>
+        <div className="space-y-1.5">
+          {shown.map((r, i) => (
+            <div
+              key={r.email || r.name}
+              className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2"
+            >
+              <span className="w-5 shrink-0 text-center text-xs font-bold text-muted-foreground">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-foreground truncate">{r.name}</span>
+                  {r.overdue > 0 && (
+                    <span className="text-[10px] text-rose-500 whitespace-nowrap">{r.overdue} overdue</span>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden max-w-[220px]">
+                    <div className={cn("h-full rounded-full", BAND_BAR[r.band])} style={{ width: `${r.score}%` }} />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground/70 whitespace-nowrap">
+                    {r.free_pct}% free · {r.skills_count} skills
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-sm font-black text-foreground tabular-nums">{r.score}</span>
+                <Badge className={cn("text-[10px] capitalize", BAND_TONE[r.band])}>{r.band}</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+        {rows.length > 10 && (
+          <button
+            onClick={() => setShowAll((s) => !s)}
+            className="mt-2 text-[11px] font-medium text-primary hover:underline"
+          >
+            {showAll ? "Show less" : `Show all ${rows.length}`}
+          </button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

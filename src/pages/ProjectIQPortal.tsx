@@ -272,6 +272,10 @@ export function ProjectIQPortal() {
   const [isAgentic, setIsAgentic] = useState(false);
   const [agenticAnswer, setAgenticAnswer] = useState<string | null>(null);
 
+  // Which engine produced the last results — "semantic" | "keyword" | null.
+  // "keyword" means the embedding server was unavailable and we degraded.
+  const [searchMode, setSearchMode] = useState<string | null>(null);
+
   // detail drawer
   const [selected, setSelected] = useState<Profile | null>(null);
   const [drawerTab, setDrawerTab] = useState<"overview" | "tech" | "evidence" | "training" | "sources">("overview");
@@ -407,6 +411,7 @@ export function ProjectIQPortal() {
     setSearched(true);
     setBrief(null);
     setAgenticAnswer(null);
+    setSearchMode(null);
     try {
       const endpoint = isAgentic ? "/api/project-iq/agentic-dna-search" : "/api/project-iq/search";
       const resp = await fetch(endpoint, {
@@ -416,6 +421,7 @@ export function ProjectIQPortal() {
       });
       const data = await resp.json();
       setResults(data.results || []);
+      setSearchMode(data.search_mode || null);
       if (isAgentic && data.answer) {
         setAgenticAnswer(data.answer);
       }
@@ -494,6 +500,36 @@ export function ProjectIQPortal() {
       assets,
       experts,
     };
+  }, [profiles]);
+
+  // Search suggestions derived from the projects actually present — clicking one
+  // matches real DNA. Prefers industry diversity, falls back to filling the list.
+  const suggestions = useMemo(() => {
+    const toPrompt = (p: Profile) => {
+      const tech = (p.technology_stack || []).slice(0, 3);
+      if (tech.length === 0) return null;
+      const industry = (p.client_industry || "").trim();
+      return `${industry ? `${industry} solution` : "Project"} using ${tech.join(", ")}`;
+    };
+    const picks: string[] = [];
+    const seenIndustry = new Set<string>();
+    // First pass: one per distinct industry for variety
+    for (const p of profiles) {
+      if (picks.length >= 4) break;
+      const industry = (p.client_industry || "").trim().toLowerCase();
+      if (industry && seenIndustry.has(industry)) continue;
+      const prompt = toPrompt(p);
+      if (!prompt || picks.includes(prompt)) continue;
+      if (industry) seenIndustry.add(industry);
+      picks.push(prompt);
+    }
+    // Second pass: fill remaining slots if industry-dedup left us short
+    for (const p of profiles) {
+      if (picks.length >= 4) break;
+      const prompt = toPrompt(p);
+      if (prompt && !picks.includes(prompt)) picks.push(prompt);
+    }
+    return picks;
   }, [profiles]);
 
   return (
@@ -635,25 +671,80 @@ export function ProjectIQPortal() {
             {/* Glow accent */}
             <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-gradient-to-bl from-sky-500/5 to-transparent rounded-full pointer-events-none blur-3xl group-hover:from-sky-500/10 transition-all duration-500" />
 
-            <label className="text-xs sm:text-sm font-semibold text-foreground flex items-center justify-between gap-1.5 w-full">
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-sky-500" />
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-sky-500 shrink-0" />
+              <span className="text-xs sm:text-sm font-semibold text-foreground">
                 Have we built something similar before?
               </span>
-              <button
-                type="button"
-                onClick={() => setIsAgentic(!isAgentic)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full border transition-all shadow-sm",
-                  isAgentic
-                    ? "bg-violet-500/10 text-violet-600 border-violet-500/30"
-                    : "bg-muted text-muted-foreground border-border"
-                )}
+            </div>
+
+            {/* Search mode selector — both modes shown side-by-side so it's obvious you can switch */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                Choose search mode
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="Search mode"
+                className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-1 rounded-2xl border border-border/60 bg-muted/40 dark:bg-white/[0.02]"
               >
-                <Brain className="w-3.5 h-3.5" />
-                {isAgentic ? "Deep DNA Search" : "Standard Search"}
-              </button>
-            </label>
+                {(
+                  [
+                    {
+                      id: false,
+                      label: "Standard",
+                      desc: "Fast semantic match",
+                      icon: Zap,
+                      activeCls:
+                        "bg-white dark:bg-card border-sky-500/40 text-sky-600 dark:text-sky-400 shadow-sm",
+                      accent: "text-sky-500",
+                    },
+                    {
+                      id: true,
+                      label: "Deep DNA Search",
+                      desc: "AI reads & synthesizes across projects",
+                      icon: Brain,
+                      activeCls:
+                        "bg-white dark:bg-card border-violet-500/40 text-violet-600 dark:text-violet-400 shadow-sm",
+                      accent: "text-violet-500",
+                    },
+                  ] as const
+                ).map((m) => {
+                  const on = isAgentic === m.id;
+                  return (
+                    <button
+                      key={String(m.id)}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setIsAgentic(m.id)}
+                      className={cn(
+                        "flex items-start gap-2.5 text-left px-3 py-2.5 rounded-xl border transition-all cursor-pointer",
+                        on
+                          ? m.activeCls
+                          : "border-transparent text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                      )}
+                    >
+                      <m.icon
+                        className={cn(
+                          "w-4 h-4 shrink-0 mt-0.5",
+                          on ? m.accent : "text-muted-foreground/60",
+                        )}
+                      />
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold leading-tight flex items-center gap-1.5">
+                          {m.label}
+                          {on && <CheckCircle2 className={cn("w-3.5 h-3.5", m.accent)} />}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                          {m.desc}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1 relative flex flex-col">
                 <textarea
@@ -693,44 +784,57 @@ export function ProjectIQPortal() {
               </button>
             </div>
 
-            {/* Quick Prompts Helper */}
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">
-                Suggestions:
-              </span>
-              {[
-                "Next.js e-commerce portal with Redis",
-                "Azure cloud migration secure landing zone",
-                "Azure OpenAI patient note trial analyzer",
-              ].map((p, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setQuery(p)}
-                  className="text-[11px] px-2.5 py-1 rounded-lg border border-border hover:border-sky-500/30 hover:bg-sky-500/5 text-muted-foreground hover:text-foreground cursor-pointer transition-colors max-w-[250px] truncate"
-                  title={p}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
+            {/* Quick Prompts Helper — built from projects present in the DNA library */}
+            {suggestions.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">
+                  Try a project like:
+                </span>
+                {suggestions.map((p, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setQuery(p)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg border border-border hover:border-sky-500/30 hover:bg-sky-500/5 text-muted-foreground hover:text-foreground cursor-pointer transition-colors max-w-[250px] truncate"
+                    title={p}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
           </form>
 
           {searched && !searching && results.length === 0 && (
             <div className="text-center py-10 rounded-2xl border border-dashed border-border bg-background/20">
               <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
               <h3 className="text-sm font-semibold text-foreground">
-                No matching DNA profiles found
+                {searchMode === "keyword"
+                  ? "No keyword matches found"
+                  : "No matching DNA profiles found"}
               </h3>
-              <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
-                Try refining your search terms or rebuild the project DNA from the Library
-                directory.
+              <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                {searchMode === "keyword"
+                  ? "Semantic search is temporarily unavailable (the embedding server is busy), so this was a keyword match. Try different or fewer keywords, or search again shortly."
+                  : "Try refining your search terms or rebuild the project DNA from the Library directory."}
               </p>
             </div>
           )}
 
           {/* Search Results */}
           <div className="flex flex-col gap-4">
+            {/* Degraded-mode banner — embedding server unavailable, keyword fallback in use */}
+            {!searching && searchMode === "keyword" && results.length > 0 && (
+              <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3">
+                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                  <span className="font-bold">Showing keyword matches.</span>{" "}
+                  Semantic (AI) search is temporarily unavailable because the embedding
+                  server is busy — results are matched on keywords and may be less precise.
+                  Try again shortly for full semantic ranking.
+                </p>
+              </div>
+            )}
             {searching && (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <Loader2 className="w-8 h-8 animate-spin text-sky-500" />

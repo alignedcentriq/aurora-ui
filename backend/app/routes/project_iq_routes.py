@@ -83,12 +83,18 @@ async def get_profile(slug: str, user: CurrentUser = Depends(require_non_employe
 async def search(req: SearchRequest, user: CurrentUser = Depends(require_non_employee)):
     """'Have we done this before?' — ranked similar past projects for a description."""
     start = time.time()
-    hits = piq.find_similar_projects(
+    res = piq.search_projects(
         req.description, limit=max(1, min(req.limit, 10)), reviewed_only=req.reviewed_only,
     )
+    hits = res["results"]
     piq.record_queries([h.get("slug") for h in hits])  # triage signal: what people actually look for
     _log_query(user.email, "project_iq", "project_iq_search", req.description, len(hits), start)
-    return {"query": req.description, "results": hits}
+    return {
+        "query": req.description,
+        "results": hits,
+        "search_mode": res["mode"],           # "semantic" | "keyword"
+        "degraded": res["mode"] != "semantic",  # embedding model unavailable → keyword fallback
+    }
 
 
 @router.post("/agentic-dna-search")
