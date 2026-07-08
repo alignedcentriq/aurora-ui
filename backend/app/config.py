@@ -426,11 +426,19 @@ class Config:
     # this live source instead of the locally-seeded dummy table. Employee records
     # are matched by name (USERNAME column). ATTENDANCE_DBURL may be a JDBC-style
     # URL (jdbc:sqlserver://;serverName=...;databaseName=...) or a plain MSSQL URL.
-    # Requires ODBC Driver 17 for SQL Server on the host OS.
+    # Requires a Microsoft ODBC Driver for SQL Server on the host/container OS
+    # (Driver 18 in the prod image, Driver 17 on Windows dev — auto-detected).
     ATTENDANCE_DBURL     = os.getenv("ATTENDANCE_DBURL", "")
     ATTENDANCE_USERNAME  = os.getenv("ATTENDANCE_USERNAME", "")
     ATTENDANCE_PASSWORD  = os.getenv("ATTENDANCE_PASSWORD", "")
     ATTENDANCE_VIEW      = os.getenv("ATTENDANCE_VIEW", "dbo.vbUserTimeEntryLog")
+    # ODBC driver name — leave blank to auto-detect the newest installed
+    # "ODBC Driver NN for SQL Server". Override only if you must pin a specific one.
+    ATTENDANCE_ODBC_DRIVER = os.getenv("ATTENDANCE_ODBC_DRIVER", "")
+    # Encrypt mode. Driver 18 defaults to Encrypt=yes; the internal eSSL server has no
+    # TLS, so default to "no" to mirror the working Driver-17 connection. Set to "yes"
+    # if the server presents a certificate.
+    ATTENDANCE_ODBC_ENCRYPT = os.getenv("ATTENDANCE_ODBC_ENCRYPT", "no")
     # Check-in after this time (HH:MM, 24h) counts as "Late" on a Present day.
     # Single source of truth for late-arrival across all attendance features.
     ATTENDANCE_LATE_CUTOFF = os.getenv("ATTENDANCE_LATE_CUTOFF", "13:00")

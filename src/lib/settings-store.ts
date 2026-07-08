@@ -195,6 +195,99 @@ export const COUNTRIES: CountryDef[] = [
   },
 ];
 
+/** A single world clock the user has pinned to the Office Clocks overlay. */
+export interface WorldClock {
+  /** Stable unique id — the IANA timezone works well as the id. */
+  id: string;
+  /** Display name, usually the city (e.g. "New York"). */
+  label: string;
+  /** Subtitle line (e.g. "US HQ" or a country/region). */
+  region: string;
+  /** Flag/emoji shown on the card. */
+  flag: string;
+  /** IANA timezone string (e.g. "America/New_York"). */
+  timezone: string;
+}
+
+/** Flags for well-known timezones; everything else falls back to 🌍. */
+const TZ_FLAGS: Record<string, string> = {
+  "America/New_York": "🇺🇸",
+  "America/Chicago": "🇺🇸",
+  "America/Denver": "🇺🇸",
+  "America/Los_Angeles": "🇺🇸",
+  "America/Toronto": "🇨🇦",
+  "America/Sao_Paulo": "🇧🇷",
+  "America/Mexico_City": "🇲🇽",
+  "Europe/London": "🇬🇧",
+  "Europe/Dublin": "🇮🇪",
+  "Europe/Paris": "🇫🇷",
+  "Europe/Berlin": "🇩🇪",
+  "Europe/Amsterdam": "🇳🇱",
+  "Europe/Madrid": "🇪🇸",
+  "Europe/Zurich": "🇨🇭",
+  "Europe/Moscow": "🇷🇺",
+  "Africa/Johannesburg": "🇿🇦",
+  "Africa/Cairo": "🇪🇬",
+  "Asia/Dubai": "🇦🇪",
+  "Asia/Kolkata": "🇮🇳",
+  "Asia/Karachi": "🇵🇰",
+  "Asia/Singapore": "🇸🇬",
+  "Asia/Hong_Kong": "🇭🇰",
+  "Asia/Shanghai": "🇨🇳",
+  "Asia/Tokyo": "🇯🇵",
+  "Asia/Seoul": "🇰🇷",
+  "Australia/Sydney": "🇦🇺",
+  "Pacific/Auckland": "🇳🇿",
+  UTC: "🌐",
+};
+
+/** Popular cities surfaced first in the "add clock" picker. */
+export const POPULAR_CLOCK_TZS: string[] = [
+  "America/Los_Angeles",
+  "America/New_York",
+  "America/Sao_Paulo",
+  "Europe/London",
+  "Europe/Dublin",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Africa/Johannesburg",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "UTC",
+];
+
+/** Default clocks shown before the user customizes anything. */
+export const DEFAULT_WORLD_CLOCKS: WorldClock[] = [
+  { id: "America/New_York", label: "New York", region: "US HQ", flag: "🇺🇸", timezone: "America/New_York" },
+  { id: "Europe/Dublin", label: "Dublin", region: "Ireland Office", flag: "🇮🇪", timezone: "Europe/Dublin" },
+  { id: "Asia/Dubai", label: "Dubai", region: "UAE Office", flag: "🇦🇪", timezone: "Asia/Dubai" },
+  { id: "Asia/Kolkata", label: "Bengaluru", region: "India Hub", flag: "🇮🇳", timezone: "Asia/Kolkata" },
+];
+
+/** Build a WorldClock from any IANA timezone id. */
+export function clockFromTimezone(tz: string): WorldClock {
+  const parts = tz.split("/");
+  const label = (parts[parts.length - 1] || tz).replace(/_/g, " ");
+  const region = (parts.length > 1 ? parts[0] : "Universal").replace(/_/g, " ");
+  return { id: tz, label, region, flag: TZ_FLAGS[tz] ?? "🌍", timezone: tz };
+}
+
+/** Every IANA timezone the browser knows about (falls back to the popular list). */
+export function listAllTimezones(): string[] {
+  try {
+    const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+      .supportedValuesOf;
+    if (typeof supported === "function") return supported("timeZone");
+  } catch {
+    // older engine — fall through
+  }
+  return POPULAR_CLOCK_TZS;
+}
+
 interface SettingsState {
   theme: "light" | "dark" | "system";
   setTheme: (theme: "light" | "dark" | "system") => void;
@@ -225,9 +318,15 @@ interface SettingsState {
   country: CountryCode;
   setCountry: (country: CountryCode) => void;
 
-  /** Selected clocks codes */
+  /** Selected clocks codes (legacy — kept for backward compat) */
   clocks: CountryCode[];
   toggleClock: (code: CountryCode) => void;
+
+  /** World clocks pinned to the Office Clocks overlay */
+  worldClocks: WorldClock[];
+  addClock: (clock: WorldClock) => void;
+  removeClock: (id: string) => void;
+  resetClocks: () => void;
 }
 
 export const useSettings = create<SettingsState>()(
@@ -263,9 +362,28 @@ export const useSettings = create<SettingsState>()(
             ? state.clocks.filter((c) => c !== code)
             : [...state.clocks, code],
         })),
+
+      worldClocks: DEFAULT_WORLD_CLOCKS,
+      addClock: (clock) =>
+        set((state) =>
+          state.worldClocks.some((c) => c.id === clock.id)
+            ? state
+            : { worldClocks: [...state.worldClocks, clock] },
+        ),
+      removeClock: (id) =>
+        set((state) => ({ worldClocks: state.worldClocks.filter((c) => c.id !== id) })),
+      resetClocks: () => set({ worldClocks: DEFAULT_WORLD_CLOCKS }),
     }),
     {
       name: "aurora-settings",
+      version: 1,
+      migrate: (persisted: any, version) => {
+        // v0 stores had no worldClocks — seed the defaults.
+        if (version < 1 && persisted && !persisted.worldClocks) {
+          persisted.worldClocks = DEFAULT_WORLD_CLOCKS;
+        }
+        return persisted as SettingsState;
+      },
     },
   ),
 );
