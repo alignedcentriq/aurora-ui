@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 type Tab = "trainings" | "assignments" | "groups" | "mine";
 
@@ -2350,28 +2351,28 @@ function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string
 
       <div className="rounded-2xl border border-slate-200/50 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 shadow-xs backdrop-blur-md overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50/50 dark:bg-zinc-900/50 border-b border-slate-100 dark:border-zinc-800/60">
-              <tr>
+          <Table paginate itemsPerPage={10} className="w-full text-sm">
+            <TableHeader className="bg-slate-50/50 dark:bg-zinc-900/50 border-b border-slate-100 dark:border-zinc-800/60">
+              <TableRow>
                 {["Employee", "Department", "Assigned Course", "Status", "Exam Score"].map((c) => (
-                  <th
+                  <TableHead
                     key={c}
                     className="text-left px-4 py-3.5 text-[10px] font-extrabold text-slate-400 dark:text-zinc-500 uppercase tracking-wider whitespace-nowrap"
                   >
                     {c}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
+              </TableRow>
+            </TableHeader>
+            <TableBody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
               {rows.map((a) => {
                 const initial = (a.employee_name || a.employee_email || "?")[0].toUpperCase();
                 return (
-                  <tr
+                  <TableRow
                     key={a.id}
                     className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/35 transition-colors duration-200"
                   >
-                    <td className="px-4 py-3.5 whitespace-nowrap">
+                    <TableCell className="px-4 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-3">
                         <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black text-white bg-gradient-to-tr from-violet-500 to-indigo-500 shadow-xs shrink-0 select-none">
                           {initial}
@@ -2387,14 +2388,14 @@ function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string
                           )}
                         </div>
                       </div>
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap text-xs font-semibold text-slate-500 dark:text-zinc-400">
+                    </TableCell>
+                    <TableCell className="px-4 py-3.5 whitespace-nowrap text-xs font-semibold text-slate-500 dark:text-zinc-400">
                       {a.department || "—"}
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap text-xs font-bold text-slate-700 dark:text-zinc-300">
+                    </TableCell>
+                    <TableCell className="px-4 py-3.5 whitespace-nowrap text-xs font-bold text-slate-700 dark:text-zinc-300">
                       {a.training_title}
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
+                    </TableCell>
+                    <TableCell className="px-4 py-3.5 whitespace-nowrap">
                       <span
                         className={cn(
                           "text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider",
@@ -2403,8 +2404,8 @@ function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string
                       >
                         {a.status}
                       </span>
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap text-xs font-black">
+                    </TableCell>
+                    <TableCell className="px-4 py-3.5 whitespace-nowrap text-xs font-black">
                       {a.score != null ? (
                         <span
                           className={cn(
@@ -2420,22 +2421,22 @@ function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string
                       ) : (
                         <span className="text-slate-400 dark:text-zinc-600 font-normal">—</span>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
               {rows.length === 0 && (
-                <tr>
-                  <td
+                <TableRow>
+                  <TableCell
                     colSpan={5}
                     className="px-4 py-12 text-center text-slate-400 dark:text-zinc-500 text-xs font-medium"
                   >
                     No learning assignments found on the platform ledger.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
 

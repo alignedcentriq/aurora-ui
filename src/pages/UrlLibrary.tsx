@@ -635,7 +635,7 @@ export function UrlLibrary() {
             {/* ── Table ── */}
             <TooltipProvider delayDuration={300}>
               <div className="rounded-xl border border-border bg-card overflow-hidden">
-                <Table>
+                <Table paginate itemsPerPage={10}>
                   <TableHeader>
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableHead className="w-12 lg:hidden"></TableHead>

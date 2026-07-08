@@ -202,7 +202,7 @@ export function AuditTrail() {
               No audit events match these filters.
             </div>
           ) : (
-            <Table>
+            <Table paginate itemsPerPage={10}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />

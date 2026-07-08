@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Bell,
   X,
@@ -54,6 +54,12 @@ interface Announcement {
   image_action: ImageAction | null;
   expires_at: string | null;
   created_at: string;
+  allow_reactions: boolean;
+  allow_rsvp: boolean;
+  require_ack: boolean;
+  my_reaction: string | null;
+  my_rsvp: string | null;
+  my_acknowledged: boolean;
 }
 
 const TYPE_ICON: Record<string, typeof Bell> = {
@@ -115,6 +121,9 @@ export function ProactiveNudgeFeed() {
   const [dismissedAnnouncements, setDismissedAnnouncements] = useState<number[]>(getDismissed);
   const [expandedAnnouncement, setExpandedAnnouncement] = useState<number | null>(null);
   const [recallTarget, setRecallTarget] = useState<number | null>(null);
+  // Announcement IDs we've already reported as seen this session — avoids re-POSTing
+  // /seen on every 10s poll or bell re-open. The server upsert is idempotent anyway.
+  const reportedSeen = useRef<Set<number>>(new Set());
 
   const isDomainManager = user ? DOMAIN_MANAGER_ROLES.has(user.role) : false;
 
@@ -180,6 +189,20 @@ export function ProactiveNudgeFeed() {
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({}),
       }).catch(() => {});
+    }
+    // Record read-receipts for every announcement actually presented to the user.
+    // Opening the bell is the honest "seen" signal — the 10s poll only means "delivered".
+    if (next) {
+      announcements
+        .filter((a) => !dismissedAnnouncements.includes(a.id))
+        .forEach((a) => {
+          if (reportedSeen.current.has(a.id)) return;
+          reportedSeen.current.add(a.id);
+          fetch(`/api/announcements/${a.id}/seen`, {
+            method: "POST",
+            headers: { ...authHeaders, "Content-Type": "application/json" },
+          }).catch(() => reportedSeen.current.delete(a.id));
+        });
     }
   };
 

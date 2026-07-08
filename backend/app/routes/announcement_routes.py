@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional, List
 
-from app.auth import CurrentUser, get_current_user, require_admin, require_domain_manager
+from app.auth import CurrentUser, get_current_user, require_admin, require_non_employee
 from app.services.announcement_service import AnnouncementService
 
 router = APIRouter(prefix="/api/announcements", tags=["announcements"])
@@ -31,6 +31,17 @@ class CreateAnnouncementRequest(BaseModel):
     image_url: Optional[str] = None
     image_action: Optional[ImageAction] = None
     email_recipients: Optional[List[str]] = None
+    allow_reactions: bool = False
+    allow_rsvp: bool = False
+    require_ack: bool = False
+
+
+class ReactRequest(BaseModel):
+    reaction: Optional[str] = None
+
+
+class RsvpRequest(BaseModel):
+    rsvp: Optional[str] = None
 
 
 class SuggestAnnouncementRequest(BaseModel):
@@ -48,7 +59,7 @@ class UpdateAnnouncementRequest(BaseModel):
 @router.post("/suggest")
 def suggest_announcement_body(
     req: SuggestAnnouncementRequest,
-    _: CurrentUser = Depends(require_domain_manager),
+    _: CurrentUser = Depends(require_non_employee),
 ):
     """Use the LLM to draft an announcement body from the given title and category."""
     from app.services import llm_controls_service as llm_controls
@@ -74,7 +85,7 @@ def suggest_announcement_body(
 @router.post("/upload-image")
 async def upload_announcement_image(
     file: UploadFile = File(...),
-    _: CurrentUser = Depends(require_domain_manager),
+    _: CurrentUser = Depends(require_non_employee),
 ):
     """Upload an image for use in an announcement body. Returns a public URL."""
     content_type = file.content_type or ""
@@ -99,13 +110,17 @@ def list_announcements(
     include_inactive: bool = False,
     user: CurrentUser = Depends(get_current_user),
 ):
-    return AnnouncementService.list_all(include_inactive=include_inactive, user_role=user.role)
+    return AnnouncementService.list_all(
+        include_inactive=include_inactive,
+        user_role=user.role,
+        user_email=user.email,
+    )
 
 
 @router.post("")
 def create_announcement(
     req: CreateAnnouncementRequest,
-    user: CurrentUser = Depends(require_domain_manager),
+    user: CurrentUser = Depends(require_non_employee),
 ):
     result = AnnouncementService.create(
         title=req.title,
@@ -118,15 +133,49 @@ def create_announcement(
         image_url=req.image_url or None,
         image_action=req.image_action.model_dump() if req.image_action else None,
         email_recipients=req.email_recipients or None,
+        allow_reactions=req.allow_reactions,
+        allow_rsvp=req.allow_rsvp,
+        require_ack=req.require_ack,
     )
     return {"message": result}
+
+
+# ── Read-tracking + engagement (any authenticated employee) ───────────────────
+@router.post("/{announcement_id}/seen")
+def mark_seen(announcement_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Record that the caller has seen this announcement. Idempotent."""
+    return AnnouncementService.record_seen(announcement_id, user.email)
+
+
+@router.post("/{announcement_id}/react")
+def react(announcement_id: int, req: ReactRequest, user: CurrentUser = Depends(get_current_user)):
+    """Set or toggle the caller's reaction (👍/🎉/❤️). Empty/unknown clears it."""
+    return AnnouncementService.set_reaction(announcement_id, user.email, req.reaction)
+
+
+@router.post("/{announcement_id}/rsvp")
+def rsvp(announcement_id: int, req: RsvpRequest, user: CurrentUser = Depends(get_current_user)):
+    """Set the caller's RSVP (yes/no/maybe). Empty/unknown clears it."""
+    return AnnouncementService.set_rsvp(announcement_id, user.email, req.rsvp)
+
+
+@router.post("/{announcement_id}/ack")
+def acknowledge(announcement_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Record the caller's acknowledgment (for require_ack announcements)."""
+    return AnnouncementService.acknowledge(announcement_id, user.email)
+
+
+@router.get("/{announcement_id}/receipts")
+def get_receipts(announcement_id: int, _: CurrentUser = Depends(require_non_employee)):
+    """Aggregate roll-up (reach, reactions, RSVP roster, acks) — authors only."""
+    return AnnouncementService.get_receipts(announcement_id)
 
 
 @router.put("/{announcement_id}")
 def update_announcement(
     announcement_id: int,
     req: UpdateAnnouncementRequest,
-    user: CurrentUser = Depends(require_domain_manager),
+    user: CurrentUser = Depends(require_non_employee),
 ):
     result = AnnouncementService.update(
         announcement_id=announcement_id,
@@ -145,7 +194,7 @@ def update_announcement(
 def deactivate_announcement(
     announcement_id: int,
     recall: bool = Query(False),
-    user: CurrentUser = Depends(require_domain_manager),
+    user: CurrentUser = Depends(require_non_employee),
 ):
     result = AnnouncementService.deactivate(announcement_id, user.email, recall=recall)
     if "not found" in result.lower():
@@ -156,7 +205,7 @@ def deactivate_announcement(
 @router.get("/users/search")
 def search_users_for_recipients(
     q: str = "",
-    _: CurrentUser = Depends(require_domain_manager),
+    _: CurrentUser = Depends(require_non_employee),
 ):
     """Search employees by name or email for the announcement recipient picker."""
     from sqlalchemy import or_

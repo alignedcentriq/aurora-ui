@@ -62,6 +62,7 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -376,13 +377,13 @@ export default function ConnectorStudio() {
 
   const seedingIcon = (status?: string) => {
     if (status === "seeding") {
-      return <Loader2 className="h-4 w-4 text-amber-500 animate-spin shrink-0" title="Seeding router..." />;
+      return <span title="Seeding router..."><Loader2 className="h-4 w-4 text-amber-500 animate-spin shrink-0" /></span>;
     }
     if (status === "seeded") {
-      return <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" title="Router ready" />;
+      return <span title="Router ready"><CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" /></span>;
     }
     if (status === "failed") {
-      return <AlertCircle className="h-4 w-4 text-red-500 shrink-0" title="Seeding failed — try re-publishing" />;
+      return <span title="Seeding failed — try re-publishing"><AlertCircle className="h-4 w-4 text-red-500 shrink-0" /></span>;
     }
     return null;
   };
@@ -685,26 +686,26 @@ export default function ConnectorStudio() {
                   <p className="text-sm text-gray-400 text-center py-12">No usage data yet</p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium text-gray-500">
-                          <th className="pb-2 pr-4">Operation</th>
-                          <th className="pb-2 pr-4 text-right">Calls</th>
-                          <th className="pb-2 pr-4 text-right">Avg latency</th>
-                          <th className="pb-2 pr-4 text-right">Success rate</th>
-                          <th className="pb-2 text-right">Time saved</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                    <Table paginate itemsPerPage={10} className="w-full text-sm">
+                      <TableHeader>
+                        <TableRow className="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium text-gray-500">
+                          <TableHead className="pb-2 pr-4">Operation</TableHead>
+                          <TableHead className="pb-2 pr-4 text-right">Calls</TableHead>
+                          <TableHead className="pb-2 pr-4 text-right">Avg latency</TableHead>
+                          <TableHead className="pb-2 pr-4 text-right">Success rate</TableHead>
+                          <TableHead className="pb-2 text-right">Time saved</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
                         {usage.map((u) => (
-                          <tr
+                          <TableRow
                             key={u.operation_id}
                             className="border-b border-gray-100 dark:border-gray-800"
                           >
-                            <td className="py-2 pr-4 font-mono text-xs">{u.name}</td>
-                            <td className="py-2 pr-4 text-right">{u.calls.toLocaleString()}</td>
-                            <td className="py-2 pr-4 text-right">{u.avg_latency_ms}ms</td>
-                            <td className="py-2 pr-4 text-right">
+                            <TableCell className="py-2 pr-4 font-mono text-xs">{u.name}</TableCell>
+                            <TableCell className="py-2 pr-4 text-right">{u.calls.toLocaleString()}</TableCell>
+                            <TableCell className="py-2 pr-4 text-right">{u.avg_latency_ms}ms</TableCell>
+                            <TableCell className="py-2 pr-4 text-right">
                               <span
                                 className={cn(
                                   "font-medium",
@@ -717,27 +718,27 @@ export default function ConnectorStudio() {
                               >
                                 {(u.success_rate * 100).toFixed(1)}%
                               </span>
-                            </td>
-                            <td className="py-2 text-right font-medium text-blue-600">
+                            </TableCell>
+                            <TableCell className="py-2 text-right font-medium text-blue-600">
                               {u.total_minutes_saved.toFixed(0)} min
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ))}
-                      </tbody>
+                      </TableBody>
                       <tfoot>
-                        <tr className="font-semibold text-sm">
-                          <td className="pt-3">Total</td>
-                          <td className="pt-3 text-right">
+                        <TableRow className="font-semibold text-sm">
+                          <TableCell className="pt-3">Total</TableCell>
+                          <TableCell className="pt-3 text-right">
                             {usage.reduce((s, u) => s + u.calls, 0).toLocaleString()}
-                          </td>
-                          <td />
-                          <td />
-                          <td className="pt-3 text-right text-blue-600">
+                          </TableCell>
+                          <TableCell />
+                          <TableCell />
+                          <TableCell className="pt-3 text-right text-blue-600">
                             {usage.reduce((s, u) => s + u.total_minutes_saved, 0).toFixed(0)} min
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       </tfoot>
-                    </table>
+                    </Table>
                   </div>
                 )}
               </TabsContent>

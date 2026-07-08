@@ -798,7 +798,7 @@ export function FormLibrary() {
                 </div>
 
                 <Card className="shadow-sm overflow-hidden border-border">
-                  <Table>
+                  <Table paginate itemsPerPage={10}>
                     <TableHeader className="bg-muted/50">
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-12 text-center lg:hidden"></TableHead>
@@ -1082,7 +1082,7 @@ export function FormLibrary() {
                 </div>
 
                 <Card className="shadow-sm overflow-hidden border-border">
-                  <Table>
+                  <Table paginate itemsPerPage={10}>
                     <TableHeader className="bg-muted/50">
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-12 text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground"></TableHead>

@@ -121,6 +121,18 @@ def require_domain_manager(user: CurrentUser = Depends(get_current_user)) -> Cur
     return user
 
 
+def require_non_employee(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows any authenticated role except a plain Employee.
+
+    Announcements are org-wide and not domain-scoped, so anyone who speaks for a
+    function (HR, IT, PMO, Admin, Functional Manager, Super Admin, …) may post one —
+    only a base-level Employee is blocked from broadcasting to the whole company.
+    """
+    if (user.role or "").strip().lower() == "employee":
+        raise HTTPException(status_code=403, detail="Announcement authoring is not available to employees.")
+    return user
+
+
 def require_hr(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     """Allows hr, admin, and super admin roles."""
     if user.role not in {"hr", "admin", "super admin"}:

@@ -16,7 +16,7 @@ from typing import Optional
 
 from app.auth import CurrentUser, require_non_employee, require_admin, get_current_user
 from app.database import get_db
-from app.models import AiRequestLog, SavedDashboard
+from app.models import SavedDashboard
 from app.services import analytics_service as svc
 from app.services import automation_service as autosvc
 from app.services import analytics_builder_service as builder_svc
@@ -136,7 +136,30 @@ def nl_query(body: NLBody, user: CurrentUser = Depends(require_non_employee),
     q = (body.question or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="Empty question.")
-    return svc.translate_nl(db, q, role=user.role)
+    start = time.time()
+    result = svc.translate_nl(db, q, role=user.role)
+
+    # Observability: NL ask-your-data bypasses /api/chat — record it (+ Langfuse trace).
+    try:
+        from app.services.observability_log import log_ai_interaction
+        ok = bool(result.get("ok")) if isinstance(result, dict) else False
+        summary = (result.get("message") or result.get("title")) if isinstance(result, dict) else None
+        log_ai_interaction(
+            session_id=f"analytics-nl-{user.email}",
+            user_email=user.email,
+            user_message=q,
+            domain="analytics_nl",
+            route_method="analytics_nl_query",
+            response_text=summary or ("query resolved" if ok else "no match"),
+            response_length=len(summary) if summary else 0,
+            start=start,
+            error=None if ok else (summary or "no match"),
+            tags=["analytics_nl"],
+        )
+    except Exception:
+        pass
+
+    return result
 
 
 # ── ROI ──────────────────────────────────────────────────────────────────────────
@@ -327,27 +350,26 @@ def builder_chat(body: BuilderChatBody, user: CurrentUser = Depends(require_non_
                                       user_email=user.email)
 
     # Observability: this bypasses the main /api/chat pipeline, so log it here
-    # the same way — otherwise chart-builder conversations are invisible in the
-    # AI Observability dashboard.
+    # (+ a Langfuse trace) — otherwise chart-builder conversations are invisible.
     try:
+        from app.services.observability_log import log_ai_interaction
         explanation = result.get("explanation") if isinstance(result, dict) else None
         ok = bool(result.get("ok")) if isinstance(result, dict) else False
-        db.add(AiRequestLog(
+        log_ai_interaction(
             session_id=f"analytics-builder-{user.email}",
             user_email=user.email,
             user_message=msg,
             domain="analytics_builder",
             sub_intent=(result.get("chart") or {}).get("type") if isinstance(result, dict) else None,
             route_method="analytics_builder_chat",
-            response_text=(explanation or "")[:2000] or None,
+            response_text=explanation,
             response_length=len(explanation) if explanation else 0,
-            total_latency_ms=int((time.time() - start) * 1000),
-            llm_call_count=1,
+            start=start,
             error=None if ok else explanation,
-        ))
-        db.commit()
+            tags=["analytics_builder"],
+        )
     except Exception:
-        db.rollback()
+        pass
 
     return result
 

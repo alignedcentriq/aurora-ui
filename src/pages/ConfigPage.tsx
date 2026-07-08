@@ -41,6 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 interface PromptRow {
   domain: string;
@@ -799,30 +800,30 @@ export function ConfigPage() {
                   const allKeys = ["guardrail", ...fetchedKeys.filter((k) => k !== "guardrail")];
                   return (
                     <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
-                      <table className="w-full text-[13px]">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] bg-muted/30">
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-40">
+                      <Table paginate itemsPerPage={10} className="w-full text-[13px]">
+                        <TableHeader>
+                          <TableRow className="border-b border-[var(--border)] bg-muted/30">
+                            <TableHead className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-40">
                               Key
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            </TableHead>
+                            <TableHead className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                               Prompt
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-20">
+                            </TableHead>
+                            <TableHead className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-20">
                               Version
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28 hidden sm:table-cell">
+                            </TableHead>
+                            <TableHead className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28 hidden sm:table-cell">
                               Updated
-                            </th>
-                            <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-24">
+                            </TableHead>
+                            <TableHead className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-24">
                               Status
-                            </th>
-                            <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28">
+                            </TableHead>
+                            <TableHead className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground w-28">
                               Actions
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--border)]">
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody className="divide-y divide-[var(--border)]">
                           {allKeys.map((key) => {
                             const compositeKey = `${activeDomain}::${key}`;
                             const label = promptLabel(key);
@@ -833,19 +834,19 @@ export function ConfigPage() {
                               : currentEdit.trim() !== "";
                             const isDeleting = deleting === compositeKey;
                             return (
-                              <tr key={key} className="hover:bg-muted/20 transition-colors">
-                                <td className="px-4 py-3.5">
+                              <TableRow key={key} className="hover:bg-muted/20 transition-colors">
+                                <TableCell className="px-4 py-3.5">
                                   <p className="font-semibold text-foreground">{label}</p>
                                   <p className="text-[11px] text-muted-foreground/55 font-mono mt-0.5">
                                     {key}
                                   </p>
-                                </td>
-                                <td className="px-4 py-3.5 max-w-0 w-full">
+                                </TableCell>
+                                <TableCell className="px-4 py-3.5 max-w-0 w-full">
                                   <p className="text-[12px] text-muted-foreground/80 truncate">
                                     {currentEdit.trim() || "—"}
                                   </p>
-                                </td>
-                                <td className="px-4 py-3.5">
+                                </TableCell>
+                                <TableCell className="px-4 py-3.5">
                                   {row ? (
                                     <span className="text-[11px] text-muted-foreground/70 font-mono">
                                       v{row.version}
@@ -855,13 +856,13 @@ export function ConfigPage() {
                                       —
                                     </span>
                                   )}
-                                </td>
-                                <td className="px-4 py-3.5 hidden sm:table-cell">
+                                </TableCell>
+                                <TableCell className="px-4 py-3.5 hidden sm:table-cell">
                                   <span className="text-[12px] text-muted-foreground/70">
                                     {row ? new Date(row.updated_at).toLocaleDateString() : "—"}
                                   </span>
-                                </td>
-                                <td className="px-4 py-3.5">
+                                </TableCell>
+                                <TableCell className="px-4 py-3.5">
                                   {isDirty ? (
                                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
                                       <AlertCircle className="h-3.5 w-3.5" />
@@ -877,8 +878,8 @@ export function ConfigPage() {
                                       Empty
                                     </span>
                                   )}
-                                </td>
-                                <td className="px-4 py-3.5">
+                                </TableCell>
+                                <TableCell className="px-4 py-3.5">
                                   <div className="flex items-center justify-end gap-1">
                                     <button
                                       onClick={() => setEditingPromptKey(compositeKey)}
@@ -910,12 +911,12 @@ export function ConfigPage() {
                                       </button>
                                     )}
                                   </div>
-                                </td>
-                              </tr>
+                                </TableCell>
+                              </TableRow>
                             );
                           })}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     </div>
                   );
                 })()

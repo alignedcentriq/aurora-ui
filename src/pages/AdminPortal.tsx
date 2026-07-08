@@ -22,6 +22,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import {
@@ -70,6 +71,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { FilterBar } from "@/components/ui/FilterBar";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 const PRIORITY_BADGE: Record<string, string> = {
   Low: "text-zinc-400",
@@ -143,66 +145,53 @@ export function AdminPortal() {
         </div>
       </div>
 
-      {/* Tabs — only show sections this admin is scoped to */}
-      <div className="px-4 py-3 sm:px-8 sm:py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex overflow-x-auto no-scrollbar">
-        <div className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex gap-1.5 w-max shrink-0 shadow-sm">
-          {allowedTabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={cn(
-                "flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 shrink-0",
-                tab === id
-                  ? "bg-[#00a29a] text-white shadow-sm"
-                  : "text-[#64748b] dark:text-white/50 hover:bg-[#f1f5f9] dark:hover:bg-white/[0.04] hover:text-[#0f172a] dark:hover:text-white",
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-            </button>
-          ))}
+      <Tabs defaultValue={allowedTabs[0]?.id || "reimbursements"} value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex flex-col flex-1 h-full overflow-hidden">
+        <div className="px-4 py-3 sm:px-8 sm:py-4 bg-[#f5f7fa] dark:bg-background shrink-0 flex overflow-x-auto no-scrollbar">
+          <TabsList className="bg-white dark:bg-card border border-[#e2e8f0] dark:border-white/[0.08] rounded-2xl p-1.5 flex gap-1.5 w-max shrink-0 shadow-sm h-auto">
+            {allowedTabs.map(({ id, label, icon: Icon }) => (
+              <TabsTrigger
+                key={id}
+                value={id}
+                className="flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition-all duration-200 shrink-0 data-[state=active]:bg-[#00a29a] data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=inactive]:text-[#64748b] dark:data-[state=inactive]:text-white/50 data-[state=inactive]:hover:bg-[#f1f5f9] dark:data-[state=inactive]:hover:bg-white/[0.04] data-[state=inactive]:hover:text-[#0f172a] dark:data-[state=inactive]:hover:text-white"
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
         </div>
-      </div>
 
-      <div className="flex-1 overflow-auto px-8 py-6 bg-[#f5f7fa] dark:bg-background">
-        {tab === "reimbursements" && (
-          <ReimbursementsTab
-            authHeaders={authHeaders}
-            canApprove={hasAction("reimbursements", "approve")}
-          />
-        )}
-        {tab === "parking" && (
-          <ParkingTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />
-        )}
-        {tab === "parking-dues" && (
-          <ParkingDuesTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />
-        )}
-        {tab === "desk-keys" && (
-          <DeskKeysTab authHeaders={authHeaders} canManage={hasAction("desk_keys", "manage")} />
-        )}
-        {tab === "complaints" && (
-          <ComplaintsTab
-            authHeaders={authHeaders}
-            canManage={hasAction("food_complaints", "manage")}
-          />
-        )}
-        {tab === "food-complaints" && (
-          <FoodComplaintsTab
-            authHeaders={authHeaders}
-            canManage={hasAction("food_complaints", "manage")}
-          />
-        )}
-        {tab === "bookshelf" && (
-          <BookshelfTab authHeaders={authHeaders} canManage={hasAction("bookshelf", "manage")} />
-        )}
-        {tab === "travel" && (
-          <TravelTab
-            authHeaders={authHeaders}
-            canApprove={hasAction("travel_management", "approve")}
-            canSettings={hasAction("travel_management", "settings")}
-          />
-        )}
-      </div>
+        <div className="flex-1 overflow-auto px-4 sm:px-8 py-6 bg-[#f5f7fa] dark:bg-background">
+          <TabsContent value="reimbursements" className="m-0 h-full data-[state=inactive]:hidden">
+            <ReimbursementsTab authHeaders={authHeaders} canApprove={hasAction("reimbursements", "approve")} />
+          </TabsContent>
+          <TabsContent value="parking" className="m-0 h-full data-[state=inactive]:hidden">
+            <ParkingTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />
+          </TabsContent>
+          <TabsContent value="parking-dues" className="m-0 h-full data-[state=inactive]:hidden">
+            <ParkingDuesTab authHeaders={authHeaders} canManage={hasAction("parking", "manage")} />
+          </TabsContent>
+          <TabsContent value="desk-keys" className="m-0 h-full data-[state=inactive]:hidden">
+            <DeskKeysTab authHeaders={authHeaders} canManage={hasAction("desk_keys", "manage")} />
+          </TabsContent>
+          <TabsContent value="complaints" className="m-0 h-full data-[state=inactive]:hidden">
+            <ComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />
+          </TabsContent>
+          <TabsContent value="food-complaints" className="m-0 h-full data-[state=inactive]:hidden">
+            <FoodComplaintsTab authHeaders={authHeaders} canManage={hasAction("food_complaints", "manage")} />
+          </TabsContent>
+          <TabsContent value="bookshelf" className="m-0 h-full data-[state=inactive]:hidden">
+            <BookshelfTab authHeaders={authHeaders} canManage={hasAction("bookshelf", "manage")} />
+          </TabsContent>
+          <TabsContent value="travel" className="m-0 h-full data-[state=inactive]:hidden">
+            <TravelTab
+              authHeaders={authHeaders}
+              canApprove={hasAction("travel_management", "approve")}
+              canSettings={hasAction("travel_management", "settings")}
+            />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
@@ -282,54 +271,54 @@ function ReimbursementsTab({
         <TableEmpty label="reimbursements" />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
-                <th className="sticky left-0 z-20 bg-white dark:bg-card py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[900px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
+                <TableHead className="sticky left-0 z-20 bg-white dark:bg-card py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Employee
-                </th>
+                </TableHead>
                 {["Type", "Amount", "Reason", "Status", "Submitted", "Actions"].map((h) => (
-                  <th
+                  <TableHead
                     key={h}
                     className="text-left py-3 px-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((r) => (
-                <tr
+                <TableRow
                   key={r.id}
                   className="border-b border-[#f1f5f9] dark:border-white/[0.05] last:border-0 hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="sticky left-0 z-10 bg-white dark:bg-card py-3.5 px-5">
+                  <TableCell className="sticky left-0 z-10 bg-white dark:bg-card py-3.5 px-5">
                     <div className="font-semibold text-[#0f172a] dark:text-white">
                       {r.employee_name}
                     </div>
                     <div className="text-[11px] text-[#94a3b8] dark:text-white/40">
                       {r.employee_email}
                     </div>
-                  </td>
-                  <td className="py-3.5 px-4 text-[#64748b] dark:text-white/60 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 text-[#64748b] dark:text-white/60 whitespace-nowrap">
                     {r.type}
-                  </td>
-                  <td className="py-3.5 px-4 font-semibold text-[#0f172a] dark:text-white whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 font-semibold text-[#0f172a] dark:text-white whitespace-nowrap">
                     ₹ {r.amount.toLocaleString("en-IN")}
-                  </td>
-                  <td className="py-3.5 px-4 text-[#64748b] dark:text-white/50 max-w-[220px]">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 text-[#64748b] dark:text-white/50 max-w-[220px]">
                     <p className="line-clamp-2 leading-snug" title={r.reason}>
                       {r.reason || "—"}
                     </p>
-                  </td>
-                  <td className="py-3.5 px-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4">
                     <StatusBadge status={r.status} />
-                  </td>
-                  <td className="py-3.5 px-4 text-[#94a3b8] dark:text-white/40 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 text-[#94a3b8] dark:text-white/40 whitespace-nowrap">
                     {r.created_at.slice(0, 10)}
-                  </td>
-                  <td className="py-3.5 px-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4">
                     {r.status === "Pending" && canApprove ? (
                       <ActionButtons
                         id={r.id}
@@ -346,11 +335,11 @@ function ReimbursementsTab({
                             : "—"}
                       </span>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -457,49 +446,49 @@ function ParkingTab({
         <TableEmpty label="parking stickers" />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
-                <th className="py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[900px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[#e2e8f0] dark:border-white/[0.08]">
+                <TableHead className="py-3 px-5 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Employee
-                </th>
+                </TableHead>
                 {["Vehicle", "Type", "Sticker #", "Valid Until", "Status", "Actions"].map((h) => (
-                  <th
+                  <TableHead
                     key={h}
                     className="text-left py-3 px-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((s) => (
-                <tr
+                <TableRow
                   key={s.id}
                   className="border-b border-[#f1f5f9] dark:border-white/[0.05] last:border-0 hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="py-3.5 px-5">
+                  <TableCell className="py-3.5 px-5">
                     <div className="font-semibold text-foreground">{s.employee_name}</div>
                     <div className="text-[11px] text-muted-foreground">{s.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 px-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4">
                     <div className="font-medium text-foreground">{s.vehicle_number}</div>
                     {(s.vehicle_make || s.vehicle_model) && (
                       <div className="text-[11px] text-muted-foreground">
                         {[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ")}
                       </div>
                     )}
-                  </td>
-                  <td className="py-3.5 px-4 text-foreground/80 capitalize">{s.vehicle_type}</td>
-                  <td className="py-3.5 px-4 text-foreground/80 font-mono">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 text-foreground/80 capitalize">{s.vehicle_type}</TableCell>
+                  <TableCell className="py-3.5 px-4 text-foreground/80 font-mono">
                     {s.sticker_number || "—"}
-                  </td>
-                  <td className="py-3.5 px-4 text-foreground/50">{s.valid_until || "—"}</td>
-                  <td className="py-3.5 px-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4 text-foreground/50">{s.valid_until || "—"}</TableCell>
+                  <TableCell className="py-3.5 px-4">
                     <StatusBadge status={s.status} />
-                  </td>
-                  <td className="py-3.5 px-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 px-4">
                     {!canManage ? (
                       <span className="text-muted-foreground/40 text-[12px]">View only</span>
                     ) : s.status === "Pending" ? (
@@ -538,11 +527,11 @@ function ParkingTab({
                     ) : (
                       <span className="text-muted-foreground/40 text-[12px]">—</span>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -636,12 +625,12 @@ function ComplaintsTab({
         <TableEmpty label="complaints" />
       ) : (
         <div className="overflow-x-auto rounded-lg">
-          <table className="w-full min-w-[1000px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[1000px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[var(--border)]">
+                <TableHead className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Ticket
-                </th>
+                </TableHead>
                 {[
                   "Employee",
                   "Category",
@@ -653,36 +642,36 @@ function ComplaintsTab({
                   ...(showClosure ? ["Closure Comment"] : []),
                   "Update Status",
                 ].map((h) => (
-                  <th
+                  <TableHead
                     key={h}
                     className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((c) => (
-                <tr
+                <TableRow
                   key={c.id}
                   className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="sticky left-0 z-10 bg-background py-3.5 pr-4 font-mono text-[12px] text-primary">
+                  <TableCell className="sticky left-0 z-10 bg-background py-3.5 pr-4 font-mono text-[12px] text-primary">
                     {c.ticket_id}
-                  </td>
-                  <td className="py-3.5 pr-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4">
                     <div className="font-medium text-foreground">{c.employee_name}</div>
                     <div className="text-[11px] text-muted-foreground">{c.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/80">{c.category}</td>
-                  <td className="py-3.5 pr-4 text-foreground/70 max-w-[220px]">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/80">{c.category}</TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/70 max-w-[220px]">
                     <p className="line-clamp-2 leading-snug" title={c.description}>
                       {c.description}
                     </p>
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/70 whitespace-nowrap">{c.location}</td>
-                  <td className="py-3.5 pr-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/70 whitespace-nowrap">{c.location}</TableCell>
+                  <TableCell className="py-3.5 pr-4">
                     <span
                       className={cn(
                         "text-[12px] font-medium",
@@ -691,24 +680,24 @@ function ComplaintsTab({
                     >
                       {c.priority}
                     </span>
-                  </td>
-                  <td className="py-3.5 pr-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4">
                     <StatusBadge status={c.status} />
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
                     {c.created_at.slice(0, 10)}
-                  </td>
+                  </TableCell>
                   {showClosure && (
-                    <td className="py-3.5 pr-4 text-foreground/60 max-w-[180px]">
+                    <TableCell className="py-3.5 pr-4 text-foreground/60 max-w-[180px]">
                       <span title={c.closure_comment ?? ""}>
                         {c.closure_comment
                           ? c.closure_comment.slice(0, 60) +
                             (c.closure_comment.length > 60 ? "…" : "")
                           : "—"}
                       </span>
-                    </td>
+                    </TableCell>
                   )}
-                  <td className="py-3.5 relative">
+                  <TableCell className="py-3.5 relative">
                     {acting === c.ticket_id ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : closingTicket === c.ticket_id ? (
@@ -780,11 +769,11 @@ function ComplaintsTab({
                         )}
                       </div>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -877,12 +866,12 @@ function FoodComplaintsTab({
         <TableEmpty label="food complaints" />
       ) : (
         <div className="overflow-x-auto rounded-lg">
-          <table className="w-full min-w-[1000px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[var(--border)]">
-                <th className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[1000px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[var(--border)]">
+                <TableHead className="sticky left-0 z-20 bg-background py-3 pr-4 text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
                   Ticket
-                </th>
+                </TableHead>
                 {[
                   "Employee",
                   "Vendor",
@@ -893,56 +882,56 @@ function FoodComplaintsTab({
                   ...(showClosure ? ["Closure Comment"] : []),
                   "Update Status",
                 ].map((h) => (
-                  <th
+                  <TableHead
                     key={h}
                     className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((c) => (
-                <tr
+                <TableRow
                   key={c.id}
                   className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="sticky left-0 z-10 bg-background py-3.5 pr-4 font-mono text-[12px] text-primary">
+                  <TableCell className="sticky left-0 z-10 bg-background py-3.5 pr-4 font-mono text-[12px] text-primary">
                     {c.ticket_id}
-                  </td>
-                  <td className="py-3.5 pr-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4">
                     <div className="font-medium text-foreground">{c.employee_name}</div>
                     <div className="text-[11px] text-muted-foreground">{c.employee_email}</div>
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/80 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/80 whitespace-nowrap">
                     {c.vendor_name}
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/70 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/70 whitespace-nowrap">
                     {c.complaint_type}
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/70 max-w-[220px]">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/70 max-w-[220px]">
                     <p className="line-clamp-2 leading-snug" title={c.description}>
                       {c.description}
                     </p>
-                  </td>
-                  <td className="py-3.5 pr-4">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4">
                     <StatusBadge status={c.status} />
-                  </td>
-                  <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
                     {c.submitted_at.slice(0, 10)}
-                  </td>
+                  </TableCell>
                   {showClosure && (
-                    <td className="py-3.5 pr-4 text-foreground/60 max-w-[180px]">
+                    <TableCell className="py-3.5 pr-4 text-foreground/60 max-w-[180px]">
                       <span title={c.closure_comment ?? ""}>
                         {c.closure_comment
                           ? c.closure_comment.slice(0, 60) +
                             (c.closure_comment.length > 60 ? "…" : "")
                           : "—"}
                       </span>
-                    </td>
+                    </TableCell>
                   )}
-                  <td className="py-3.5 relative">
+                  <TableCell className="py-3.5 relative">
                     {acting === c.ticket_id ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                     ) : closingTicket === c.ticket_id ? (
@@ -1014,11 +1003,11 @@ function FoodComplaintsTab({
                         )}
                       </div>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -1561,9 +1550,9 @@ function BookshelfTab({
             <TableEmpty label="extension requests" />
           ) : (
             <div className="overflow-x-auto rounded-lg">
-              <table className="w-full min-w-[960px] text-[13px]">
-                <thead>
-                  <tr className="border-b border-[var(--border)]">
+              <Table paginate itemsPerPage={10} className="w-full min-w-[960px] text-[13px]">
+                <TableHeader>
+                  <TableRow className="border-b border-[var(--border)]">
                     {[
                       "Ticket",
                       "Employee",
@@ -1575,50 +1564,50 @@ function BookshelfTab({
                       "Status",
                       "Actions",
                     ].map((h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {extensions.map((e) => (
-                    <tr
+                    <TableRow
                       key={e.id}
                       className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
                     >
-                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">
+                      <TableCell className="py-3.5 pr-4 font-mono text-[12px] text-primary">
                         {e.ticket_id}
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <div className="font-medium text-foreground">{e.employee_name}</div>
                         <div className="text-[11px] text-muted-foreground">{e.employee_email}</div>
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <div className="font-medium text-foreground">{e.book_title}</div>
                         {e.book_author && (
                           <div className="text-[11px] text-muted-foreground">{e.book_author}</div>
                         )}
-                      </td>
-                      <td className="py-3.5 pr-4 font-semibold">+{e.additional_days}</td>
-                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 font-semibold">+{e.additional_days}</TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/70 max-w-[180px]">
                         <p className="line-clamp-2 leading-snug" title={e.reason}>
                           {e.reason || "—"}
                         </p>
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
                         {e.current_due_date || "—"}
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
                         {e.new_due_date || "—"}
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <StatusBadge status={e.status} />
-                      </td>
-                      <td className="py-3.5">
+                      </TableCell>
+                      <TableCell className="py-3.5">
                         {actingExt === e.id ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                         ) : e.status === "Pending" ? (
@@ -1639,11 +1628,11 @@ function BookshelfTab({
                         ) : (
                           <span className="text-[11px] text-muted-foreground">—</span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </>
@@ -1659,54 +1648,54 @@ function BookshelfTab({
           <TableEmpty label="active assignments" />
         ) : (
           <div className="overflow-x-auto rounded-lg">
-            <table className="w-full min-w-[900px] text-[13px]">
-              <thead>
-                <tr className="border-b border-[var(--border)]">
+            <Table paginate itemsPerPage={10} className="w-full min-w-[900px] text-[13px]">
+              <TableHeader>
+                <TableRow className="border-b border-[var(--border)]">
                   {["Book", "Employee", "Ticket", "Copy", "Issue Date", "Due Date", "Status"].map(
                     (h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ),
                   )}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {(dashboard.assignment_list || []).map((a) => (
-                  <tr
+                  <TableRow
                     key={a.ticket_id}
                     className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
                   >
-                    <td className="py-3.5 pr-4">
+                    <TableCell className="py-3.5 pr-4">
                       <div className="font-medium text-foreground">{a.book_title}</div>
                       {a.book_author && (
                         <div className="text-[11px] text-muted-foreground">{a.book_author}</div>
                       )}
-                    </td>
-                    <td className="py-3.5 pr-4">
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4">
                       <div className="font-medium text-foreground">{a.employee_name}</div>
                       <div className="text-[11px] text-muted-foreground">{a.employee_email}</div>
-                    </td>
-                    <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 font-mono text-[12px] text-primary">
                       {a.ticket_id}
-                    </td>
-                    <td className="py-3.5 pr-4 text-foreground/70">#{a.copy_number}</td>
-                    <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/70">#{a.copy_number}</TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
                       {a.issued_at ? a.issued_at.slice(0, 10) : "—"}
-                    </td>
-                    <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
                       {a.due_date}
-                    </td>
-                    <td className="py-3.5 pr-4">
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4">
                       <StatusBadge status={a.status} />
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ))}
 
@@ -1725,9 +1714,9 @@ function BookshelfTab({
             <TableEmpty label="book requests" />
           ) : (
             <div className="overflow-x-auto rounded-lg">
-              <table className="w-full min-w-[960px] text-[13px]">
-                <thead>
-                  <tr className="border-b border-[var(--border)]">
+              <Table paginate itemsPerPage={10} className="w-full min-w-[960px] text-[13px]">
+                <TableHeader>
+                  <TableRow className="border-b border-[var(--border)]">
                     {[
                       "Ticket",
                       "Employee",
@@ -1738,54 +1727,54 @@ function BookshelfTab({
                       "Requested",
                       "Actions",
                     ].map((h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {requests.map((r) => (
-                    <tr
+                    <TableRow
                       key={r.id}
                       className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
                     >
-                      <td className="py-3.5 pr-4 font-mono text-[12px] text-primary">
+                      <TableCell className="py-3.5 pr-4 font-mono text-[12px] text-primary">
                         {r.ticket_id}
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <div className="font-medium text-foreground">{r.employee_name}</div>
                         <div className="text-[11px] text-muted-foreground">{r.employee_email}</div>
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <div className="font-medium text-foreground">{r.book_title}</div>
                         {r.book_author && (
                           <div className="text-[11px] text-muted-foreground">{r.book_author}</div>
                         )}
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/70 max-w-[160px]">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/70 max-w-[160px]">
                         <p className="line-clamp-2 leading-snug" title={r.notes}>
                           {r.notes || "—"}
                         </p>
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <StatusBadge status={r.status} />
                         {r.admin_remarks && (
                           <div className="text-[11px] text-muted-foreground mt-0.5">
                             {r.admin_remarks}
                           </div>
                         )}
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/60 whitespace-nowrap text-[12px]">
                         {r.due_date || "—"}
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/50 whitespace-nowrap">
                         {r.requested_at.slice(0, 10)}
-                      </td>
-                      <td className="py-3.5">
+                      </TableCell>
+                      <TableCell className="py-3.5">
                         {acting === r.id ? (
                           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                         ) : !canManage ? (
@@ -1815,11 +1804,11 @@ function BookshelfTab({
                         ) : (
                           <span className="text-muted-foreground/40 text-[12px]">—</span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </>
@@ -2064,6 +2053,9 @@ function DeskKeysTab({
   authHeaders: Record<string, string>;
   canManage: boolean;
 }) {
+  const [subTab, setSubTab] = useState<"requests" | "mapping">("requests");
+
+  // Requests state
   const [items, setItems] = useState<DeskKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
@@ -2072,6 +2064,11 @@ function DeskKeysTab({
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+
+  // Mapping state
+  const [mappingItems, setMappingItems] = useState<DeskKey[]>([]);
+  const [mappingLoading, setMappingLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -2084,11 +2081,29 @@ function DeskKeysTab({
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, authHeaders]);
+
+  const fetchMapping = useCallback(async () => {
+    setMappingLoading(true);
+    try {
+      const res = await fetch(`/api/portal/admin/desk-keys?status=Approved`, { headers: authHeaders });
+      setMappingItems(await res.json());
+    } catch {
+      toast.error("Failed to load desk mapping");
+    } finally {
+      setMappingLoading(false);
+    }
+  }, [authHeaders]);
 
   useEffect(() => {
     fetch_();
   }, [fetch_]);
+
+  useEffect(() => {
+    if (subTab === "mapping") {
+      fetchMapping();
+    }
+  }, [subTab, fetchMapping]);
 
   const act = async (id: number, action: "approve" | "reject" | "release", reason?: string) => {
     let body: string | undefined;
@@ -2108,6 +2123,7 @@ function DeskKeysTab({
       else toast.success(action === "reject" ? "Request rejected" : "Desk released");
       setRejectDialogOpen(false);
       fetch_();
+      if (subTab === "mapping") fetchMapping();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -2115,85 +2131,176 @@ function DeskKeysTab({
     }
   };
 
+  const groupedMapping = useMemo(() => {
+    let filtered = mappingItems;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (i) =>
+          i.desk_number.toLowerCase().includes(q) ||
+          i.employee_name.toLowerCase().includes(q) ||
+          i.employee_email.toLowerCase().includes(q)
+      );
+    }
+
+    const map = new Map<string, DeskKey[]>();
+    for (const item of filtered) {
+      if (!map.has(item.desk_number)) map.set(item.desk_number, []);
+      map.get(item.desk_number)!.push(item);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+  }, [mappingItems, searchQuery]);
+
   return (
-    <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]}
-        onRefresh={fetch_}
-      />
-      {loading ? (
-        <TableLoader />
-      ) : items.length === 0 ? (
-        <TableEmpty label="desk key requests" />
-      ) : (
-        <table className="w-full text-[13px]">
-          <thead>
-            <tr className="border-b border-[var(--border)]">
-              {["Employee", "Desk", "Reason", "Status", "Actions"].map((h) => (
-                <th
-                  key={h}
-                  className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((d) => (
-              <tr
-                key={d.id}
-                className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
-              >
-                <td className="py-3.5 pr-4">
-                  <div className="font-medium text-foreground">{d.employee_name}</div>
-                  <div className="text-[11px] text-muted-foreground">{d.employee_email}</div>
-                </td>
-                <td className="py-3.5 pr-4 font-mono text-foreground/90">{d.desk_number}</td>
-                <td className="py-3.5 pr-4 text-foreground/70 max-w-[260px]">
-                  {d.reason || d.decision_reason || "—"}
-                </td>
-                <td className="py-3.5 pr-4">
-                  <StatusBadge status={d.status} />
-                </td>
-                <td className="py-3.5">
-                  {!canManage ? (
-                    <span className="text-muted-foreground/40 text-[12px]">View only</span>
-                  ) : d.status === "Pending" ? (
-                    <ActionButtons
-                      id={d.id}
-                      acting={acting}
-                      onApprove={() => act(d.id, "approve")}
-                      onReject={() => {
-                        setRejectId(d.id);
-                        setRejectReason("");
-                        setRejectDialogOpen(true);
-                      }}
-                    />
-                  ) : d.status === "Approved" ? (
-                    <button
-                      onClick={() => act(d.id, "release")}
-                      disabled={acting === d.id}
-                      className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-medium bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 transition-colors disabled:opacity-50"
+    <div className="flex flex-col h-full">
+      <Tabs value={subTab} onValueChange={(v) => setSubTab(v as any)} className="w-full">
+        <div className="flex items-center justify-between mb-4">
+          <TabsList>
+            <TabsTrigger value="requests">Requests</TabsTrigger>
+            <TabsTrigger value="mapping">Directory Mapping</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="requests" className="m-0">
+          <FilterBar
+            filter={filter}
+            setFilter={setFilter}
+            options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]}
+            onRefresh={fetch_}
+          />
+          {loading ? (
+            <TableLoader />
+          ) : items.length === 0 ? (
+            <TableEmpty label="desk key requests" />
+          ) : (
+            <Table paginate itemsPerPage={10} className="w-full text-[13px]">
+              <TableHeader>
+                <TableRow className="border-b border-[var(--border)]">
+                  {["Employee", "Desk", "Reason", "Status", "Actions"].map((h) => (
+                    <TableHead
+                      key={h}
+                      className="text-left py-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40"
                     >
-                      {acting === d.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                      {h}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((d) => (
+                  <TableRow
+                    key={d.id}
+                    className="border-b border-[var(--border)]/50 hover:bg-white/[0.02] transition-colors"
+                  >
+                    <TableCell className="py-3.5 pr-4">
+                      <div className="font-medium text-foreground">{d.employee_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{d.employee_email}</div>
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4 font-mono text-foreground/90">{d.desk_number}</TableCell>
+                    <TableCell className="py-3.5 pr-4 text-foreground/70 max-w-[260px]">
+                      {d.reason || d.decision_reason || "—"}
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-4">
+                      <StatusBadge status={d.status} />
+                    </TableCell>
+                    <TableCell className="py-3.5">
+                      {!canManage ? (
+                        <span className="text-muted-foreground/40 text-[12px]">View only</span>
+                      ) : d.status === "Pending" ? (
+                        <ActionButtons
+                          id={d.id}
+                          acting={acting}
+                          onApprove={() => act(d.id, "approve")}
+                          onReject={() => {
+                            setRejectId(d.id);
+                            setRejectReason("");
+                            setRejectDialogOpen(true);
+                          }}
+                        />
+                      ) : d.status === "Approved" ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => act(d.id, "release")}
+                          disabled={acting === d.id}
+                          className="h-8 gap-1.5 text-[12px] bg-zinc-500/10 text-zinc-500 hover:bg-zinc-500/20 hover:text-zinc-600 border-zinc-500/20"
+                        >
+                          {acting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                          Release
+                        </Button>
                       ) : (
-                        <X className="h-3 w-3" />
+                        <span className="text-muted-foreground/40 text-[12px]">—</span>
                       )}
-                      Release
-                    </button>
-                  ) : (
-                    <span className="text-muted-foreground/40 text-[12px]">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </TabsContent>
+
+        <TabsContent value="mapping" className="m-0">
+          <div className="mb-4 flex items-center justify-between">
+            <input
+              type="text"
+              placeholder="Search by desk number or employee..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-card px-3 py-1.5 text-[13px] outline-none focus:ring-1 focus:ring-primary"
+            />
+            <Button variant="outline" size="sm" onClick={fetchMapping} className="h-8 gap-1.5">
+              <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+              Refresh
+            </Button>
+          </div>
+          
+          {mappingLoading ? (
+            <TableLoader />
+          ) : groupedMapping.length === 0 ? (
+            <div className="py-12 text-center text-[13px] text-muted-foreground">
+              No desk keys currently issued.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {groupedMapping.map(([desk, holders]) => (
+                <div key={desk} className="rounded-xl border border-[var(--border)] bg-card p-4 shadow-sm hover:shadow transition-all">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      <KeyRound className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-[14px] font-bold text-foreground">Desk {desk}</h4>
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{holders.length} {holders.length === 1 ? 'Holder' : 'Holders'}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {holders.map(h => (
+                      <div key={h.id} className="flex justify-between items-start pt-3 border-t border-[var(--border)]/40">
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-foreground truncate" title={h.employee_name}>{h.employee_name}</p>
+                          <p className="text-[11px] text-muted-foreground truncate" title={h.employee_email}>{h.employee_email}</p>
+                        </div>
+                        {canManage && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-6 w-6 rounded-md hover:bg-rose-500/10 hover:text-rose-500" 
+                            title="Release Key"
+                            onClick={() => act(h.id, "release")}
+                            disabled={acting === h.id}
+                          >
+                            {acting === h.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
         <DialogContent className="max-w-md">
@@ -2551,26 +2658,26 @@ function ParkingDuesTab({
                     {h.payments.length === 0 ? (
                       <p className="text-[12px] text-muted-foreground">No charges accrued yet.</p>
                     ) : (
-                      <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
-                            <th className="py-1.5 pr-4">Month</th>
-                            <th className="py-1.5 pr-4">Amount</th>
-                            <th className="py-1.5 pr-4">Status</th>
-                            <th className="py-1.5">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                      <Table paginate itemsPerPage={10} className="w-full text-[12px]">
+                        <TableHeader>
+                          <TableRow className="text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
+                            <TableHead className="py-1.5 pr-4">Month</TableHead>
+                            <TableHead className="py-1.5 pr-4">Amount</TableHead>
+                            <TableHead className="py-1.5 pr-4">Status</TableHead>
+                            <TableHead className="py-1.5">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {h.payments.map((p) => (
-                            <tr key={p.id} className="border-t border-[var(--border)]/40">
-                              <td className="py-2 pr-4 text-foreground/90">{p.month}</td>
-                              <td className="py-2 pr-4 text-foreground/80">
+                            <TableRow key={p.id} className="border-t border-[var(--border)]/40">
+                              <TableCell className="py-2 pr-4 text-foreground/90">{p.month}</TableCell>
+                              <TableCell className="py-2 pr-4 text-foreground/80">
                                 INR {p.amount_due.toLocaleString()}
-                              </td>
-                              <td className="py-2 pr-4">
+                              </TableCell>
+                              <TableCell className="py-2 pr-4">
                                 <StatusBadge status={p.status} />
-                              </td>
-                              <td className="py-2">
+                              </TableCell>
+                              <TableCell className="py-2">
                                 {p.status === "Due" && canManage ? (
                                   <div className="flex items-center gap-1.5">
                                     <button
@@ -2596,11 +2703,11 @@ function ParkingDuesTab({
                                 ) : (
                                   <span className="text-muted-foreground/40">—</span>
                                 )}
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ))}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     )}
                   </div>
                 )}
@@ -2862,13 +2969,13 @@ function TravelRequestsSubTab({
   };
 
   const filterOptions = [
-    "All",
-    "pending_rm",
-    "rm_approved",
-    "admin_approved",
-    "rm_rejected",
-    "admin_rejected",
-    "completed",
+    { label: "All", value: "All" },
+    { label: "Pending RM", value: "pending_rm" },
+    { label: "RM Approved", value: "rm_approved" },
+    { label: "Admin Approved", value: "admin_approved" },
+    { label: "RM Rejected", value: "rm_rejected" },
+    { label: "Admin Rejected", value: "admin_rejected" },
+    { label: "Completed", value: "completed" },
   ];
 
   return (
@@ -2880,35 +2987,35 @@ function TravelRequestsSubTab({
         <TableEmpty label="travel requests" />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
-          <table className="w-full min-w-[1000px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[1000px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
                 {["Ref", "Employee", "Route", "Date", "Mode", "Est. Cost", "Status", "Actions"].map(
                   (h) => (
-                    <th
+                    <TableHead
                       key={h}
                       className="text-left px-4 py-3 text-[11px] font-bold text-[#64748b] dark:text-white/40 uppercase tracking-wider"
                     >
                       {h}
-                    </th>
+                    </TableHead>
                   ),
                 )}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((item) => (
-                <tr
+                <TableRow
                   key={item.id}
                   className="border-b border-[#f1f5f9] dark:border-white/[0.04] hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors"
                 >
-                  <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">{item.ref_id}</td>
-                  <td className="px-4 py-3">
+                  <TableCell className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">{item.ref_id}</TableCell>
+                  <TableCell className="px-4 py-3">
                     <div className="font-semibold text-[#0f172a] dark:text-white">
                       {item.employee_name}
                     </div>
                     <div className="text-[11px] text-[#94a3b8]">{item.employee_email}</div>
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell className="px-4 py-3">
                     <div className="font-medium text-[#0f172a] dark:text-white">
                       {item.from_location} → {item.to_destination}
                     </div>
@@ -2923,15 +3030,15 @@ function TravelRequestsSubTab({
                     >
                       {item.business_reason}
                     </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="px-4 py-3 whitespace-nowrap">
                     <div>{item.travel_date}</div>
                     {item.return_date && (
                       <div className="text-[11px] text-[#94a3b8]">→ {item.return_date}</div>
                     )}
-                  </td>
-                  <td className="px-4 py-3">{item.mode_of_travel || "—"}</td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell className="px-4 py-3">{item.mode_of_travel || "—"}</TableCell>
+                  <TableCell className="px-4 py-3">
                     {item.estimated_cost ? `INR ${item.estimated_cost.toLocaleString()}` : "—"}
                     {item.expense_limit && (
                       <div className="text-[11px] text-emerald-600">
@@ -2939,8 +3046,8 @@ function TravelRequestsSubTab({
                         {item.expense_limit.toLocaleString()}
                       </div>
                     )}
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell className="px-4 py-3">
                     <span
                       className={cn(
                         "px-2 py-1 rounded-full text-[11px] font-semibold",
@@ -2957,8 +3064,8 @@ function TravelRequestsSubTab({
                         {item.rm_rejection_reason || item.admin_rejection_reason}
                       </div>
                     )}
-                  </td>
-                  <td className="px-4 py-3">
+                  </TableCell>
+                  <TableCell className="px-4 py-3">
                     {canApprove && item.status === "rm_approved" && (
                       <div className="flex gap-2">
                         <button
@@ -2988,11 +3095,11 @@ function TravelRequestsSubTab({
                     {canApprove && item.status === "admin_approved" && (
                       <span className="text-[11px] text-emerald-600 font-semibold">Approved ✓</span>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -3254,9 +3361,9 @@ function TravelExpensesSubTab({
         <TableEmpty label="expense claims" />
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-[#e2e8f0] dark:border-white/[0.08] bg-white dark:bg-card">
-          <table className="w-full min-w-[900px] text-[13px]">
-            <thead>
-              <tr className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
+          <Table paginate itemsPerPage={10} className="w-full min-w-[900px] text-[13px]">
+            <TableHeader>
+              <TableRow className="border-b border-[#e2e8f0] dark:border-white/[0.08] bg-[#f8fafc] dark:bg-white/[0.02]">
                 {[
                   "Expense Ref",
                   "Travel Ref",
@@ -3267,39 +3374,39 @@ function TravelExpensesSubTab({
                   "Status",
                   "Actions",
                 ].map((h) => (
-                  <th
+                  <TableHead
                     key={h}
                     className="text-left px-4 py-3 text-[11px] font-bold text-[#64748b] dark:text-white/40 uppercase tracking-wider"
                   >
                     {h}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((item) => {
                 const overLimit = item.expense_limit && item.amount > item.expense_limit;
                 return (
-                  <tr
+                  <TableRow
                     key={item.id}
                     className="border-b border-[#f1f5f9] dark:border-white/[0.04] hover:bg-[#f8fafc] dark:hover:bg-white/[0.02] transition-colors"
                   >
-                    <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">
+                    <TableCell className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">
                       {item.ref_id}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-[12px] text-[#94a3b8]">
                       {item.travel_ref}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       <div className="font-semibold text-[#0f172a] dark:text-white">
                         {item.employee_name}
                       </div>
                       <div className="text-[11px] text-[#94a3b8]">{item.employee_email}</div>
-                    </td>
-                    <td className="px-4 py-3 text-[#374151] dark:text-white/70">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-[#374151] dark:text-white/70">
                       {item.from_location} → {item.to_destination}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       <div
                         className={cn(
                           "font-bold",
@@ -3320,8 +3427,8 @@ function TravelExpensesSubTab({
                           {(item.amount - item.expense_limit!).toLocaleString()}
                         </div>
                       )}
-                    </td>
-                    <td className="px-4 py-3 max-w-[160px]">
+                    </TableCell>
+                    <TableCell className="px-4 py-3 max-w-[160px]">
                       {item.breakdown && (
                         <div className="text-[12px] truncate" title={item.breakdown}>
                           {item.breakdown}
@@ -3335,8 +3442,8 @@ function TravelExpensesSubTab({
                           Reason: {item.over_limit_reason}
                         </div>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       <span
                         className={cn(
                           "px-2 py-1 rounded-full text-[11px] font-semibold",
@@ -3353,8 +3460,8 @@ function TravelExpensesSubTab({
                           {item.rejection_reason}
                         </div>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
                       {canApprove && item.status === "Pending" && (
                         <div className="flex gap-2">
                           <button
@@ -3381,12 +3488,12 @@ function TravelExpensesSubTab({
                           </button>
                         </div>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 

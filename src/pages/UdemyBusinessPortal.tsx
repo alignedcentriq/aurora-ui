@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TableEmpty } from "@/components/ui/TableEmpty";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 type Tab = "catalog" | "insights" | "activity" | "course-activity" | "inactive" | "automations";
 
@@ -369,22 +370,22 @@ function ResponsiveTable({
       {/* Desktop view */}
       <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 shadow-md bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md">
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
+          <Table paginate itemsPerPage={10} className="min-w-full text-sm">
+            <TableHeader>
+              <TableRow className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                 {cols.map((c) => (
-                  <th
+                  <TableHead
                     key={c}
                     className="text-left px-5 py-3.5 font-bold text-slate-500 dark:text-zinc-400 whitespace-nowrap text-xs uppercase tracking-wider"
                   >
                     {c.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {pageRows.map((r, i) => (
-                <tr
+                <TableRow
                   key={i}
                   className={cn(
                     "border-t border-slate-100 dark:border-zinc-800/50 hover:bg-[#A435F0]/5 dark:hover:bg-[#A435F0]/5 transition-colors",
@@ -395,7 +396,7 @@ function ResponsiveTable({
                     const val = r[c];
                     const pct = c.toLowerCase().includes("percent") || c.toLowerCase().split(/[-_\s]/).includes("ratio");
                     return (
-                      <td key={c} className="px-5 py-3.5 whitespace-nowrap text-sm font-medium text-slate-700 dark:text-zinc-300">
+                      <TableCell key={c} className="px-5 py-3.5 whitespace-nowrap text-sm font-medium text-slate-700 dark:text-zinc-300">
                         {pct && val != null ? (
                           <span
                             className={cn(
@@ -413,13 +414,13 @@ function ResponsiveTable({
                         ) : (
                           String(val ?? "")
                         )}
-                      </td>
+                      </TableCell>
                     );
                   })}
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
         <TablePagination
           total={rows.length}
@@ -1104,29 +1105,29 @@ function InsightsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <>
             {/* Desktop Table */}
             <div className="hidden md:block">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
+              <Table paginate itemsPerPage={10} className="w-full text-sm">
+                <TableHeader>
+                  <TableRow className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                     {["Course", "Category", "Enrolled", "Avg progress"].map((h) => (
-                      <th key={h} className="text-left px-5 py-3 font-bold text-slate-500 dark:text-zinc-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      <TableHead key={h} className="text-left px-5 py-3 font-bold text-slate-500 dark:text-zinc-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {data.low_engagement.map((c, i) => (
-                    <tr key={c.course_id} className={cn("border-t border-slate-100 dark:border-zinc-850/50 hover:bg-slate-50/50 dark:hover:bg-zinc-800/40 transition-colors", i % 2 === 1 && "bg-slate-50/20 dark:bg-zinc-900/20")}>
-                      <td className="px-5 py-3 font-bold text-slate-700 dark:text-zinc-200 max-w-[340px] truncate">{c.title}</td>
-                      <td className="px-5 py-3 text-slate-500 dark:text-zinc-400">{c.category}</td>
-                      <td className="px-5 py-3 tabular-nums text-slate-600 dark:text-zinc-300">{c.enrolled}</td>
-                      <td className="px-5 py-3">
+                    <TableRow key={c.course_id} className={cn("border-t border-slate-100 dark:border-zinc-850/50 hover:bg-slate-50/50 dark:hover:bg-zinc-800/40 transition-colors", i % 2 === 1 && "bg-slate-50/20 dark:bg-zinc-900/20")}>
+                      <TableCell className="px-5 py-3 font-bold text-slate-700 dark:text-zinc-200 max-w-[340px] truncate">{c.title}</TableCell>
+                      <TableCell className="px-5 py-3 text-slate-500 dark:text-zinc-400">{c.category}</TableCell>
+                      <TableCell className="px-5 py-3 tabular-nums text-slate-600 dark:text-zinc-300">{c.enrolled}</TableCell>
+                      <TableCell className="px-5 py-3">
                         <Badge variant="outline" className="normal-case tracking-normal font-bold border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400">
                           {c.avg_completion_pct}%
                         </Badge>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
 
             {/* Mobile Cards */}
@@ -1781,29 +1782,29 @@ function InactiveSeatsTab({
           {/* Desktop Table View */}
           <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 shadow-md bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md">
             <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
+              <Table paginate itemsPerPage={10} className="min-w-full text-sm">
+                <TableHeader>
+                  <TableRow className="bg-slate-50/80 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800/80">
                     {["Learner", "Role", "Groups", "Last active", "Idle Status", "Activity History", ""].map((h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="text-left px-5 py-3.5 font-bold text-slate-500 dark:text-zinc-400 whitespace-nowrap text-xs uppercase tracking-wider"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {pageRows.map((r, i) => (
-                    <tr
+                    <TableRow
                       key={r.email || i}
                       className={cn(
                         "border-t border-slate-100 dark:border-zinc-850/50 hover:bg-[#A435F0]/5 dark:hover:bg-[#A435F0]/5 transition-colors",
                         i % 2 === 1 && "bg-slate-50/20 dark:bg-zinc-900/20"
                       )}
                     >
-                      <td className="px-5 py-3">
+                      <TableCell className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <UserAvatar name={r.name} email={r.email} />
                           <div className="min-w-0">
@@ -1811,13 +1812,13 @@ function InactiveSeatsTab({
                             <div className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 truncate">{r.email}</div>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
+                      </TableCell>
+                      <TableCell className="px-5 py-3 whitespace-nowrap">
                         <Badge variant="secondary" className="font-bold py-0.5 px-2">
                           {ROLE_LABELS[r.role] || r.role || "Member"}
                         </Badge>
-                      </td>
-                      <td className="px-5 py-3">
+                      </TableCell>
+                      <TableCell className="px-5 py-3">
                         {r.groups?.length ? (
                           <div className="flex flex-wrap gap-1 max-w-[220px]">
                             {r.groups.map((g) => (
@@ -1829,17 +1830,17 @@ function InactiveSeatsTab({
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-slate-500 dark:text-zinc-400 font-medium">
+                      </TableCell>
+                      <TableCell className="px-5 py-3 whitespace-nowrap text-slate-500 dark:text-zinc-400 font-medium">
                         {r.never_visited ? "Never" : fmtDate(r.last_active)}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
+                      </TableCell>
+                      <TableCell className="px-5 py-3 whitespace-nowrap">
                         <IdleBadge days={r.idle_days} never={r.never_visited} />
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-xs text-slate-500 dark:text-zinc-400 font-semibold">
+                      </TableCell>
+                      <TableCell className="px-5 py-3 whitespace-nowrap text-xs text-slate-500 dark:text-zinc-400 font-semibold">
                         {Math.round(r.video_minutes)} min · {r.completed_courses} completed
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap text-right">
+                      </TableCell>
+                      <TableCell className="px-5 py-3 whitespace-nowrap text-right">
                         <div className="inline-flex items-center gap-2">
                           {done[r.email] === "done" ? (
                             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
@@ -1895,11 +1896,11 @@ function InactiveSeatsTab({
                         {done[r.email] && done[r.email] !== "done" && (
                           <div className="text-[11px] text-rose-500 mt-1">{done[r.email]}</div>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             <TablePagination
               total={filteredRows.length}

@@ -32,6 +32,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/10 text-amber-500 border border-amber-500/20 dark:bg-amber-500/5",
@@ -400,33 +401,33 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
       ) : (
         <div className="bg-white/60 dark:bg-zinc-950/20 backdrop-blur-lg border border-slate-200/60 dark:border-white/[0.04] rounded-2xl overflow-hidden shadow-elevated">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+            <Table paginate itemsPerPage={10} className="w-full min-w-[860px] border-collapse text-left text-xs">
+              <TableHeader>
+                <TableRow className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Skill
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Action Required
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Market Demand
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
                     Known Capacity
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Free Now
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Rolling Off
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Strategic Rationale
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
                 {paginatedRows.map((r) => {
                   const actionClass =
                     ACTION_BADGE[r.action] ??
@@ -439,20 +440,20 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                   else if (r.action === "STAFFABLE") ActionIcon = UserCheck;
 
                   return (
-                    <tr
+                    <TableRow
                       key={r.skill_id}
                       className="hover:bg-slate-500/[0.015] dark:hover:bg-white/[0.01] transition-colors duration-150 align-middle"
                     >
                       {/* Skill */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <div className="font-bold text-sm text-foreground tracking-tight flex items-center gap-2">
                           <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
                           {r.skill_name}
                         </div>
-                      </td>
+                      </TableCell>
 
                       {/* Action */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <span
                           className={cn(
                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider select-none",
@@ -462,10 +463,10 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                           <ActionIcon className="h-3 w-3" />
                           {r.action}
                         </span>
-                      </td>
+                      </TableCell>
 
                       {/* Market Demand Index with progress meter */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <div className="flex flex-col gap-1 max-w-[130px]">
                           <div className="flex justify-between items-center text-xs font-bold text-foreground">
                             <span>{Math.round(r.demand)}</span>
@@ -480,17 +481,17 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                             />
                           </div>
                         </div>
-                      </td>
+                      </TableCell>
 
                       {/* Known capacity count */}
-                      <td className="py-4 px-6 text-center">
+                      <TableCell className="py-4 px-6 text-center">
                         <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-extrabold text-slate-700 dark:text-zinc-300 bg-slate-100 dark:bg-zinc-800/80 border border-slate-200/50 dark:border-zinc-700/50 rounded-md min-w-8 shadow-sm">
                           {r.coverage_count}
                         </span>
-                      </td>
+                      </TableCell>
 
                       {/* Free Now with mini Avatars */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <div className="flex items-center gap-2">
                           <span
                             className={cn(
@@ -550,10 +551,10 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                             </div>
                           )}
                         </div>
-                      </td>
+                      </TableCell>
 
                       {/* Rolling Off info list */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         {r.rolling_off.length === 0 ? (
                            <span className="text-muted-foreground/30 text-xs">—</span>
                         ) : (
@@ -578,22 +579,22 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                             </div>
                           </div>
                         )}
-                      </td>
+                      </TableCell>
 
                       {/* Rationale */}
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <p
                           className="text-xs text-muted-foreground/90 leading-relaxed max-w-[280px]"
                           title={r.rationale}
                         >
                           {r.rationale}
                         </p>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
 
           {/* Pagination Controls */}
@@ -862,30 +863,30 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
       ) : (
         <div className="bg-white/60 dark:bg-zinc-950/20 backdrop-blur-lg border border-slate-200/60 dark:border-white/[0.04] rounded-2xl overflow-hidden shadow-elevated">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+            <Table paginate itemsPerPage={10} className="w-full min-w-[860px] border-collapse text-left text-xs">
+              <TableHeader>
+                <TableRow className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Employee
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Status
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Recommended Course
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
                     Skills to Gain
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
                     Due By
-                  </th>
-                  <th className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-right">
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-right">
                     Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
                 {paginatedRows.map((r) => {
                   const initials = r.employee_name
                     .split(" ")
@@ -896,11 +897,11 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                   const key = rowKey(r);
                   const isAssigned = assigned.has(key);
                   return (
-                    <tr
+                    <TableRow
                       key={key}
                       className="hover:bg-slate-500/[0.015] dark:hover:bg-white/[0.01] transition-colors duration-150 align-middle"
                     >
-                      <td className="py-4 px-6">
+                      <TableCell className="py-4 px-6">
                         <div className="flex items-center gap-3">
                           <div className="inline-flex items-center justify-center h-7 w-7 rounded-full text-[10px] font-black text-white bg-gradient-to-br from-indigo-500 to-violet-600 shadow-inner">
                             {initials}
@@ -914,8 +915,8 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                             </div>
                           </div>
                         </div>
-                      </td>
-                      <td className="py-4 px-6">
+                      </TableCell>
+                      <TableCell className="py-4 px-6">
                         <span
                           className={cn(
                             "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border",
@@ -926,8 +927,8 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                         >
                           {r.reason === "On bench" ? `${r.free_pct}% free` : `Off ${r.rolloff_date}`}
                         </span>
-                      </td>
-                      <td className="py-4 px-6">
+                      </TableCell>
+                      <TableCell className="py-4 px-6">
                         <div className="flex flex-col gap-0.5 min-w-0">
                           <span className="font-semibold text-foreground leading-snug">
                             {r.recommended_training}
@@ -938,8 +939,8 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                             </span>
                           )}
                         </div>
-                      </td>
-                      <td className="py-4 px-6">
+                      </TableCell>
+                      <TableCell className="py-4 px-6">
                         <div className="flex flex-wrap gap-1 max-w-[200px]">
                           {r.teaches_skills.slice(0, 3).map((sk) => (
                             <span
@@ -950,11 +951,11 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                             </span>
                           ))}
                         </div>
-                      </td>
-                      <td className="py-4 px-6 text-center font-mono text-[11px] text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-center font-mono text-[11px] text-muted-foreground">
                         {r.suggested_due_date}
-                      </td>
-                      <td className="py-4 px-6 text-right">
+                      </TableCell>
+                      <TableCell className="py-4 px-6 text-right">
                         <button
                           onClick={() => assign(r)}
                           disabled={acting === key || isAssigned}
@@ -974,12 +975,12 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
                           )}
                           {isAssigned ? "Assigned" : "Approve & Assign"}
                         </button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
 
           {/* Pagination Controls */}

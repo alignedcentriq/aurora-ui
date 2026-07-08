@@ -263,7 +263,7 @@ const TABS: TabItem[] = [
     category: "Management Portals",
     icon: TrendingUp,
     color: "#06B6D4",
-    show: (role) => role === "PMO" || role === "Admin",
+    show: (role) => role === "PMO" || role === "Admin" || role === "Super Admin",
     component: LeadershipPortal,
   },
   {

@@ -687,8 +687,37 @@ class Announcement(Base):
     image_url = Column(String, nullable=True)
     image_action = Column(JSON, nullable=True)  # {type: "url"|"form"|"app", value: str|int, label: str}
     email_recipients = Column(JSON, nullable=True)  # explicit email addresses for the email blast
+    # Engagement mechanics the author enables per-announcement. Read tracking is
+    # always on (AnnouncementReceipt); these govern what the reader can DO with it.
+    allow_reactions = Column(Boolean, default=False)   # 👍 🎉 ❤️ tap-to-react
+    allow_rsvp = Column(Boolean, default=False)        # "Count me in" (events) — author sees the roster
+    require_ack = Column(Boolean, default=False)       # "I acknowledge" sign-off (policy / must-know)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
+
+
+class AnnouncementReceipt(Base):
+    """One row per (announcement, employee) — the read-tracking spine.
+
+    Created/updated when an employee first sees an announcement in the feed, and
+    upserted again when they react / RSVP / acknowledge. This is what turns the
+    fire-and-forget broadcast into a measurable loop: reach %, reaction counts,
+    RSVP roster, and acknowledgment audit all read off this table.
+    """
+    __tablename__ = "announcement_receipts"
+    __table_args__ = (
+        UniqueConstraint("announcement_id", "user_email", name="uq_announcement_receipt"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    announcement_id = Column(Integer, ForeignKey(f"{SCHEMA}.announcements.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_email = Column(String, index=True, nullable=False)
+    seen_at = Column(DateTime, default=datetime.datetime.utcnow)
+    reaction = Column(String, nullable=True)            # "👍" | "🎉" | "❤️" | None
+    rsvp = Column(String, nullable=True)                # "yes" | "no" | "maybe" | None
+    acknowledged_at = Column(DateTime, nullable=True)   # set when reader clicks "I acknowledge"
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
 # ── Food / Cafeteria Complaints (distinct from star-rating feedback) ──────────

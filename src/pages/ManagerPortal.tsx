@@ -501,7 +501,7 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
 
           {/* Attendance table */}
           <Card>
-            <Table>
+            <Table paginate itemsPerPage={10}>
               <TableHeader>
                 <TableRow className="bg-muted/60 text-[11px] font-bold uppercase tracking-[0.1em]">
                   <TableHead className="px-4 py-3">Employee</TableHead>
@@ -1209,7 +1209,7 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
         <div className="space-y-4">
           {[...grouped.entries()].map(([name, rows]) => (
             <ExpandableGroup key={name} title={name} count={rows.length}>
-              <Table>
+              <Table paginate itemsPerPage={10}>
                 <TableHeader>
                   <TableRow className="bg-muted/40 text-[11px] uppercase tracking-wide">
                     <TableHead className="px-3 py-2 font-semibold">Project</TableHead>

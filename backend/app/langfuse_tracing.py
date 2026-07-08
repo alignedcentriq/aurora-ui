@@ -57,7 +57,8 @@ class TracingContext:
     """
 
     def __init__(self, session_id: str = None, user_id: str = None,
-                 metadata: dict = None, tags: list = None, is_private: bool = False):
+                 metadata: dict = None, tags: list = None, is_private: bool = False,
+                 input: str = None):
         self._generations: dict[str, object] = {}   # run_id → generation span
         self._gen_starts: dict[str, float] = {}      # run_id → start time
         self.trace_id: str | None = None
@@ -76,6 +77,7 @@ class TracingContext:
                 name="chat",
                 session_id=session_id,
                 user_id=user_id,
+                input=input,
                 metadata=metadata or {},
                 tags=tags or [],
             )

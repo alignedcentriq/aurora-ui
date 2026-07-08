@@ -39,6 +39,25 @@ services:
       - SALT=mysalt
       - NEXTAUTH_URL=http://localhost:3003
       - TELEMETRY_ENABLED=false
+      # ── Headless initialization ────────────────────────────────────────────
+      # Auto-provisions org + project (with FIXED keys) + a login user on first boot,
+      # so nobody signs up or copies API keys by hand. The project keys here MUST match
+      # the backend's LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY (see .env.local locally,
+      # and the backend service in docker-compose.yml for prod). Init only runs when the
+      # entities don't already exist — to re-seed after a key change, reset just the
+      # langfuse DB (see the note in .env.example), NOT the whole `db` container (that
+      # also holds the local app database).
+      - LANGFUSE_INIT_ORG_ID=centriq
+      - LANGFUSE_INIT_ORG_NAME=Centriq
+      - LANGFUSE_INIT_PROJECT_ID=centriq-ai
+      - LANGFUSE_INIT_PROJECT_NAME=Centriq AI
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-centriq-ai}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-centriq-ai-2026}
+      - LANGFUSE_INIT_USER_EMAIL=${LANGFUSE_INIT_USER_EMAIL:-shivam.sharma@alignedautomation.com}
+      - LANGFUSE_INIT_USER_NAME=${LANGFUSE_INIT_USER_NAME:-Centriq Admin}
+      - LANGFUSE_INIT_USER_PASSWORD=${LANGFUSE_INIT_USER_PASSWORD:-Centriq@2026}
+      # Only the pre-seeded user above can log in — no self-serve signup.
+      - AUTH_DISABLE_SIGNUP=true
     networks:
       - centriq-network
 

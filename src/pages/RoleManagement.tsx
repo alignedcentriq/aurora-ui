@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 interface EmployeeSearchResult {
   id: number;
@@ -324,9 +325,9 @@ export function RoleManagement() {
                 <span className="text-[13px]">No active role overrides set in the database.</span>
               </div>
             ) : (
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="border-b border-[var(--border)] text-left">
+              <Table paginate itemsPerPage={10} className="w-full text-[13px]">
+                <TableHeader>
+                  <TableRow className="border-b border-[var(--border)] text-left">
                     {[
                       "Employee Details",
                       "Designation",
@@ -334,30 +335,30 @@ export function RoleManagement() {
                       "Assigned Role",
                       "Actions",
                     ].map((h) => (
-                      <th
+                      <TableHead
                         key={h}
                         className="pb-3 pr-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/60"
                       >
                         {h}
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {assignedRoles.map((record) => (
-                    <tr
+                    <TableRow
                       key={record.id}
                       className="border-b border-[var(--border)]/50 last:border-b-0 hover:bg-white/[0.01] transition-colors"
                     >
-                      <td className="py-3.5 pr-4">
+                      <TableCell className="py-3.5 pr-4">
                         <div className="font-semibold text-foreground">{record.name}</div>
                         <div className="text-[11px] text-muted-foreground">{record.email}</div>
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/80">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/80">
                         {record.designation || "—"}
-                      </td>
-                      <td className="py-3.5 pr-4 text-foreground/80">{record.department || "—"}</td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4 text-foreground/80">{record.department || "—"}</TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <span
                           className={cn(
                             "rounded-full px-2.5 py-0.5 text-[11px] font-medium border",
@@ -366,8 +367,8 @@ export function RoleManagement() {
                         >
                           {record.role}
                         </span>
-                      </td>
-                      <td className="py-3.5 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3.5 pr-4">
                         <button
                           onClick={() => handleResetRole(record.email)}
                           className="flex items-center gap-1.5 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/15 rounded-lg px-2.5 py-1 text-[11px] transition-all font-semibold"
@@ -376,11 +377,11 @@ export function RoleManagement() {
                           <Trash2 className="h-3 w-3" />
                           Reset
                         </button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
           </div>
         </div>

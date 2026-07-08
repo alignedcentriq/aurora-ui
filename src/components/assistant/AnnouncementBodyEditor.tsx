@@ -165,7 +165,7 @@ export function AnnouncementBodyEditor({
 
   return (
     <div className={`space-y-1 ${className}`}>
-      {/* Suggest + label row */}
+      {/* Message label + AI draft action */}
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Message
@@ -173,15 +173,21 @@ export function AnnouncementBodyEditor({
         <button
           type="button"
           onClick={handleSuggest}
-          disabled={suggesting || !title.trim()}
-          className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-500 hover:text-violet-600 disabled:opacity-40 transition-colors"
+          disabled={suggesting}
+          title="Write the message for you from the title — you can edit it after"
+          className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[11px] font-semibold text-violet-600 hover:bg-violet-500/20 disabled:opacity-50 transition-colors dark:text-violet-300"
         >
           {suggesting ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Writing…
+            </>
           ) : (
-            <Sparkles className="h-3 w-3" />
+            <>
+              <Sparkles className="h-3 w-3" />
+              Draft with AI
+            </>
           )}
-          Suggest
         </button>
       </div>
 
