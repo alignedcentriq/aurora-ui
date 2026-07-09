@@ -361,6 +361,30 @@ CAPABILITY_CATALOGUE: dict[str, dict] = {
             {"id": "export", "label": "Export", "description": "Export and schedule attendance reports"},
         ],
     },
+    "team_onboarding": {
+        "label": "Team Onboarding Requests",
+        "description": "Manager Portal → Onboarding tab. Allows raising and tracking client-side onboarding requests (drug test, background verification, client onboarding) for team members. Previously restricted to Functional Managers.",
+        "category": "feature",
+        "actions": [
+            {"id": "manage", "label": "Manage", "description": "Create, view, and update onboarding requests"},
+        ],
+    },
+    "team_vdi_provision": {
+        "label": "Team VDI Provision (Onboarding)",
+        "description": "Manager Portal → PMO Requests tab. Allows raising VDI provision (\"request VDI\") requests to PMO for team members. Previously restricted to Functional Managers.",
+        "category": "feature",
+        "actions": [
+            {"id": "manage", "label": "Manage", "description": "Create and view VDI provision requests"},
+        ],
+    },
+    "team_vdi_revoke": {
+        "label": "Team VDI Revoke (Offboarding)",
+        "description": "Manager Portal → PMO Requests tab. Allows raising VDI revoke / access-revocation (\"offboarding\") requests to PMO for team members. Previously restricted to Functional Managers.",
+        "category": "feature",
+        "actions": [
+            {"id": "manage", "label": "Manage", "description": "Create and view VDI revoke requests"},
+        ],
+    },
     "people_directory": {
         "label": "People Directory",
         "description": "Allows searching and viewing employee profiles, skills, and project assignments.",
@@ -438,6 +462,8 @@ DEFAULT_ROLE_CAPABILITIES: dict[str, list[str]] = {
         "portal:url_library", "portal:form_library", "portal:cabin_directory",
         "mode:analytics", "mode:resource", "mode:me",
         "attendance_reports", "people_directory", "email_automation",
+        # Manager-portal team operations (were hardcoded FM-only; now assignable capabilities).
+        "team_onboarding", "team_vdi_provision", "team_vdi_revoke",
     ],
     "employee": [
         # Portals employees can open for self-service
@@ -500,6 +526,28 @@ def _role_capabilities(role_slug: str, db: Session) -> list[str]:
     """Return capability keys currently assigned to a role."""
     rows = db.query(RoleCapabilityMap).filter(RoleCapabilityMap.role_slug == role_slug).all()
     return [r.capability_key for r in rows]
+
+
+def effective_capabilities(user, db: Session) -> set[str]:
+    """All capability keys effectively granted to a user: the role's mapped capabilities
+    plus any per-user extra grants. Super Admin is unrestricted (every catalogue key).
+
+    Falls back to DEFAULT_ROLE_CAPABILITIES for a system role whose DB map hasn't been
+    seeded yet, so enforcement is correct even before the first seed runs.
+    """
+    role = (getattr(user, "role", "") or "").strip().lower()
+    if role == "super admin":
+        return set(CAPABILITY_CATALOGUE.keys())
+    caps = set(_role_capabilities(role, db))
+    if not caps and role in DEFAULT_ROLE_CAPABILITIES:
+        caps = set(DEFAULT_ROLE_CAPABILITIES[role])
+    caps |= set(getattr(user, "extra_capabilities", None) or [])
+    return caps
+
+
+def user_has_capability(user, capability_key: str, db: Session) -> bool:
+    """True if the user's effective capabilities include ``capability_key``."""
+    return capability_key in effective_capabilities(user, db)
 
 
 # ── Pydantic payloads ──────────────────────────────────────────────────────────

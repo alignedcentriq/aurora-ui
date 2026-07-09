@@ -34,20 +34,11 @@ export const AUTOMATION_CATALOG: CatalogItem[] = [
   {
     id: "leave_balance_report",
     label: "Team Leave Balance Report",
-    description: "Summary of leave balances for your team or department",
-    emailPreview: "Each employee's available, used, and remaining leave days per leave type",
+    description: "Leave balances for your reporting hierarchy (Super Admins get org-wide)",
+    emailPreview: "Available, used, and remaining leave days per leave type — scoped to your team",
     category: "Report", accent: "#16A34A",
     portalIds: ["hr-portal", "leadership-command"],
-    params: [
-      {
-        key: "scope", label: "Report scope", type: "select",
-        options: [
-          { value: "all", label: "All employees" },
-          { value: "department", label: "My department" },
-        ],
-        default: "all",
-      },
-    ],
+    params: [],
     defaultFrequency: "monthly", defaultDayOfMonth: 1, defaultHour: 9,
     defaultSubject: "Team Leave Balance Report — {{month}} {{year}}",
   },

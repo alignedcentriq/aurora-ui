@@ -6,9 +6,12 @@
 
 import { useAuth } from "@/lib/auth-store";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Loader2, RefreshCw, Compass, TrendingUp, AlertCircle } from "lucide-react";
+import { Loader2, RefreshCw, Compass, TrendingUp, AlertCircle, Users, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface Feature {
   key: string;
@@ -107,171 +110,195 @@ export function AdoptionTab() {
   return (
     <div className="space-y-6">
       {/* Header + window selector */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Compass className="h-4 w-4 text-indigo-400" />
-          Capability reach across staff — trailing {data.window_days} days. Sorted most-undiscovered
-          first.
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/50">
+        <div className="space-y-1">
+          <h2 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <Compass className="h-6 w-6 text-primary" />
+            Feature Adoption
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Capability reach across staff over the trailing {data.window_days} days.
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center rounded-lg border border-border bg-muted/30 p-1">
             {WINDOWS.map((w) => (
-              <button
+              <Button
                 key={w}
+                variant={windowDays === w ? "secondary" : "ghost"}
+                size="sm"
                 onClick={() => setWindowDays(w)}
                 className={cn(
-                  "px-3 py-1.5 text-[12px] font-medium transition-colors",
-                  windowDays === w
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground",
+                  "h-8 px-4 text-xs font-medium transition-all",
+                  windowDays === w ? "shadow-sm bg-background text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 )}
               >
                 {w}d
-              </button>
+              </Button>
             ))}
           </div>
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={load}
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground"
+            className="h-10 gap-2 font-medium"
           >
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </Button>
         </div>
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {[
-          { label: "Total staff", value: data.total_staff, icon: null },
+          { label: "Total Staff", value: data.total_staff, icon: <Users className="h-4 w-4 text-muted-foreground" /> },
           {
-            label: "Active users",
+            label: "Active Users",
             value: data.active_users,
-            icon: <TrendingUp className="h-4 w-4 text-emerald-400" />,
+            icon: <TrendingUp className="h-4 w-4 text-emerald-500" />,
           },
-          { label: "Capabilities", value: data.feature_count, icon: null },
+          { label: "Capabilities", value: data.feature_count, icon: <LayoutGrid className="h-4 w-4 text-blue-500" /> },
           {
             label: "Undiscovered",
             value: data.undiscovered_count,
-            icon: <AlertCircle className="h-4 w-4 text-rose-400" />,
+            icon: <AlertCircle className={cn("h-4 w-4", data.undiscovered_count > 0 ? "text-destructive" : "text-emerald-500")} />,
             accent: data.undiscovered_count > 0,
           },
         ].map((c) => (
-          <div
-            key={c.label}
-            className={cn(
-              "rounded-xl border border-[var(--border)] bg-card/50 p-4",
-              c.accent && "border-rose-500/30 bg-rose-500/5",
-            )}
-          >
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          <Card key={c.label} className={cn("overflow-hidden transition-all hover:shadow-sm", c.accent && "border-destructive/30 bg-destructive/5")}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
                 {c.label}
-              </span>
+              </CardTitle>
               {c.icon}
-            </div>
-            <div className="mt-1 text-2xl font-bold text-foreground">{c.value}</div>
-          </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{c.value}</div>
+              {c.accent && (
+                <p className="text-xs text-destructive mt-1 font-medium">
+                  Requires attention
+                </p>
+              )}
+            </CardContent>
+          </Card>
         ))}
       </div>
 
       {/* Feature adoption table */}
-      <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-        <Table paginate itemsPerPage={10} className="w-full text-[13px]">
-          <TableHeader className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <TableRow>
-              <TableHead className="px-4 py-2.5 font-semibold">Capability</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold">Category</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold">Reach (staff)</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold text-right">Users</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold text-right">Never used</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold text-right">Requests</TableHead>
-              <TableHead className="px-4 py-2.5 font-semibold text-right">Last used</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.features.map((f) => (
-              <TableRow key={f.key} className="border-t border-[var(--border)] hover:bg-muted/20">
-                <TableCell className="px-4 py-2.5 font-medium text-foreground">
-                  {f.title}
-                  {f.users === 0 && (
-                    <span className="ml-2 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold text-rose-400">
-                      undiscovered
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="px-4 py-2.5 text-muted-foreground">{f.category}</TableCell>
-                <TableCell className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className={cn("h-full rounded-full", barColor(f.adoption_pct_staff))}
-                        style={{ width: `${Math.max(f.adoption_pct_staff, f.users > 0 ? 2 : 0)}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums text-muted-foreground">
-                      {f.adoption_pct_staff}%
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="px-4 py-2.5 text-right tabular-nums">{f.users}</TableCell>
-                <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                  {denom ? f.never_used_staff : "—"}
-                </TableCell>
-                <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                  {f.requests}
-                </TableCell>
-                <TableCell className="px-4 py-2.5 text-right text-muted-foreground">
-                  {fmtDate(f.last_used)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Unmapped traffic — registry blind spots */}
-      {data.unmapped.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-[13px] font-semibold text-foreground">
-            Unmapped traffic
-            <span className="ml-2 font-normal text-muted-foreground">
-              — real usage no capability claims yet (extend the registry to cover these)
-            </span>
-          </h3>
-          <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-            <Table paginate itemsPerPage={10} className="w-full text-[13px]">
-              <TableHeader className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle>Capability Reach</CardTitle>
+          <CardDescription>
+            Sorted most-undiscovered first to highlight blind spots.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="border-t border-border">
+            <Table paginate itemsPerPage={10} className="w-full text-sm">
+              <TableHeader className="bg-muted/40">
                 <TableRow>
-                  <TableHead className="px-4 py-2.5 font-semibold">Domain</TableHead>
-                  <TableHead className="px-4 py-2.5 font-semibold">Sub-intent</TableHead>
-                  <TableHead className="px-4 py-2.5 font-semibold text-right">Users</TableHead>
-                  <TableHead className="px-4 py-2.5 font-semibold text-right">Requests</TableHead>
-                  <TableHead className="px-4 py-2.5 font-semibold text-right">Last used</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold">Capability</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold">Category</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold">Reach (staff)</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold text-right">Users</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold text-right">Never used</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold text-right">Requests</TableHead>
+                  <TableHead className="px-6 py-3 font-semibold text-right">Last used</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.unmapped.map((b) => (
-                  <TableRow
-                    key={`${b.domain}:${b.sub_intent}`}
-                    className="border-t border-[var(--border)] hover:bg-muted/20"
-                  >
-                    <TableCell className="px-4 py-2.5 text-foreground">{b.domain || "—"}</TableCell>
-                    <TableCell className="px-4 py-2.5 font-mono text-[12px] text-muted-foreground">
-                      {b.sub_intent}
+                {data.features.map((f) => (
+                  <TableRow key={f.key} className="hover:bg-muted/20">
+                    <TableCell className="px-6 py-3 font-medium text-foreground">
+                      <div className="flex items-center gap-2">
+                        {f.title}
+                        {f.users === 0 && (
+                          <Badge variant="destructive" className="h-5 px-1.5 text-[10px] uppercase tracking-wider font-semibold">
+                            Undiscovered
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="px-4 py-2.5 text-right tabular-nums">{b.users}</TableCell>
-                    <TableCell className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                      {b.requests}
+                    <TableCell className="px-6 py-3 text-muted-foreground">{f.category}</TableCell>
+                    <TableCell className="px-6 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className={cn("h-full rounded-full transition-all duration-500", barColor(f.adoption_pct_staff))}
+                            style={{ width: `${Math.max(f.adoption_pct_staff, f.users > 0 ? 2 : 0)}%` }}
+                          />
+                        </div>
+                        <span className="tabular-nums font-medium text-muted-foreground">
+                          {f.adoption_pct_staff}%
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell className="px-4 py-2.5 text-right text-muted-foreground">
-                      {fmtDate(b.last_used)}
+                    <TableCell className="px-6 py-3 text-right tabular-nums">{f.users}</TableCell>
+                    <TableCell className="px-6 py-3 text-right tabular-nums text-muted-foreground">
+                      {denom ? f.never_used_staff : "—"}
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right tabular-nums text-muted-foreground">
+                      {f.requests}
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right text-muted-foreground">
+                      {fmtDate(f.last_used)}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-        </div>
+        </CardContent>
+      </Card>
+
+      {/* Unmapped traffic — registry blind spots */}
+      {data.unmapped.length > 0 && (
+        <Card className="border-dashed border-amber-200/50 dark:border-amber-900/50 bg-amber-50/10 dark:bg-amber-950/10">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <AlertCircle className="h-5 w-5" />
+              Unmapped Traffic
+            </CardTitle>
+            <CardDescription className="text-amber-600/80 dark:text-amber-500/80">
+              Real usage with no capability claims yet. Extend the registry to cover these domains.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="border-t border-amber-200/50 dark:border-amber-900/50">
+              <Table paginate itemsPerPage={10} className="w-full text-sm">
+                <TableHeader className="bg-amber-100/50 dark:bg-amber-900/20">
+                  <TableRow>
+                    <TableHead className="px-6 py-3 font-semibold text-amber-700 dark:text-amber-400">Domain</TableHead>
+                    <TableHead className="px-6 py-3 font-semibold text-amber-700 dark:text-amber-400">Sub-intent</TableHead>
+                    <TableHead className="px-6 py-3 font-semibold text-right text-amber-700 dark:text-amber-400">Users</TableHead>
+                    <TableHead className="px-6 py-3 font-semibold text-right text-amber-700 dark:text-amber-400">Requests</TableHead>
+                    <TableHead className="px-6 py-3 font-semibold text-right text-amber-700 dark:text-amber-400">Last used</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.unmapped.map((b) => (
+                    <TableRow
+                      key={`${b.domain}:${b.sub_intent}`}
+                      className="hover:bg-amber-100/30 dark:hover:bg-amber-900/30 border-amber-200/30 dark:border-amber-900/30"
+                    >
+                      <TableCell className="px-6 py-3 text-foreground font-medium">{b.domain || "—"}</TableCell>
+                      <TableCell className="px-6 py-3 font-mono text-muted-foreground">
+                        {b.sub_intent}
+                      </TableCell>
+                      <TableCell className="px-6 py-3 text-right tabular-nums">{b.users}</TableCell>
+                      <TableCell className="px-6 py-3 text-right tabular-nums text-muted-foreground">
+                        {b.requests}
+                      </TableCell>
+                      <TableCell className="px-6 py-3 text-right text-muted-foreground">
+                        {fmtDate(b.last_used)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

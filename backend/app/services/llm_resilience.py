@@ -60,6 +60,72 @@ def _is_server_busy(exc: Exception) -> bool:
     return any(p in text for p in _BUSY_PHRASES)
 
 
+# ── ml01 load-reject tracking + resident-model rescue ────────────────────────
+# Observed failure mode on the shared ml01 box (2026-07-09): Ollama instantly
+# rejects ANY request for a model that is not already resident ("server busy,
+# please try again. maximum pending requests exceeded") while the resident model
+# answers in <1s — the scheduler's load queue is wedged or misconfigured; the
+# box is NOT actually under load. Retrying the same model can never succeed in
+# that state, so once busy retries are exhausted we answer on a model that is
+# already in memory (degraded but alive) and record the reject so the Control
+# Hub can show the real reason instead of an idle-looking dashboard.
+
+_load_reject_count = 0
+_load_reject_last: float = 0.0            # time.time() of the latest reject
+_LOAD_REJECT_RECENT_SECONDS = 600.0
+
+
+def _note_load_reject() -> None:
+    global _load_reject_count, _load_reject_last
+    _load_reject_count += 1
+    _load_reject_last = time.time()
+
+
+def get_load_reject_status() -> dict:
+    """Surfaced on /api/chat/load and /api/health/llm."""
+    recent = _load_reject_last > 0 and (time.time() - _load_reject_last) < _LOAD_REJECT_RECENT_SECONDS
+    return {
+        "count": _load_reject_count,
+        "last_at": _load_reject_last or None,
+        "recent": recent,
+    }
+
+
+def _hot_fallback_model(tier: str) -> Optional[str]:
+    """A model currently resident on ml01 (per /api/ps) to answer on while model
+    loads are being rejected — strongest configured candidate first, else any
+    resident non-embedding model. Returns None when nothing usable is loaded, or
+    when the tier's own primary IS resident (busy then means real saturation, and
+    shifting load to a sibling model on the same box would make it worse)."""
+    try:
+        from app.config import settings
+        from app.services.llm_controls_service import ollama_residency, tier_params
+        loaded = [m["name"] for m in (ollama_residency().get("models") or [])]
+    except Exception:  # noqa: BLE001 — rescue is best-effort, never raise from here
+        return None
+    if not loaded:
+        return None
+
+    def _same(a: str, b: str) -> bool:
+        strip = lambda s: s[: -len(":latest")] if s.endswith(":latest") else s  # noqa: E731
+        return strip(a or "") == strip(b or "")
+
+    try:
+        primary = tier_params(tier)["model"]
+    except Exception:  # noqa: BLE001
+        primary = ""
+    if primary and any(_same(primary, name) for name in loaded):
+        return None  # primary is resident yet busy → genuine saturation, don't pile on
+
+    for cand in (settings.SERVICE_MODEL_NAME, settings.FAST_MODEL_NAME):
+        if cand and not _same(cand, primary) and any(_same(cand, name) for name in loaded):
+            return cand
+    for name in loaded:
+        if "embed" not in name and not _same(name, primary):
+            return name
+    return None
+
+
 # TTFT threshold before we hedge with a fallback stream
 TTFT_HEDGE_SECONDS = 8.0
 
@@ -257,6 +323,14 @@ def resilient_invoke(
                     )
                     time.sleep(delay)
                     continue
+                _note_load_reject()
+                hot = _hot_fallback_model(tier)
+                if hot:
+                    log.warning("ml01 rejecting model loads — answering tier %r on resident model %r", tier, hot)
+                    try:
+                        return _prepare(tier, build, hot, default_timeout, default_max_tokens).invoke(messages)
+                    except Exception as hot_exc:  # noqa: BLE001
+                        log.warning("Resident-model rescue failed for tier %r: %s", tier, hot_exc)
                 log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
                 raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
             _breaker.record_failure(tier)
@@ -294,6 +368,14 @@ async def resilient_ainvoke(
                     )
                     await asyncio.sleep(delay)
                     continue
+                _note_load_reject()
+                hot = await asyncio.to_thread(_hot_fallback_model, tier)
+                if hot:
+                    log.warning("ml01 rejecting model loads — answering tier %r on resident model %r", tier, hot)
+                    try:
+                        return await _prepare(tier, build, hot, default_timeout, default_max_tokens).ainvoke(messages)
+                    except Exception as hot_exc:  # noqa: BLE001
+                        log.warning("Resident-model rescue failed for tier %r: %s", tier, hot_exc)
                 log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
                 raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
             _breaker.record_failure(tier)
@@ -393,8 +475,13 @@ async def resilient_stream(
                     except asyncio.TimeoutError:
                         pass
 
-                # Check if primary task completed (sentinel means stream ended)
-                if primary_task and primary_task.done():
+                # Check if primary task completed (sentinel means stream ended).
+                # Skipped once a fallback stream is active: the finished/cancelled
+                # primary must not be re-inspected on every poll — .exception() on a
+                # hedge-cancelled task raises CancelledError, and a failed primary
+                # would re-enter the error branch and break/raise, killing the
+                # still-running fallback stream mid-flight.
+                if not fallback_active and primary_task and primary_task.done():
                     exc = primary_task.exception()
                     if exc:
                         if _is_server_busy(exc):
@@ -411,6 +498,16 @@ async def resilient_stream(
                                     _fill_queue(_stream_llm(tier, messages, primary_model), primary_queue)
                                 )
                                 ttft_deadline = time.monotonic() + TTFT_HEDGE_SECONDS
+                                continue
+                            _note_load_reject()
+                            hot = await asyncio.to_thread(_hot_fallback_model, tier)
+                            if hot and not fallback_active and not got_primary_token:
+                                log.warning("ml01 rejecting model loads — streaming tier %r on resident model %r", tier, hot)
+                                fallback_task = asyncio.create_task(
+                                    _fill_queue(_stream_llm(tier, messages, hot), fallback_queue)
+                                )
+                                fallback_active = True
+                                is_fallback = True
                                 continue
                             log.warning("ML01 server busy for tier %r — stopping stream after %d retries", tier, busy_retries)
                             raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc

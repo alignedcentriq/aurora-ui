@@ -530,7 +530,7 @@ async def llm_health():
     status: "ok" (reachable, all breakers closed), "degraded" (reachable but at least
     one tier's circuit breaker is open — fallback models are serving that tier), or
     "down" (Ollama unreachable — VPN required from outside office)."""
-    from app.services.llm_resilience import get_breaker_status
+    from app.services.llm_resilience import get_breaker_status, get_load_reject_status
     import urllib.request
 
     base = settings.AGENT_BASE_URL.rsplit("/v1", 1)[0]
@@ -545,24 +545,55 @@ async def llm_health():
 
     reachable = await asyncio.to_thread(_probe)
     breakers = get_breaker_status()
+    load_rejects = get_load_reject_status()
     if not reachable:
         status = "down"
-    elif any(state == "open" for state in breakers.values()):
+    elif any(state == "open" for state in breakers.values()) or load_rejects["recent"]:
+        # "recent" load-rejects: ml01 is up but refusing to load non-resident
+        # models — chats are being served by the resident-model rescue path.
         status = "degraded"
     else:
         status = "ok"
-    return {"status": status, "ollama_reachable": reachable, "circuit_breakers": breakers}
+    return {
+        "status": status,
+        "ollama_reachable": reachable,
+        "circuit_breakers": breakers,
+        "ml01_load_rejects": load_rejects,
+    }
 
 @app.get("/api/chat/load")
 async def chat_load():
     """Live concurrency-gate stats + circuit breaker states — handy while load testing."""
     stats = await chat_gate.stats()
     try:
-        from app.services.llm_resilience import get_breaker_status
+        from app.services.llm_resilience import get_breaker_status, get_load_reject_status
         stats["circuit_breakers"] = get_breaker_status()
+        stats["ml01_load_rejects"] = get_load_reject_status()
     except Exception:
         pass
     return stats
+
+
+@app.get("/api/chat/background-answer/{session_id}")
+async def get_background_answer(session_id: str, x_user_email: Optional[str] = Header(None)):
+    """The finished answer for a request whose client left mid-queue.
+
+    Populated by the chat worker when it completes a generation after the
+    requester disconnected (see the background-delivery block in /api/chat).
+    Only served back to the same user the request belonged to."""
+    from app.services import background_answers
+
+    payload = background_answers.fetch(session_id)
+    requester = (x_user_email or settings.DEFAULT_USER_EMAIL).strip().lower()
+    if not payload or (payload.get("user_email") or "").strip().lower() != requester:
+        return {"ready": False}
+    return {
+        "ready": True,
+        "question": payload.get("question"),
+        "answer": payload.get("answer"),
+        "domain": payload.get("domain"),
+        "completed_at": payload.get("completed_at"),
+    }
 
 
 @app.post("/api/warmup")
@@ -1510,7 +1541,12 @@ async def chat(
     # never block on the live MS Graph call. input_data is assembled lazily there.
     config = {"configurable": {"thread_id": request.session_id}}
 
-    async def generate():
+    # Shared state between the SSE relay and the generation worker.
+    #   streamed    — the first answer token has been sent to the client
+    #   client_gone — the HTTP client disconnected (navigated away or Stop)
+    st = {"client_gone": False, "streamed": False}
+
+    async def _generate():
         from app.models import AiRequestLog, AiLlmCallLog
 
         # ── Global kill switch (IT) ─────────────────────────────────────
@@ -1636,11 +1672,34 @@ async def chat(
         # keepalives to the client while it waits; once we hold a slot, a
         # heartbeat keeps its lease alive so it can't leak if this worker dies.
         slot = None
+        waiter_token = None
+        # Identity attached to our queue spot / slot so the Model Controls
+        # "live traffic" view can show whose request occupies each one.
+        gate_meta = {
+            "email": user_email,
+            "snippet": "(private chat)" if request.is_private else request.message[:80],
+            "since": time.time(),
+        }
         async for kind, payload in chat_gate.acquire():
             if kind == "queued":
-                yield f"data: {json.dumps({'type': 'queued', 'message': 'High demand right now — holding your place in line…'})}\n\n"
+                waiter_token = payload
+                await chat_gate.annotate(waiter_token, gate_meta)
+                pos = await chat_gate.queue_position(waiter_token)
+                queued_msg = (
+                    f"High demand right now — you're #{pos} in line. Your answer will "
+                    "generate as soon as a slot frees up; feel free to keep this open."
+                    if pos else
+                    "High demand right now — holding your place in line…"
+                )
+                yield f"data: {json.dumps({'type': 'queued', 'position': pos, 'message': queued_msg})}\n\n"
             elif kind == "keepalive":
-                yield ": keepalive\n\n"
+                # Refresh the client's queue position with each keepalive so the
+                # wait feels alive ("#3 in line… #2… #1") instead of a dead spinner.
+                pos = await chat_gate.queue_position(waiter_token) if waiter_token else None
+                if pos:
+                    yield f"data: {json.dumps({'type': 'queued', 'position': pos, 'message': f'Still in line — #{pos}…'})}\n\n"
+                else:
+                    yield ": keepalive\n\n"
             elif kind in ("busy", "timeout"):
                 busy_msg = (
                     "Centriq is handling a lot of requests right now. "
@@ -1651,6 +1710,7 @@ async def chat(
                 return
             elif kind == "acquired":
                 slot = payload
+                await chat_gate.annotate(slot, {**gate_meta, "since": time.time()})
 
         heartbeat_task = asyncio.ensure_future(chat_gate.slot_heartbeat(slot))
 
@@ -1670,7 +1730,12 @@ async def chat(
 
         try:
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
-                if await raw_request.is_disconnected():
+                if not st["client_gone"] and await raw_request.is_disconnected():
+                    st["client_gone"] = True
+                # Client left mid-answer (Stop): abort to free the GPU. Client left
+                # BEFORE the first token (still queued/thinking): keep generating —
+                # the answer is delivered via the nudge bell when it completes.
+                if st["client_gone"] and st["streamed"]:
                     break
                 event_type = event.get("event", "")
 
@@ -1781,6 +1846,8 @@ async def chat(
                             if isinstance(content, str) and content:
                                 if ttft_ms is None:
                                     ttft_ms = int((time.time() - start_time) * 1000)
+                                if not st["client_gone"]:
+                                    st["streamed"] = True
                                 accumulated_text += content
                                 yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
@@ -1952,6 +2019,91 @@ async def chat(
                 yield f"data: {json.dumps({'type': 'warning', 'message': 'Semantic routing is warming up — answer accuracy should improve on your next message.'})}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
+
+        # ── Background delivery: the user left while this request was still in
+        # the queue (or thinking). Positive responses only — errors, refusals,
+        # and soft-failures are dropped silently; the user already moved on.
+        if (
+            st["client_gone"]
+            and not request.is_private
+            and not error_msg
+            and final_message
+            and not _REFUSAL_RE.search(final_message)
+        ):
+            try:
+                from app.services import background_answers, nudge_service
+                background_answers.store(request.session_id, {
+                    "user_email": user_email,
+                    "question": request.message,
+                    "answer": final_message,
+                    "domain": routed_domain,
+                    "completed_at": time.time(),
+                })
+                preview = " ".join(final_message.strip().split())
+                if len(preview) > 160:
+                    preview = preview[:157] + "…"
+                _ndb = SessionLocal()
+                try:
+                    nudge_service.upsert(_ndb, {
+                        "user_email": user_email,
+                        "nudge_type": "answer_ready",
+                        "dedup_key": f"answer_ready:{request.session_id}:{int(start_time)}",
+                        "title": "Your answer is ready",
+                        "body": (
+                            f"“{request.message[:80]}” finished while you were away — "
+                            f"reopen the chat to see it. {preview}"
+                        ),
+                        "severity": "info",
+                        "action_payload": {"session_id": request.session_id},
+                        "entity_type": "chat_session",
+                        "entity_id": request.session_id,
+                    })
+                    _ndb.commit()
+                finally:
+                    _ndb.close()
+                logger.info("[chat] background answer delivered for session %s", request.session_id)
+            except Exception:
+                logger.exception("[chat] background answer delivery failed")
+
+    async def generate():
+        """SSE relay that decouples generation from the HTTP connection.
+
+        The worker task runs _generate() to completion; this generator only
+        forwards its SSE lines. If the client disconnects BEFORE the first
+        answer token (still queued, or thinking), the worker is left running —
+        the finished answer is delivered via the nudge bell + the
+        background-answer store instead of being thrown away. If the client
+        disconnects mid-answer (Stop button), the worker is cancelled, matching
+        the previous behavior.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _pump():
+            try:
+                async for line in _generate():
+                    if not st["client_gone"]:
+                        await queue.put(line)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[chat] generation worker crashed")
+            finally:
+                if not st["client_gone"]:
+                    await queue.put(None)
+
+        worker = asyncio.create_task(_pump())
+        try:
+            while True:
+                line = await queue.get()
+                if line is None:
+                    break
+                yield line
+        finally:
+            # Runs on normal completion AND on client disconnect (Starlette
+            # cancels this relay). No awaits here — cancellation-safe.
+            st["client_gone"] = True
+            if st["streamed"] and not worker.done():
+                worker.cancel()
 
     return StreamingResponse(
         generate(),
