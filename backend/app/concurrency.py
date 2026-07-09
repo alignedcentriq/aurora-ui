@@ -89,6 +89,25 @@ class BaseChatGate:
     async def stats(self) -> dict:
         raise NotImplementedError
 
+    # ── request identity (who is running / waiting) ──────────────────────
+    # Best-effort metadata attached to a slot/waiter token so the Model
+    # Controls "live traffic" view can show WHOSE request occupies each slot
+    # or queue spot. Never raises; a metadata blip must not affect admission.
+    async def annotate(self, token: Optional[str], info: dict) -> None:
+        raise NotImplementedError
+
+    async def remove_annotation(self, token: Optional[str]) -> None:
+        raise NotImplementedError
+
+    async def queue_position(self, waiter: str) -> Optional[int]:
+        """1-based position of *waiter* in the queue (by enqueue time), or None."""
+        raise NotImplementedError
+
+    async def detailed_stats(self) -> dict:
+        """stats() plus per-request identity: ``running``/``waiting`` lists of
+        {token-less} entries {email, snippet, since, position?}."""
+        raise NotImplementedError
+
     # ── shared acquire flow ──────────────────────────────────────────────
     async def acquire(self) -> AsyncIterator[Step]:
         slot = await self._try_acquire()
@@ -101,7 +120,9 @@ class BaseChatGate:
             yield ("busy", None)  # queue is full — reject fast
             return
 
-        yield ("queued", None)
+        # Expose the waiter token so the caller can annotate it with the
+        # requesting user and ask for live queue positions while waiting.
+        yield ("queued", waiter)
 
         removed = False
 
@@ -141,22 +162,25 @@ class InProcessChatGate(BaseChatGate):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._active = 0
-        self._waiting = 0
+        self._slots: dict[str, float] = {}     # slot token → acquired_at
+        self._waiters: dict[str, float] = {}   # waiter token → enqueued_at (insertion-ordered)
+        self._meta: dict[str, dict] = {}       # token → {email, snippet, ...}
         self._lock = asyncio.Lock()
 
     async def _try_acquire(self) -> Optional[str]:
         async with self._lock:
-            if self._active < self.max_concurrency:
-                self._active += 1
-                return uuid.uuid4().hex
+            if len(self._slots) < self.max_concurrency:
+                token = uuid.uuid4().hex
+                self._slots[token] = time.time()
+                return token
         return None
 
     async def _register_waiter(self) -> Optional[str]:
         async with self._lock:
-            if self._waiting < self.max_queue:
-                self._waiting += 1
-                return uuid.uuid4().hex
+            if len(self._waiters) < self.max_queue:
+                token = uuid.uuid4().hex
+                self._waiters[token] = time.time()
+                return token
         return None
 
     async def _renew_waiter(self, waiter: str) -> None:
@@ -164,7 +188,8 @@ class InProcessChatGate(BaseChatGate):
 
     async def _remove_waiter(self, waiter: str) -> None:
         async with self._lock:
-            self._waiting = max(0, self._waiting - 1)
+            self._waiters.pop(waiter, None)
+            self._meta.pop(waiter, None)
 
     async def slot_heartbeat(self, slot: str) -> None:
         # No lease to renew in-process; just park until cancelled.
@@ -172,17 +197,56 @@ class InProcessChatGate(BaseChatGate):
             await asyncio.sleep(3600)
 
     async def release(self, slot: Optional[str]) -> None:
+        if not slot:
+            return
         async with self._lock:
-            self._active = max(0, self._active - 1)
+            self._slots.pop(slot, None)
+            self._meta.pop(slot, None)
 
     async def stats(self) -> dict:
         return {
             "backend": "memory",
-            "active": self._active,
-            "waiting": self._waiting,
+            "active": len(self._slots),
+            "waiting": len(self._waiters),
             "max_concurrency": self.max_concurrency,
             "max_queue": self.max_queue,
         }
+
+    async def annotate(self, token: Optional[str], info: dict) -> None:
+        if not token:
+            return
+        async with self._lock:
+            self._meta[token] = dict(info)
+
+    async def remove_annotation(self, token: Optional[str]) -> None:
+        if not token:
+            return
+        async with self._lock:
+            self._meta.pop(token, None)
+
+    async def queue_position(self, waiter: str) -> Optional[int]:
+        async with self._lock:
+            # Dict preserves insertion order == true arrival order (timestamps
+            # can tie when two requests enqueue in the same tick).
+            for i, tok in enumerate(self._waiters):
+                if tok == waiter:
+                    return i + 1
+        return None
+
+    async def detailed_stats(self) -> dict:
+        async with self._lock:
+            now = time.time()
+            running = [
+                {**self._meta.get(tok, {}), "since": since, "elapsed_s": round(now - since, 1)}
+                for tok, since in sorted(self._slots.items(), key=lambda kv: kv[1])
+            ]
+            waiting = [
+                {**self._meta.get(tok, {}), "since": since, "elapsed_s": round(now - since, 1),
+                 "position": i + 1}
+                for i, (tok, since) in enumerate(sorted(self._waiters.items(), key=lambda kv: kv[1]))
+            ]
+        base = await self.stats()
+        return {**base, "running": running, "waiting_list": waiting}
 
 
 # Atomic "take a lease if under the limit" for a sorted set keyed by expiry.
@@ -215,6 +279,7 @@ class RedisChatGate(BaseChatGate):
     WAITER_TTL = 30.0     # a queued waiter must be renewed within this window
     SLOTS_KEY = "chat:gate:slots"
     WAITERS_KEY = "chat:gate:waiters"
+    META_KEY = "chat:gate:meta"   # hash: token → JSON {email, snippet, since}
 
     def __init__(self, client, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -244,6 +309,7 @@ class RedisChatGate(BaseChatGate):
     async def _remove_waiter(self, waiter: str) -> None:
         try:
             await self._r.zrem(self.WAITERS_KEY, waiter)
+            await self._r.hdel(self.META_KEY, waiter)
         except Exception:  # noqa: BLE001
             pass
 
@@ -262,6 +328,7 @@ class RedisChatGate(BaseChatGate):
             return
         try:
             await self._r.zrem(self.SLOTS_KEY, slot)
+            await self._r.hdel(self.META_KEY, slot)
         except Exception:  # noqa: BLE001
             pass
 
@@ -281,6 +348,73 @@ class RedisChatGate(BaseChatGate):
             "max_concurrency": self.max_concurrency,
             "max_queue": self.max_queue,
         }
+
+    async def annotate(self, token: Optional[str], info: dict) -> None:
+        if not token:
+            return
+        try:
+            import json
+            await self._r.hset(self.META_KEY, token, json.dumps(info))
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def remove_annotation(self, token: Optional[str]) -> None:
+        if not token:
+            return
+        try:
+            await self._r.hdel(self.META_KEY, token)
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _members_with_meta(self, key: str) -> list[tuple[str, dict]]:
+        """(token, entry) pairs for live tokens in *key*, oldest-first by the
+        annotation's ``since`` with the token as a deterministic tie-breaker
+        (timestamps can tie when two requests enqueue in the same tick;
+        un-annotated tokens sort last)."""
+        import json
+        tokens = await self._r.zrange(key, 0, -1)
+        if not tokens:
+            return []
+        raw = await self._r.hmget(self.META_KEY, tokens)
+        now = time.time()
+        entries = []
+        for tok, blob in zip(tokens, raw):
+            try:
+                info = json.loads(blob) if blob else {}
+            except Exception:  # noqa: BLE001
+                info = {}
+            since = float(info.get("since") or now)
+            entries.append((tok, {**info, "since": since, "elapsed_s": round(now - since, 1)}))
+        entries.sort(key=lambda pair: (pair[1]["since"], pair[0]))
+        return entries
+
+    async def queue_position(self, waiter: str) -> Optional[int]:
+        try:
+            entries = await self._members_with_meta(self.WAITERS_KEY)
+            for i, (tok, _) in enumerate(entries):
+                if tok == waiter:
+                    return i + 1
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    async def detailed_stats(self) -> dict:
+        base = await self.stats()
+        try:
+            running = [entry for _, entry in await self._members_with_meta(self.SLOTS_KEY)]
+            waiting = [entry for _, entry in await self._members_with_meta(self.WAITERS_KEY)]
+            for i, e in enumerate(waiting):
+                e["position"] = i + 1
+            # GC: drop annotations whose token no longer holds a slot or queue spot.
+            live = set(await self._r.zrange(self.SLOTS_KEY, 0, -1)) | set(
+                await self._r.zrange(self.WAITERS_KEY, 0, -1)
+            )
+            stale = [t for t in await self._r.hkeys(self.META_KEY) if t not in live]
+            if stale:
+                await self._r.hdel(self.META_KEY, *stale)
+        except Exception:  # noqa: BLE001
+            running, waiting = [], []
+        return {**base, "running": running, "waiting_list": waiting}
 
 
 def _build_chat_gate() -> BaseChatGate:

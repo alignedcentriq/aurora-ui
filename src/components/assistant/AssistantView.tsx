@@ -523,9 +523,30 @@ const DOC_TYPE_RE =
 const DOC_GEN_RE =
   /\b(?:generate|create|make|draft|prepare|issue)\b.{0,60}\b(?:letter|certificate|document)\b/i;
 
+// Placeholder turn left when the user navigates away while their request is still
+// waiting in the server queue (pre-first-token). The generation keeps running
+// server-side; the pickup effect below swaps this for the finished answer, and the
+// nudge bell notifies when it's ready. The prefix doubles as the detection marker.
+const BG_PENDING_PREFIX = "⏳ Still working on this in the background";
+const BG_PENDING_TEXT =
+  `${BG_PENDING_PREFIX} — you left while it was waiting in line. ` +
+  "You'll get a bell notification when it's ready, and the answer will appear here when you come back.";
+
 // ── My-requests navigation ────────────────────────────────────────────────────
 const MY_REQUESTS_VIEW_RE =
   /\b(?:show|see|view|check|open|list|find|what(?:'s|\s+are)?)\b.{0,30}\bmy\b.{0,30}\b(?:requests?|leave\s+(?:requests?|history|applications?)|it\s+tickets?|support\s+tickets?|travel\s+(?:requests?|history)|expense\s+claims?|escalations?|applications?|submissions?|documents?)\b/i;
+
+const TOP_PROMPTS_POOL = [
+  "What's my leave balance?",
+  "Apply for casual leave next Monday",
+  "Cancel my leave on the 14th",
+  "What are the holidays this month?",
+  "What's next in my onboarding?",
+  "What's the maternity leave policy?",
+  "How do I claim travel expenses?",
+  "Who is the manager for Project Aurora?",
+  "Show me my payslip for last month",
+];
 
 export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?: boolean; portalContext?: string }) {
   const {
@@ -583,6 +604,19 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
   // user opens the access management portal context so custom roles are included.
   const [accessRoles, setAccessRoles] = useState<string[]>(_FALLBACK_ROLES);
 
+  const [topPrompts, setTopPrompts] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Simulate fetching most used prompts that change over time based on data
+    const fetchTopPrompts = () => {
+      const shuffled = [...TOP_PROMPTS_POOL].sort(() => 0.5 - Math.random());
+      setTopPrompts(shuffled.slice(0, 3));
+    };
+    fetchTopPrompts();
+    const interval = setInterval(fetchTopPrompts, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleOpenSavePrompt = (text: string) => {
     setPromptToSave(text);
     setPromptLabel(text.slice(0, 30));
@@ -634,13 +668,13 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       .then((data) => {
         if (Array.isArray(data)) urlLinksRef.current = data;
       })
-      .catch(() => {});
+      .catch(() => { });
     fetch("/api/forms/list", { headers })
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
         if (Array.isArray(data)) formsRef.current = data;
       })
-      .catch(() => {});
+      .catch(() => { });
     // Role-aware "what can you do" starters + live signals for the empty state.
     fetch("/api/capabilities", { headers })
       .then((r) => (r.ok ? r.json() : null))
@@ -649,7 +683,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           setCaps({ starters: data.starters, live: Array.isArray(data.live) ? data.live : [] });
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [user?.email, user?.role]);
 
   // Fetch live roles when the copilot opens on the Access Management page so
@@ -669,7 +703,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           setAccessRoles(roleStrings);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [portalContext, user?.email, user?.role]);
 
   // Open a form from the announcement banner image click.
@@ -713,6 +747,10 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
   // independently and a stopped abort isn't mistaken for a timeout.
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
   const stoppedRef = useRef<Set<string>>(new Set());
+  // Threads whose abort came from navigating away (unmount) rather than the Stop
+  // button — those leave a "still working in the background" placeholder instead
+  // of "Response stopped." (the server finishes the answer and nudges the user).
+  const backgroundRef = useRef<Set<string>>(new Set());
   // The copilot sidebar keeps streaming in the background if it's closed mid-response —
   // the fetch has no consumer left, but nothing told it to stop. Abort every in-flight
   // request this instance owns on unmount (sidebar close, portal navigation away, etc.)
@@ -722,11 +760,47 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
     return () => {
       controllersRef.current.forEach((controller, threadId) => {
         stoppedRef.current.add(threadId);
+        backgroundRef.current.add(threadId);
         controller.abort();
         setThinking(threadId, false);
       });
     };
   }, [setThinking]);
+  // Pickup for background-completed answers: while the active thread's last turn
+  // is the "still working in the background" placeholder, poll the server (which
+  // kept generating after we disconnected and stores the result for 24h) and swap
+  // the placeholder for the real answer as soon as it's ready.
+  useEffect(() => {
+    if (!activeId) return;
+    const thread = threads[activeId];
+    const last = thread?.turns[thread.turns.length - 1];
+    if (!last || last.role !== "ai" || !last.text?.startsWith(BG_PENDING_PREFIX)) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(`/api/chat/background-answer/${encodeURIComponent(activeId)}`, {
+          headers: { ...(user?.email ? { "x-user-email": user.email } : {}) },
+        });
+        if (!res.ok || cancelled) return;
+        const d = await res.json();
+        if (d.ready && d.answer && !cancelled) {
+          updateLastAITurn(activeId, {
+            text: d.answer as string,
+            domain: (d.domain as string) ?? undefined,
+            streaming: false,
+          });
+        }
+      } catch {
+        /* still pending — next poll will retry */
+      }
+    };
+    check();
+    const id = setInterval(check, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [activeId, threads, updateLastAITurn, user?.email]);
   // Set right before a recursive send() re-run so the /directory intercept below skips
   // itself once (the query already failed both the regex and LLM-SQL fallback) and falls
   // through to the general backend agent instead of looping.
@@ -809,8 +883,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
     activeThread.turns.length > 0 ? activeThread.turns[activeThread.turns.length - 1] : undefined;
   const pendingChoice =
     lastTurn?.role === "ai" &&
-    lastTurn.interactive?.type === "quick_choice" &&
-    lastTurn.interactive.data
+      lastTurn.interactive?.type === "quick_choice" &&
+      lastTurn.interactive.data
       ? (lastTurn.interactive.data as import("@/lib/chat-store").QuickChoiceData)
       : null;
 
@@ -1198,663 +1272,626 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       // a scoped context, so every message goes straight to the backend — generic interceptors
       // like "years of experience" or "skills" must not hijack portal-specific queries.
       if (!activeMode && !portalContext) {
-      // ── Document generation navigation ─────────────────────────────────────
-      const isDocGen =
-        (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
-        /\b(?:generate|create|make|draft|prepare|issue|get|need|want|request)\b/i.test(text) &&
-        !/\b(?:expense|claim|reimburse)\b/i.test(text);
-      if (isDocGen) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Zoho People handles document generation. Pick your template and fill it in below — you'll generate, download, or e-sign it directly in Zoho.",
-          interactive: { type: "document_generation_form" },
-          domain: "hr",
-        });
-        setInput("");
-        return;
-      }
-
-      // ── My-requests navigation ─────────────────────────────────────────────
-      if (MY_REQUESTS_VIEW_RE.test(text)) {
-        const statusFilter: "all" | "open" | "in-progress" | "closed" =
-          /\b(pending|open|waiting|submitted|new)\b/i.test(text)
-            ? "open"
-            : /\b(approved|done|completed|resolved|closed|finished|processed|cancelled)\b/i.test(
-                  text,
-                )
-              ? "closed"
-              : /\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(
-                    text,
-                  )
-                ? "in-progress"
-                : "all";
-        const statusLabel: Record<string, string> = {
-          all: "all",
-          open: "pending",
-          "in-progress": "in-progress",
-          closed: "approved / closed",
-        };
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: `Opening **My Requests** — showing ${statusLabel[statusFilter]} requests.\n\n<<NAV:/my-requests|View My Requests>>`,
-        });
-        setInput("");
-        window.setTimeout(() => {
-          navigate({ to: "/my-requests" });
-          window.dispatchEvent(
-            new CustomEvent("centriq:requests-filter", { detail: { status: statusFilter } }),
-          );
-        }, 400);
-        return;
-      }
-
-      // Intercept parking sticker requests
-      if (
-        text.toLowerCase().includes("parking sticker") ||
-        (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Please fill in your vehicle details below to submit a parking sticker request.",
-          interactive: { type: "parking_form" },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept travel request submissions (exclude document/letter requests like "travel support letter")
-      const travelLower = text.toLowerCase();
-      if (
-        !DOC_TYPE_RE.test(text) &&
-        (travelLower.includes("travel") ||
-          travelLower.includes("trip") ||
-          travelLower.includes("visa")) &&
-        (travelLower.includes("business") ||
-          travelLower.includes("official") ||
-          travelLower.includes("work") ||
-          travelLower.includes("request") ||
-          travelLower.includes("apply") ||
-          travelLower.includes("submit") ||
-          travelLower.includes("create") ||
-          travelLower.includes("plan") ||
-          travelLower.includes("book") ||
-          travelLower.includes("need to travel") ||
-          travelLower.includes("travelling for"))
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Let me help you submit a business travel request. Please fill in the details below.",
-          interactive: { type: "travel_request_form" },
-          domain: "admin",
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept travel expense submissions
-      if (
-        (travelLower.includes("travel") || travelLower.includes("trip")) &&
-        (travelLower.includes("expense") ||
-          travelLower.includes("claim") ||
-          travelLower.includes("back from") ||
-          travelLower.includes("post-trip") ||
-          travelLower.includes("post trip") ||
-          travelLower.includes("after trip"))
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Welcome back! Let me help you submit your post-trip expense claim.",
-          interactive: { type: "travel_expense_form" },
-          domain: "admin",
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept book-related intents → route to /books or /my-library directly.
-      // This is the spec's "User Query → Intent Detection → Route to Page" path.
-      const bookIntent = detectBookIntent(text);
-      if (bookIntent) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: `${bookIntent.reply}\n\n<<NAV:${bookIntent.path}|${bookIntent.label}>>`,
-          domain: "admin",
-        });
-        setInput("");
-        // Auto-navigate a moment later so the message is visible first.
-        window.setTimeout(() => navigate({ to: bookIntent.path }), 400);
-        return;
-      }
-
-      // Intercept room booking requests.
-      // Matches: "book/reserve a room", "book [named room] for/on/at [time or date]"
-      // Does NOT rely on hardcoded room names — uses structure instead.
-      const isRoomBooking =
-        /\b(book|reserve)\b.{0,40}\b(rooms?|conference|meeting rooms?|conf rooms?)\b/i.test(text) ||
-        /\b(rooms?|conference rooms?|meeting rooms?)\b.{0,40}\b(book|reserve|available|availability|free)\b/i.test(
-          text,
-        ) ||
-        /\b(available|free|availability)\b.{0,25}\b(rooms?|meeting rooms?|conference rooms?)\b/i.test(
-          text,
-        ) ||
-        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(
-          text,
-        ) ||
-        // "book salween room for Interview from 4 am to 4:30 am"
-        /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+for\s+\w[\w\s]{0,30}\s+from\s+\d{1,2}/i.test(
-          text,
-        );
-      if (isRoomBooking) {
-        const prefill = parseRoomBooking(text);
-        const hasContext = !!(
-          prefill.roomHint &&
-          prefill.date &&
-          prefill.startTime &&
-          prefill.endTime
-        );
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: hasContext
-            ? "On it — checking availability and booking your room."
-            : "Let's book a meeting room. Pick your date, time, and duration — I'll show you what's available.",
-          interactive: { type: "room_booking_form", data: prefill },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept room cancellation requests
-      if (
-        /\b(cancel|cancell?ation|delete|remove)\b.{0,30}\b(booking|reservation|room|meeting room|conference)\b/i.test(
-          text,
-        ) ||
-        /\b(booking|reservation|room booking)\b.{0,30}\b(cancel|delete|remove)\b/i.test(text)
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here are your upcoming room bookings — select one to cancel.",
-          interactive: { type: "cancel_booking_form" },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept leave cancellation / withdrawal requests
-      if (
-        /\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time[- ]?off)\b/i.test(
-          text,
-        ) ||
-        /\b(leave|time[- ]?off)\b.{0,30}\b(cancel|withdraw|revoke|recall)\b/i.test(text)
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here are your pending and approved leaves — select one to cancel.",
-          interactive: { type: "cancel_leave_form" },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept leave *application* requests → embed the Zoho People apply-leave form.
-      // Placed AFTER cancellation so "cancel my leave" still wins. Excludes balance/policy
-      // questions ("how many leaves", "leave balance", "leave policy") which aren't form actions.
-      const leaveLower = text.toLowerCase();
-      const isApplyLeave =
-        (/\b(apply|book|take|request|submit|put in|raise|file)\b.{0,30}\b(leave|time[- ]?off|day off|days off|vacation|pto)\b/i.test(
-          text,
-        ) ||
-          /\b(leave|time[- ]?off|vacation|pto)\b.{0,20}\b(application|request)\b/i.test(text) ||
-          /\bi\s+(want|need|would like|wish)\s+(to\s+)?(take|apply|book|request)\b.{0,20}\b(leave|time[- ]?off|day off|vacation)\b/i.test(
-            text,
-          )) &&
-        !/\b(balance|how many|remaining|left|available|status|policy|cancel|withdraw|revoke|recall)\b/i.test(
-          text,
-        );
-      if (isApplyLeave) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Let's apply for your leave. Fill in the Zoho People leave form below and submit it there.",
-          interactive: { type: "leave_application_form" },
-          domain: "hr",
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept "show my schedule / my meetings / upcoming bookings" — read-only calendar pull, zero LLM.
-      if (
-        /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(
-          text,
-        ) ||
-        /\bwhat('?s| is| are)\b.{0,30}\b(my )?(schedule|meetings?|calendar|agenda)\b/i.test(text)
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here's what's on your calendar.",
-          interactive: { type: "my_schedule" },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept "update/add my skills / certifications", "set primary skill",
-      // "years of experience". Self-serve for all roles — zero LLM. Structural, not name-based.
-      const isSkillsEditor =
-        /\b(update|edit|add|change|manage|set)\b.{0,30}\b(skill|skills|certification|certificate|cert|expertise)\b/i.test(
-          text,
-        ) ||
-        /\b(skill|skills|certification|certificate|expertise)\b.{0,30}\b(update|edit|add|upload|manage|change)\b/i.test(
-          text,
-        ) ||
-        /\bprimary skill\b/i.test(text) ||
-        /\byears? of experience\b/i.test(text) ||
-        /\bupload\b.{0,20}\bcertif/i.test(text);
-      if (isSkillsEditor) {
-        const m = text.match(
-          /\badd\s+(?:a\s+|an\s+|my\s+)?([A-Za-z][A-Za-z0-9+.# ]{1,30}?)\s+(?:skill|certification|cert)\b/i,
-        );
-        const prefill = { skill: m?.[1]?.trim() };
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here's your skills profile — add or update skills, set your primary skill, years of experience, when you last used it, and attach a certification.",
-          interactive: { type: "skills_editor", data: prefill },
-        });
-        setInput("");
-        return;
-      }
-
-      // Admin commands — only for domain managers; others fall through to chat.
-      const isManager = ["hr", "it", "pmo", "admin"].includes(role);
-
-      // Intercept team attendance requests — Functional Managers only. Zero-LLM, structural.
-      // "generate/show attendance for everyone under me / my team / my hierarchy" -> report view.
-      // "email me / schedule / automate ... attendance ... every month/week/day" -> schedule setup.
-      const mentionsAttendance = /\battendance\b/i.test(text);
-      const mentionsTeamScope =
-        /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(
-          text,
-        );
-      if (role === "functional manager" && mentionsAttendance && mentionsTeamScope) {
-        const isRecurring =
-          /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(
-            text,
-          );
-        addTurn(activeId, { role: "user", text });
-        if (isRecurring) {
-          // Parse cadence cues.
-          const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text)
-            ? "daily"
-            : /\b(weekly|every week|each week)\b/i.test(text)
-              ? "weekly"
-              : /\b(monthly|every month|each month)\b/i.test(text)
-                ? "monthly"
-                : "monthly";
-          const dows = [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
-          ];
-          const dowIdx = dows.findIndex((d) => new RegExp(`\\b${d}\\b`, "i").test(text));
-          const hourM = text.match(/\bat\s+(\d{1,2})\s*(am|pm)?\b/i);
-          let hour: number | undefined;
-          if (hourM) {
-            hour = Number(hourM[1]) % 12;
-            if (/pm/i.test(hourM[2] || "")) hour += 12;
-          }
-          const prefill: Record<string, number | string> = {
-            frequency: dowIdx >= 0 ? "weekly" : freq,
-          };
-          if (dowIdx >= 0) prefill.day_of_week = dowIdx;
-          if (hour !== undefined) prefill.hour = hour;
-          addTurn(activeId, {
-            role: "ai",
-            text: "Let's set up an automated attendance email for your team. Confirm the schedule below.",
-            interactive: { type: "attendance_schedule", data: prefill },
-          });
-        } else {
-          addTurn(activeId, {
-            role: "ai",
-            text: "Here's the attendance for everyone in your reporting hierarchy.",
-            interactive: { type: "team_attendance" },
-          });
-        }
-        setInput("");
-        return;
-      }
-
-      // Intercept "my attendance" — any logged-in employee. Zero-LLM.
-      if (
-        mentionsAttendance &&
-        !mentionsTeamScope &&
-        /\b(my\s+attendance|attendance\s+(this|for)\s+(month|june|july|august|september|october|november|december|january|february|march|april|may)|show\s+(my\s+)?attendance|view\s+(my\s+)?attendance|attendance\s+(summary|report)|days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark)\b/i.test(
-          text,
-        )
-      ) {
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here's your attendance for this month.",
-          interactive: { type: "my_attendance" },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept "create/add an announcement …"
-      if (
-        isManager &&
-        /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)
-      ) {
-        const prefill = parseAnnouncement(text);
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Let's publish an announcement. Review the details below — add a message or let me draft one, then publish.",
-          interactive: { type: "announcement_form", data: prefill },
-        });
-        setInput("");
-        return;
-      }
-
-      // Intercept "update/change the … prompt/guardrail/system prompt …"
-      if (
-        isManager &&
-        /\b(update|change|edit|set|add|configure|tweak)\b.{0,40}\b(prompt|config(?:uration)?|guardrail|system prompt|instruction)\b/i.test(
-          text,
-        )
-      ) {
-        const prefill = parsePromptConfig(text);
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "Here's the prompt configuration — confirm the domain and section, edit the text, then save.",
-          interactive: { type: "prompt_config_form", data: prefill },
-        });
-        setInput("");
-        return;
-      }
-
-      // Information-style questions ("what is the process for reporting…", "how do I…",
-      // "what's the policy on…") must reach the backend so the policy/HR agents can actually
-      // answer them. The leave/URL-link interceptors below are for ACTION intents only —
-      // hijacking a question with an "Open X portal?" card is a misroute.
-      const isInfoQuery =
-        /\bwhat(?:'s|\s+is|\s+are)?\s|\bhow\s+(?:do|can|does|should|to)\b|\bwhy\b|\bexplain\b|\btell\s+me\b|\bprocess\s+(?:for|of|to)\b|\bpolic(?:y|ies)\b|\bprocedure\b|\bguidelines?\b|\bsteps?\s+(?:for|to)\b/i.test(
-          text,
-        );
-
-      // Suffix appended when the user picks "Let the assistant handle it" — prevents
-      // re-interception of the follow-up message. Using endsWith prevents a natural phrase
-      // mid-sentence from accidentally matching.
-      const ASSISTANT_HANDOFF_SUFFIX = " via the assistant";
-
-      // Single-word generic keywords that are too broad to safely trigger a URL/form intercept.
-      // Multi-word phrases are always allowed. This is evaluated by keywordMatches() below.
-      const GENERIC_KEYWORDS = new Set([
-        "request",
-        "requests",
-        "report",
-        "reports",
-        "form",
-        "forms",
-        "ticket",
-        "tickets",
-        "apply",
-        "status",
-        "help",
-        "issue",
-        "issues",
-        "new",
-        "portal",
-        "app",
-        "submit",
-        "my",
-      ]);
-
-      // Shared keyword matcher used by both the URL Library and Form Library intercepts.
-      // Skips single-word keywords that are too generic to safely hijack a message.
-      const keywordMatches = (triggerKeywords: string | undefined, msgText: string): boolean => {
-        if (!triggerKeywords) return false;
-        return triggerKeywords
-          .split(",")
-          .map((k) => k.trim().toLowerCase())
-          .filter(Boolean)
-          .filter((kw) => kw.includes(" ") || (kw.length >= 4 && !GENERIC_KEYWORDS.has(kw)))
-          .some((kw) =>
-            new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(msgText),
-          );
-      };
-
-      // Create-form intent — hoist detection so the intercept block can run BEFORE URL/form
-      // intercepts. Without this, a generic keyword like "requests" on a URL Library link
-      // would hijack "create a form for gym membership reimbursement requests".
-      const isCreateFormIntent =
-        /\b(create|make|build|generate|set\s*up|add|design)\b[\s\S]{0,60}?\bform\b/i.test(text) &&
-        !/\b(fill|submit|open)\b/i.test(text);
-
-      // Edit-an-existing-form intent — admin only. Targets a form the message names, or the
-      // one most recently created/edited this session. Runs BEFORE the create intercept so
-      // "add a date field to the form" revises it rather than spawning a brand-new draft.
-      const editVerb =
-        /\b(add|remove|delete|drop|rename|change|make|set|mark|update|include|require|reorder|move)\b/i.test(
-          text,
-        );
-      const fieldSignal =
-        /\bfield\b/i.test(text) ||
-        /\b(required|optional|mandatory)\b/i.test(text) ||
-        /\b(this|that|the)\s+form\b/i.test(text);
-      // A form explicitly named in the message wins over the last-touched one.
-      const namedForm = formsRef.current.find(
-        (f) =>
-          f.name &&
-          new RegExp(`\\b${f.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text),
-      );
-      const editTarget = namedForm
-        ? { id: namedForm.id, name: namedForm.name }
-        : lastFormRef.current;
-      const isEditFormIntent =
-        role === "admin" &&
-        !isInfoQuery &&
-        editVerb &&
-        fieldSignal &&
-        !!editTarget &&
-        !/\b(fill|submit|open)\b/i.test(text) &&
-        !/\bcreate\b|\bnew\s+form\b/i.test(text);
-
-      if (isEditFormIntent && editTarget) {
-        const capturedId = activeId;
-        addTurn(capturedId, { role: "user", text });
-        setInput("");
-        addTurn(capturedId, {
-          role: "ai",
-          text: `Updating **"${editTarget.name}"** — one moment…`,
-        });
-        const editHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        if (user?.email) editHeaders["X-User-Email"] = user.email;
-        if (user?.role) editHeaders["X-User-Role"] = user.role.toLowerCase();
-        fetch("/api/admin/form-library/generate-edit", {
-          method: "POST",
-          headers: editHeaders,
-          credentials: "include",
-          body: JSON.stringify({ form_id: editTarget.id, instruction: text }),
-        })
-          .then((res) =>
-            res.json().then((data) => {
-              if (res.ok) {
-                const d = data as import("@/lib/chat-store").FormBuilderDraft;
-                if (typeof d.id === "number") lastFormRef.current = { id: d.id, name: d.name };
-                addTurn(capturedId, {
-                  role: "ai",
-                  text: `Here's the revised **"${d.name}"** — review the changes and save when ready.`,
-                  interactive: { type: "form_builder", data: d },
-                });
-              } else {
-                addTurn(capturedId, {
-                  role: "ai",
-                  text: `Could not update the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
-                  isError: true,
-                });
-              }
-            }),
-          )
-          .catch(() => {
-            addTurn(capturedId, {
-              role: "ai",
-              text: "Could not reach the server. Please try again.",
-              isError: true,
-            });
-          });
-        return;
-      }
-
-      // Create-form intercept — admin only. Runs BEFORE leave/URL/form intercepts so a
-      // generic trigger keyword can't steal this intent. Any "create/make/build a form …"
-      // phrasing is accepted: the strict command syntax is parsed locally, everything else
-      // is drafted by the LLM. Either way the admin reviews an editable preview before
-      // anything is created — no silent misinterpretation.
-      if (role === "admin" && isCreateFormIntent && !isInfoQuery) {
-        const capturedId = activeId;
-        addTurn(capturedId, { role: "user", text });
-        setInput("");
-        const parsed = parseFormCommand(text);
-        if (parsed && parsed.fields.length > 0) {
-          addTurn(capturedId, {
-            role: "ai",
-            text: `Here's the draft for **"${parsed.name}"** — review the fields and create it when ready.`,
-            interactive: {
-              type: "form_builder",
-              data: parsed as import("@/lib/chat-store").FormBuilderDraft,
-            },
-          });
-          return;
-        }
-        // Free-form request → let the LLM design the fields, then show the same preview.
-        addTurn(capturedId, { role: "ai", text: "Designing your form — one moment…" });
-        const genHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        if (user?.email) genHeaders["X-User-Email"] = user.email;
-        if (user?.role) genHeaders["X-User-Role"] = user.role.toLowerCase();
-        fetch("/api/admin/form-library/generate", {
-          method: "POST",
-          headers: genHeaders,
-          credentials: "include",
-          body: JSON.stringify({ prompt: text }),
-        })
-          .then((res) =>
-            res.json().then((data) => {
-              if (res.ok) {
-                addTurn(capturedId, {
-                  role: "ai",
-                  text: `Here's a draft of **"${(data as { name: string }).name}"** — edit anything you like, then create it.`,
-                  interactive: {
-                    type: "form_builder",
-                    data: data as import("@/lib/chat-store").FormBuilderDraft,
-                  },
-                });
-              } else {
-                addTurn(capturedId, {
-                  role: "ai",
-                  text: `Could not draft the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
-                  isError: true,
-                });
-              }
-            }),
-          )
-          .catch(() => {
-            addTurn(capturedId, {
-              role: "ai",
-              text: "Could not reach the server. Please try again.",
-              isError: true,
-            });
-          });
-        return;
-      }
-
-      // Intercept leave application intent — offer self-serve vs. assistant-handled choice.
-      // The handoff suffix on the continuation message prevents re-interception.
-      const isLeaveApplication =
-        !isInfoQuery &&
-        !isCreateFormIntent &&
-        !text.endsWith(ASSISTANT_HANDOFF_SUFFIX) &&
-        (/\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(
-          text,
-        ) ||
-          /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
-          /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(
-            text,
-          ));
-      if (isLeaveApplication) {
-        const zohoPeopleLink =
-          urlLinksRef.current.find((l) => /leave|people/i.test(l.purpose ?? "")) ??
-          urlLinksRef.current.find((l) => /people/i.test(l.name) || /leave/i.test(l.name)) ??
-          urlLinksRef.current.find((l) => /zoho/i.test(l.name) && !/expense/i.test(l.name));
-        const zohoLink = zohoPeopleLink?.url ?? "https://people.zoho.com";
-        const zohoName = zohoPeopleLink?.name ?? "Zoho People";
-        addTurn(activeId, { role: "user", text });
-        addTurn(activeId, {
-          role: "ai",
-          text: "How would you like to apply for leave?",
-          interactive: {
-            type: "quick_choice",
-            data: {
-              question: "How would you like to apply for leave?",
-              options: [
-                {
-                  label: `I'll apply myself (${zohoName})`,
-                  action: "link",
-                  value: zohoLink,
-                  icon: "external-link",
-                },
-                {
-                  label: "Let the assistant handle it",
-                  action: "message",
-                  value: `${text}${ASSISTANT_HANDOFF_SUFFIX}`,
-                  icon: "sparkles",
-                },
-              ],
-            },
-          },
-        });
-        setInput("");
-        return;
-      }
-
-      // Generic URL Library intercept — fire for any active link with matching trigger_keywords.
-      // Skipped for create-form, handoff continuations, and information-style questions.
-      // Uses keywordMatches() which filters out single generic words like "requests".
-      if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
-        const triggeredLink = urlLinksRef.current.find((l) =>
-          keywordMatches(l.trigger_keywords, text),
-        );
-        if (triggeredLink) {
+        // ── Document generation navigation ─────────────────────────────────────
+        const isDocGen =
+          (DOC_TYPE_RE.test(text) || DOC_GEN_RE.test(text)) &&
+          /\b(?:generate|create|make|draft|prepare|issue|get|need|want|request)\b/i.test(text) &&
+          !/\b(?:expense|claim|reimburse)\b/i.test(text);
+        if (isDocGen) {
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
             role: "ai",
-            text: `How would you like to access ${triggeredLink.name}?`,
+            text: "Zoho People handles document generation. Pick your template and fill it in below — you'll generate, download, or e-sign it directly in Zoho.",
+            interactive: { type: "document_generation_form" },
+            domain: "hr",
+          });
+          setInput("");
+          return;
+        }
+
+        // ── My-requests navigation ─────────────────────────────────────────────
+        if (MY_REQUESTS_VIEW_RE.test(text)) {
+          const statusFilter: "all" | "open" | "in-progress" | "closed" =
+            /\b(pending|open|waiting|submitted|new)\b/i.test(text)
+              ? "open"
+              : /\b(approved|done|completed|resolved|closed|finished|processed|cancelled)\b/i.test(
+                text,
+              )
+                ? "closed"
+                : /\b(in[- ]?progress|processing|under\s+review|in\s+review|acknowledged|active)\b/i.test(
+                  text,
+                )
+                  ? "in-progress"
+                  : "all";
+          const statusLabel: Record<string, string> = {
+            all: "all",
+            open: "pending",
+            "in-progress": "in-progress",
+            closed: "approved / closed",
+          };
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: `Opening **My Requests** — showing ${statusLabel[statusFilter]} requests.\n\n<<NAV:/my-requests|View My Requests>>`,
+          });
+          setInput("");
+          window.setTimeout(() => {
+            navigate({ to: "/my-requests" });
+            window.dispatchEvent(
+              new CustomEvent("centriq:requests-filter", { detail: { status: statusFilter } }),
+            );
+          }, 400);
+          return;
+        }
+
+        // Intercept parking sticker requests
+        if (
+          text.toLowerCase().includes("parking sticker") ||
+          (text.toLowerCase().includes("parking") && text.toLowerCase().includes("sticker"))
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Please fill in your vehicle details below to submit a parking sticker request.",
+            interactive: { type: "parking_form" },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept travel request submissions (exclude document/letter requests like "travel support letter")
+        const travelLower = text.toLowerCase();
+        if (
+          !DOC_TYPE_RE.test(text) &&
+          (travelLower.includes("travel") ||
+            travelLower.includes("trip") ||
+            travelLower.includes("visa")) &&
+          (travelLower.includes("business") ||
+            travelLower.includes("official") ||
+            travelLower.includes("work") ||
+            travelLower.includes("request") ||
+            travelLower.includes("apply") ||
+            travelLower.includes("submit") ||
+            travelLower.includes("create") ||
+            travelLower.includes("plan") ||
+            travelLower.includes("book") ||
+            travelLower.includes("need to travel") ||
+            travelLower.includes("travelling for"))
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Let me help you submit a business travel request. Please fill in the details below.",
+            interactive: { type: "travel_request_form" },
+            domain: "admin",
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept travel expense submissions
+        if (
+          (travelLower.includes("travel") || travelLower.includes("trip")) &&
+          (travelLower.includes("expense") ||
+            travelLower.includes("claim") ||
+            travelLower.includes("back from") ||
+            travelLower.includes("post-trip") ||
+            travelLower.includes("post trip") ||
+            travelLower.includes("after trip"))
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Welcome back! Let me help you submit your post-trip expense claim.",
+            interactive: { type: "travel_expense_form" },
+            domain: "admin",
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept book-related intents → route to /books or /my-library directly.
+        // This is the spec's "User Query → Intent Detection → Route to Page" path.
+        const bookIntent = detectBookIntent(text);
+        if (bookIntent) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: `${bookIntent.reply}\n\n<<NAV:${bookIntent.path}|${bookIntent.label}>>`,
+            domain: "admin",
+          });
+          setInput("");
+          // Auto-navigate a moment later so the message is visible first.
+          window.setTimeout(() => navigate({ to: bookIntent.path }), 400);
+          return;
+        }
+
+        // Intercept room booking requests.
+        // Matches: "book/reserve a room", "book [named room] for/on/at [time or date]"
+        // Does NOT rely on hardcoded room names — uses structure instead.
+        const isRoomBooking =
+          /\b(book|reserve)\b.{0,40}\b(rooms?|conference|meeting rooms?|conf rooms?)\b/i.test(text) ||
+          /\b(rooms?|conference rooms?|meeting rooms?)\b.{0,40}\b(book|reserve|available|availability|free)\b/i.test(
+            text,
+          ) ||
+          /\b(available|free|availability)\b.{0,25}\b(rooms?|meeting rooms?|conference rooms?)\b/i.test(
+            text,
+          ) ||
+          /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+(?:for|on|at)\s+(?:tomorrow|today|\d{1,2}(?:\s*(?:am|pm|:\d)))/i.test(
+            text,
+          ) ||
+          // "book salween room for Interview from 4 am to 4:30 am"
+          /\b(?:book|reserve)\s+\w[\w\s]{1,25}\s+for\s+\w[\w\s]{0,30}\s+from\s+\d{1,2}/i.test(
+            text,
+          );
+        if (isRoomBooking) {
+          const prefill = parseRoomBooking(text);
+          const hasContext = !!(
+            prefill.roomHint &&
+            prefill.date &&
+            prefill.startTime &&
+            prefill.endTime
+          );
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: hasContext
+              ? "On it — checking availability and booking your room."
+              : "Let's book a meeting room. Pick your date, time, and duration — I'll show you what's available.",
+            interactive: { type: "room_booking_form", data: prefill },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept room cancellation requests
+        if (
+          /\b(cancel|cancell?ation|delete|remove)\b.{0,30}\b(booking|reservation|room|meeting room|conference)\b/i.test(
+            text,
+          ) ||
+          /\b(booking|reservation|room booking)\b.{0,30}\b(cancel|delete|remove)\b/i.test(text)
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here are your upcoming room bookings — select one to cancel.",
+            interactive: { type: "cancel_booking_form" },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept leave cancellation / withdrawal requests
+        if (
+          /\b(cancel|withdraw|revoke|recall|rescind|retract)\b.{0,30}\b(leave|time[- ]?off)\b/i.test(
+            text,
+          ) ||
+          /\b(leave|time[- ]?off)\b.{0,30}\b(cancel|withdraw|revoke|recall)\b/i.test(text)
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here are your pending and approved leaves — select one to cancel.",
+            interactive: { type: "cancel_leave_form" },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept leave *application* requests → embed the Zoho People apply-leave form.
+        // Placed AFTER cancellation so "cancel my leave" still wins. Excludes balance/policy
+        // questions ("how many leaves", "leave balance", "leave policy") which aren't form actions.
+        const leaveLower = text.toLowerCase();
+        const isApplyLeave =
+          (/\b(apply|book|take|request|submit|put in|raise|file)\b.{0,30}\b(leave|time[- ]?off|day off|days off|vacation|pto)\b/i.test(
+            text,
+          ) ||
+            /\b(leave|time[- ]?off|vacation|pto)\b.{0,20}\b(application|request)\b/i.test(text) ||
+            /\bi\s+(want|need|would like|wish)\s+(to\s+)?(take|apply|book|request)\b.{0,20}\b(leave|time[- ]?off|day off|vacation)\b/i.test(
+              text,
+            )) &&
+          !/\b(balance|how many|remaining|left|available|status|policy|cancel|withdraw|revoke|recall)\b/i.test(
+            text,
+          );
+        if (isApplyLeave) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Let's apply for your leave. Fill in the Zoho People leave form below and submit it there.",
+            interactive: { type: "leave_application_form" },
+            domain: "hr",
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept "show my schedule / my meetings / upcoming bookings" — read-only calendar pull, zero LLM.
+        if (
+          /\b(my|today'?s|upcoming|this week'?s)\b.{0,20}\b(schedule|meetings?|calendar|bookings?|agenda)\b/i.test(
+            text,
+          ) ||
+          /\bwhat('?s| is| are)\b.{0,30}\b(my )?(schedule|meetings?|calendar|agenda)\b/i.test(text)
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's what's on your calendar.",
+            interactive: { type: "my_schedule" },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept "update/add my skills / certifications", "set primary skill",
+        // "years of experience". Self-serve for all roles — zero LLM. Structural, not name-based.
+        const isSkillsEditor =
+          /\b(update|edit|add|change|manage|set)\b.{0,30}\b(skill|skills|certification|certificate|cert|expertise)\b/i.test(
+            text,
+          ) ||
+          /\b(skill|skills|certification|certificate|expertise)\b.{0,30}\b(update|edit|add|upload|manage|change)\b/i.test(
+            text,
+          ) ||
+          /\bprimary skill\b/i.test(text) ||
+          /\byears? of experience\b/i.test(text) ||
+          /\bupload\b.{0,20}\bcertif/i.test(text);
+        if (isSkillsEditor) {
+          const m = text.match(
+            /\badd\s+(?:a\s+|an\s+|my\s+)?([A-Za-z][A-Za-z0-9+.# ]{1,30}?)\s+(?:skill|certification|cert)\b/i,
+          );
+          const prefill = { skill: m?.[1]?.trim() };
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's your skills profile — add or update skills, set your primary skill, years of experience, when you last used it, and attach a certification.",
+            interactive: { type: "skills_editor", data: prefill },
+          });
+          setInput("");
+          return;
+        }
+
+        // Admin commands — only for domain managers; others fall through to chat.
+        const isManager = ["hr", "it", "pmo", "admin"].includes(role);
+
+        // Intercept team attendance requests — Functional Managers only. Zero-LLM, structural.
+        // "generate/show attendance for everyone under me / my team / my hierarchy" -> report view.
+        // "email me / schedule / automate ... attendance ... every month/week/day" -> schedule setup.
+        const mentionsAttendance = /\battendance\b/i.test(text);
+        const mentionsTeamScope =
+          /\b(everyone|all)\b.{0,20}\b(under|below|report)|my\s+(team|hierarchy|reportees|reports|org|department)|whole\s+hierarchy|team'?s/i.test(
+            text,
+          );
+        if (role === "functional manager" && mentionsAttendance && mentionsTeamScope) {
+          const isRecurring =
+            /\b(every|each|daily|weekly|monthly|recurring|automat\w*|schedule|remind|regularly)\b/i.test(
+              text,
+            );
+          addTurn(activeId, { role: "user", text });
+          if (isRecurring) {
+            // Parse cadence cues.
+            const freq = /\b(daily|every day|each day|every weekday)\b/i.test(text)
+              ? "daily"
+              : /\b(weekly|every week|each week)\b/i.test(text)
+                ? "weekly"
+                : /\b(monthly|every month|each month)\b/i.test(text)
+                  ? "monthly"
+                  : "monthly";
+            const dows = [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday",
+              "saturday",
+              "sunday",
+            ];
+            const dowIdx = dows.findIndex((d) => new RegExp(`\\b${d}\\b`, "i").test(text));
+            const hourM = text.match(/\bat\s+(\d{1,2})\s*(am|pm)?\b/i);
+            let hour: number | undefined;
+            if (hourM) {
+              hour = Number(hourM[1]) % 12;
+              if (/pm/i.test(hourM[2] || "")) hour += 12;
+            }
+            const prefill: Record<string, number | string> = {
+              frequency: dowIdx >= 0 ? "weekly" : freq,
+            };
+            if (dowIdx >= 0) prefill.day_of_week = dowIdx;
+            if (hour !== undefined) prefill.hour = hour;
+            addTurn(activeId, {
+              role: "ai",
+              text: "Let's set up an automated attendance email for your team. Confirm the schedule below.",
+              interactive: { type: "attendance_schedule", data: prefill },
+            });
+          } else {
+            addTurn(activeId, {
+              role: "ai",
+              text: "Here's the attendance for everyone in your reporting hierarchy.",
+              interactive: { type: "team_attendance" },
+            });
+          }
+          setInput("");
+          return;
+        }
+
+        // Intercept "my attendance" — any logged-in employee. Zero-LLM.
+        if (
+          mentionsAttendance &&
+          !mentionsTeamScope &&
+          /\b(my\s+attendance|attendance\s+(this|for)\s+(month|june|july|august|september|october|november|december|january|february|march|april|may)|show\s+(my\s+)?attendance|view\s+(my\s+)?attendance|attendance\s+(summary|report)|days?\s+present|days?\s+absent|wfh\s+days?|late\s+mark)\b/i.test(
+            text,
+          )
+        ) {
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's your attendance for this month.",
+            interactive: { type: "my_attendance" },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept "create/add an announcement …"
+        if (
+          isManager &&
+          /\b(create|add|post|publish|make|send)\b.{0,40}\bannouncement\b/i.test(text)
+        ) {
+          const prefill = parseAnnouncement(text);
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Let's publish an announcement. Review the details below — add a message or let me draft one, then publish.",
+            interactive: { type: "announcement_form", data: prefill },
+          });
+          setInput("");
+          return;
+        }
+
+        // Intercept "update/change the … prompt/guardrail/system prompt …"
+        if (
+          isManager &&
+          /\b(update|change|edit|set|add|configure|tweak)\b.{0,40}\b(prompt|config(?:uration)?|guardrail|system prompt|instruction)\b/i.test(
+            text,
+          )
+        ) {
+          const prefill = parsePromptConfig(text);
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "Here's the prompt configuration — confirm the domain and section, edit the text, then save.",
+            interactive: { type: "prompt_config_form", data: prefill },
+          });
+          setInput("");
+          return;
+        }
+
+        // Information-style questions ("what is the process for reporting…", "how do I…",
+        // "what's the policy on…") must reach the backend so the policy/HR agents can actually
+        // answer them. The leave/URL-link interceptors below are for ACTION intents only —
+        // hijacking a question with an "Open X portal?" card is a misroute.
+        const isInfoQuery =
+          /\bwhat(?:'s|\s+is|\s+are)?\s|\bhow\s+(?:do|can|does|should|to)\b|\bwhy\b|\bexplain\b|\btell\s+me\b|\bprocess\s+(?:for|of|to)\b|\bpolic(?:y|ies)\b|\bprocedure\b|\bguidelines?\b|\bsteps?\s+(?:for|to)\b/i.test(
+            text,
+          );
+
+        // Suffix appended when the user picks "Let the assistant handle it" — prevents
+        // re-interception of the follow-up message. Using endsWith prevents a natural phrase
+        // mid-sentence from accidentally matching.
+        const ASSISTANT_HANDOFF_SUFFIX = " via the assistant";
+
+        // Single-word generic keywords that are too broad to safely trigger a URL/form intercept.
+        // Multi-word phrases are always allowed. This is evaluated by keywordMatches() below.
+        const GENERIC_KEYWORDS = new Set([
+          "request",
+          "requests",
+          "report",
+          "reports",
+          "form",
+          "forms",
+          "ticket",
+          "tickets",
+          "apply",
+          "status",
+          "help",
+          "issue",
+          "issues",
+          "new",
+          "portal",
+          "app",
+          "submit",
+          "my",
+        ]);
+
+        // Shared keyword matcher used by both the URL Library and Form Library intercepts.
+        // Skips single-word keywords that are too generic to safely hijack a message.
+        const keywordMatches = (triggerKeywords: string | undefined, msgText: string): boolean => {
+          if (!triggerKeywords) return false;
+          return triggerKeywords
+            .split(",")
+            .map((k) => k.trim().toLowerCase())
+            .filter(Boolean)
+            .filter((kw) => kw.includes(" ") || (kw.length >= 4 && !GENERIC_KEYWORDS.has(kw)))
+            .some((kw) =>
+              new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(msgText),
+            );
+        };
+
+        // Create-form intent — hoist detection so the intercept block can run BEFORE URL/form
+        // intercepts. Without this, a generic keyword like "requests" on a URL Library link
+        // would hijack "create a form for gym membership reimbursement requests".
+        const isCreateFormIntent =
+          /\b(create|make|build|generate|set\s*up|add|design)\b[\s\S]{0,60}?\bform\b/i.test(text) &&
+          !/\b(fill|submit|open)\b/i.test(text);
+
+        // Edit-an-existing-form intent — admin only. Targets a form the message names, or the
+        // one most recently created/edited this session. Runs BEFORE the create intercept so
+        // "add a date field to the form" revises it rather than spawning a brand-new draft.
+        const editVerb =
+          /\b(add|remove|delete|drop|rename|change|make|set|mark|update|include|require|reorder|move)\b/i.test(
+            text,
+          );
+        const fieldSignal =
+          /\bfield\b/i.test(text) ||
+          /\b(required|optional|mandatory)\b/i.test(text) ||
+          /\b(this|that|the)\s+form\b/i.test(text);
+        // A form explicitly named in the message wins over the last-touched one.
+        const namedForm = formsRef.current.find(
+          (f) =>
+            f.name &&
+            new RegExp(`\\b${f.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text),
+        );
+        const editTarget = namedForm
+          ? { id: namedForm.id, name: namedForm.name }
+          : lastFormRef.current;
+        const isEditFormIntent =
+          role === "admin" &&
+          !isInfoQuery &&
+          editVerb &&
+          fieldSignal &&
+          !!editTarget &&
+          !/\b(fill|submit|open)\b/i.test(text) &&
+          !/\bcreate\b|\bnew\s+form\b/i.test(text);
+
+        if (isEditFormIntent && editTarget) {
+          const capturedId = activeId;
+          addTurn(capturedId, { role: "user", text });
+          setInput("");
+          addTurn(capturedId, {
+            role: "ai",
+            text: `Updating **"${editTarget.name}"** — one moment…`,
+          });
+          const editHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (user?.email) editHeaders["X-User-Email"] = user.email;
+          if (user?.role) editHeaders["X-User-Role"] = user.role.toLowerCase();
+          fetch("/api/admin/form-library/generate-edit", {
+            method: "POST",
+            headers: editHeaders,
+            credentials: "include",
+            body: JSON.stringify({ form_id: editTarget.id, instruction: text }),
+          })
+            .then((res) =>
+              res.json().then((data) => {
+                if (res.ok) {
+                  const d = data as import("@/lib/chat-store").FormBuilderDraft;
+                  if (typeof d.id === "number") lastFormRef.current = { id: d.id, name: d.name };
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Here's the revised **"${d.name}"** — review the changes and save when ready.`,
+                    interactive: { type: "form_builder", data: d },
+                  });
+                } else {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Could not update the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                    isError: true,
+                  });
+                }
+              }),
+            )
+            .catch(() => {
+              addTurn(capturedId, {
+                role: "ai",
+                text: "Could not reach the server. Please try again.",
+                isError: true,
+              });
+            });
+          return;
+        }
+
+        // Create-form intercept — admin only. Runs BEFORE leave/URL/form intercepts so a
+        // generic trigger keyword can't steal this intent. Any "create/make/build a form …"
+        // phrasing is accepted: the strict command syntax is parsed locally, everything else
+        // is drafted by the LLM. Either way the admin reviews an editable preview before
+        // anything is created — no silent misinterpretation.
+        if (role === "admin" && isCreateFormIntent && !isInfoQuery) {
+          const capturedId = activeId;
+          addTurn(capturedId, { role: "user", text });
+          setInput("");
+          const parsed = parseFormCommand(text);
+          if (parsed && parsed.fields.length > 0) {
+            addTurn(capturedId, {
+              role: "ai",
+              text: `Here's the draft for **"${parsed.name}"** — review the fields and create it when ready.`,
+              interactive: {
+                type: "form_builder",
+                data: parsed as import("@/lib/chat-store").FormBuilderDraft,
+              },
+            });
+            return;
+          }
+          // Free-form request → let the LLM design the fields, then show the same preview.
+          addTurn(capturedId, { role: "ai", text: "Designing your form — one moment…" });
+          const genHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (user?.email) genHeaders["X-User-Email"] = user.email;
+          if (user?.role) genHeaders["X-User-Role"] = user.role.toLowerCase();
+          fetch("/api/admin/form-library/generate", {
+            method: "POST",
+            headers: genHeaders,
+            credentials: "include",
+            body: JSON.stringify({ prompt: text }),
+          })
+            .then((res) =>
+              res.json().then((data) => {
+                if (res.ok) {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Here's a draft of **"${(data as { name: string }).name}"** — edit anything you like, then create it.`,
+                    interactive: {
+                      type: "form_builder",
+                      data: data as import("@/lib/chat-store").FormBuilderDraft,
+                    },
+                  });
+                } else {
+                  addTurn(capturedId, {
+                    role: "ai",
+                    text: `Could not draft the form: ${(data as { detail?: string }).detail || "Unknown error"}`,
+                    isError: true,
+                  });
+                }
+              }),
+            )
+            .catch(() => {
+              addTurn(capturedId, {
+                role: "ai",
+                text: "Could not reach the server. Please try again.",
+                isError: true,
+              });
+            });
+          return;
+        }
+
+        // Intercept leave application intent — offer self-serve vs. assistant-handled choice.
+        // The handoff suffix on the continuation message prevents re-interception.
+        const isLeaveApplication =
+          !isInfoQuery &&
+          !isCreateFormIntent &&
+          !text.endsWith(ASSISTANT_HANDOFF_SUFFIX) &&
+          (/\b(apply|request|submit|file)\b.{0,30}\b(leave|day off|time off|vacation|annual leave|sick leave|casual leave)\b/i.test(
+            text,
+          ) ||
+            /\b(take|want|need)\b.{0,20}\b(leave|day off|time off|vacation)\b/i.test(text) ||
+            /\b(leave|day off|time off)\b.{0,30}\b(apply|request|submit|file|want|need)\b/i.test(
+              text,
+            ));
+        if (isLeaveApplication) {
+          const zohoPeopleLink =
+            urlLinksRef.current.find((l) => /leave|people/i.test(l.purpose ?? "")) ??
+            urlLinksRef.current.find((l) => /people/i.test(l.name) || /leave/i.test(l.name)) ??
+            urlLinksRef.current.find((l) => /zoho/i.test(l.name) && !/expense/i.test(l.name));
+          const zohoLink = zohoPeopleLink?.url ?? "https://people.zoho.com";
+          const zohoName = zohoPeopleLink?.name ?? "Zoho People";
+          addTurn(activeId, { role: "user", text });
+          addTurn(activeId, {
+            role: "ai",
+            text: "How would you like to apply for leave?",
             interactive: {
               type: "quick_choice",
               data: {
-                question: `How would you like to access ${triggeredLink.name}?`,
+                question: "How would you like to apply for leave?",
                 options: [
                   {
-                    label: `Open ${triggeredLink.name}`,
+                    label: `I'll apply myself (${zohoName})`,
                     action: "link",
-                    value: triggeredLink.url,
+                    value: zohoLink,
                     icon: "external-link",
                   },
                   {
@@ -1870,34 +1907,71 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           setInput("");
           return;
         }
-      }
 
-      // Form Library intercept — open the matched form inline without going through the LLM.
-      // Uses keywordMatches() with the same specificity rules as URL Library.
-      if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
-        const triggeredForm = formsRef.current.find((f) =>
-          keywordMatches(f.trigger_keywords, text),
-        );
-        if (triggeredForm) {
-          addTurn(activeId, { role: "user", text });
-          addTurn(activeId, {
-            role: "ai",
-            text: triggeredForm.description || `Here is the ${triggeredForm.name} form:`,
-            interactive: {
-              type: "dynamic_form",
-              data: {
-                template_id: triggeredForm.id,
-                name: triggeredForm.name,
-                description: triggeredForm.description,
-                fields: triggeredForm.fields,
-                submit_endpoint: "/api/forms/submit",
+        // Generic URL Library intercept — fire for any active link with matching trigger_keywords.
+        // Skipped for create-form, handoff continuations, and information-style questions.
+        // Uses keywordMatches() which filters out single generic words like "requests".
+        if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
+          const triggeredLink = urlLinksRef.current.find((l) =>
+            keywordMatches(l.trigger_keywords, text),
+          );
+          if (triggeredLink) {
+            addTurn(activeId, { role: "user", text });
+            addTurn(activeId, {
+              role: "ai",
+              text: `How would you like to access ${triggeredLink.name}?`,
+              interactive: {
+                type: "quick_choice",
+                data: {
+                  question: `How would you like to access ${triggeredLink.name}?`,
+                  options: [
+                    {
+                      label: `Open ${triggeredLink.name}`,
+                      action: "link",
+                      value: triggeredLink.url,
+                      icon: "external-link",
+                    },
+                    {
+                      label: "Let the assistant handle it",
+                      action: "message",
+                      value: `${text}${ASSISTANT_HANDOFF_SUFFIX}`,
+                      icon: "sparkles",
+                    },
+                  ],
+                },
               },
-            },
-          });
-          setInput("");
-          return;
+            });
+            setInput("");
+            return;
+          }
         }
-      }
+
+        // Form Library intercept — open the matched form inline without going through the LLM.
+        // Uses keywordMatches() with the same specificity rules as URL Library.
+        if (!isInfoQuery && !isCreateFormIntent && !text.endsWith(ASSISTANT_HANDOFF_SUFFIX)) {
+          const triggeredForm = formsRef.current.find((f) =>
+            keywordMatches(f.trigger_keywords, text),
+          );
+          if (triggeredForm) {
+            addTurn(activeId, { role: "user", text });
+            addTurn(activeId, {
+              role: "ai",
+              text: triggeredForm.description || `Here is the ${triggeredForm.name} form:`,
+              interactive: {
+                type: "dynamic_form",
+                data: {
+                  template_id: triggeredForm.id,
+                  name: triggeredForm.name,
+                  description: triggeredForm.description,
+                  fields: triggeredForm.fields,
+                  submit_endpoint: "/api/forms/submit",
+                },
+              },
+            });
+            setInput("");
+            return;
+          }
+        }
       } // end: local heuristic routing (bypassed while a focus mode is active)
 
       // Pin the originating thread so the streaming closure writes to the chat that
@@ -1946,7 +2020,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               setSuggestions(d.suggestions);
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       };
 
       fetch("/api/chat", {
@@ -1994,8 +2068,14 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
             }
 
             if (evt.type === "queued") {
-              // Server is at capacity; our request is waiting for a slot.
-              setActivity((evt.message as string) ?? "High demand — waiting in queue…");
+              // Server is at capacity; our request is waiting for a slot. The
+              // backend refreshes our live position with each update.
+              const pos = typeof evt.position === "number" ? (evt.position as number) : null;
+              setActivity(
+                pos
+                  ? `In queue — #${pos} in line. Your turn is coming…`
+                  : ((evt.message as string) ?? "High demand — waiting in queue…"),
+              );
             } else if (evt.type === "status") {
               // Real pipeline progress from the backend — replaces fake timer steps.
               // Only update if we haven't received the first token yet (pre-stream phase).
@@ -2054,8 +2134,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                 domain: (evt.domain as string) ?? undefined,
                 interactive:
                   evt.interactive &&
-                  typeof (evt.interactive as { type?: unknown }).type === "string" &&
-                  (evt.interactive as { type?: unknown }).type
+                    typeof (evt.interactive as { type?: unknown }).type === "string" &&
+                    (evt.interactive as { type?: unknown }).type
                     ? (evt.interactive as Turn["interactive"])
                     : undefined,
                 downloadUrl: (evt.download_url as string) ?? undefined,
@@ -2119,10 +2199,16 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           // message. If nothing had streamed in yet, leave a visible "stopped" turn
           // rather than silently returning to a blank screen.
           if (err.name === "AbortError" && stoppedRef.current.has(threadId)) {
+            const leftWhileWaiting = backgroundRef.current.has(threadId) && !aiTurnAdded;
+            backgroundRef.current.delete(threadId);
             if (aiTurnAdded && accumulatedText.trim()) {
               updateLastAITurn(threadId, { streaming: false });
             } else if (aiTurnAdded) {
               updateLastAITurn(threadId, { streaming: false, text: "Response stopped." });
+            } else if (leftWhileWaiting) {
+              // Navigated away before the answer started — the server keeps
+              // generating; leave a placeholder the pickup effect can replace.
+              addTurn(threadId, { role: "ai", text: BG_PENDING_TEXT });
             } else {
               addTurn(threadId, { role: "ai", text: "Response stopped." });
             }
@@ -2156,6 +2242,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           setThinking(threadId, false);
           controllersRef.current.delete(threadId);
           stoppedRef.current.delete(threadId);
+          backgroundRef.current.delete(threadId);
         });
     },
     [activeId, input, threads, addTurn, updateLastAITurn, setThinking, user?.email, user?.role, activeMode, portalContext],
@@ -2170,7 +2257,24 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
     controller.abort();
     setThinking(activeId, false);
     setActivity("");
-  }, [activeId, setThinking]);
+    // Dismiss any answer_ready nudges so the bell notification doesn't fire
+    // for a deliberately stopped response (only background nav-away should notify).
+    const authH = {
+      ...(user?.email ? { "x-user-email": user.email } : {}),
+      ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+    };
+    fetch("/api/nudges", { headers: authH })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { nudges: { id: number; nudge_type: string }[] } | null) => {
+        if (!data?.nudges) return;
+        data.nudges
+          .filter((n) => n.nudge_type === "answer_ready")
+          .forEach((n) => {
+            fetch(`/api/nudges/${n.id}/dismiss`, { method: "POST", headers: authH }).catch(() => { });
+          });
+      })
+      .catch(() => { });
+  }, [activeId, setThinking, user?.email, user?.role]);
 
   // ── Hands-free voice loop ("Jarvis") ──────────────────────────────────────
   // Keep a live ref to send() so recognition callbacks never capture a stale one.
@@ -2592,21 +2696,6 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                     className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
                   >
                     <div className="try-asking-container">
-                      {/* Live signals — surface anything waiting on the user up front. */}
-                      {caps?.live && caps.live.length > 0 && (
-                        <div className="flex flex-wrap justify-center gap-2 mb-3">
-                          {caps.live.map((l) => (
-                            <button
-                              key={l.title}
-                              onClick={() => !busy && send(l.prompt)}
-                              className="group flex items-center gap-2 rounded-full border border-amber-400/50 bg-amber-400/10 px-3 py-1.5 text-[11px] sm:text-[12px] font-semibold text-amber-700 dark:text-amber-300 shadow-sm transition-all hover:bg-amber-400/20 hover:scale-[1.02]"
-                            >
-                              <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                              {l.title}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">
                         Try asking…
                       </p>
@@ -2652,55 +2741,19 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                             );
                           })}
                         </div>
-                      ) : caps?.starters && caps.starters.length > 0 ? (
-                        /* Role-aware capability starters (static, from /api/capabilities). */
+                      ) : (
                         <div className="flex flex-wrap justify-center gap-2">
-                          {caps.starters.map((s) => (
+                          {topPrompts.map((prompt) => (
                             <button
-                              key={s.prompt}
-                              title={s.title}
-                              onClick={() => !busy && send(s.prompt)}
-                              className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
+                              key={prompt}
+                              onClick={() => !busy && send(prompt)}
+                              className="group flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-foreground shadow-sm transition-all hover:bg-primary/10 hover:scale-[1.02]"
                             >
-                              <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                                <Sparkles className="h-2.5 w-2.5 text-primary" />
-                              </span>
-                              {s.prompt}
+                              <Sparkles className="h-3 w-3 text-primary/70" />
+                              {prompt}
                             </button>
                           ))}
                         </div>
-                      ) : (
-                        <AnimatePresence mode="wait">
-                          <motion.div
-                            key={starterPage}
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -6 }}
-                            transition={{ duration: 0.3 }}
-                            className="flex flex-wrap justify-center gap-2"
-                          >
-                            {queries
-                              .slice(
-                                starterPage * STARTER_PAGE_SIZE,
-                                starterPage * STARTER_PAGE_SIZE + STARTER_PAGE_SIZE,
-                              )
-                              .map((q) => {
-                                const IconComponent = ICON_MAP[q.icon] || ICON_MAP.Bookmark;
-                                return (
-                                  <button
-                                    key={q.prompt}
-                                    onClick={() => !busy && send(q.prompt)}
-                                    className="group flex items-center gap-2 rounded-full border border-border/80 bg-card/70 backdrop-blur-sm px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-muted-foreground shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-foreground hover:shadow-md hover:scale-[1.02]"
-                                  >
-                                    <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-muted/60 group-hover:bg-primary/10 transition-colors">
-                                      <IconComponent className={`h-2.5 w-2.5 ${q.iconColor}`} />
-                                    </span>
-                                    {q.label}
-                                  </button>
-                                );
-                              })}
-                          </motion.div>
-                        </AnimatePresence>
                       )}
                     </div>
                   </motion.div>
@@ -2898,8 +2951,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userEmail={user?.email || ""}
                                 prefill={
                                   t.interactive.data as
-                                    | import("@/lib/chat-store").VisitorPassPrefill
-                                    | undefined
+                                  | import("@/lib/chat-store").VisitorPassPrefill
+                                  | undefined
                                 }
                                 onSubmitted={(msg) =>
                                   activeId &&
@@ -2968,7 +3021,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                     .then((d) => {
                                       if (Array.isArray(d)) formsRef.current = d;
                                     })
-                                    .catch(() => {});
+                                    .catch(() => { });
                                 }}
                               />
                             )}
@@ -3011,8 +3064,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userRole={user?.role || "employee"}
                                 prefill={
                                   t.interactive.data as
-                                    | import("@/lib/chat-store").RoomBookingPrefill
-                                    | undefined
+                                  | import("@/lib/chat-store").RoomBookingPrefill
+                                  | undefined
                                 }
                                 onBooked={(msg) =>
                                   activeId &&
@@ -3064,8 +3117,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userRole={user?.role || "employee"}
                                 prefill={
                                   t.interactive.data as
-                                    | import("@/lib/chat-store").SkillsEditorPrefill
-                                    | undefined
+                                  | import("@/lib/chat-store").SkillsEditorPrefill
+                                  | undefined
                                 }
                                 onSaved={(msg) =>
                                   activeId &&
@@ -3079,8 +3132,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userRole={user?.role || "employee"}
                                 prefill={
                                   t.interactive.data as
-                                    | import("@/lib/chat-store").AnnouncementPrefill
-                                    | undefined
+                                  | import("@/lib/chat-store").AnnouncementPrefill
+                                  | undefined
                                 }
                                 onPublished={(msg) =>
                                   activeId &&
@@ -3094,8 +3147,8 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 userRole={user?.role || "employee"}
                                 prefill={
                                   t.interactive.data as
-                                    | import("@/lib/chat-store").PromptConfigPrefill
-                                    | undefined
+                                  | import("@/lib/chat-store").PromptConfigPrefill
+                                  | undefined
                                 }
                                 onSaved={(msg) =>
                                   activeId &&
@@ -3105,25 +3158,25 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                             )}
                             {(t.interactive?.type === "team_attendance" ||
                               t.interactive?.type === "attendance_schedule") && (
-                              <AttendanceScheduleWidget
-                                userEmail={user?.email || ""}
-                                userRole={user?.role || "employee"}
-                                mode={
-                                  t.interactive.type === "attendance_schedule"
-                                    ? "schedule"
-                                    : "report"
-                                }
-                                prefill={
-                                  t.interactive.data as
+                                <AttendanceScheduleWidget
+                                  userEmail={user?.email || ""}
+                                  userRole={user?.role || "employee"}
+                                  mode={
+                                    t.interactive.type === "attendance_schedule"
+                                      ? "schedule"
+                                      : "report"
+                                  }
+                                  prefill={
+                                    t.interactive.data as
                                     | import("@/lib/chat-store").AttendanceSchedulePrefill
                                     | undefined
-                                }
-                                onDone={(msg) =>
-                                  activeId &&
-                                  addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
-                                }
-                              />
-                            )}
+                                  }
+                                  onDone={(msg) =>
+                                    activeId &&
+                                    addTurn(activeId, { role: "ai", text: msg, domain: "hr" })
+                                  }
+                                />
+                              )}
                             {t.interactive?.type === "my_attendance" && (
                               <MyAttendanceWidget
                                 userEmail={user?.email || ""}
@@ -3310,7 +3363,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           const targetMode = transitionState.targetMode;
           const modeInfo = targetMode ? CHAT_MODES[targetMode] : null;
           const ModeIcon = modeInfo ? modeInfo.Icon : Sparkles;
-          
+
           let color = "#3b82f6";
           if (targetMode === "analytics") color = "#8b5cf6";
           if (targetMode === "training") color = "#10b981";
@@ -3331,12 +3384,12 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
             >
               <motion.div
                 initial={{ scale: 0, opacity: 0.3 }}
-                animate={{ 
+                animate={{
                   scale: 60,
                   opacity: [0.3, 0.75, 0.75],
                 }}
-                transition={{ 
-                  duration: 0.8, 
+                transition={{
+                  duration: 0.8,
                   ease: [0.16, 1, 0.3, 1]
                 }}
                 className="absolute rounded-full shrink-0 w-20 h-20"
@@ -3350,10 +3403,10 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               <motion.div
                 initial={{ scale: 0, rotate: -30, opacity: 0 }}
                 animate={{ scale: [0, 1.25, 1], rotate: 0, opacity: 1 }}
-                transition={{ 
-                  duration: 0.55, 
+                transition={{
+                  duration: 0.55,
                   ease: [0.34, 1.56, 0.64, 1],
-                  delay: 0.1 
+                  delay: 0.1
                 }}
                 className="relative z-10 flex h-28 w-28 items-center justify-center rounded-[32px] border border-white/20 bg-white/10 backdrop-blur-xl shadow-2xl"
               >

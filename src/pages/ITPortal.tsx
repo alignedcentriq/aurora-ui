@@ -514,8 +514,22 @@ interface OllamaModelResidency {
   context_length: number | null;
   expires_at: string | null;
 }
+interface LiveRequest {
+  email?: string;
+  snippet?: string;
+  since?: number;
+  elapsed_s?: number;
+  position?: number;
+}
 interface CapacityInfo {
-  gate: { active: number; waiting: number; max_concurrency: number; max_queue: number };
+  gate: {
+    active: number;
+    waiting: number;
+    max_concurrency: number;
+    max_queue: number;
+    running?: LiveRequest[];
+    waiting_list?: LiveRequest[];
+  };
   ollama: { reachable: boolean; models: OllamaModelResidency[]; error: string | null };
   capacity: {
     max_concurrency: number;
@@ -534,6 +548,12 @@ interface CapacityInfo {
   };
 }
 
+const fmtElapsed = (s?: number): string => {
+  if (s == null || !Number.isFinite(s)) return "";
+  if (s < 60) return `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+};
+
 const fmtGB = (bytes: number): string =>
   bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 
@@ -547,6 +567,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
     active: number;
     waiting: number;
     max_concurrency: number;
+    ml01_load_rejects?: { count: number; last_at: number | null; recent: boolean };
   } | null>(null);
   const [capacity, setCapacity] = useState<CapacityInfo | null>(null);
   const [capChecks, setCapChecks] = useState<Record<string, CapCheck>>({});
@@ -1095,7 +1116,67 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     Idle — no requests running or queued right now.
                   </div>
                 )}
+                {/* Who exactly is running / waiting (from the gate's per-request identity) */}
+                {gate && ((gate.running?.length ?? 0) > 0 || (gate.waiting_list?.length ?? 0) > 0) && (
+                  <div className="mt-3 flex flex-col gap-1.5">
+                    {(gate.running ?? []).map((r, i) => (
+                      <div
+                        key={`run-${i}`}
+                        className="flex items-center gap-2 rounded-lg bg-secondary/40 dark:bg-secondary/20 px-2.5 py-1.5 text-[12px]"
+                      >
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
+                        <span className="shrink-0 font-mono font-medium text-foreground/90">
+                          {r.email ?? "unknown"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground/70">
+                          {r.snippet ?? ""}
+                        </span>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground/60">
+                          {fmtElapsed(r.elapsed_s)}
+                        </span>
+                      </div>
+                    ))}
+                    {(gate.waiting_list ?? []).map((w, i) => (
+                      <div
+                        key={`wait-${i}`}
+                        className="flex items-center gap-2 rounded-lg bg-secondary/40 dark:bg-secondary/20 px-2.5 py-1.5 text-[12px]"
+                      >
+                        <span className="shrink-0 font-mono text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                          #{w.position ?? i + 1}
+                        </span>
+                        <span className="shrink-0 font-mono font-medium text-foreground/90">
+                          {w.email ?? "unknown"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground/70">
+                          {w.snippet ?? ""}
+                        </span>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground/60">
+                          waiting {fmtElapsed(w.elapsed_s)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+
+              {/* ml01 refusing to load models — the "server busy on an idle box" condition */}
+              {load?.ml01_load_rejects?.recent && (
+                <div className="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05] p-4 text-[12px] text-rose-700 dark:text-rose-300">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    ml01 is rejecting model loads
+                  </div>
+                  <p className="mt-1.5 leading-relaxed">
+                    The Ollama server is refusing to load any model that isn&apos;t already in
+                    memory (&ldquo;maximum pending requests exceeded&rdquo;) even when it is otherwise
+                    idle — its load queue is wedged or misconfigured. Chats are being answered
+                    by whichever model is still resident. Ask the ml01 admin to restart Ollama
+                    and check OLLAMA_MAX_QUEUE / free GPU memory.{" "}
+                    ({load.ml01_load_rejects.count} reject
+                    {load.ml01_load_rejects.count === 1 ? "" : "s"} since backend start)
+                  </p>
+                </div>
+              )}
 
               {/* Real GPU / CPU model placement */}
               <div>

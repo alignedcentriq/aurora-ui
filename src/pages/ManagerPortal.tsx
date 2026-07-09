@@ -214,16 +214,32 @@ type TabId =
   | "pmo-requests"
   | "appreciations";
 
-const BASE_TABS: { id: TabId; label: string; icon: typeof Users; fmOnly?: boolean }[] = [
+// `cap` gates a tab on a Manager-Portal capability (from /api/portal/manager/access).
+// Tabs without `cap` are visible to anyone who reaches the portal (has reports / Super Admin).
+type TabCap = "onboarding" | "pmo";
+const BASE_TABS: { id: TabId; label: string; icon: typeof Users; cap?: TabCap }[] = [
   { id: "attendance", label: "Attendance", icon: CalendarClock },
   { id: "email-automation", label: "Email Automation", icon: Mail },
   { id: "allocations", label: "Allocations", icon: Briefcase },
   { id: "readiness", label: "Readiness", icon: Gauge },
   { id: "skills", label: "Skills", icon: Wrench },
-  { id: "onboarding", label: "Onboarding", icon: ClipboardList, fmOnly: true },
-  { id: "pmo-requests", label: "PMO Requests", icon: Server, fmOnly: true },
+  { id: "onboarding", label: "Onboarding", icon: ClipboardList, cap: "onboarding" },
+  { id: "pmo-requests", label: "PMO Requests", icon: Server, cap: "pmo" },
   { id: "appreciations", label: "Appreciations", icon: Trophy },
 ];
+
+interface ManagerAccess {
+  can_onboarding: boolean;
+  can_vdi_provision: boolean;
+  can_vdi_revoke: boolean;
+  can_pmo_requests: boolean;
+}
+const NO_ACCESS: ManagerAccess = {
+  can_onboarding: false,
+  can_vdi_provision: false,
+  can_vdi_revoke: false,
+  can_pmo_requests: false,
+};
 
 const STATUS_COLORS: Record<string, string> = {
   Pending: "bg-amber-500/10 text-amber-600",
@@ -242,20 +258,31 @@ export function ManagerPortal() {
     [user?.email, user?.role],
   );
 
-  const TABS = BASE_TABS.filter((t) => !t.fmOnly || isFM);
+  // Team-operation tabs (onboarding / PMO requests) are gated by assignable capabilities,
+  // resolved by the backend. Until loaded, they stay hidden (fail-closed).
+  const [access, setAccess] = useState<ManagerAccess>(NO_ACCESS);
+  const TABS = BASE_TABS.filter((t) => {
+    if (t.cap === "onboarding") return access.can_onboarding;
+    if (t.cap === "pmo") return access.can_pmo_requests;
+    return true;
+  });
 
   const [activeTab, setActiveTab] = useState<TabId>("attendance");
   const [team, setTeam] = useState<TeamMember[]>([]);
 
   useEffect(() => {
     if (!TABS.find((t) => t.id === activeTab)) setActiveTab("attendance");
-  }, [isFM]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [access]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch("/api/portal/manager/team", { headers: auth })
       .then((r) => r.json())
       .then((d) => (Array.isArray(d) ? setTeam(d) : null))
       .catch(() => {});
+    fetch("/api/portal/manager/access", { headers: auth })
+      .then((r) => (r.ok ? r.json() : NO_ACCESS))
+      .then((d) => setAccess({ ...NO_ACCESS, ...(d || {}) }))
+      .catch(() => setAccess(NO_ACCESS));
   }, [auth]);
 
   return (
@@ -315,14 +342,14 @@ export function ManagerPortal() {
         <TabsContent value="skills">
           <SkillsTab auth={auth} />
         </TabsContent>
-        {isFM && (
+        {access.can_onboarding && (
           <TabsContent value="onboarding">
             <OnboardingTab auth={auth} team={team} />
           </TabsContent>
         )}
-        {isFM && (
+        {access.can_pmo_requests && (
           <TabsContent value="pmo-requests">
-            <PMORequestsTab auth={auth} team={team} />
+            <PMORequestsTab auth={auth} team={team} access={access} />
           </TabsContent>
         )}
         <TabsContent value="appreciations">
@@ -1647,7 +1674,15 @@ function OnboardingForm({
 
 // ── PMO Requests tab ──────────────────────────────────────────────────────────
 
-function PMORequestsTab({ auth, team }: { auth: Record<string, string>; team: TeamMember[] }) {
+function PMORequestsTab({
+  auth,
+  team,
+  access,
+}: {
+  auth: Record<string, string>;
+  team: TeamMember[];
+  access: ManagerAccess;
+}) {
   const [requests, setRequests] = useState<PMOReq[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState<"vdi_provision" | "vdi_revoke" | null>(null);
@@ -1677,22 +1712,26 @@ function PMORequestsTab({ auth, team }: { auth: Record<string, string>; team: Te
           Submit VDI or access requests to PMO. Email notification is sent automatically.
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant={showForm === "vdi_provision" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setShowForm(showForm === "vdi_provision" ? null : "vdi_provision")}
-            className="w-full sm:w-auto"
-          >
-            <Server className="h-3.5 w-3.5" /> Request VDI
-          </Button>
-          <Button
-            variant={showForm === "vdi_revoke" ? "destructive" : "outline"}
-            size="sm"
-            onClick={() => setShowForm(showForm === "vdi_revoke" ? null : "vdi_revoke")}
-            className="w-full sm:w-auto"
-          >
-            <ShieldX className="h-3.5 w-3.5" /> Revoke Access
-          </Button>
+          {access.can_vdi_provision && (
+            <Button
+              variant={showForm === "vdi_provision" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowForm(showForm === "vdi_provision" ? null : "vdi_provision")}
+              className="w-full sm:w-auto"
+            >
+              <Server className="h-3.5 w-3.5" /> Request VDI
+            </Button>
+          )}
+          {access.can_vdi_revoke && (
+            <Button
+              variant={showForm === "vdi_revoke" ? "destructive" : "outline"}
+              size="sm"
+              onClick={() => setShowForm(showForm === "vdi_revoke" ? null : "vdi_revoke")}
+              className="w-full sm:w-auto"
+            >
+              <ShieldX className="h-3.5 w-3.5" /> Revoke Access
+            </Button>
+          )}
         </div>
       </div>
 

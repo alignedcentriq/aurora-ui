@@ -3,13 +3,25 @@ import { useAuth } from "@/lib/auth-store";
 import {
   ScrollText,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   Loader2,
+  ArrowRight,
+  Plus,
+  Minus,
+  PencilLine,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -43,6 +55,8 @@ interface AuditEntry {
   created_at: string | null;
 }
 
+const PAGE_SIZE = 15;
+
 const CATEGORY_LABEL: Record<string, string> = {
   role_assignment: "Role Assignment",
   role_definition: "Role Definition",
@@ -67,6 +81,151 @@ function formatDate(iso: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// Compact page list with ellipses: 1 … 4 5 [6] 7 8 … 20
+function getPageList(current: number, total: number): (number | "ellipsis")[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | "ellipsis")[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  if (start > 2) pages.push("ellipsis");
+  for (let p = start; p <= end; p++) pages.push(p);
+  if (end < total - 1) pages.push("ellipsis");
+  pages.push(total);
+  return pages;
+}
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
+function formatValue(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (Array.isArray(v)) return v.length ? v.map((x) => formatValue(x)).join(", ") : "—";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function valuesEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+type FieldStatus = "added" | "removed" | "changed" | "unchanged";
+
+interface FieldDiff {
+  key: string;
+  oldValue: unknown;
+  newValue: unknown;
+  status: FieldStatus;
+}
+
+function diffValues(
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+): FieldDiff[] {
+  const keys = Array.from(
+    new Set([...Object.keys(oldValue ?? {}), ...Object.keys(newValue ?? {})]),
+  );
+  return keys.map((key) => {
+    const hasOld = oldValue != null && key in oldValue;
+    const hasNew = newValue != null && key in newValue;
+    const oldV = oldValue?.[key];
+    const newV = newValue?.[key];
+    let status: FieldStatus;
+    if (!hasOld && hasNew) status = "added";
+    else if (hasOld && !hasNew) status = "removed";
+    else if (!valuesEqual(oldV, newV)) status = "changed";
+    else status = "unchanged";
+    return { key, oldValue: oldV, newValue: newV, status };
+  });
+}
+
+const STATUS_META: Record<
+  FieldStatus,
+  { label: string; icon: typeof Plus; badge: "default" | "secondary" | "destructive" | "outline"; tint: string }
+> = {
+  added: { label: "Added", icon: Plus, badge: "default", tint: "text-emerald-600 dark:text-emerald-400" },
+  removed: { label: "Removed", icon: Minus, badge: "destructive", tint: "text-red-600 dark:text-red-400" },
+  changed: { label: "Changed", icon: PencilLine, badge: "secondary", tint: "text-amber-600 dark:text-amber-400" },
+  unchanged: { label: "Unchanged", icon: ArrowRight, badge: "outline", tint: "text-muted-foreground" },
+};
+
+function ValuePill({ value, muted }: { value: unknown; muted?: boolean }) {
+  const text = formatValue(value);
+  return (
+    <code
+      className={
+        "inline-block max-w-full break-words rounded-md border px-2 py-0.5 text-xs " +
+        (muted
+          ? "border-transparent bg-muted/50 text-muted-foreground line-through"
+          : "border-border bg-background")
+      }
+    >
+      {text}
+    </code>
+  );
+}
+
+function ChangeDetail({
+  oldValue,
+  newValue,
+}: {
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
+}) {
+  const diffs = diffValues(oldValue, newValue);
+  const isScalarPair = diffs.length === 0;
+
+  // No structured fields — fall back to a simple before → after of the whole values.
+  if (isScalarPair) {
+    return (
+      <div className="flex items-center gap-3 py-2 text-sm">
+        <ValuePill value={oldValue} muted />
+        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <ValuePill value={newValue} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-border/60 rounded-lg border border-border bg-background/60">
+      {diffs.map((d) => {
+        const meta = STATUS_META[d.status];
+        const Icon = meta.icon;
+        return (
+          <div key={d.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
+            <div className="flex w-40 shrink-0 items-center gap-1.5">
+              <Icon className={"h-3.5 w-3.5 shrink-0 " + meta.tint} />
+              <span className="truncate text-xs font-medium">{humanizeKey(d.key)}</span>
+            </div>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              {d.status === "added" ? (
+                <ValuePill value={d.newValue} />
+              ) : d.status === "removed" ? (
+                <ValuePill value={d.oldValue} muted />
+              ) : d.status === "unchanged" ? (
+                <ValuePill value={d.newValue} />
+              ) : (
+                <>
+                  <ValuePill value={d.oldValue} muted />
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <ValuePill value={d.newValue} />
+                </>
+              )}
+            </div>
+            <Badge variant={meta.badge} className="ml-auto text-[10px]">
+              {meta.label}
+            </Badge>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function AuditTrail() {
@@ -94,7 +253,7 @@ export function AuditTrail() {
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), limit: "50" });
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
       if (category !== "All") params.set("category", category);
       if (severity !== "All") params.set("severity", severity.toLowerCase());
       if (actorEmail) params.set("actor_email", actorEmail);
@@ -202,7 +361,7 @@ export function AuditTrail() {
               No audit events match these filters.
             </div>
           ) : (
-            <Table paginate itemsPerPage={10}>
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
@@ -257,23 +416,14 @@ export function AuditTrail() {
                       {isOpen && hasDetail && (
                         <TableRow>
                           <TableCell colSpan={7} className="bg-muted/30">
-                            <div className="grid grid-cols-2 gap-4 py-2">
-                              <div>
-                                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                  Before
+                            <div className="py-3">
+                              <div className="mb-2 flex items-center gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                  Change Detail
                                 </p>
-                                <pre className="whitespace-pre-wrap break-all rounded-md bg-background p-2 text-xs">
-                                  {e.old_value ? JSON.stringify(e.old_value, null, 2) : "—"}
-                                </pre>
+                                <Separator className="flex-1" />
                               </div>
-                              <div>
-                                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                  After
-                                </p>
-                                <pre className="whitespace-pre-wrap break-all rounded-md bg-background p-2 text-xs">
-                                  {e.new_value ? JSON.stringify(e.new_value, null, 2) : "—"}
-                                </pre>
-                              </div>
+                              <ChangeDetail oldValue={e.old_value} newValue={e.new_value} />
                             </div>
                           </TableCell>
                         </TableRow>
@@ -285,25 +435,70 @@ export function AuditTrail() {
             </Table>
           )}
 
-          {pages > 1 && (
-            <div className="mt-4 flex items-center justify-center gap-3">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="rounded-md border border-border p-1.5 disabled:opacity-40"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="text-xs text-muted-foreground">
-                Page {page} of {pages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(pages, p + 1))}
-                disabled={page >= pages}
-                className="rounded-md border border-border p-1.5 disabled:opacity-40"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+          {!loading && total > 0 && (
+            <div className="mt-4 flex flex-col items-center justify-between gap-3 border-t border-border/60 pt-4 sm:flex-row">
+              <p className="text-xs text-muted-foreground">
+                Showing{" "}
+                <span className="font-medium text-foreground">
+                  {(page - 1) * PAGE_SIZE + 1}
+                </span>{" "}
+                –{" "}
+                <span className="font-medium text-foreground">
+                  {Math.min(page * PAGE_SIZE, total)}
+                </span>{" "}
+                of <span className="font-medium text-foreground">{total}</span> events
+              </p>
+              {pages > 1 && (
+                <Pagination className="mx-0 w-auto justify-end">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        href="#"
+                        onClick={(ev) => {
+                          ev.preventDefault();
+                          if (page > 1) setPage((p) => p - 1);
+                        }}
+                        className={
+                          page <= 1 ? "pointer-events-none opacity-40" : "cursor-pointer"
+                        }
+                      />
+                    </PaginationItem>
+                    {getPageList(page, pages).map((p, i) =>
+                      p === "ellipsis" ? (
+                        <PaginationItem key={`e${i}`}>
+                          <PaginationEllipsis />
+                        </PaginationItem>
+                      ) : (
+                        <PaginationItem key={p}>
+                          <PaginationLink
+                            href="#"
+                            isActive={p === page}
+                            onClick={(ev) => {
+                              ev.preventDefault();
+                              setPage(p);
+                            }}
+                            className="cursor-pointer"
+                          >
+                            {p}
+                          </PaginationLink>
+                        </PaginationItem>
+                      ),
+                    )}
+                    <PaginationItem>
+                      <PaginationNext
+                        href="#"
+                        onClick={(ev) => {
+                          ev.preventDefault();
+                          if (page < pages) setPage((p) => p + 1);
+                        }}
+                        className={
+                          page >= pages ? "pointer-events-none opacity-40" : "cursor-pointer"
+                        }
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              )}
             </div>
           )}
         </CardContent>

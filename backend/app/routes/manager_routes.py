@@ -21,14 +21,73 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.auth import CurrentUser, get_current_user, require_functional_manager, require_has_reports
-from app.database import SessionLocal
+from app.auth import CurrentUser, get_current_user, require_has_reports
+from app.database import SessionLocal, get_db
 from app.models import Employee, EmployeeAllocation, EmployeeSkill, OnboardingRequest, PMOTeamRequest
 from app.services import attendance_schedule_service, attendance_service
 from app.services.attendance_service import descendants, resolve_employee
 from app.services import email_service
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/portal/manager", tags=["Manager Portal"])
+
+
+# ── Capability gates ────────────────────────────────────────────────────────────
+# Team onboarding / VDI provision / VDI revoke were historically hardcoded to
+# Functional Manager + Super Admin. They are now assignable access capabilities
+# (see access_routes.CAPABILITY_CATALOGUE) so a Super Admin can grant them to any
+# role or individual user. Super Admin remains unrestricted; Functional Manager keeps
+# them via the default capability seed, preserving existing behaviour.
+
+def _require_capability(capability_key: str, denial: str):
+    def _dep(
+        user: CurrentUser = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> CurrentUser:
+        from app.routes.access_routes import user_has_capability
+        if not user_has_capability(user, capability_key, db):
+            raise HTTPException(status_code=403, detail=denial)
+        return user
+    return _dep
+
+
+require_team_onboarding = _require_capability(
+    "team_onboarding", "You don't have access to team onboarding requests."
+)
+
+
+def require_pmo_requests(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CurrentUser:
+    """Allow viewing/opening the PMO Requests tab if the caller can raise EITHER a VDI
+    provision or a VDI revoke request."""
+    from app.routes.access_routes import user_has_capability
+    if not (
+        user_has_capability(user, "team_vdi_provision", db)
+        or user_has_capability(user, "team_vdi_revoke", db)
+    ):
+        raise HTTPException(status_code=403, detail="You don't have access to team PMO requests.")
+    return user
+
+
+@router.get("/access")
+def manager_access(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Capability flags the Manager Portal uses to show/hide team-operation tabs and
+    actions. Backend is the source of truth; the frontend only reads these booleans."""
+    from app.routes.access_routes import user_has_capability
+    can_onboarding = user_has_capability(user, "team_onboarding", db)
+    can_vdi_provision = user_has_capability(user, "team_vdi_provision", db)
+    can_vdi_revoke = user_has_capability(user, "team_vdi_revoke", db)
+    return {
+        "can_onboarding": can_onboarding,
+        "can_vdi_provision": can_vdi_provision,
+        "can_vdi_revoke": can_vdi_revoke,
+        "can_pmo_requests": can_vdi_provision or can_vdi_revoke,
+    }
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -467,7 +526,7 @@ class OnboardingBody(BaseModel):
 
 
 @router.get("/onboarding")
-def list_onboarding(user: CurrentUser = Depends(require_functional_manager)):
+def list_onboarding(user: CurrentUser = Depends(require_team_onboarding)):
     db = SessionLocal()
     try:
         rows = (
@@ -484,7 +543,7 @@ def list_onboarding(user: CurrentUser = Depends(require_functional_manager)):
 @router.post("/onboarding")
 def create_onboarding(
     body: OnboardingBody,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_team_onboarding),
 ):
     if not any([body.drug_test, body.background_check, body.client_onboarding]):
         raise HTTPException(status_code=400, detail="Select at least one onboarding step.")
@@ -531,7 +590,7 @@ def create_onboarding(
 def update_onboarding_status(
     req_id: int,
     body: dict,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(require_team_onboarding),
 ):
     db = SessionLocal()
     try:
@@ -564,7 +623,7 @@ class PMORequestBody(BaseModel):
 
 
 @router.get("/pmo-requests")
-def list_pmo_requests(user: CurrentUser = Depends(require_functional_manager)):
+def list_pmo_requests(user: CurrentUser = Depends(require_pmo_requests)):
     db = SessionLocal()
     try:
         rows = (
@@ -581,11 +640,20 @@ def list_pmo_requests(user: CurrentUser = Depends(require_functional_manager)):
 @router.post("/pmo-requests")
 def create_pmo_request(
     body: PMORequestBody,
-    user: CurrentUser = Depends(require_functional_manager),
+    user: CurrentUser = Depends(get_current_user),
+    cap_db: Session = Depends(get_db),
 ):
     allowed_types = {"vdi_provision", "vdi_revoke"}
     if body.request_type not in allowed_types:
         raise HTTPException(status_code=400, detail=f"request_type must be one of {allowed_types}")
+
+    # Per-type capability: provision ("onboarding") vs revoke ("offboarding") are
+    # granted independently, so a role can be allowed to request VDI without revoking it.
+    from app.routes.access_routes import user_has_capability
+    needed = "team_vdi_provision" if body.request_type == "vdi_provision" else "team_vdi_revoke"
+    if not user_has_capability(user, needed, cap_db):
+        action = "request VDI provision" if body.request_type == "vdi_provision" else "revoke VDI / access"
+        raise HTTPException(status_code=403, detail=f"You don't have permission to {action}.")
 
     db = SessionLocal()
     try:

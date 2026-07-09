@@ -88,6 +88,90 @@ def _today_str() -> str:
     return datetime.datetime.now().strftime("%d %b %Y")
 
 
+# ── Hierarchy scoping ───────────────────────────────────────────────────────────
+# People-data automations (attendance, leave, onboarding, allocation, training, IT
+# tickets) must only ever expose the rule creator's own reporting hierarchy —
+# the creator plus every descendant beneath them in the org tree. Super Admin is the
+# SOLE role with organization-wide visibility (product decision, 2026-07-09).
+#
+# This mirrors attendance_service.team_report() / access_control's self-manager-HR
+# model, tightened to a Super-Admin-only bypass. Every generator that reads
+# per-employee data resolves a _Scope up front and filters rows through it. A
+# non-Super-Admin owner who cannot be placed in the org tree fails CLOSED (empty
+# report) rather than leaking the whole org.
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class _Scope:
+    unrestricted: bool                              # True only for Super Admin
+    ids: set = field(default_factory=set)           # allowed Employee.id (int)
+    names: set = field(default_factory=set)         # allowed lowercased Employee.name
+    emails: set = field(default_factory=set)        # allowed lowercased Employee.email
+    label: str = ""                                 # human line rendered in the email footer
+
+    def by_id(self, employee_id) -> bool:
+        if self.unrestricted:
+            return True
+        try:
+            return int(employee_id) in self.ids
+        except (TypeError, ValueError):
+            return False
+
+    def by_name(self, name) -> bool:
+        if self.unrestricted:
+            return True
+        return bool(name) and str(name).strip().lower() in self.names
+
+    def by_any(self, employee_id=None, name=None, email=None) -> bool:
+        if self.unrestricted:
+            return True
+        if employee_id is not None and self.by_id(employee_id):
+            return True
+        if email and str(email).strip().lower() in self.emails:
+            return True
+        return bool(name) and str(name).strip().lower() in self.names
+
+
+def _resolve_scope(rule: "AutomationRule") -> _Scope:
+    """Resolve the set of employees the rule owner may see, from rule.created_by
+    (email) and rule.created_by_role. Super Admin → unrestricted; everyone else →
+    their own reporting tree (creator + descendants); unresolvable owner → empty."""
+    role = (getattr(rule, "created_by_role", "") or "").strip().lower()
+    if role == "super admin":
+        return _Scope(unrestricted=True, label="Scope: organization-wide (Super Admin).")
+
+    from app.database import SessionLocal
+    from app.services.attendance_service import resolve_employee, descendants
+
+    db = SessionLocal()
+    try:
+        owner_email = getattr(rule, "created_by", None)
+        creator = resolve_employee(db, owner_email) if owner_email else None
+        if not creator:
+            return _Scope(
+                unrestricted=False,
+                label="Scope: no reporting hierarchy could be resolved for the automation "
+                      "owner, so this report is intentionally empty.",
+            )
+        members = [creator] + descendants(db, creator.id)
+        ids = {e.id for e in members}
+        names = {(e.name or "").strip().lower() for e in members if e.name}
+        emails = {(e.email or "").strip().lower() for e in members if e.email}
+        return _Scope(
+            unrestricted=False, ids=ids, names=names, emails=emails,
+            label=f"Scope: {creator.name or creator.email}'s reporting hierarchy "
+                  f"({len(ids)} employee(s)).",
+        )
+    finally:
+        db.close()
+
+
+def _scope_note(scope: _Scope) -> str:
+    return _note(scope.label) if scope.label else ""
+
+
 # ── Leave balance report ───────────────────────────────────────────────────────
 
 def gen_leave_balance_report(rule: "AutomationRule") -> tuple[str, str]:
@@ -98,21 +182,27 @@ def gen_leave_balance_report(rule: "AutomationRule") -> tuple[str, str]:
     year = datetime.datetime.now().year
     subject = f"Team Leave Balance Report — {datetime.datetime.now().strftime('%B %Y')}"
 
+    # Only ever the rule owner's reporting hierarchy (Super Admin = org-wide).
+    scope = _resolve_scope(rule)
+
     # Source of truth is the LeaveBalance / LeaveType DB tables (same data the chat
     # `get_leave_balance` tool serves) — one row per employee × leave type for the
     # current year. LWP is excluded (it's "no limit", nothing to report a balance for).
     #
     # Balances are materialised lazily (the chat tool inits a user's rows on first
-    # query), so a team report first ensures every employee has current-year rows —
-    # otherwise the roster reads empty.
+    # query), so a team report first ensures every in-scope employee has current-year
+    # rows — otherwise the roster reads empty.
     db = SessionLocal()
     try:
         from app.hr_service import HRService
-        for emp in db.query(Employee.id, Employee.joining_date).all():
+        emp_q = db.query(Employee.id, Employee.joining_date)
+        if not scope.unrestricted:
+            emp_q = emp_q.filter(Employee.id.in_(scope.ids or {-1}))
+        for emp in emp_q.all():
             HRService._init_employee_balances(db, emp.id, emp.joining_date)
         db.commit()
 
-        rows = (
+        rows_q = (
             db.query(
                 Employee.name,
                 Employee.employee_id,
@@ -129,9 +219,10 @@ def gen_leave_balance_report(rule: "AutomationRule") -> tuple[str, str]:
                 LeaveType.is_active.is_(True),
                 LeaveType.code != "LWP",
             )
-            .order_by(Employee.name.asc(), LeaveType.name.asc())
-            .all()
         )
+        if not scope.unrestricted:
+            rows_q = rows_q.filter(Employee.id.in_(scope.ids or {-1}))
+        rows = rows_q.order_by(Employee.name.asc(), LeaveType.name.asc()).all()
     finally:
         db.close()
 
@@ -164,7 +255,7 @@ def gen_leave_balance_report(rule: "AutomationRule") -> tuple[str, str]:
     else:
         tbl = '<p style="color:#64748B;">No leave balance data available.</p>'
 
-    body = summary + tbl + _note("Generated by Centriq AI · HR Portal Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · HR Portal Automation")
     return subject, _shell(subject, intro, body, preheader=f"Team leave balances as of {today}")
 
 
@@ -190,29 +281,38 @@ def gen_attendance_summary(rule: "AutomationRule") -> tuple[str, str]:
 
     subject = f"Team Attendance Summary — {period_label}"
 
+    # Only ever the rule owner's reporting hierarchy (Super Admin = org-wide).
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
-        rows = (
+        rows_q = (
             db.query(Attendance)
             .filter(Attendance.date >= from_date, Attendance.date <= now)
-            .all()
         )
-        emp_map: dict[str, str] = {
+        if not scope.unrestricted:
+            rows_q = rows_q.filter(Attendance.employee_id.in_(scope.ids or {-1}))
+        rows = rows_q.all()
+
+        emp_q = db.query(Employee)
+        if not scope.unrestricted:
+            emp_q = emp_q.filter(Employee.id.in_(scope.ids or {-1}))
+        emp_map: dict[int, str] = {
             e.id: (e.name or e.email or str(e.id))
-            for e in db.query(Employee).all()
+            for e in emp_q.all()
         }
     finally:
         db.close()
 
     total = len(rows)
     status_counts: dict[str, int] = {}
-    emp_rows: dict[str, dict] = {}
+    emp_rows: dict[int, dict] = {}
     for r in rows:
         s = r.status or "Unknown"
         status_counts[s] = status_counts.get(s, 0) + 1
-        eid = str(r.employee_id)
+        eid = r.employee_id
         if eid not in emp_rows:
-            emp_rows[eid] = {"name": emp_map.get(eid, eid), "Present": 0, "Absent": 0, "WFH": 0, "Half-day": 0}
+            emp_rows[eid] = {"name": emp_map.get(eid, str(eid)), "Present": 0, "Absent": 0, "WFH": 0, "Half-day": 0}
         k = s if s in emp_rows[eid] else "Present"
         emp_rows[eid][k] = emp_rows[eid].get(k, 0) + 1
 
@@ -234,7 +334,7 @@ def gen_attendance_summary(rule: "AutomationRule") -> tuple[str, str]:
         for v in sorted(emp_rows.values(), key=lambda x: x["name"])
     ]
     tbl = _tbl(["Employee", "Present", "Absent", "WFH", "Half-day"], tbl_data, _C_BLUE)
-    body = summary + tbl + _note("Generated by Centriq AI · HR Portal Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · HR Portal Automation")
     return subject, _shell(subject, intro, body, preheader=f"Attendance snapshot — {period_label}")
 
 
@@ -249,17 +349,20 @@ def gen_it_ticket_digest(rule: "AutomationRule") -> tuple[str, str]:
     today = _today_str()
     subject = f"IT Ticket Status Report — {today}"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         statuses = ["Open", "Awaiting Approval"]
         if include_in_progress:
             statuses.append("In Progress")
-        tickets = (
+        tickets_q = (
             db.query(ITTicket)
             .filter(ITTicket.status.in_(statuses))
-            .order_by(ITTicket.created_at.asc())
-            .all()
         )
+        if not scope.unrestricted:
+            tickets_q = tickets_q.filter(ITTicket.employee_id.in_(scope.ids or {-1}))
+        tickets = tickets_q.order_by(ITTicket.created_at.asc()).all()
     finally:
         db.close()
 
@@ -300,7 +403,7 @@ def gen_it_ticket_digest(rule: "AutomationRule") -> tuple[str, str]:
         for t in tickets_sorted[:60]
     ]
     tbl = _tbl(["Ticket", "Category", "Subject", "Priority", "Status", "Assigned To", "Age"], tbl_data, _C_BLUE)
-    body = summary + tbl + _note("Generated by Centriq AI · IT Portal Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · IT Portal Automation")
     return subject, _shell(subject, intro, body, preheader=f"{len(tickets_sorted)} open IT tickets")
 
 
@@ -320,16 +423,20 @@ def gen_it_overdue_tickets_alert(rule: "AutomationRule") -> tuple[str, str]:
     cutoff = now - datetime.timedelta(days=overdue_days)
     subject = f"IT SLA Alert — Tickets Open >{overdue_days} Days"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
-        tickets = (
+        tickets_q = (
             db.query(ITTicket)
             .filter(
                 ITTicket.status.in_(["Open", "In Progress", "Awaiting Approval"]),
                 ITTicket.created_at <= cutoff,
             )
-            .all()
         )
+        if not scope.unrestricted:
+            tickets_q = tickets_q.filter(ITTicket.employee_id.in_(scope.ids or {-1}))
+        tickets = tickets_q.all()
     finally:
         db.close()
 
@@ -362,7 +469,7 @@ def gen_it_overdue_tickets_alert(rule: "AutomationRule") -> tuple[str, str]:
         for t in filtered_sorted
     ]
     tbl = _tbl(["Ticket", "Subject", "Priority", "Status", "Assigned To", "Age"], tbl_data, _C_ERR)
-    body = summary + tbl + _note("Generated by Centriq AI · IT Portal Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · IT Portal Automation")
     return subject, _shell(subject, intro, body, preheader=f"SLA breach: {len(filtered_sorted)} overdue tickets")
 
 
@@ -377,13 +484,20 @@ def gen_leave_approval_reminder(rule: "AutomationRule") -> tuple[str, str]:
     now = datetime.datetime.now()
     cutoff = now - datetime.timedelta(days=pending_days_min) if pending_days_min else None
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         q = db.query(Leave).filter(Leave.status == "Pending")
+        if not scope.unrestricted:
+            q = q.filter(Leave.employee_id.in_(scope.ids or {-1}))
         pending = q.all()
+        emp_q = db.query(Employee)
+        if not scope.unrestricted:
+            emp_q = emp_q.filter(Employee.id.in_(scope.ids or {-1}))
         emp_map: dict[str, str] = {
             str(e.id): (e.name or e.email or str(e.id))
-            for e in db.query(Employee).all()
+            for e in emp_q.all()
         }
     finally:
         db.close()
@@ -419,7 +533,7 @@ def gen_leave_approval_reminder(rule: "AutomationRule") -> tuple[str, str]:
             str(days_pending) + "d" if isinstance(days_pending, int) else days_pending,
         ])
     tbl = _tbl(["Employee", "Leave Type", "From", "To", "Days", "Pending For"], tbl_data, _C_WARN)
-    body = summary + tbl + _note("Generated by Centriq AI · HR Portal Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · HR Portal Automation")
     return subject, _shell(subject, intro, body, preheader=f"{len(pending)} leave requests need action")
 
 
@@ -432,11 +546,17 @@ def gen_bench_utilization_report(rule: "AutomationRule") -> tuple[str, str]:
     today = _today_str()
     subject = f"Bench & Utilization Report — {datetime.datetime.now().strftime('%B %Y')}"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         allocs = db.query(EmployeeAllocation).all()
     finally:
         db.close()
+
+    if not scope.unrestricted:
+        # Allocations link to people by name (no FK to employees.id), so scope by name.
+        allocs = [a for a in allocs if scope.by_name(a.employee_name)]
 
     bench = [a for a in allocs if (a.billability_percent or 0) == 0 or (a.project_name or "").lower() == "bench"]
     billable = [a for a in allocs if (a.billability_percent or 0) > 0 and (a.project_name or "").lower() != "bench"]
@@ -461,7 +581,7 @@ def gen_bench_utilization_report(rule: "AutomationRule") -> tuple[str, str]:
         for a in bench[:60]
     ]
     tbl = _tbl(["Employee", "Billability %", "Status"], bench_tbl_data, _C_BLUE)
-    body = summary + tbl + _note("Generated by Centriq AI · PMO Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · PMO Automation")
     return subject, _shell(subject, intro, body, preheader=f"Utilization: {util_pct}% | Bench: {bench_count}")
 
 
@@ -477,12 +597,20 @@ def gen_training_compliance_report(rule: "AutomationRule") -> tuple[str, str]:
     today = _today_str()
     subject = f"Training Compliance Report — {today}"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         from sqlalchemy.orm import joinedload
         assignments = db.query(TeAssignment).options(joinedload(TeAssignment.training)).all()
     finally:
         db.close()
+
+    if not scope.unrestricted:
+        assignments = [
+            a for a in assignments
+            if scope.by_any(employee_id=a.employee_id, name=a.employee_name, email=a.employee_email)
+        ]
 
     if overdue_only:
         assignments = [
@@ -524,7 +652,7 @@ def gen_training_compliance_report(rule: "AutomationRule") -> tuple[str, str]:
         for a in sorted(show, key=lambda x: x.due_date or datetime.date.max)
     ]
     tbl = _tbl(["Employee", "Course", "Status", "Due Date", "Flag"], tbl_data, _C_PURPLE)
-    body = summary + tbl + _note("Generated by Centriq AI · TechElevate Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · TechElevate Automation")
     return subject, _shell(subject, intro, body, preheader=f"Training compliance: {comp_rate}%")
 
 
@@ -541,12 +669,20 @@ def gen_training_due_reminder(rule: "AutomationRule") -> tuple[str, str]:
     today = _today_str()
     subject = f"Training Deadline Reminder — Due in {due_within_days} Days"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         from sqlalchemy.orm import joinedload
         assignments = db.query(TeAssignment).options(joinedload(TeAssignment.training)).all()
     finally:
         db.close()
+
+    if not scope.unrestricted:
+        assignments = [
+            a for a in assignments
+            if scope.by_any(employee_id=a.employee_id, name=a.employee_name, email=a.employee_email)
+        ]
 
     due_soon = [
         a for a in assignments
@@ -574,7 +710,7 @@ def gen_training_due_reminder(rule: "AutomationRule") -> tuple[str, str]:
         for a in sorted(due_soon, key=lambda x: x.due_date or datetime.date.max)
     ]
     tbl = _tbl(["Employee", "Course", "Status", "Due Date", "Days Left"], tbl_data, _C_WARN)
-    body = summary + tbl + _note("Generated by Centriq AI · TechElevate Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · TechElevate Automation")
     return subject, _shell(subject, intro, body, preheader=f"{len(due_soon)} training deadlines approaching")
 
 
@@ -601,11 +737,16 @@ def gen_project_status_report(rule: "AutomationRule") -> tuple[str, str]:
     today = _today_str()
     subject = f"Project Delivery Status — Week of {today}"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         allocs = db.query(EmployeeAllocation).all()
     finally:
         db.close()
+
+    if not scope.unrestricted:
+        allocs = [a for a in allocs if scope.by_name(a.employee_name)]
 
     if active_only:
         allocs = [a for a in allocs if (a.project_status or "").lower() in ("active", "ongoing", "in progress")]
@@ -634,7 +775,7 @@ def gen_project_status_report(rule: "AutomationRule") -> tuple[str, str]:
         status = members[0].project_status or "—"
         tbl_data.append([pname, str(len(members)), f"{int(avg_bill)}%", status])
     tbl = _tbl(["Project", "Team Size", "Avg Billability", "Status"], tbl_data, _C_PURPLE)
-    body = summary + tbl + _note("Generated by Centriq AI · PMO Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · PMO Automation")
     return subject, _shell(subject, intro, body, preheader=f"{len(by_project)} active projects")
 
 
@@ -651,14 +792,18 @@ def gen_onboarding_pending_reminder(rule: "AutomationRule") -> tuple[str, str]:
     stall_cutoff = now - datetime.timedelta(days=stalled_days)
     today = _today_str()
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
-        journeys = (
+        journeys_q = (
             db.query(OnboardingJourney)
             .options(joinedload(OnboardingJourney.employee), joinedload(OnboardingJourney.steps))
             .filter(OnboardingJourney.status != "completed")
-            .all()
         )
+        if not scope.unrestricted:
+            journeys_q = journeys_q.filter(OnboardingJourney.employee_id.in_(scope.ids or {-1}))
+        journeys = journeys_q.all()
     finally:
         db.close()
 
@@ -693,7 +838,7 @@ def gen_onboarding_pending_reminder(rule: "AutomationRule") -> tuple[str, str]:
         for j in sorted(stalled, key=lambda x: x.started_at or datetime.datetime.min)
     ]
     tbl = _tbl(["New Joiner", "Email", "Status", "Start Date"], tbl_data, _C_PURPLE)
-    body = summary + tbl + _note("Generated by Centriq AI · HR Onboarding Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · HR Onboarding Automation")
     return subject, _shell(subject, intro, body, preheader=f"{len(stalled)} onboarding journeys need attention")
 
 
@@ -748,6 +893,8 @@ def gen_team_learning_digest(rule: "AutomationRule") -> tuple[str, str]:
     week_label = f"Week of {today}"
     subject = f"Team Learning Digest — {week_label}"
 
+    scope = _resolve_scope(rule)
+
     rows_data: list[list[str]] = []
 
     if source in ("te_lms", "both"):
@@ -757,6 +904,11 @@ def gen_team_learning_digest(rule: "AutomationRule") -> tuple[str, str]:
             assignments = db.query(TeAssignment).options(joinedload(TeAssignment.training)).all()
         finally:
             db.close()
+        if not scope.unrestricted:
+            assignments = [
+                a for a in assignments
+                if scope.by_any(employee_id=a.employee_id, name=a.employee_name, email=a.employee_email)
+            ]
         for a in assignments:
             status = a.status or "Assigned"
             rows_data.append([
@@ -772,7 +924,13 @@ def gen_team_learning_digest(rule: "AutomationRule") -> tuple[str, str]:
             from app.services import udemy_business_service as udemy
             if udemy.configured():
                 result = udemy.get_user_list()
-                for u in (result.get("results") or [])[:100]:
+                udemy_users = result.get("results") or []
+                if not scope.unrestricted:
+                    udemy_users = [
+                        u for u in udemy_users
+                        if (u.get("email") or "").strip().lower() in scope.emails
+                    ]
+                for u in udemy_users[:100]:
                     rows_data.append([
                         u.get("display_name") or u.get("email") or "—",
                         "— (Udemy Business)",
@@ -799,7 +957,7 @@ def gen_team_learning_digest(rule: "AutomationRule") -> tuple[str, str]:
         ("Not Started", str(not_started)),
     ])
     tbl = _tbl(["Employee", "Course", "Platform", "Status", "Done?"], rows_data, _C_PURPLE)
-    body = summary + tbl + _note("Generated by Centriq AI · Learning Automation")
+    body = summary + tbl + _scope_note(scope) + _note("Generated by Centriq AI · Learning Automation")
     return subject, _shell(subject, intro, body, preheader=f"Learning digest: {completed} completed this week")
 
 
@@ -813,11 +971,16 @@ def gen_workforce_readiness_digest(rule: "AutomationRule") -> tuple[str, str]:
     week_label = f"Week of {today}"
     subject = f"Workforce Readiness Digest — {week_label}"
 
+    scope = _resolve_scope(rule)
+
     db = SessionLocal()
     try:
         allocs = db.query(EmployeeAllocation).all()
     finally:
         db.close()
+
+    if not scope.unrestricted:
+        allocs = [a for a in allocs if scope.by_name(a.employee_name)]
 
     total_employees = len({a.employee_name for a in allocs})
     bench = [a for a in allocs if (a.billability_percent or 0) == 0]
@@ -854,5 +1017,5 @@ def gen_workforce_readiness_digest(rule: "AutomationRule") -> tuple[str, str]:
         if bench_count > 30:
             bench_block += _note(f"…and {bench_count - 30} more on bench.")
 
-    body = summary + bench_block + _note("Generated by Centriq AI · Leadership Automation")
+    body = summary + bench_block + _scope_note(scope) + _note("Generated by Centriq AI · Leadership Automation")
     return subject, _shell(subject, intro, body, preheader=f"Utilization: {util_pct}% | Bench: {bench_count}")

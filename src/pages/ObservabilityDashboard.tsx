@@ -43,6 +43,8 @@ import { AdoptionTab } from "./AdoptionTab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 // ── Colour palettes ──────────────────────────────────────────────────────────
 const DOMAIN_COLORS: Record<string, string> = {
@@ -256,16 +258,18 @@ export function ObservabilityDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
+            <div className="flex rounded-lg border border-border bg-muted/30 p-1">
               {(["logs", "charts", "triage", "adoption"] as const).map((tab) => (
-                <button
+                <Button
                   key={tab}
+                  variant={activeTab === tab ? "secondary" : "ghost"}
+                  size="sm"
                   onClick={() => setActiveTab(tab)}
                   className={cn(
-                    "px-4 py-2 text-[13px] font-medium transition-colors",
+                    "h-8 px-4 text-xs font-medium transition-all",
                     activeTab === tab
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "shadow-sm bg-background text-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                   )}
                 >
                   {tab === "logs"
@@ -275,7 +279,7 @@ export function ObservabilityDashboard() {
                       : tab === "triage"
                         ? "Feedback Triage"
                         : "Feature Adoption"}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -397,7 +401,7 @@ function LogsTab() {
     <div className="space-y-4">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-[12px] text-muted-foreground mr-1">Filter</span>
+        <span className="text-sm font-medium text-muted-foreground mr-1">Filter</span>
 
         <select
           value={domain}
@@ -405,7 +409,7 @@ function LogsTab() {
             setDomain(e.target.value);
             setPage(1);
           }}
-          className="rounded-xl border border-[var(--border)] bg-card px-3 py-2.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="h-9 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
         >
           <option value="All">All Domains</option>
           <option value="hr">HR</option>
@@ -416,35 +420,39 @@ function LogsTab() {
           <option value="functional_manager">Manager</option>
         </select>
 
-        <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
+        <div className="flex rounded-lg border border-border bg-muted/30 p-1">
           {["All", "Success", "Error"].map((s) => (
-            <button
+            <Button
               key={s}
+              variant={status === s ? "secondary" : "ghost"}
+              size="sm"
               onClick={() => {
                 setStatus(s);
                 setPage(1);
               }}
               className={cn(
-                "px-3.5 py-2 text-[12px] font-medium transition-colors",
+                "h-7 px-3 text-xs font-medium transition-all",
                 status === s
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "shadow-sm bg-background text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
               )}
             >
               {s}
-            </button>
+            </Button>
           ))}
         </div>
 
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={fetchLogs}
-          className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2.5 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+          className="h-9 gap-2"
         >
-          <RefreshCw className="h-3.5 w-3.5" />
+          <RefreshCw className="h-4 w-4" />
           Refresh
-        </button>
+        </Button>
 
-        <span className="text-[11px] text-muted-foreground ml-auto">{total} total entries</span>
+        <span className="text-sm font-medium text-muted-foreground ml-auto">{total} total entries</span>
       </div>
 
       {/* Log table */}
@@ -753,25 +761,29 @@ function LogsTab() {
       {/* Pagination */}
       {pages > 1 && (
         <div className="flex items-center justify-center gap-3 pt-2">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page <= 1}
-            className="flex items-center gap-1 rounded-xl border border-[var(--border)] px-3 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+            className="gap-2 h-9"
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
+            <ChevronLeft className="h-4 w-4" />
             Previous
-          </button>
-          <span className="text-[12px] text-muted-foreground">
+          </Button>
+          <span className="text-sm font-medium text-muted-foreground">
             Page {page} of {pages}
           </span>
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setPage((p) => Math.min(pages, p + 1))}
             disabled={page >= pages}
-            className="flex items-center gap-1 rounded-xl border border-[var(--border)] px-3 py-2 text-[12px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+            className="gap-2 h-9"
           >
             Next
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       )}
     </div>
@@ -844,29 +856,33 @@ function ChartsTab() {
     <div className="space-y-6">
       {/* Period selector */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex rounded-xl border border-[var(--border)] overflow-hidden">
+        <div className="flex rounded-lg border border-border bg-muted/30 p-1">
           {["24h", "7d", "30d"].map((p) => (
-            <button
+            <Button
               key={p}
+              variant={period === p ? "secondary" : "ghost"}
+              size="sm"
               onClick={() => setPeriod(p)}
               className={cn(
-                "px-4 py-2 text-[13px] font-medium transition-colors",
+                "h-8 px-4 text-xs font-medium transition-all",
                 period === p
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "shadow-sm bg-background text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
               )}
             >
               {p === "24h" ? "Last 24h" : p === "7d" ? "Last 7 days" : "Last 30 days"}
-            </button>
+            </Button>
           ))}
         </div>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={fetchAll}
-          className="flex items-center gap-1.5 rounded-xl border border-[var(--border)] px-3.5 py-2.5 text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+          className="h-10 gap-2 font-medium"
         >
-          <RefreshCw className="h-3.5 w-3.5" />
+          <RefreshCw className="h-4 w-4" />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {/* KPI Cards */}

@@ -84,7 +84,9 @@ async def get_capacity(_: CurrentUser = Depends(require_super_admin)):
     Read-only. Cached ~3s server-side so many admin pollers issue one ml01 probe."""
     from app.concurrency import chat_gate
 
-    gate = await chat_gate.stats()
+    # detailed_stats() = stats() + per-request identity (running / waiting_list
+    # entries carry email, question snippet, elapsed) for the live-traffic table.
+    gate = await chat_gate.detailed_stats()
     residency = llm_controls.ollama_residency()
     parallel = llm_controls.ollama_parallelism()
 

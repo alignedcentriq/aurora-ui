@@ -204,7 +204,7 @@ export function LeadershipPortal() {
     Promise.resolve().then(() => fetch_());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (user?.role !== "PMO" && user?.role !== "Admin") {
+  if (user?.role !== "PMO" && user?.role !== "Admin" && user?.role !== "Super Admin") {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-md p-8 rounded-3xl border border-slate-200/60 dark:border-white/[0.06] bg-white/60 dark:bg-zinc-950/40 backdrop-blur-2xl shadow-elevated">

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import {
   Bell,
   X,
@@ -67,6 +68,7 @@ const TYPE_ICON: Record<string, typeof Bell> = {
   approval_stale: AlarmClock,
   new_mail: Mail,
   new_community_post: MessageSquare,
+  answer_ready: MessageSquare,
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -124,6 +126,12 @@ export function ProactiveNudgeFeed() {
   // Announcement IDs we've already reported as seen this session — avoids re-POSTing
   // /seen on every 10s poll or bell re-open. The server upsert is idempotent anyway.
   const reportedSeen = useRef<Set<number>>(new Set());
+  // Track answer_ready nudge IDs already toasted this session so we don't
+  // re-fire on every poll tick.
+  const toastedNudgeIds = useRef<Set<number>>(new Set());
+  // True after the very first successful nudge poll — any answer_ready nudge
+  // that existed before we mounted should NOT fire a toast (stale backlog).
+  const firstLoadDoneRef = useRef(false);
 
   const isDomainManager = user ? DOMAIN_MANAGER_ROLES.has(user.role) : false;
 
@@ -137,7 +145,39 @@ export function ProactiveNudgeFeed() {
     fetch("/api/nudges", { headers: authHeaders })
       .then((r) => r.json())
       .then((data: { nudges: Nudge[]; unread: number }) => {
-        setNudges(data.nudges || []);
+        const all: Nudge[] = data.nudges || [];
+
+        // Intercept answer_ready nudges — show a toast banner and auto-dismiss
+        // them instead of showing them in the bell. The stop-button fix already
+        // dismisses these server-side for deliberately stopped responses, so
+        // only genuine background-completed answers reach here.
+        const answerReady = all.filter((n) => n.nudge_type === "answer_ready");
+
+        if (!firstLoadDoneRef.current) {
+          // Very first poll: seed all existing nudge IDs silently so stale
+          // backlog items never fire a spurious toast on page load.
+          firstLoadDoneRef.current = true;
+          all.forEach((n) => toastedNudgeIds.current.add(n.id));
+        } else {
+          // Subsequent polls: only toast nudges we haven't seen before.
+          answerReady.forEach((n) => {
+            if (toastedNudgeIds.current.has(n.id)) return;
+            toastedNudgeIds.current.add(n.id);
+            toast.success("Your answer is ready! 💬", {
+              description: n.body || "Head back to the chat to see it.",
+              duration: 8000,
+            });
+            // Auto-dismiss from backend so it doesn't linger in the bell.
+            fetch(`/api/nudges/${n.id}/dismiss`, {
+              method: "POST",
+              headers: { ...authHeaders, "Content-Type": "application/json" },
+            }).catch(() => { });
+          });
+        }
+
+        // Only pass non-answer_ready nudges to the bell.
+        const bellNudges = all.filter((n) => n.nudge_type !== "answer_ready");
+        setNudges(bellNudges);
         setNudgesUnread(data.unread || 0);
       })
       .catch(() => {});

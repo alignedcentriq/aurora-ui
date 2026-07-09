@@ -515,8 +515,9 @@ function LayoutComponent() {
   const showCopilot =
     location.pathname !== "/" &&
     location.pathname !== "/settings" &&
+    !location.pathname.startsWith("/team") &&
     !location.pathname.startsWith("/documents") &&
-    !(location.pathname.startsWith("/control-hub") && (location.search as Record<string, string>)?.tab === "project-iq");
+    !location.pathname.startsWith("/control-hub");
 
   return (
     <div className="flex h-screen h-[100dvh] w-full bg-background overflow-hidden flex-row">
@@ -528,7 +529,7 @@ function LayoutComponent() {
         )}
       >
         {/* Brand Header */}
-        <div className="flex items-center px-4 py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5">
+        <div className={cn("flex items-center py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5", sidebarCollapsed ? "justify-center px-0" : "px-4")}>
           <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity overflow-hidden">
             <div className="relative shrink-0 flex items-center justify-center">
               <Logo size="sm" />
