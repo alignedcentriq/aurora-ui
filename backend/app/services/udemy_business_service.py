@@ -381,6 +381,70 @@ def _ensure_activity_cache() -> list[dict]:
     return rows
 
 
+def force_refresh_cache() -> dict:
+    """Invalidate the activity + user-directory caches and rebuild them synchronously
+    from the live Udemy API, bypassing the 1-hour TTL.
+
+    After fetching, auto-calculates:
+        available = purchased − active_users   (non-deactivated rows in the report)
+
+    This only runs when PMO has already set a ``purchased`` total — we never invent
+    that figure from thin air. The result is persisted to udemy_license_config.json
+    so the seat pills reflect it immediately without a manual edit.
+
+    Returns {refreshed, learners, active, purchased, available, available_updated}
+    on success, or {error} when not configured.
+    """
+    global _activity_cache, _activity_built_at, _user_dir_map, _user_dir_built_at
+    if not configured():
+        return {"error": "not_configured"}
+
+    # Zero out both caches so _ensure_* fetches from Udemy unconditionally.
+    with _activity_lock:
+        _activity_cache = []
+        _activity_built_at = 0.0
+        _user_dir_map = {}
+        _user_dir_built_at = 0.0
+
+    # Rebuild synchronously (the endpoint is PMO-only so this is a deliberate,
+    # infrequent call; a few seconds of latency is acceptable).
+    rows = _ensure_activity_cache()
+    _ensure_user_directory()
+
+    # ── Auto-update available seats ─────────────────────────────────────────
+    # Count only non-deactivated rows — these are the seats currently occupied.
+    # Deactivated users are still in the report but no longer consuming a seat.
+    active_count = sum(1 for r in rows if not r["is_deactivated"])
+    cfg = get_license_config()
+    purchased = cfg.get("purchased")
+    auto_available: int | None = None
+    available_updated = False
+
+    if purchased is not None:
+        auto_available = max(0, purchased - active_count)
+        set_license_config(
+            purchased=purchased,
+            available=auto_available,
+            inactive_days=cfg.get("inactive_days"),
+            updated_by="system (force-refresh)",
+        )
+        available_updated = True
+        log.info(
+            "[udemy] available seats auto-updated: purchased=%d active=%d → available=%d",
+            purchased, active_count, auto_available,
+        )
+
+    log.info("[udemy] cache force-refreshed: %d learner rows (%d active)", len(rows), active_count)
+    return {
+        "refreshed": True,
+        "learners": len(rows),
+        "active": active_count,
+        "purchased": purchased,
+        "available": auto_available,
+        "available_updated": available_updated,
+    }
+
+
 # Email → {id, role, groups} from /users/list/ (the user-activity report omits the
 # numeric id and group membership). Cached alongside the activity pull so per-user
 # admin deep-links resolve and groups/roles can be shown.

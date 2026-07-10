@@ -6,10 +6,8 @@ import {
   AlertTriangle,
   XCircle,
   Gauge,
-  Wallet,
   Grid3x3,
   ShieldAlert,
-  GraduationCap,
   Users,
   TrendingUp,
 } from "lucide-react";
@@ -40,11 +38,6 @@ interface SpofRow {
   holder_count: number;
   holders: string[];
 }
-interface Opportunity {
-  training: string;
-  would_help: number;
-  skills: string[];
-}
 interface Overview {
   ok: boolean;
   generated_on?: string;
@@ -56,17 +49,7 @@ interface Overview {
     rows: ReadinessRow[];
   };
   spof?: { count: number; rows: SpofRow[] };
-  bench_cost?: {
-    currency: string;
-    bench_headcount: number;
-    idle_hours_per_month: number;
-    monthly_bench_cost: number;
-    opportunities: Opportunity[];
-  };
 }
-
-const money = (v: number, cur: string) =>
-  `${cur === "INR" ? "₹" : "$"}${Math.round(v).toLocaleString()}`;
 
 const readinessColor = (p: number) =>
   p >= 75
@@ -221,7 +204,6 @@ export function LeadershipPortal() {
   }
 
   const pr = data?.pipeline_readiness;
-  const bc = data?.bench_cost;
   const hm = data?.heatmap;
   const spof = data?.spof;
 
@@ -239,8 +221,8 @@ export function LeadershipPortal() {
             </span>
           </div>
           <p className="text-[13px] text-muted-foreground mt-0.5 max-w-2xl leading-relaxed">
-            Org-wide workforce intelligence — capability, pipeline readiness, single-point-of-failure
-            risk, and bench cost.
+            Org-wide workforce intelligence — capability, pipeline readiness, and
+            single-point-of-failure risk.
           </p>
         </div>
         <button
@@ -270,7 +252,7 @@ export function LeadershipPortal() {
         ) : (
           <>
             {/* KPI summary row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
               <KPIStat
                 label="People in Scope"
                 value={data.headcount?.toLocaleString() ?? "—"}
@@ -290,13 +272,6 @@ export function LeadershipPortal() {
                 }
               />
               <KPIStat
-                label="On Bench"
-                value={String(bc?.bench_headcount ?? 0)}
-                sub={bc ? money(bc.monthly_bench_cost, bc.currency) + "/mo" : undefined}
-                icon={Wallet}
-                color="amber"
-              />
-              <KPIStat
                 label="SPOF Risks"
                 value={String(spof?.count ?? 0)}
                 icon={ShieldAlert}
@@ -305,8 +280,9 @@ export function LeadershipPortal() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Pipeline Readiness */}
-              <Panel title="Pipeline Readiness" icon={Gauge} accent="cyan">
+              {/* Pipeline Readiness — full width */}
+              <div className="lg:col-span-2">
+                <Panel title="Pipeline Readiness" icon={Gauge} accent="cyan">
                 <div className="flex flex-wrap items-center gap-4 mb-5">
                   <CircleGauge pct={pr?.overall_readiness_pct ?? 0} />
                   <div>
@@ -363,62 +339,7 @@ export function LeadershipPortal() {
                   )}
                 </div>
               </Panel>
-
-              {/* Bench Cost & Opportunity */}
-              <Panel title="Bench Cost & Opportunity" icon={Wallet} accent="amber">
-                <div className="rounded-2xl bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/20 p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600/70 dark:text-amber-500/60 mb-1">
-                      Monthly Bench Cost
-                    </div>
-                    <div className="text-[28px] font-black leading-none text-amber-600 dark:text-amber-400">
-                      {bc ? money(bc.monthly_bench_cost, bc.currency) : "—"}
-                    </div>
-                  </div>
-                  <div className="text-right space-y-2">
-                    <div>
-                      <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">
-                        On Bench
-                      </div>
-                      <div className="text-lg font-black text-foreground">
-                        {bc?.bench_headcount ?? 0}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">
-                        Idle hrs/mo
-                      </div>
-                      <div className="text-lg font-black text-foreground">
-                        {Math.round(bc?.idle_hours_per_month ?? 0).toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-wider mb-2">
-                  Top training opportunities
-                </div>
-                <div className="space-y-1.5">
-                  {(bc?.opportunities ?? []).map((o) => (
-                    <div
-                      key={o.training}
-                      className="flex flex-col md:flex-row md:items-center justify-between gap-4 gap-2 text-xs bg-slate-50/60 dark:bg-zinc-950/20 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-zinc-800/40 hover:border-amber-400/40 transition-colors"
-                    >
-                      <span className="flex items-center gap-1.5 font-medium text-foreground truncate">
-                        <GraduationCap className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                        {o.training}
-                      </span>
-                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 whitespace-nowrap bg-amber-500/10 px-1.5 py-0.5 rounded-md shrink-0">
-                        +{o.would_help}
-                      </span>
-                    </div>
-                  ))}
-                  {(bc?.opportunities ?? []).length === 0 && (
-                    <p className="text-xs text-muted-foreground/70">
-                      No course opportunities (needs synced skill profiles).
-                    </p>
-                  )}
-                </div>
-              </Panel>
+              </div>
 
               {/* Capability Heat Map — full width */}
               <div className="lg:col-span-2">
@@ -572,7 +493,7 @@ export function LeadershipPortal() {
         {data?.generated_on && (
           <div className="mt-6 flex items-center gap-2 text-[11px] text-muted-foreground/60">
             <span className="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0" />
-            All figures computed from live allocation, skills, and the ROI cost model · Generated{" "}
+            All figures computed from live allocation and skills data · Generated{" "}
             {data.generated_on}
           </div>
         )}

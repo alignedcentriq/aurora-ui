@@ -199,6 +199,28 @@ def udemy_license_summary(user: CurrentUser = Depends(get_current_user)):
         _err(e)
 
 
+@router.post("/analytics/refresh-cache")
+def udemy_refresh_cache(user: CurrentUser = Depends(get_current_user)):
+    """Force-clear the server-side learner-activity + user-directory caches and
+    immediately rebuild them from the live Udemy API.  Bypasses the 1-hour TTL so
+    PMO can see deactivations or new provisioning straight away without a restart.
+    Restricted to PMO / Admin — HR is read-only and shouldn't trigger heavy refetches."""
+    _guard_configured()
+    if user.role not in _LICENSE_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Force-refresh is restricted to PMO / Admin.")
+    try:
+        result = udemy.force_refresh_cache()
+        if "error" in result:
+            raise HTTPException(status_code=503, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        _err(e)
+
+
+
+
 @router.put("/analytics/license-config")
 def udemy_set_license_config(
     payload: dict = Body(..., examples=[{"purchased": 230, "available": 1, "inactive_days": 30}]),

@@ -1,18 +1,16 @@
 """
 Leadership Capability Command — org-wide, read-only workforce intelligence.
 
-Four deterministic-SQL panels for leadership (NO LLM, no per-row guesswork):
+Three deterministic-SQL panels for leadership (NO LLM, no per-row guesswork):
 
   1. Capability Heat Map      — skill × function holder counts (where is capability
                                 strong / thin / concentrated).
   2. Pipeline Readiness Score — % of forward-planned demand staffable from current
                                 free capacity, per function and overall.
   3. Single-Point-of-Failure  — skills held by ≤2 people (delivery + retention risk).
-  4. Bench Cost & Opportunity — monthly cost of idle bench (ROI cost model) + the
-                                training that would make the most people billable.
 
 Capacity comes from allocation_snapshot_service (latest snapshot per person); skills
-from EmployeeSkill (joined by employee name); cost from the shared ROI assumptions.
+from EmployeeSkill (joined by employee name).
 """
 
 import datetime
@@ -21,7 +19,6 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import TeTraining
 from app.services import allocation_snapshot_service as snap
 from app.services import workforce_directory as wd
 
@@ -130,41 +127,6 @@ def single_point_of_failure(db: Session, skills_map: dict, max_holders: int = 2)
     return {"count": len(out), "rows": out}
 
 
-# ── 4. Bench Cost & Opportunity ───────────────────────────────────────────────
-
-def bench_cost(db: Session, load_map: dict, skills_map: dict) -> dict:
-    """Monthly cost of idle bench capacity + the courses that would unlock the most
-    billability (most bench people who lack the skill it teaches)."""
-    from app.services.analytics_service import get_assumptions
-    a = get_assumptions(db)
-    hourly = float(a.get("hourly_cost", 0) or 0)
-    currency = a.get("currency", "INR")
-
-    bench = [(n, v) for n, v in load_map.items() if v["is_bench"] and v.get("active")]
-    # Idle hours/month ≈ free% × 160 billable hours.
-    idle_hours = sum((v["free"] / 100.0) * 160.0 for _, v in bench)
-    monthly_cost = round(idle_hours * hourly, 0)
-
-    # Opportunity: which TE course would help the most bench people (those lacking its skills).
-    course_rows = []
-    for t in db.query(TeTraining).all():
-        tags = {(s or "").strip().lower() for s in (t.skill_tags or [])}
-        if not tags:
-            continue
-        helps = 0
-        for n, _ in bench:
-            have = {_norm(s) for s in skills_map.get(n, set())}
-            if tags - have:  # course teaches at least one skill they lack
-                helps += 1
-        if helps:
-            course_rows.append({"training": t.title, "would_help": helps,
-                                "skills": list(t.skill_tags or [])[:4]})
-    course_rows.sort(key=lambda r: r["would_help"], reverse=True)
-    return {"currency": currency, "bench_headcount": len(bench),
-            "idle_hours_per_month": round(idle_hours, 0), "monthly_bench_cost": monthly_cost,
-            "opportunities": course_rows[:5]}
-
-
 # ── Aggregate overview ────────────────────────────────────────────────────────
 
 def overview(db: Session, today: Optional[datetime.date] = None) -> dict:
@@ -179,5 +141,4 @@ def overview(db: Session, today: Optional[datetime.date] = None) -> dict:
         "heatmap": capability_heatmap(db, load_map, skills_map),
         "pipeline_readiness": pipeline_readiness(db, load_map, today),
         "spof": single_point_of_failure(db, skills_map),
-        "bench_cost": bench_cost(db, load_map, skills_map),
     }

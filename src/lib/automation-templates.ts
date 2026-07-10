@@ -321,14 +321,6 @@ export const PORTAL_TEMPLATES: Record<string, PortalTemplateConfig> = {
         email_body:
           "Hi Leadership,\n\nCritical SPOF risks identified:\n\n• Role: [Role Name] — Only [Name] holds this expertise\n• Domain: [Skill]\n• Risk: [High / Critical]\n• Project dependency: [Project Name]\n\nRecommended actions:\n1. Knowledge transfer to [Backup]\n2. Hire/cross-train backup\n3. Document critical processes\n\n— Workforce Intelligence",
       },
-      {
-        name: "Monthly Bench Cost Summary",
-        description: "Monthly cost report for bench and unallocated resources",
-        frequency: "monthly", day_of_month: 5, hour: 9, minute: 0,
-        email_subject: "Bench Cost Report — [Month Year]",
-        email_body:
-          "Hi Finance & PMO,\n\nBench summary for [Month]:\n\n• Total Bench: [Count]\n• Estimated Cost: ₹[Amount]\n• Avg Bench Duration: [X] days\n• Highest bench skills: [Skill 1], [Skill 2]\n• Ready to deploy: [Count]\n\nFull analysis in Capability Command → Bench Report.\n\n— PMO Finance",
-      },
     ],
   },
 

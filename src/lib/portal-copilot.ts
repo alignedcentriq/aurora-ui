@@ -363,18 +363,16 @@ const CONFIGS: Record<string, PortalCopilotConfig> = {
     Icon: TrendingUp,
     accent: "#06B6D4",
     heading: "Org-wide workforce intelligence",
-    tagline: "Skill gaps, pipeline readiness, SPOF risk, and bench cost — all in one view.",
+    tagline: "Skill gaps, pipeline readiness, and SPOF risk — all in one view.",
     starters: [
       "Where is our biggest skill gap right now?",
       "Show the leadership capability heat map",
       "Who are our single-points of failure?",
-      "What's our bench cost this quarter?",
     ],
     placeholders: [
       "Biggest skill gap",
       "Capability heat map",
       "Single points of failure",
-      "Bench cost this quarter",
     ],
   },
 
