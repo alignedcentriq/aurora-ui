@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TableEmpty } from "@/components/ui/TableEmpty";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { useUdemyAutomations } from "@/lib/udemy-automations-store";
 
 type Tab = "catalog" | "insights" | "activity" | "course-activity" | "inactive" | "automations";
 
@@ -510,6 +511,7 @@ function ResponsiveTable({
 export function UdemyBusinessPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("catalog");
+  const { isOpen: showAutomations, close: closeAutomations } = useUdemyAutomations();
   const [status, setStatus] = useState<{
     configured: boolean;
     can_view_reports: boolean;
@@ -582,7 +584,6 @@ export function UdemyBusinessPortal() {
     { id: "activity", label: "Learner Activity", icon: BarChart2, show: !!status?.can_view_reports },
     { id: "course-activity", label: "Course Activity", icon: Activity, show: !!status?.can_view_reports },
     { id: "inactive", label: "Inactive Seats", icon: UserMinus, show: !!status?.can_view_reports },
-    { id: "automations", label: "Automations", icon: Bell, show: !!status?.can_view_reports },
   ] as const;
 
   return (
@@ -594,7 +595,7 @@ export function UdemyBusinessPortal() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[50%] aspect-square rounded-full bg-[#6366F1]/20 blur-[90px] pointer-events-none" />
         <div
           className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05]"
-          style={{
+        style={{
             backgroundImage:
               "radial-gradient(circle, white 1px, transparent 1px)",
             backgroundSize: "28px 28px",
@@ -613,28 +614,80 @@ export function UdemyBusinessPortal() {
               Browse your organization's course catalog and monitor development progress in real-time.
             </p>
           </div>
-          {count > 0 && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4 }}
-              className="shrink-0 bg-white/10 dark:bg-white/[0.03] backdrop-blur-md border border-white/20 dark:border-white/10 rounded-2xl p-5 flex items-center gap-4 shadow-xl hover:bg-white/15 dark:hover:bg-white/[0.05] transition-all duration-300"
-            >
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-[#A435F0] to-[#7C3AED] flex items-center justify-center shadow-lg shadow-purple-500/30">
-                <BookOpen className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <div className="text-3xl font-black text-white leading-none tracking-tight">
-                  {count.toLocaleString()}
+          <div className="flex items-center gap-3 shrink-0">
+            {count > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.4 }}
+                className="shrink-0 bg-white/10 dark:bg-white/[0.03] backdrop-blur-md border border-white/20 dark:border-white/10 rounded-2xl p-5 flex items-center gap-4 shadow-xl hover:bg-white/15 dark:hover:bg-white/[0.05] transition-all duration-300"
+              >
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-[#A435F0] to-[#7C3AED] flex items-center justify-center shadow-lg shadow-purple-500/30">
+                  <BookOpen className="w-6 h-6 text-white" />
                 </div>
-                <div className="text-[10px] text-white/60 font-semibold uppercase tracking-wider mt-1">
-                  Active Courses
+                <div>
+                  <div className="text-3xl font-black text-white leading-none tracking-tight">
+                    {count.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] text-white/60 font-semibold uppercase tracking-wider mt-1">
+                    Active Courses
+                  </div>
                 </div>
-              </div>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Automations slide-in drawer */}
+      <AnimatePresence>
+        {showAutomations && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              key="automations-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => closeAutomations()}
+              className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+            />
+            {/* Panel */}
+            <motion.div
+              key="automations-panel"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-2xl flex flex-col bg-slate-50 dark:bg-zinc-950 border-l border-slate-200 dark:border-zinc-800/80 shadow-2xl"
+            >
+              {/* Drawer header */}
+              <div className="flex items-center justify-between gap-4 px-6 py-5 border-b border-slate-200 dark:border-zinc-800/80 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-[#A435F0]/10 border border-[#A435F0]/20 flex items-center justify-center">
+                    <Bell className="w-4.5 h-4.5 text-[#A435F0]" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-extrabold text-slate-800 dark:text-white">Notification Automations</p>
+                    <p className="text-xs text-slate-500 dark:text-zinc-400">Scheduled reports &amp; learner nudges</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => closeAutomations()}
+                  className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4.5 h-4.5" />
+                </button>
+              </div>
+              {/* Drawer body — scrollable */}
+              <div className="flex-1 overflow-y-auto px-6 py-6">
+                <AutomationsTab authHeaders={authHeaders} />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 sm:py-8 flex flex-col gap-6">
         {/* Tab Selector bar with custom Framer Motion indicator */}
@@ -1247,7 +1300,6 @@ function SeatPills({
   const beginEdit = () => {
     setPurchased(s?.purchased != null ? String(s.purchased) : "");
     setAvailable(s?.available != null ? String(s.available) : "");
-    setInactiveDays(s?.inactive_days != null ? String(s.inactive_days) : "");
     setSaveError("");
     setEditing(true);
   };
@@ -1262,7 +1314,8 @@ function SeatPills({
         body: JSON.stringify({
           purchased: purchased === "" ? null : Number(purchased),
           available: available === "" ? null : Number(available),
-          inactive_days: inactiveDays === "" ? null : Number(inactiveDays),
+          // inactive_days is not user-editable — preserve existing value
+          inactive_days: s?.inactive_days ?? null,
         }),
       });
       const b = await r.json().catch(() => ({}));
@@ -1278,39 +1331,31 @@ function SeatPills({
 
   if (!s) return null;
 
+  // ── Prompt PMO to set purchased total if it's never been configured ─────────
+  // This is the single most important first action — without it, auto-calculation
+  // can't derive available seats and the gauge shows nothing useful.
+  const purchasedUnset = s.purchased == null;
+
   if (editing) {
     return (
       <div className="flex flex-wrap items-end gap-3.5 rounded-2xl border border-violet-500/25 bg-violet-500/[0.04] p-5 shadow-inner">
         <label className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Purchased seats</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">
+            Total purchased seats
+            <span className="ml-1.5 text-rose-500">*</span>
+          </span>
           <input
             type="number"
             min={0}
             value={purchased}
             onChange={(e) => setPurchased(e.target.value)}
-            className="w-28 px-3 py-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#A435F0]/40"
+            placeholder="e.g. 230"
+            autoFocus
+            className="w-32 px-3 py-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#A435F0]/40"
           />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Available (from Udemy)</span>
-          <input
-            type="number"
-            min={0}
-            value={available}
-            onChange={(e) => setAvailable(e.target.value)}
-            className="w-28 px-3 py-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#A435F0]/40"
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Inactive threshold (days)</span>
-          <input
-            type="number"
-            min={1}
-            value={inactiveDays}
-            onChange={(e) => setInactiveDays(e.target.value)}
-            placeholder="30"
-            className="w-28 px-3 py-2 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#A435F0]/40"
-          />
+          <span className="text-[10px] text-slate-400 dark:text-zinc-500 leading-snug max-w-[140px]">
+            Read from Udemy admin → Settings → License
+          </span>
         </label>
         <button
           onClick={save}
@@ -1328,7 +1373,7 @@ function SeatPills({
         </button>
         {saveError && <span className="text-xs text-rose-500 self-center">{saveError}</span>}
         <span className="text-[11px] text-slate-400 dark:text-zinc-500 self-center max-w-[260px] leading-snug">
-          Udemy's API doesn't expose live seat counts — read them off the Udemy admin dashboard and enter here.
+          After saving, click <strong>Force Refresh</strong> to auto-calculate available seats from live Udemy data.
         </span>
       </div>
     );
@@ -1341,107 +1386,152 @@ function SeatPills({
   const strokeDashoffset = circumference - (pct / 100) * circumference;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-2">
-      {/* Gauge Card */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md p-5 shadow-sm flex items-center gap-5 md:col-span-1">
-        <div className="absolute top-0 right-0 w-20 h-20 bg-[#A435F0]/10 rounded-full blur-2xl pointer-events-none" />
-        
-        <div className="relative flex-shrink-0 w-20 h-20">
-          <svg className="w-full h-full transform -rotate-90">
-            <circle
-              cx="40"
-              cy="40"
-              r={radius}
-              className="stroke-slate-100 dark:stroke-zinc-850"
-              strokeWidth="6"
-              fill="transparent"
-            />
-            <motion.circle
-              cx="40"
-              cy="40"
-              r={radius}
-              className="stroke-[#A435F0]"
-              strokeWidth="6"
-              fill="transparent"
-              strokeDasharray={circumference}
-              initial={{ strokeDashoffset: circumference }}
-              animate={{ strokeDashoffset }}
-              transition={{ duration: 1.2, ease: "easeOut" }}
-              strokeLinecap="round"
-            />
-          </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-lg font-black text-slate-800 dark:text-white tabular-nums leading-none">
-              {s.utilization_pct != null ? `${s.utilization_pct}%` : "—"}
-            </span>
-            <span className="text-[9px] font-bold text-slate-400 dark:text-zinc-500 uppercase mt-0.5 tracking-wider">Used</span>
+    <div className="flex flex-col gap-4 mb-2">
+      {/* Prominent PMO banner when purchased total is not yet configured */}
+      {canEdit && purchasedUnset && (
+        <div className="flex items-center gap-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-4 shadow-sm">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0 border border-amber-500/20">
+            <Pencil className="w-4.5 h-4.5 text-amber-500" />
           </div>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-extrabold text-slate-800 dark:text-white truncate">Seat Utilization</h3>
-          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 leading-snug">
-            {s.used ?? 0} occupied of {s.purchased ?? "∞"} seats.
-          </p>
-          {canEdit && (
-            <button
-              onClick={beginEdit}
-              className="mt-3.5 inline-flex items-center gap-1.5 text-xs font-bold text-[#A435F0] dark:text-[#C084FC] hover:text-white hover:bg-gradient-to-r hover:from-[#A435F0] hover:to-[#7C3AED] border border-[#A435F0]/20 hover:border-transparent px-3 py-1.5 rounded-xl transition-all duration-300 shadow-sm cursor-pointer"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              Manage Seats
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Metrics Card Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 md:col-span-2 gap-4">
-        <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Used Seats</span>
-          <div>
-            <div className="text-2xl font-black text-slate-800 dark:text-white mt-1 tabular-nums">{s.used ?? "—"}</div>
-            <p className="text-[10px] text-slate-450 dark:text-zinc-500 mt-1">Occupied user seats</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-extrabold text-slate-800 dark:text-white">Set your purchased seat total</p>
+            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5 leading-snug">
+              Required once — read it from <strong>Udemy admin → Settings → License</strong>. After saving, use <strong>Force Refresh</strong> to auto-calculate available seats.
+            </p>
           </div>
+          <button
+            onClick={beginEdit}
+            className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 px-4 py-2.5 rounded-xl shadow-md transition-all cursor-pointer"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Set Total
+          </button>
         </div>
+      )}
 
-        <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Available Seats</span>
-          <div>
-            <div className={cn(
-              "text-2xl font-black mt-1 tabular-nums",
-              s.available != null && s.available <= 0 ? "text-amber-500" : "text-emerald-600 dark:text-emerald-400"
-            )}>
-              {s.available ?? "—"}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {/* Gauge Card */}
+        <div className="relative overflow-hidden rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md p-5 shadow-sm flex items-center gap-5 md:col-span-1">
+          <div className="absolute top-0 right-0 w-20 h-20 bg-[#A435F0]/10 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="relative flex-shrink-0 w-20 h-20">
+            <svg className="w-full h-full transform -rotate-90">
+              <circle
+                cx="40"
+                cy="40"
+                r={radius}
+                className="stroke-slate-100 dark:stroke-zinc-850"
+                strokeWidth="6"
+                fill="transparent"
+              />
+              <motion.circle
+                cx="40"
+                cy="40"
+                r={radius}
+                className="stroke-[#A435F0]"
+                strokeWidth="6"
+                fill="transparent"
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset }}
+                transition={{ duration: 1.2, ease: "easeOut" }}
+                strokeLinecap="round"
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-lg font-black text-slate-800 dark:text-white tabular-nums leading-none">
+                {s.utilization_pct != null ? `${s.utilization_pct}%` : "—"}
+              </span>
+              <span className="text-[9px] font-bold text-slate-400 dark:text-zinc-500 uppercase mt-0.5 tracking-wider">Used</span>
             </div>
-            <p className="text-[10px] text-slate-455 dark:text-zinc-500 mt-1">Free to allocate</p>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-extrabold text-slate-800 dark:text-white truncate">Seat Utilization</h3>
+            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 leading-snug">
+              {s.used ?? 0} occupied of {s.purchased ?? "∞"} seats.
+            </p>
+            {canEdit && !purchasedUnset && (
+              <button
+                onClick={beginEdit}
+                className="mt-3.5 inline-flex items-center gap-1.5 text-xs font-bold text-[#A435F0] dark:text-[#C084FC] hover:text-white hover:bg-gradient-to-r hover:from-[#A435F0] hover:to-[#7C3AED] border border-[#A435F0]/20 hover:border-transparent px-3 py-1.5 rounded-xl transition-all duration-300 shadow-sm cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit Total
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Reclaimable</span>
-          <div>
-            <div className={cn(
-              "text-2xl font-black mt-1 tabular-nums",
-              reclaimable > 0 ? "text-amber-500" : "text-slate-800 dark:text-white"
-            )}>
-              {reclaimable}
+        {/* Metrics Card Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 md:col-span-2 gap-4">
+          <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Used Seats</span>
+            <div>
+              <div className="text-2xl font-black text-slate-800 dark:text-white mt-1 tabular-nums">{s.used ?? "—"}</div>
+              <p className="text-[10px] text-slate-450 dark:text-zinc-500 mt-1">Occupied user seats</p>
             </div>
-            <p className="text-[10px] text-slate-455 dark:text-zinc-500 mt-1">Learners idle ≥{days}d</p>
           </div>
-        </div>
 
-        <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Contracted</span>
-          <div>
-            <div className="text-2xl font-black text-slate-800 dark:text-white mt-1 tabular-nums">{s.purchased ?? "—"}</div>
-            <p className="text-[10px] text-slate-455 dark:text-zinc-500 mt-1">Contract total purchased</p>
+          <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Available Seats</span>
+            <div>
+              <div className={cn(
+                "text-2xl font-black mt-1 tabular-nums",
+                s.available != null && s.available <= 0 ? "text-amber-500" : "text-emerald-600 dark:text-emerald-400"
+              )}>
+                {s.available ?? "—"}
+              </div>
+              <p className="text-[10px] text-slate-455 dark:text-zinc-500 mt-1">Free to allocate</p>
+            </div>
+          </div>
+
+          <div className="bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border border-slate-200 dark:border-zinc-800/80 rounded-2xl p-4.5 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Reclaimable</span>
+            <div>
+              <div className={cn(
+                "text-2xl font-black mt-1 tabular-nums",
+                reclaimable > 0 ? "text-amber-500" : "text-slate-800 dark:text-white"
+              )}>
+                {reclaimable}
+              </div>
+              <p className="text-[10px] text-slate-455 dark:text-zinc-500 mt-1">Learners idle ≥{days}d</p>
+            </div>
+          </div>
+
+          {/* Contracted card — clickable for PMO to update the purchased total */}
+          <div
+            onClick={canEdit ? beginEdit : undefined}
+            className={cn(
+              "bg-white/70 dark:bg-zinc-900/60 backdrop-blur-md border rounded-2xl p-4.5 shadow-sm flex flex-col justify-between transition-all",
+              canEdit
+                ? "border-[#A435F0]/25 hover:border-[#A435F0]/50 hover:shadow-md cursor-pointer group"
+                : "border-slate-200 dark:border-zinc-800/80 hover:shadow-md"
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Contracted</span>
+              {canEdit && (
+                <Pencil className="w-3 h-3 text-slate-300 dark:text-zinc-600 group-hover:text-[#A435F0] transition-colors" />
+              )}
+            </div>
+            <div>
+              <div className="text-2xl font-black text-slate-800 dark:text-white mt-1 tabular-nums">{s.purchased ?? "—"}</div>
+              <p className="text-[10px] mt-1 font-medium">
+                {canEdit ? (
+                  <span className="text-[#A435F0] dark:text-[#C084FC] group-hover:underline">Click to update</span>
+                ) : (
+                  <span className="text-slate-455 dark:text-zinc-500">Contract total purchased</span>
+                )}
+              </p>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 function fmtDate(d: string | null) {
   if (!d) return "—";
@@ -1608,6 +1698,9 @@ function InactiveSeatsTab({
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [search, setSearch] = useState("");
+  const [forceRefreshing, setForceRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pillsKey, setPillsKey] = useState(0); // increment to force SeatPills to re-fetch
 
   const deactivate = useCallback(
     async (email: string) => {
@@ -1653,6 +1746,43 @@ function InactiveSeatsTab({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },
     []
+  );
+
+  const forceRefresh = useCallback(
+    async (threshold: number) => {
+      setForceRefreshing(true);
+      setRefreshMsg(null);
+      try {
+        const r = await fetch("/api/portal/udemy/analytics/refresh-cache", {
+          method: "POST",
+          headers: authHeaders,
+        });
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(b.detail || `HTTP ${r.status}`);
+
+        // Build a human-readable summary of what changed
+        const parts: string[] = [`${b.learners ?? 0} learner records pulled from Udemy.`];
+        if (b.available_updated && b.purchased != null) {
+          parts.push(
+            `Available seats auto-updated: ${b.purchased} purchased − ${b.active} active = ${b.available} available.`
+          );
+        } else if (!b.available_updated) {
+          parts.push("Set a purchased seat total to enable auto-calculation of available seats.");
+        }
+        setRefreshMsg({ ok: true, text: parts.join(" ") });
+
+        // Re-mount SeatPills so it re-fetches the updated license summary
+        setPillsKey((k) => k + 1);
+        // Reload the inactive-users table with fresh server data
+        load(threshold);
+      } catch (e: any) {
+        setRefreshMsg({ ok: false, text: e.message || "Force refresh failed." });
+      } finally {
+        setForceRefreshing(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load]
   );
 
   useEffect(() => {
@@ -1718,10 +1848,50 @@ function InactiveSeatsTab({
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
           </button>
+          {canManageLicense && (
+            <button
+              onClick={() => forceRefresh(days)}
+              disabled={forceRefreshing || days === 0}
+              title="Bypass the 1-hour cache and pull the latest data directly from Udemy"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-[#A435F0] to-[#7C3AED] hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2.5 rounded-xl transition-all shadow-md shadow-purple-500/15 cursor-pointer"
+            >
+              {forceRefreshing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              {forceRefreshing ? "Fetching from Udemy…" : "Force Refresh"}
+            </button>
+          )}
         </div>
       </div>
 
+      {refreshMsg && (
+        <div
+          className={cn(
+            "flex items-start gap-3 rounded-2xl border p-4 text-sm animate-fade-in",
+            refreshMsg.ok
+              ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
+              : "border-rose-500/20 bg-rose-500/5 text-rose-700 dark:text-rose-400"
+          )}
+        >
+          {refreshMsg.ok ? (
+            <CheckCircle2 className="w-4.5 h-4.5 mt-0.5 shrink-0 text-emerald-500" />
+          ) : (
+            <AlertCircle className="w-4.5 h-4.5 mt-0.5 shrink-0 text-rose-500" />
+          )}
+          <span>{refreshMsg.text}</span>
+          <button
+            onClick={() => setRefreshMsg(null)}
+            className="ml-auto text-current opacity-50 hover:opacity-100 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <SeatPills
+        key={pillsKey}
         authHeaders={authHeaders}
         reclaimable={rows.length}
         days={days}

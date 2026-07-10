@@ -71,6 +71,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { format } from "date-fns";
+import { Progress } from "@/components/ui/progress";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1172,7 +1173,7 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
-  const [showActive, setShowActive] = useState(true);
+  const [showActive, setShowActive] = useState(false);
 
   useEffect(() => {
     fetch("/api/portal/manager/team/allocations", { headers: auth })
@@ -1206,87 +1207,136 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
     return map;
   }, [filtered]);
 
+  // KPIs
+  const totalMembers = grouped.size;
+  const activeAllocations = allocations.filter((a) => a.completion_status === "Active");
+  const uniqueActiveProjects = new Set(activeAllocations.map(a => a.project_name)).size;
+  const avgEffort = activeAllocations.length
+    ? Math.round(activeAllocations.reduce((sum, a) => sum + (a.efforts_percent || 0), 0) / activeAllocations.length)
+    : 0;
+  const avgBillability = activeAllocations.length
+    ? Math.round(activeAllocations.reduce((sum, a) => sum + (a.billability_percent || 0), 0) / activeAllocations.length)
+    : 0;
+
   if (loading) return <LoadingState label="Loading allocations…" />;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter…"
-            className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm"
-          />
-        </div>
-        <label className="flex items-center gap-1.5 text-xs sm:text-sm text-muted-foreground cursor-pointer select-none whitespace-nowrap">
-          <input
-            type="checkbox"
-            checked={showActive}
-            onChange={(e) => setShowActive(e.target.checked)}
-            className="rounded"
-          />
-          Active
-        </label>
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        {[
+          { label: "Team Members", value: totalMembers, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
+          { label: "Active Projects", value: uniqueActiveProjects, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+          { label: "Avg Effort", value: `${avgEffort}%`, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+          { label: "Avg Billability", value: `${avgBillability}%`, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+        ].map((c) => (
+          <div key={c.label} className={cn("rounded-2xl border px-4 py-4 backdrop-blur-sm", c.border, c.bg)}>
+            <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em] mb-2", c.color)}>{c.label}</p>
+            <p className="text-2xl sm:text-3xl font-extrabold text-foreground">{c.value}</p>
+          </div>
+        ))}
       </div>
+
+      <Card>
+        <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search by name, project, client…"
+              className="w-full pl-9 pr-3 rounded-xl border border-border bg-background py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--collaboration)]"
+            />
+          </div>
+          <div className="flex items-center">
+            <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/40 border border-border cursor-pointer select-none text-sm font-medium hover:bg-muted/60 transition-colors">
+              <input
+                type="checkbox"
+                checked={showActive}
+                onChange={(e) => setShowActive(e.target.checked)}
+                className="rounded text-[var(--collaboration)] focus:ring-[var(--collaboration)]"
+              />
+              Show Active Only
+            </label>
+          </div>
+        </CardContent>
+      </Card>
+
       {grouped.size === 0 ? (
-        <EmptyState label="No allocations found." />
+        <EmptyState label="No allocations found matching your criteria." />
       ) : (
         <div className="space-y-4">
-          {[...grouped.entries()].map(([name, rows]) => (
-            <ExpandableGroup key={name} title={name} count={rows.length}>
-              <Table paginate itemsPerPage={10}>
-                <TableHeader>
-                  <TableRow className="bg-muted/40 text-[11px] uppercase tracking-wide">
-                    <TableHead className="px-3 py-2 font-semibold">Project</TableHead>
-                    <TableHead className="px-3 py-2 font-semibold hidden sm:table-cell">Client</TableHead>
-                    <TableHead className="px-3 py-2 font-semibold">Status</TableHead>
-                    <TableHead className="px-3 py-2 text-center font-semibold hidden sm:table-cell">Effort %</TableHead>
-                    <TableHead className="px-3 py-2 text-center font-semibold hidden md:table-cell">Billable %</TableHead>
-                    <TableHead className="px-3 py-2 font-semibold hidden md:table-cell">End Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+          {[...grouped.entries()].map(([name, rows]) => {
+            const uniqueProjectsCount = new Set(rows.map(r => r.project_name)).size;
+            return (
+              <ExpandableGroup key={name} title={name} count={uniqueProjectsCount} unit="project">
+                <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3 bg-muted/20 rounded-b-2xl border-t border-border/50">
                   {rows.map((a) => (
-                    <TableRow key={a.id}>
-                      <TableCell className="px-3 py-2">
-                        <div className="font-medium text-foreground">{a.project_name}</div>
-                        {a.sub_project && (
-                          <div className="text-[11px] text-muted-foreground">{a.sub_project}</div>
-                        )}
-                        <div className="text-[11px] text-muted-foreground sm:hidden">{a.client_master || "—"}</div>
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-muted-foreground hidden sm:table-cell">
-                        {a.client_master || "—"}
-                      </TableCell>
-                      <TableCell className="px-3 py-2">
-                        <Badge
-                          variant={a.completion_status === "Active" ? "default" : "secondary"}
-                          className={cn(
-                            a.completion_status === "Active"
-                              ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                              : "",
+                    <Card key={a.id} className="shadow-none bg-background hover:shadow-md transition-all duration-200 border-border/80">
+                      <CardContent className="p-4 flex flex-col h-full gap-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0">
+                            <h4 className="font-semibold text-sm text-foreground truncate" title={a.project_name}>
+                              {a.project_name}
+                            </h4>
+                            {(a.client_master || a.sub_project) && (
+                              <p className="text-xs text-muted-foreground mt-0.5 truncate flex items-center gap-1" title={a.client_master || a.sub_project || ""}>
+                                <Building2 className="h-3 w-3 shrink-0" />
+                                {a.client_master || a.sub_project}
+                              </p>
+                            )}
+                          </div>
+                          <Badge
+                            variant={a.completion_status === "Active" ? "default" : "secondary"}
+                            className={cn(
+                              "shrink-0 text-[10px] px-1.5 py-0 font-bold uppercase tracking-wide",
+                              a.completion_status === "Active"
+                                ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                                : ""
+                            )}
+                          >
+                            {a.completion_status}
+                          </Badge>
+                        </div>
+                        
+                        <div className="mt-auto space-y-3">
+                          {a.efforts_percent != null && (
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-[11px] font-medium">
+                                <span className="text-muted-foreground uppercase tracking-wide">Effort</span>
+                                <span className="text-foreground">{a.efforts_percent}%</span>
+                              </div>
+                              <Progress value={a.efforts_percent} className="h-1.5" />
+                            </div>
                           )}
-                        >
-                          {a.completion_status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-center hidden sm:table-cell">
-                        {a.efforts_percent != null ? `${a.efforts_percent}%` : "—"}
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-center hidden md:table-cell">
-                        {a.billability_percent != null ? `${a.billability_percent}%` : "—"}
-                      </TableCell>
-                      <TableCell className="px-3 py-2 text-muted-foreground text-sm hidden md:table-cell">
-                        {fmtDate(a.expected_end_date)}
-                      </TableCell>
-                    </TableRow>
+                          {a.billability_percent != null && (
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-[11px] font-medium">
+                                <span className="text-muted-foreground uppercase tracking-wide">Billable</span>
+                                <span className="text-foreground">{a.billability_percent}%</span>
+                              </div>
+                              <Progress value={a.billability_percent} className="h-1.5" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-3 mt-1 border-t border-border flex justify-between items-center text-[11px] text-muted-foreground font-medium">
+                          {a.project_type ? (
+                            <span className="flex items-center gap-1.5">
+                              <Briefcase className="h-3.5 w-3.5" /> {a.project_type}
+                            </span>
+                          ) : <span />}
+                          <span className="flex items-center gap-1.5">
+                            <CalendarIcon className="h-3.5 w-3.5" /> {fmtDate(a.expected_end_date) || "No end date"}
+                          </span>
+                        </div>
+                      </CardContent>
+                    </Card>
                   ))}
-                </TableBody>
-              </Table>
-            </ExpandableGroup>
-          ))}
+                </div>
+              </ExpandableGroup>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2590,7 +2640,7 @@ function ExpandableGroup({
   unit?: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   return (
     <Card className="overflow-hidden">
       <button

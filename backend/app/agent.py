@@ -2926,6 +2926,26 @@ def _ms365_pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
                     reasoning=f"User cancelled a pending {hit_type} action.")
 
 
+def _connector_pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
+    """A yes/no while a connector write op is staged (requires_confirmation=True) →
+    confirm or cancel it. Routes back into the same connector: domain so
+    connector_agent's own top-of-function handler claims/executes or discards it."""
+    is_yes, is_no = _is_confirmation(ctx.message), _is_cancellation(ctx.message)
+    if not (is_yes or is_no):
+        return None
+    pending = PendingActionService.get_pending(_draft_key(ctx.state), "connector_op")
+    if not pending:
+        return None
+    slug = (pending.get("payload") or {}).get("slug", "")
+    if not slug:
+        return None
+    if is_yes:
+        return Decision(domain=f"connector:{slug}", sub_intent="connector_op_confirm",
+                        reasoning="User confirmed a pending connector write operation.")
+    return Decision(domain=f"connector:{slug}", sub_intent="connector_op_cancel",
+                    reasoning="User cancelled a pending connector write operation.")
+
+
 def _announcement_pending_action_strategy(ctx: RouteContext) -> Optional[Decision]:
     """A yes/no while an announcement draft is staged → confirm or cancel it."""
     is_yes, is_no = _is_confirmation(ctx.message), _is_cancellation(ctx.message)
@@ -2990,6 +3010,7 @@ ROUTER_RESOLVER = Resolver()
 ROUTER_RESOLVER.register("clarify_reply", _clarify_reply_strategy)
 ROUTER_RESOLVER.register("pending_action", _pending_action_strategy)
 ROUTER_RESOLVER.register("ms365_pending_action", _ms365_pending_action_strategy)
+ROUTER_RESOLVER.register("connector_pending_action", _connector_pending_action_strategy)
 ROUTER_RESOLVER.register("announcement_pending_action", _announcement_pending_action_strategy)
 # Explicit mode stickiness sits after the pending-action/clarify confirmations (so a staged
 # yes/no still resolves) but before every keyword/semantic classifier below.
@@ -5062,12 +5083,26 @@ def disabled_agent(state: AgentState):
     return {"messages": [AIMessage(content=msg)]}
 
 
+class _ConnectorConfirmationNeeded(Exception):
+    """Raised from inside the ReAct loop to short-circuit the turn when a write op
+    (requires_confirmation=True) is about to run — see the staging block below."""
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 async def connector_agent(state: AgentState):
     """Generic ReAct agent for connector: domains.
 
     Builds StructuredTools from published ConnectorOperations at runtime,
     binds them to the agent LLM, and runs a ReAct loop (≤2 tool rounds).
     Falls back to a friendly message if the connector registry is empty.
+
+    Write safety: operations flagged requires_confirmation=True never execute inline —
+    the ReAct loop stages them via PendingActionService and asks for a plain yes/no
+    (mirrors the MS365/announcement write flows), confirmed/cancelled below via the
+    connector_op_confirm / connector_op_cancel sub_intents routed by
+    _connector_pending_action_strategy.
     """
     from app.connectors.registry import ConnectorRegistry
     from app.connectors.tool_factory import build_tools_for_request
@@ -5077,8 +5112,60 @@ async def connector_agent(state: AgentState):
     user_role = state.get("user_role", "employee")
     department = state.get("department", "")
     messages = list(state.get("messages", []))
+    sub_intent = state.get("sub_intent", "")
 
     slug = domain.removeprefix("connector:")
+    draft_key = _draft_key(state)
+
+    # ── Confirm/cancel a staged write op ────────────────────────────────────────
+    if sub_intent in ("connector_op_confirm", "connector_op_cancel"):
+        if sub_intent == "connector_op_cancel":
+            PendingActionService.cancel(draft_key, "connector_op")
+            return {"messages": [AIMessage(content="No problem — nothing was sent.")]}
+
+        claimed = PendingActionService.confirm(draft_key, "connector_op")
+        if not claimed:
+            return {"messages": [AIMessage(content=(
+                "I don't have a pending action to confirm — please ask again and I'll "
+                "prepare a fresh request."
+            ))]}
+        payload = claimed.get("payload") or {}
+        connector_name = payload.get("connector_name") or slug
+        op_display = payload.get("op_display") or "the operation"
+
+        from app.connectors.executor import execute_operation
+        result = await execute_operation(
+            operation_id=payload["operation_id"],
+            call_args=payload.get("call_args") or {},
+            user_email=user_email,
+        )
+        if not result.get("ok"):
+            return {"messages": [AIMessage(content=(
+                f"I couldn't complete **{op_display}** on {connector_name}: {result.get('error')}"
+            ))]}
+
+        reply = f"Done — **{op_display}** completed on {connector_name}."
+        try:
+            from app.services import receipt_service
+            data = result.get("data")
+            ref = None
+            if isinstance(data, dict):
+                ref = data.get("id") or data.get("key") or data.get("ticket_id")
+            idem = claimed.get("idempotency_key") or ""
+            receipt = receipt_service.emit(
+                user_email, "connector_op", connector_name,
+                f"{op_display} on {connector_name}",
+                confirmation_id=str(ref) if ref else (idem[-12:] if idem else None),
+                entity_type="connector_operation",
+                entity_id=str(payload["operation_id"]),
+                idempotency_key=idem or None,
+            )
+            line = receipt_service.format_receipt_line(receipt)
+            if line:
+                reply = f"{reply}\n\n{line}"
+        except Exception:
+            log.warning("connector_op receipt emit failed", exc_info=True)
+        return {"messages": [AIMessage(content=reply)]}
 
     # Resolve connector + its operations
     connector = await ConnectorRegistry.get_connector_by_slug(slug)
@@ -5134,6 +5221,7 @@ async def connector_agent(state: AgentState):
         ))]}
 
     tools = build_tools_for_request(ops, user_email, max_tools=8)
+    op_by_name = {o["name"]: o for o in ops}
 
     system_prompt = (
         f"You are an AI assistant integrated with the {connector['name']} system. "
@@ -5156,6 +5244,35 @@ async def connector_agent(state: AgentState):
 
             # Execute all tool calls
             for tc in response.tool_calls:
+                op_meta = op_by_name.get(tc["name"])
+                if op_meta and op_meta.get("requires_confirmation"):
+                    # Mutating op — stage it and hand the turn back for a plain yes/no
+                    # instead of calling out. Confirmed/cancelled above via
+                    # connector_op_confirm / connector_op_cancel.
+                    call_args = {
+                        k: v for k, v in (tc.get("args") or {}).items()
+                        if v is not None and k != "no_params"
+                    }
+                    op_display = op_meta.get("display_name") or op_meta["name"]
+                    idem = f"connector_op:{op_meta['id']}:{user_email}:{json.dumps(call_args, sort_keys=True)}"
+                    PendingActionService.create(
+                        session_key=draft_key,
+                        action_type="connector_op",
+                        payload={
+                            "operation_id": op_meta["id"],
+                            "call_args": call_args,
+                            "slug": slug,
+                            "connector_name": connector["name"],
+                            "op_display": op_display,
+                        },
+                        user_email=user_email,
+                        idempotency_key=idem,
+                    )
+                    args_preview = ", ".join(f"{k}: {v}" for k, v in call_args.items()) or "no additional details"
+                    raise _ConnectorConfirmationNeeded(
+                        f"I'm about to run **{op_display}** on {connector['name']} with "
+                        f"{args_preview}.\n\nShall I go ahead? (yes/no)"
+                    )
                 tool_fn = next((t for t in tools if t.name == tc["name"]), None)
                 if tool_fn is None:
                     tool_result = f"Tool '{tc['name']}' not found."
@@ -5181,6 +5298,8 @@ async def connector_agent(state: AgentState):
                 "it may be warming up. Please try again in a moment."
             )
         )]
+    except _ConnectorConfirmationNeeded as cn:
+        new_messages = [AIMessage(content=cn.message)]
 
     return {"messages": new_messages}
 

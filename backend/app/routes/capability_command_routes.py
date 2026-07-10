@@ -16,5 +16,5 @@ def capability_command(
     db: Session = Depends(get_db),
 ):
     """Org-wide workforce intelligence: capability heat map, pipeline readiness,
-    single-point-of-failure risks, and bench cost & opportunity — all SQL, no LLM."""
+    and single-point-of-failure risks — all SQL, no LLM."""
     return capability_command_service.overview(db)

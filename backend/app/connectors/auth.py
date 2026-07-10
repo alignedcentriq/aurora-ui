@@ -285,6 +285,12 @@ async def resolve_connected_account_token(connector_id: int, user_email: str) ->
         return None
 
 
+# Some providers don't speak plain "Bearer <token>" — Zoho's whole API surface (People,
+# Recruit, Expense, ...) requires "Zoho-oauthtoken <token>" instead. Keyed by SSO provider
+# for connected_account; falls back to Bearer for anything unlisted (e.g. microsoft).
+_CONNECTED_ACCOUNT_SCHEME = {"zoho": "Zoho-oauthtoken"}
+
+
 async def apply_auth(
     connector_id: int,
     auth_type: str,
@@ -301,11 +307,19 @@ async def apply_auth(
     if auth_type == "connected_account":
         token = await resolve_connected_account_token(connector_id, user_email or "")
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            provider = connected_account_provider(connector_id)
+            scheme = _CONNECTED_ACCOUNT_SCHEME.get(provider, "Bearer")
+            headers["Authorization"] = f"{scheme} {token}"
         return
     if auth_type == "oauth2":
         token = await ensure_oauth2_token(connector_id, auth_mode, user_email, force_refresh)
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            cfg = (
+                _load_user_config(connector_id, user_email)
+                if (auth_mode == "per_user" and user_email)
+                else _load_config(connector_id)
+            ) or {}
+            scheme = cfg.get("token_scheme") or "Bearer"
+            headers["Authorization"] = f"{scheme} {token}"
         return
     inject_auth(connector_id, auth_type, headers, params, auth_mode, user_email)

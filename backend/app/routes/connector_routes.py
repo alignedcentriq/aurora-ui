@@ -141,6 +141,65 @@ async def create_connector(
         return {"id": conn.id, "slug": conn.slug, "status": conn.status}
 
 
+# ── Template gallery ──────────────────────────────────────────────────────────
+# Registered BEFORE the `/{connector_id}` routes below — a literal "/templates"
+# segment must win over the int path-param route, not be swallowed by it.
+
+class TemplateInstallPayload(BaseModel):
+    slug: str
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+@router.get("/templates")
+async def list_templates(user: CurrentUser = Depends(require_admin)):
+    from app.connectors import templates as template_catalog
+    return template_catalog.list_templates()
+
+
+@router.post("/templates/{key}/install")
+async def install_template(
+    key: str,
+    payload: TemplateInstallPayload,
+    user: CurrentUser = Depends(require_super_admin),
+):
+    from app.connectors import templates as template_catalog
+    tpl = template_catalog.get_template(key)
+    if tpl is None:
+        raise HTTPException(404, f"Unknown template '{key}'")
+
+    with SessionLocal() as db:
+        existing = db.query(Connector).filter(Connector.slug == payload.slug).first()
+        if existing:
+            raise HTTPException(400, f"Connector slug '{payload.slug}' already exists")
+        conn = Connector(
+            slug=payload.slug,
+            name=payload.name or tpl["name"],
+            description=tpl["description"],
+            source_type="manual",
+            base_url=payload.base_url or tpl["base_url_hint"],
+            status="draft",
+            created_by=user.email,
+        )
+        db.add(conn)
+        db.commit()
+        db.refresh(conn)
+
+        for op_data in tpl["operations"]:
+            db.add(ConnectorOperation(connector_id=conn.id, **op_data))
+        db.commit()
+
+        return {
+            "id": conn.id,
+            "slug": conn.slug,
+            "auth_type": tpl["auth_type"],
+            "auth_mode": tpl["auth_mode"],
+            "auth_fields": tpl["auth_fields"],
+            "provider": tpl.get("provider"),
+            "note": tpl.get("note", ""),
+        }
+
+
 @router.get("/{connector_id}")
 async def get_connector(connector_id: int, user: CurrentUser = Depends(require_admin)):
     with SessionLocal() as db:
@@ -455,13 +514,81 @@ async def publish_connector(
 
 # ── Usage / metrics ───────────────────────────────────────────────────────────
 
+@router.get("/analytics/overview")
+async def connectors_analytics_overview(user: CurrentUser = Depends(require_admin)):
+    """One row per connector — cross-connector leaderboard for the Studio's Analytics panel.
+
+    Same aggregation shape as /{connector_id}/usage, just grouped by connector_id
+    across all connectors instead of by operation_id within one.
+    """
+    import datetime as _dt
+    from sqlalchemy import func as sqlfunc, cast, Integer
+
+    week_ago = _dt.datetime.utcnow() - _dt.timedelta(days=7)
+
+    with SessionLocal() as db:
+        totals = {
+            r.connector_id: r
+            for r in db.query(
+                ConnectorCallLog.connector_id,
+                sqlfunc.count(ConnectorCallLog.id).label("calls"),
+                sqlfunc.avg(ConnectorCallLog.latency_ms).label("avg_latency_ms"),
+                sqlfunc.sum(cast(ConnectorCallLog.status == "success", Integer)).label("successes"),
+            ).group_by(ConnectorCallLog.connector_id).all()
+        }
+        recent = {
+            r.connector_id: r.calls
+            for r in db.query(
+                ConnectorCallLog.connector_id,
+                sqlfunc.count(ConnectorCallLog.id).label("calls"),
+            ).filter(ConnectorCallLog.created_at >= week_ago)
+            .group_by(ConnectorCallLog.connector_id).all()
+        }
+        # Sum minutes_saved per actual call (each log row joined to its operation's
+        # minutes_saved), not an average — so ROI reflects which operations were
+        # actually invoked, matching how the per-connector /usage endpoint computes it.
+        minutes_saved = {
+            r.connector_id: r.total_minutes_saved or 0
+            for r in db.query(
+                ConnectorCallLog.connector_id,
+                sqlfunc.sum(ConnectorOperation.minutes_saved).label("total_minutes_saved"),
+            )
+            .join(ConnectorOperation, ConnectorCallLog.operation_id == ConnectorOperation.id)
+            .group_by(ConnectorCallLog.connector_id)
+            .all()
+        }
+
+        conns = db.query(Connector).order_by(Connector.name).all()
+
+    rows = []
+    for c in conns:
+        t = totals.get(c.id)
+        calls = t.calls if t else 0
+        rows.append({
+            "connector_id": c.id,
+            "name": c.name,
+            "status": c.status,
+            "calls": calls,
+            "calls_last_7d": recent.get(c.id, 0),
+            "avg_latency_ms": round((t.avg_latency_ms or 0) if t else 0),
+            "success_rate": round((t.successes or 0) / calls, 3) if t and calls else None,
+            "total_minutes_saved": round(minutes_saved.get(c.id, 0), 1),
+        })
+    rows.sort(key=lambda r: r["calls"], reverse=True)
+    return {"connectors": rows}
+
+
 @router.get("/{connector_id}/usage")
 async def connector_usage(
     connector_id: int,
     user: CurrentUser = Depends(require_admin),
 ):
+    import datetime as _dt
+    from sqlalchemy import func as sqlfunc, cast, Integer
+
+    thirty_days_ago = _dt.datetime.utcnow() - _dt.timedelta(days=30)
+
     with SessionLocal() as db:
-        from sqlalchemy import func as sqlfunc, cast, Integer
         rows = (
             db.query(
                 ConnectorCallLog.operation_id,
@@ -481,6 +608,49 @@ async def connector_usage(
         op_names = {o.id: o.name for o in ops}
         minutes_saved_map = {o.id: o.minutes_saved for o in ops}
 
+        daily_rows = (
+            db.query(
+                sqlfunc.date(ConnectorCallLog.created_at).label("day"),
+                sqlfunc.count(ConnectorCallLog.id).label("calls"),
+                sqlfunc.sum(cast(ConnectorCallLog.status != "success", Integer)).label("errors"),
+            )
+            .filter(
+                ConnectorCallLog.connector_id == connector_id,
+                ConnectorCallLog.created_at >= thirty_days_ago,
+            )
+            .group_by("day")
+            .order_by("day")
+            .all()
+        )
+
+        error_rows = (
+            db.query(
+                ConnectorCallLog.error,
+                sqlfunc.count(ConnectorCallLog.id).label("count"),
+            )
+            .filter(
+                ConnectorCallLog.connector_id == connector_id,
+                ConnectorCallLog.status != "success",
+                ConnectorCallLog.error.isnot(None),
+            )
+            .group_by(ConnectorCallLog.error)
+            .order_by(sqlfunc.count(ConnectorCallLog.id).desc())
+            .limit(5)
+            .all()
+        )
+
+        user_rows = (
+            db.query(
+                ConnectorCallLog.user_email,
+                sqlfunc.count(ConnectorCallLog.id).label("calls"),
+            )
+            .filter(ConnectorCallLog.connector_id == connector_id)
+            .group_by(ConnectorCallLog.user_email)
+            .order_by(sqlfunc.count(ConnectorCallLog.id).desc())
+            .limit(5)
+            .all()
+        )
+
     return {
         "connector_id": connector_id,
         "operations": [
@@ -493,6 +663,18 @@ async def connector_usage(
                 "total_minutes_saved": round((r.calls or 0) * (minutes_saved_map.get(r.operation_id) or 0), 1),
             }
             for r in rows
+        ],
+        "daily": [
+            {"date": str(d.day), "calls": d.calls, "errors": d.errors or 0}
+            for d in daily_rows
+        ],
+        "errors": [
+            {"message": (e.error or "")[:200], "count": e.count}
+            for e in error_rows
+        ],
+        "top_users": [
+            {"user_email": u.user_email or "unknown", "calls": u.calls}
+            for u in user_rows
         ],
     }
 

@@ -191,6 +191,13 @@ def _map_row(row: dict) -> dict:
     check_out = row.get("CHECKOUTTIME")
     hours = row.get("TIMEINHOURS") or 0
 
+    # eSSL backfills CHECKOUTTIME to equal CHECKINTIME when only a single punch has been
+    # recorded for the day (no actual punch-out yet) — surfacing that as a real checkout
+    # time is misleading (e.g. "still in the office" showing an "Out:" time). Treat it as
+    # not-checked-out.
+    if check_out is not None and check_in is not None and check_out <= check_in:
+        check_out = None
+
     if hours >= 4:
         status = "Present"
     elif hours >= 1:

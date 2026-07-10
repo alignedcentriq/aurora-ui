@@ -24,6 +24,7 @@ import {
   MessageSquareText,
   ShieldCheck,
   Sparkles,
+  LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -63,6 +64,8 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ChartCanvas, type ChartSpec } from "@/components/analytics/ChartCanvas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +107,30 @@ interface UsageRow {
   calls: number;
   avg_latency_ms: number;
   success_rate: number;
+  total_minutes_saved: number;
+}
+
+interface DailyUsagePoint {
+  date: string;
+  calls: number;
+  errors: number;
+}
+interface UsageErrorRow {
+  message: string;
+  count: number;
+}
+interface UsageTopUserRow {
+  user_email: string;
+  calls: number;
+}
+interface ConnectorOverviewRow {
+  connector_id: number;
+  name: string;
+  status: string;
+  calls: number;
+  calls_last_7d: number;
+  avg_latency_ms: number;
+  success_rate: number | null;
   total_minutes_saved: number;
 }
 
@@ -236,11 +263,22 @@ export default function ConnectorStudio() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ConnectorDetail | null>(null);
   const [usage, setUsage] = useState<UsageRow[]>([]);
+  const [usageDaily, setUsageDaily] = useState<DailyUsagePoint[]>([]);
+  const [usageErrors, setUsageErrors] = useState<UsageErrorRow[]>([]);
+  const [usageTopUsers, setUsageTopUsers] = useState<UsageTopUserRow[]>([]);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [tab, setTab] = useState("operations");
 
   // Dialogs
   const [showCreate, setShowCreate] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [authHint, setAuthHint] = useState<{
+    authType: string;
+    authMode: string;
+    fields: { key: string; label: string; secret: boolean }[];
+    note: string;
+  } | null>(null);
   const [showAuth, setShowAuth] = useState(false);
   const [showScopes, setShowScopes] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -315,8 +353,14 @@ export default function ConnectorStudio() {
     try {
       const data = await apiFetch(`/api/admin/connectors/${id}/usage`);
       setUsage(data.operations ?? []);
+      setUsageDaily(data.daily ?? []);
+      setUsageErrors(data.errors ?? []);
+      setUsageTopUsers(data.top_users ?? []);
     } catch {
       setUsage([]);
+      setUsageDaily([]);
+      setUsageErrors([]);
+      setUsageTopUsers([]);
     } finally {
       setUsageLoading(false);
     }
@@ -402,6 +446,15 @@ export default function ConnectorStudio() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              onClick={() => setShowAnalytics(true)}
+              title="Cross-connector analytics"
+            >
+              <BarChart2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
               onClick={() => setShowHelp(true)}
               title="How to use Connector Studio"
             >
@@ -420,7 +473,17 @@ export default function ConnectorStudio() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              onClick={() => setShowTemplates(true)}
+              title="Browse connector templates"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
               onClick={() => setShowCreate(true)}
+              title="New connector"
             >
               <Plus className="h-3.5 w-3.5" />
             </Button>
@@ -465,6 +528,9 @@ export default function ConnectorStudio() {
               Import an OpenAPI spec, configure auth, and publish
             </p>
             <div className="mt-6 flex items-center gap-2">
+              <Button variant="outline" onClick={() => setShowTemplates(true)}>
+                <LayoutGrid className="h-4 w-4 mr-2" /> Browse Templates
+              </Button>
               <Button onClick={() => setShowCreate(true)}>
                 <Plus className="h-4 w-4 mr-2" /> New Connector
               </Button>
@@ -588,9 +654,23 @@ export default function ConnectorStudio() {
                             {op.name}
                           </span>
                           {op.requires_confirmation && (
-                            <span className="text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <AlertCircle className="h-3 w-3" /> Confirm
-                            </span>
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className="text-xs font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded-full flex items-center gap-1 cursor-help"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <AlertCircle className="h-3 w-3" /> Confirm
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs text-xs">
+                                  This is a write/mutating operation. When the AI agent wants to
+                                  call it during chat, the user must explicitly approve it first —
+                                  it will never fire automatically.
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                           {!op.enabled && (
                             <span className="text-xs font-medium text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
@@ -685,6 +765,54 @@ export default function ConnectorStudio() {
                 ) : usage.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-12">No usage data yet</p>
                 ) : (
+                  <div className="space-y-6">
+                    {usageDaily.length > 0 && (
+                      <ChartCanvas
+                        height={220}
+                        spec={{
+                          type: "composed",
+                          title: "Calls — last 30 days",
+                          data: usageDaily.map((d) => ({ date: d.date, Calls: d.calls, Errors: d.errors })),
+                          x_key: "date",
+                          y_keys: ["Calls", "Errors"],
+                          colors: ["#6366f1", "#ef4444"],
+                        } as ChartSpec}
+                      />
+                    )}
+                    {(usageErrors.length > 0 || usageTopUsers.length > 0) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {usageErrors.length > 0 && (
+                          <Card>
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm">Top errors</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-1.5 pt-0">
+                              {usageErrors.map((e, i) => (
+                                <div key={i} className="flex items-start justify-between gap-2 text-xs">
+                                  <span className="text-gray-500 truncate">{e.message || "(no message)"}</span>
+                                  <Badge variant="outline" className="shrink-0">{e.count}</Badge>
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        )}
+                        {usageTopUsers.length > 0 && (
+                          <Card>
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-sm">Top users</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-1.5 pt-0">
+                              {usageTopUsers.map((u, i) => (
+                                <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="text-gray-500 truncate">{u.user_email}</span>
+                                  <Badge variant="outline" className="shrink-0">{u.calls}</Badge>
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        )}
+                      </div>
+                    )}
                   <div className="overflow-x-auto">
                     <Table paginate itemsPerPage={10} className="w-full text-sm">
                       <TableHeader>
@@ -740,6 +868,7 @@ export default function ConnectorStudio() {
                       </tfoot>
                     </Table>
                   </div>
+                  </div>
                 )}
               </TabsContent>
             </Tabs>
@@ -760,12 +889,29 @@ export default function ConnectorStudio() {
         }}
       />
 
+      <TemplateGalleryDialog
+        open={showTemplates}
+        onClose={() => setShowTemplates(false)}
+        onInstalled={async (id, hint) => {
+          await fetchConnectors();
+          await selectConnector(id);
+          setAuthHint(hint);
+          setShowAuth(true);
+        }}
+      />
+
+      <AnalyticsOverviewDialog open={showAnalytics} onClose={() => setShowAnalytics(false)} />
+
       {selected && (
         <>
           <AuthDialog
             connectorId={selected.id}
             open={showAuth}
-            onClose={() => setShowAuth(false)}
+            onClose={() => {
+              setShowAuth(false);
+              setAuthHint(null);
+            }}
+            hint={authHint}
           />
           <AccessDialog
             connectorId={selected.id}
@@ -919,6 +1065,331 @@ function CreateConnectorDialog({
           <Button onClick={submit} disabled={saving}>
             {saving && <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />}
             Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Template gallery ────────────────────────────────────────────────────────
+
+interface TemplateSummary {
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+  base_url_hint: string;
+  auth_type: string;
+  provider?: string | null;
+  note: string;
+  operation_count: number;
+  operations: { name: string; display_name: string | null; method: string }[];
+}
+
+function TemplateGalleryDialog({
+  open,
+  onClose,
+  onInstalled,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onInstalled: (id: number, hint: AuthHint) => void;
+}) {
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [picked, setPicked] = useState<TemplateSummary | null>(null);
+  const [form, setForm] = useState({ slug: "", name: "", base_url: "" });
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setPicked(null);
+    setLoading(true);
+    apiFetch("/api/admin/connectors/templates")
+      .then(setTemplates)
+      .catch((e: any) => toast.error(e.message))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const pick = (t: TemplateSummary) => {
+    setPicked(t);
+    setForm({ slug: t.key, name: t.name, base_url: t.base_url_hint });
+  };
+
+  const install = async () => {
+    if (!picked) return;
+    if (!form.slug.trim()) {
+      toast.error("Slug is required");
+      return;
+    }
+    setInstalling(true);
+    try {
+      const r = await apiFetch(`/api/admin/connectors/templates/${picked.key}/install`, {
+        method: "POST",
+        body: JSON.stringify({
+          slug: form.slug,
+          name: form.name || undefined,
+          base_url: form.base_url || undefined,
+        }),
+      });
+      toast.success(`${picked.name} installed — add credentials to finish setup`);
+      onClose();
+      onInstalled(r.id, {
+        authType: r.auth_type,
+        authMode: r.auth_mode,
+        fields: r.auth_fields,
+        provider: r.provider,
+        note: r.note,
+      });
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {picked && (
+              <Button variant="ghost" size="icon" className="h-6 w-6 -ml-1.5" onClick={() => setPicked(null)}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            )}
+            {picked ? `Install ${picked.name}` : "Connector Templates"}
+          </DialogTitle>
+          <DialogDescription>
+            {picked
+              ? "Review the curated operations below, then create the connector. You'll add real credentials next."
+              : "Start from a curated, popular API instead of building a connector from scratch."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {!picked ? (
+          <div className="max-h-[60dvh] overflow-y-auto pr-1">
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-28 w-full" />
+                ))}
+              </div>
+            ) : templates.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-12">No templates available</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {templates.map((t) => (
+                  <button key={t.key} onClick={() => pick(t)} className="text-left">
+                    <Card className="h-full hover:border-blue-400 dark:hover:border-blue-600 transition-colors cursor-pointer">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <CardTitle className="text-sm">{t.name}</CardTitle>
+                          <Badge variant="secondary" className="text-[10px]">{t.category}</Badge>
+                        </div>
+                        <CardDescription className="text-xs">{t.description}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <p className="text-[11px] text-gray-400">
+                          {t.operation_count} operation{t.operation_count !== 1 ? "s" : ""} ·{" "}
+                          {AUTH_TYPE_LABELS[t.auth_type] ?? titleCase(t.auth_type)}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
+            <div>
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Slug *</label>
+              <Input
+                className="mt-1 font-mono text-sm"
+                value={form.slug}
+                onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value.toLowerCase().replace(/\s+/g, "_") }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Name</label>
+              <Input
+                className="mt-1"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Base URL</label>
+              <Input
+                className="mt-1 font-mono text-sm"
+                value={form.base_url}
+                onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
+              />
+            </div>
+            {picked.note && (
+              <p className="rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 px-2.5 py-2 text-[11px] text-blue-700 dark:text-blue-300">
+                {picked.note}
+              </p>
+            )}
+            <div>
+              <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">Included operations</p>
+              <div className="space-y-1">
+                {picked.operations.map((o) => (
+                  <div key={o.name} className="flex items-center gap-2 text-xs">
+                    <Badge variant="outline" className="text-[10px] font-mono">{o.method}</Badge>
+                    <span>{o.display_name || o.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={installing}>
+            Cancel
+          </Button>
+          {picked && (
+            <Button onClick={install} disabled={installing}>
+              {installing && <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />}
+              Install
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Cross-connector analytics dialog ────────────────────────────────────────
+
+function successRateColor(rate: number | null): string {
+  if (rate === null) return "text-gray-400";
+  if (rate >= 0.95) return "text-green-600";
+  if (rate >= 0.8) return "text-yellow-600";
+  return "text-red-600";
+}
+
+function AnalyticsOverviewDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [rows, setRows] = useState<ConnectorOverviewRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    apiFetch("/api/admin/connectors/analytics/overview")
+      .then((data) => setRows(data.connectors ?? []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const totals = rows.reduce(
+    (acc, r) => ({
+      calls: acc.calls + r.calls,
+      minutes: acc.minutes + r.total_minutes_saved,
+    }),
+    { calls: 0, minutes: 0 },
+  );
+  const active = rows.filter((r) => r.calls > 0);
+  const avgSuccess = active.length
+    ? active.reduce((s, r) => s + (r.success_rate ?? 0), 0) / active.length
+    : null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Connector Analytics</DialogTitle>
+          <DialogDescription>
+            Which connectors are actually earning their keep — across all published and draft connectors.
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="space-y-2 py-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-12">No connector usage yet</p>
+        ) : (
+          <div className="space-y-4 max-h-[65dvh] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-xs text-gray-500">Connectors</p>
+                  <p className="text-xl font-semibold">{rows.length}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-xs text-gray-500">Total calls</p>
+                  <p className="text-xl font-semibold">{totals.calls.toLocaleString()}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-xs text-gray-500">Avg success rate</p>
+                  <p className={cn("text-xl font-semibold", successRateColor(avgSuccess))}>
+                    {avgSuccess === null ? "—" : `${(avgSuccess * 100).toFixed(1)}%`}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-xs text-gray-500">Time saved</p>
+                  <p className="text-xl font-semibold text-blue-600">{totals.minutes.toFixed(0)} min</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="overflow-x-auto">
+              <Table className="w-full text-sm">
+                <TableHeader>
+                  <TableRow className="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium text-gray-500">
+                    <TableHead className="pb-2 pr-4">Connector</TableHead>
+                    <TableHead className="pb-2 pr-4">Status</TableHead>
+                    <TableHead className="pb-2 pr-4 text-right">Calls</TableHead>
+                    <TableHead className="pb-2 pr-4 text-right">Calls (7d)</TableHead>
+                    <TableHead className="pb-2 pr-4 text-right">Avg latency</TableHead>
+                    <TableHead className="pb-2 pr-4 text-right">Success rate</TableHead>
+                    <TableHead className="pb-2 text-right">Time saved</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r) => (
+                    <TableRow key={r.connector_id} className="border-b border-gray-100 dark:border-gray-800">
+                      <TableCell className="py-2 pr-4 font-medium">{r.name}</TableCell>
+                      <TableCell className="py-2 pr-4">
+                        <Badge variant={r.status === "published" ? "default" : "secondary"} className="text-[10px]">
+                          {titleCase(r.status)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-2 pr-4 text-right">{r.calls.toLocaleString()}</TableCell>
+                      <TableCell className="py-2 pr-4 text-right">{r.calls_last_7d.toLocaleString()}</TableCell>
+                      <TableCell className="py-2 pr-4 text-right">{r.avg_latency_ms}ms</TableCell>
+                      <TableCell className="py-2 pr-4 text-right">
+                        <span className={cn("font-medium", successRateColor(r.success_rate))}>
+                          {r.success_rate === null ? "—" : `${(r.success_rate * 100).toFixed(1)}%`}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-2 text-right font-medium text-blue-600">
+                        {r.total_minutes_saved.toFixed(0)} min
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1318,20 +1789,49 @@ function QuestionsTab({ connectorId }: { connectorId: number }) {
   );
 }
 
+interface AuthHint {
+  authType: string;
+  authMode: string;
+  fields: { key: string; label: string; secret: boolean }[];
+  provider?: string | null;
+  note: string;
+}
+
 function AuthDialog({
   connectorId,
   open,
   onClose,
+  hint,
 }: {
   connectorId: number;
   open: boolean;
   onClose: () => void;
+  hint?: AuthHint | null;
 }) {
   const [authType, setAuthType] = useState("api_key");
   const [authMode, setAuthMode] = useState("service");
   const [provider, setProvider] = useState("microsoft");
   const [config, setConfig] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // A just-installed template pre-selects its auth type + shows which JSON keys
+  // to fill in — the admin only has to paste real secrets, not guess the shape.
+  useEffect(() => {
+    if (open && hint) {
+      setAuthType(hint.authType);
+      setAuthMode(hint.authMode);
+      if (hint.authType === "connected_account" && hint.provider) {
+        setProvider(hint.provider);
+      }
+      if (hint.fields.length) {
+        const example: Record<string, string> = {};
+        hint.fields.forEach((f) => {
+          example[f.key] = f.secret ? `your-${f.key}` : "";
+        });
+        setConfig(JSON.stringify(example, null, 2));
+      }
+    }
+  }, [open, hint]);
 
   const AUTH_TYPES = ["none", "api_key", "bearer", "basic", "oauth2", "connected_account"];
 
@@ -1388,6 +1888,11 @@ function AuthDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 max-h-[60dvh] overflow-y-auto pr-1">
+          {hint?.note && (
+            <p className="rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 px-2.5 py-2 text-[11px] text-blue-700 dark:text-blue-300">
+              {hint.note}
+            </p>
+          )}
           <div>
             <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
               Auth Type

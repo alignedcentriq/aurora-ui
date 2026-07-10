@@ -1290,7 +1290,7 @@ export function ProjectIQPortal() {
                         {m.label}
                       </span>
                       <span className="text-xs font-bold text-foreground block mt-0.5">
-                        {m.value || "Unknown"}
+                        {m.value || "Data not available"}
                       </span>
                     </div>
                   </div>

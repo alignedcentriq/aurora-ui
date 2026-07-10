@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-store";
 import { useAutomationDrawer } from "@/lib/automation-drawer-store";
+import { useUdemyAutomations } from "@/lib/udemy-automations-store";
 import { lazy, Suspense, useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
@@ -449,6 +450,7 @@ function ControlHubPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const { openDrawer: openAutomationDrawer } = useAutomationDrawer();
+  const { open: openUdemyAutomations } = useUdemyAutomations();
 
   const role = user?.role ?? "";
   const scopes = user?.scopes ?? [];
@@ -564,10 +566,12 @@ function ControlHubPage() {
                   {activeTabId !== "automation-hub" && (
                     <button
                       onClick={() =>
-                        openAutomationDrawer(
-                          activeTabId as string,
-                          activeTab?.label,
-                        )
+                        activeTabId === "udemy-business"
+                          ? openUdemyAutomations()
+                          : openAutomationDrawer(
+                              activeTabId as string,
+                              activeTab?.label,
+                            )
                       }
                       className="flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-500/30 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-colors shrink-0"
                     >

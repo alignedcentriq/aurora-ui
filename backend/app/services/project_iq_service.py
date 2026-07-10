@@ -64,14 +64,42 @@ def list_project_slugs() -> dict[str, str]:
     return out
 
 
+def _doc_type_rank(title: str) -> int:
+    """Extraction-order priority from a Policy.title ('{name} — {DocType}: {stem}').
+
+    Summaries state team size/dates/outcomes explicitly in a few hundred words;
+    transcripts bury the same facts (if present at all) in thousands of words of
+    dialogue. When char_budget can't fit everything, summaries must go first or
+    a verbose transcript ingested earlier starves the summary out of the budget
+    entirely — the leading cause of 'unknown' fields that are actually answered
+    in the docs."""
+    doc_type = title.split(" — ", 1)[1] if title and " — " in title else (title or "")
+    doc_type = doc_type.lower()
+    if "summary" in doc_type:
+        return 0
+    if "transcript" in doc_type:
+        return 2
+    return 1
+
+
 def _gather_project_text(slug: str, char_budget: int = 9000) -> tuple[str, int]:
-    """Concatenate all chunk text for one project (budgeted), grouped by file.
+    """Concatenate chunk text for one project (budgeted), grouped by file and
+    ordered summary-first/transcript-last so the highest-value facts survive
+    truncation regardless of ingestion order.
+
+    char_budget is deliberately conservative, NOT raised from the original 9000:
+    the service-tier model runs on shared ml01 at Ollama's runtime context window
+    (~4096 tokens, confirmed via /api/ps — nothing in this codebase sets num_ctx
+    per-request), and that budget is shared with ~450 tokens of schema prompt plus
+    however much the model needs to write the output JSON. A larger input budget
+    starves the output instead of the summary, producing MORE truncated/unparseable
+    extractions, not fewer. The fix for thin DNA cards is ordering (below), not size.
 
     Returns ``(text, distinct_doc_count)``."""
     db = SessionLocal()
     try:
         rows = (
-            db.query(Policy.id, Policy.title, PolicyChunk.text)
+            db.query(Policy.id, Policy.title, PolicyChunk.chunk_index, PolicyChunk.text)
             .join(PolicyChunk, PolicyChunk.policy_id == Policy.id)
             .filter(Policy.source_key.like(f"{_KEY_PREFIX}{slug}/%"))
             .order_by(Policy.id, PolicyChunk.chunk_index)
@@ -80,28 +108,33 @@ def _gather_project_text(slug: str, char_budget: int = 9000) -> tuple[str, int]:
     finally:
         db.close()
 
+    docs: dict[int, dict] = {}
+    doc_order: list[int] = []
+    for pid, title, _chunk_idx, txt in rows:
+        if pid not in docs:
+            docs[pid] = {"title": title, "chunks": []}
+            doc_order.append(pid)
+        docs[pid]["chunks"].append(txt or "")
+    doc_order.sort(key=lambda pid: (_doc_type_rank(docs[pid]["title"]), pid))
+
     parts: list[str] = []
     total = 0
-    last_title = None
-    doc_ids: set[int] = set()
-    for pid, title, txt in rows:
-        doc_ids.add(pid)
-        snippet = (txt or "").strip()
-        if not snippet:
-            continue
-        if title != last_title:
-            header = f"\n\n### {title}\n"
-            parts.append(header)
-            total += len(header)
-            last_title = title
-        if total + len(snippet) > char_budget:
-            snippet = snippet[: max(0, char_budget - total)]
-        if snippet:
-            parts.append(snippet)
-            total += len(snippet)
+    for pid in doc_order:
         if total >= char_budget:
             break
-    return "".join(parts).strip(), len(doc_ids)
+        doc_text = "".join(docs[pid]["chunks"]).strip()
+        if not doc_text:
+            continue
+        header = f"\n\n### {docs[pid]['title']}\n"
+        parts.append(header)
+        total += len(header)
+        remaining = char_budget - total
+        if remaining <= 0:
+            break
+        snippet = doc_text[:remaining]
+        parts.append(snippet)
+        total += len(snippet)
+    return "".join(parts).strip(), len(doc_order)
 
 
 # ── DNA extraction (LLM) ─────────────────────────────────────────────────────
@@ -150,11 +183,41 @@ def _norm_conf(val) -> str:
     return "verified" if str(val or "").strip().lower() == "verified" else "inferred"
 
 
+# LLM extractors asked to fill a required-keys JSON shape routinely answer an
+# unstated field with a placeholder string instead of null. Those pass truthiness
+# checks (`if v:`) and inflate health scores / render as if they were real facts,
+# so they're normalized to None here — "data not available" (rendered by the UI
+# for a null field) rather than a fabricated-looking "Unknown".
+_UNKNOWN_SENTINELS = {
+    "unknown", "n/a", "na", "not available", "not applicable", "not specified",
+    "not mentioned", "not stated", "not provided", "not given", "not disclosed",
+    "tbd", "to be determined", "none", "null", "none mentioned", "none specified",
+    "-", "--", "n.a.", "n/a.",
+    # The schema prompt places "confidence": "verified|inferred" inside nearly every
+    # nested object, right next to the real field values — small models sometimes
+    # echo one of those two words into a scalar field instead of the actual fact
+    # (e.g. team_size ends up literally "inferred"). Neither word is ever itself
+    # a legitimate value for any of these fields.
+    "verified", "inferred",
+}
+
+
+def _clean(val):
+    """Normalize an LLM-extracted scalar: sentinel placeholder strings -> None."""
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s.lower().strip(".") in _UNKNOWN_SENTINELS:
+            return None
+        return s
+    return val
+
+
 def _as_list(val) -> list:
     if isinstance(val, list):
-        return [v for v in val if v not in (None, "")]
+        return [c for v in val for c in [_clean(v)] if c not in (None, "")]
     if isinstance(val, str) and val.strip():
-        return [val.strip()]
+        c = _clean(val)
+        return [c] if c else []
     return []
 
 
@@ -191,23 +254,23 @@ def _upsert_profile(slug: str, name: str, data: dict, source_doc_count: int) -> 
             db.add(profile)
 
         profile.name = name
-        profile.client_industry = data.get("client_industry")
-        profile.status = data.get("status")
-        profile.business_problem = data.get("business_problem")
-        profile.solution_summary = data.get("solution_summary")
-        profile.business_outcomes = data.get("business_outcomes")
+        profile.client_industry = _clean(data.get("client_industry"))
+        profile.status = _clean(data.get("status"))
+        profile.business_problem = _clean(data.get("business_problem"))
+        profile.solution_summary = _clean(data.get("solution_summary"))
+        profile.business_outcomes = _clean(data.get("business_outcomes"))
         profile.technology_stack = _as_list(data.get("technology_stack"))
-        profile.architecture_summary = data.get("architecture_summary")
+        profile.architecture_summary = _clean(data.get("architecture_summary"))
         profile.complexity_drivers = _as_list(data.get("complexity_drivers"))
-        profile.project_size = data.get("project_size")
-        profile.team_size = data.get("team_size")
-        profile.delivery_start_date = data.get("delivery_start_date")
-        profile.delivery_end_date = data.get("delivery_end_date")
+        profile.project_size = _clean(data.get("project_size"))
+        profile.team_size = _clean(data.get("team_size"))
+        profile.delivery_start_date = _clean(data.get("delivery_start_date"))
+        profile.delivery_end_date = _clean(data.get("delivery_end_date"))
         profile.confidence = _norm_conf(data.get("overall_confidence"))
         profile.source_doc_count = source_doc_count
-        
+
         # Lineage metadata
-        profile.lineage_summary = data.get("lineage_summary")
+        profile.lineage_summary = _clean(data.get("lineage_summary"))
         profile.related_projects = _as_list(data.get("related_projects"))
         profile.reference_docs = _as_list(data.get("reference_docs"))
 
@@ -234,32 +297,32 @@ def _upsert_profile(slug: str, name: str, data: dict, source_doc_count: int) -> 
                 continue
             db.add(ProjectCapability(
                 profile_id=profile.id, capability_name=c["capability_name"],
-                category=c.get("category"), maturity_level=c.get("maturity_level"),
-                confidence=_norm_conf(c.get("confidence")), evidence=c.get("evidence"),
+                category=_clean(c.get("category")), maturity_level=_clean(c.get("maturity_level")),
+                confidence=_norm_conf(c.get("confidence")), evidence=_clean(c.get("evidence")),
             ))
         for i in (data.get("integrations") or []):
             if not i.get("system_name"):
                 continue
             db.add(ProjectIntegration(
                 profile_id=profile.id, system_name=i["system_name"],
-                integration_type=i.get("integration_type"), complexity_level=i.get("complexity_level"),
-                lessons_learned=i.get("lessons_learned"), confidence=_norm_conf(i.get("confidence")),
+                integration_type=_clean(i.get("integration_type")), complexity_level=_clean(i.get("complexity_level")),
+                lessons_learned=_clean(i.get("lessons_learned")), confidence=_norm_conf(i.get("confidence")),
             ))
         for l in (data.get("lessons") or []):
             if not l.get("lesson"):
                 continue
             db.add(ProjectLesson(
-                profile_id=profile.id, category=l.get("category"), lesson=l["lesson"],
-                impact_level=l.get("impact_level"), recommendation=l.get("recommendation"),
-                confidence=_norm_conf(l.get("confidence")), evidence=l.get("evidence"),
+                profile_id=profile.id, category=_clean(l.get("category")), lesson=l["lesson"],
+                impact_level=_clean(l.get("impact_level")), recommendation=_clean(l.get("recommendation")),
+                confidence=_norm_conf(l.get("confidence")), evidence=_clean(l.get("evidence")),
             ))
         for a in (data.get("reusable_assets") or []):
             if not a.get("asset_name"):
                 continue
             db.add(ProjectReusableAsset(
-                profile_id=profile.id, asset_name=a["asset_name"], asset_type=a.get("asset_type"),
-                repository_url=a.get("repository_url"), owner=a.get("owner"),
-                reuse_readiness=a.get("reuse_readiness"), documentation_url=a.get("documentation_url"),
+                profile_id=profile.id, asset_name=a["asset_name"], asset_type=_clean(a.get("asset_type")),
+                repository_url=_clean(a.get("repository_url")), owner=_clean(a.get("owner")),
+                reuse_readiness=_clean(a.get("reuse_readiness")), documentation_url=_clean(a.get("documentation_url")),
                 confidence=_norm_conf(a.get("confidence")),
             ))
         for e in (data.get("expertise") or []):
@@ -267,7 +330,7 @@ def _upsert_profile(slug: str, name: str, data: dict, source_doc_count: int) -> 
                 continue
             db.add(ProjectExpertise(
                 profile_id=profile.id, person_name=e["person_name"],
-                role_on_project=e.get("role_on_project"), capability=e.get("capability"),
+                role_on_project=_clean(e.get("role_on_project")), capability=_clean(e.get("capability")),
                 evidence_level=_norm_conf(e.get("evidence_level")),
                 employee_id=_resolve_employee_id(db, e["person_name"]),
             ))
