@@ -95,6 +95,21 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
     }
   }, []);
 
+  // "Read all": dismiss the nudge-backed priorities server-side (so they clear
+  // from the bell too) and close the briefing for the day.
+  const readAll = useCallback(() => {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(user?.email ? { "x-user-email": user.email } : {}),
+      ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+    };
+    briefing?.attention.forEach((it) => {
+      if (it.id != null)
+        fetch(`/api/nudges/${it.id}/dismiss`, { method: "POST", headers }).catch(() => {});
+    });
+    dismiss();
+  }, [briefing, user?.email, user?.role, dismiss]);
+
   if (dismissed || !briefing || !briefing.has_anything) return null;
 
   return (
@@ -131,9 +146,17 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
           {/* Attention items */}
           {briefing.attention.length > 0 && (
             <div className="mb-5 flex flex-col gap-2">
-              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground/80 mb-1">
-                Priorities needing attention
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground/80">
+                  Priorities needing attention
+                </p>
+                <button
+                  onClick={readAll}
+                  className="text-[11px] font-medium text-primary hover:underline"
+                >
+                  Read all
+                </button>
+              </div>
               <div className="flex flex-col gap-2">
                 {briefing.attention.map((item, idx) => {
                   const sev = SEVERITY_CONFIG[item.severity] || SEVERITY_CONFIG.info;

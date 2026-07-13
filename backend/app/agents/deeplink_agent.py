@@ -18,8 +18,8 @@ from langgraph.prebuilt import ToolNode
 
 from app.config import settings
 
-_MCP_SERVER_DIR = Path(__file__).resolve().parent.parent.parent / "mcp_server"
-_SESSIONS_DIR = _MCP_SERVER_DIR / "sessions"
+_BROWSER_SSO_DIR = Path(__file__).resolve().parent.parent.parent / "browser_sso"
+_SESSIONS_DIR = _BROWSER_SSO_DIR / "sessions"
 
 
 # -- State ---------------------------------------------------------------------
@@ -75,7 +75,7 @@ def _apply_handoff_message(leave_type: str, start_disp: str, end_disp: str) -> s
 def setup_zoho_session() -> str:
     """Open Edge browser non-headlessly so the user can complete Zoho People SSO login.
     Saves session cookies automatically once login is detected."""
-    setup_script = _MCP_SERVER_DIR / "_zoho_setup.py"
+    setup_script = _BROWSER_SSO_DIR / "_zoho_setup.py"
     if not setup_script.exists():
         return json.dumps({"success": False, "error": "Setup script not found."})
 
@@ -154,7 +154,7 @@ def submit_powerapps_complaint(
 def setup_powerapps_session() -> str:
     """Open Edge browser non-headlessly so the user can complete PowerApps Azure AD SSO login.
     Saves the session profile automatically once login is detected."""
-    setup_script = _MCP_SERVER_DIR / "_powerapps_setup.py"
+    setup_script = _BROWSER_SSO_DIR / "_powerapps_setup.py"
     if not setup_script.exists():
         return json.dumps({"success": False, "error": "PowerApps setup script not found."})
 

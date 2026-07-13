@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
@@ -35,6 +36,12 @@ log = logging.getLogger(__name__)
 
 CHART_TYPES = ["bar", "line", "area", "pie", "scatter", "radar", "treemap", "funnel", "composed"]
 PERIODS = list(_PERIODS.keys())  # 24h, 7d, 30d, 90d, 6m, 12m
+
+# Chart types that render one label/slice per category — unreadable past a couple dozen
+# categories. Dynamic/combine queries can return arbitrarily many groups (e.g. skills,
+# designations), so results above this threshold auto-switch to treemap (see _execute_grouped_query).
+_LABEL_HEAVY_TYPES = {"bar", "pie", "radar", "funnel", "composed"}
+_MANY_CATEGORIES_THRESHOLD = 20
 
 # ── ChartSpec ──────────────────────────────────────────────────────────────────────────────
 # Richer than the legacy {series: [{label,value}]} — supports multi-series, named axes, etc.
@@ -123,6 +130,13 @@ class FilterCondition(BaseModel):
 
 
 class BuilderIntent(BaseModel):
+    off_topic: bool = Field(
+        default=False,
+        description="True when the request is a knowledge/policy question rather than a "
+                    "chartable data request — e.g. 'what is the maternity leave policy', "
+                    "'how do I apply for leave'. Set this true instead of guessing a chart "
+                    "for it; leave every other field at its default.",
+    )
     mode: str = Field(
         default="template",
         description="'template' — use a predefined query_id; 'dynamic' — query any registered DB "
@@ -532,6 +546,11 @@ _DATA_SOURCES: dict[str, dict] = {
 }
 
 
+# Core Employee fields any employee-linked source can be grouped by via a join
+# (e.g. "leave by department" when Leave itself has no department column).
+_EMPLOYEE_GROUPABLE = _DATA_SOURCES["employee"]["groupable"]
+
+
 def _build_dynamic_docs() -> str:
     sections = [
         ("IT & OPERATIONS", ["it_tickets", "software_requests", "asset_assignments", "asset_requests"]),
@@ -555,6 +574,14 @@ def _build_dynamic_docs() -> str:
         "(query_id/filter_sources/filters stay empty/unset — do not set mode='template' here, "
         "'employee_skills' is not a template id)",
         "",
+        "Any data_source below marked with an employee link can ALSO be grouped by a core "
+        f"Employee field even if that field isn't in its own group_by list: "
+        f"{' | '.join(_EMPLOYEE_GROUPABLE)}. Use this whenever the request names one of these "
+        "fields and the data source itself doesn't have that column.",
+        "  Q: 'leave data by department' (Leave has no department column of its own)",
+        "  -> mode='dynamic', data_source='leave', group_by='department', metric='count' "
+        "(NOT data_source='employee_skills' — 'department' has nothing to do with skills)",
+        "",
     ]
     for section, ids in sections:
         lines.append(f"{section}:")
@@ -577,6 +604,57 @@ def _build_dynamic_docs() -> str:
 
 
 _DYNAMIC_DOCS = _build_dynamic_docs()
+
+# Keyword a user message must contain (whole word/phrase, case-insensitive) to unambiguously
+# imply a given dynamic/combine data source. Guards against the router LLM anchoring to the
+# wrong worked example in its own prompt (e.g. asked for "leave by department" but it echoes
+# back the skills or Finance-attendance example instead) — see builder_chat's retry loop.
+_SOURCE_KEYWORDS: dict[str, list[str]] = {
+    "leave": ["leave"],
+    "attendance": ["attendance"],
+    "employee_skills": ["skill"],
+    "it_tickets": ["it ticket"],
+    "reimbursements": ["reimbursement"],
+    "grievances": ["grievance"],
+    "hr_queries": ["hr quer"],
+    "travel_requests": ["travel request"],
+    "travel_expense_claims": ["travel expense", "travel claim"],
+    "onboarding_journeys": ["onboarding"],
+    "parking_stickers": ["parking"],
+    "facility_complaints": ["facility complaint"],
+    "food_vendor_feedback": ["food vendor", "cafeteria feedback"],
+    "visitor_passes": ["visitor pass"],
+    "desk_key_requests": ["desk key"],
+    "escalations": ["escalation"],
+    "te_assignments": ["training assignment"],
+    "udemy_license_requests": ["udemy"],
+    "book_requests": ["book request", "library book"],
+    "appreciations": ["appreciation"],
+    "employee_allocation": ["allocation", "bench", "utilization"],
+}
+
+
+def _unambiguous_source_hint(message: str) -> Optional[str]:
+    """Return the one data source id whose keyword unambiguously appears in `message`,
+    or None if zero or multiple sources match (too ambiguous to override the model)."""
+    hits = {sid for sid, kws in _SOURCE_KEYWORDS.items()
+            if any(re.search(rf"\b{re.escape(kw)}", message, re.I) for kw in kws)}
+    return next(iter(hits)) if len(hits) == 1 else None
+
+
+def _field_hint(message: str, candidate_fields: list) -> Optional[str]:
+    """Return the one candidate group_by field (e.g. 'department') named as a literal word/
+    phrase in `message`, or None if zero or multiple candidates match — same anchoring guard
+    as _unambiguous_source_hint, applied to the group_by choice instead of the data source."""
+    hits = {f for f in candidate_fields
+            if re.search(rf"\b{re.escape(f.replace('_', ' '))}\b", message, re.I)}
+    return next(iter(hits)) if len(hits) == 1 else None
+
+
+def _default_title(data_source: str, group_by: str) -> str:
+    src = _DATA_SOURCES.get(data_source)
+    label = src["label"] if src else data_source.replace("_", " ").title()
+    return f"{label} by {group_by.replace('_', ' ').title()}"
 
 
 def _build_combine_docs() -> str:
@@ -938,17 +1016,26 @@ def _execute_grouped_query(db: Session, intent: BuilderIntent, src_id: Optional[
     groupable: dict = src.get("groupable", {})
     bool_labels: dict = src.get("bool_as_label", {})
     numeric: dict = src.get("numeric", {})
+    link = src.get("employee_link") or {"type": "none", "column": None}
 
     # Validate group_by ─────────────────────────────────────────────────────────
     group_by = (intent.group_by or "").strip()
     is_bool_col = group_by in bool_labels
-    if group_by not in groupable and not is_bool_col:
-        allowed = list(groupable) + list(bool_labels)
+    # Any employee-linked source can also be grouped by a core Employee field
+    # (department, designation, location, ...) via a join — e.g. "leave by department"
+    # when the source itself (Leave) has no department column of its own.
+    is_employee_join = (
+        group_by in _EMPLOYEE_GROUPABLE
+        and group_by not in groupable
+        and link["type"] != "none"
+    )
+    if group_by not in groupable and not is_bool_col and not is_employee_join:
+        allowed = list(groupable) + list(bool_labels) + list(_EMPLOYEE_GROUPABLE)
         raise ValueError(
             f"Cannot group '{src_id}' by '{group_by}'. "
             f"Allowed: {', '.join(allowed)}"
         )
-    grp_col = getattr(Model, group_by)
+    grp_col = getattr(Employee, group_by) if is_employee_join else getattr(Model, group_by)
 
     # Build metric expression ───────────────────────────────────────────────────
     metric_raw = (intent.metric or "count").strip()
@@ -994,7 +1081,16 @@ def _execute_grouped_query(db: Session, intent: BuilderIntent, src_id: Optional[
         )
 
     # Build and execute query ───────────────────────────────────────────────────
-    q = db.query(grp_col.label("grp"), metric_expr.label("val"))
+    if is_employee_join:
+        q = db.query(grp_col.label("grp"), metric_expr.label("val")).select_from(Model)
+        if link["type"] == "fk_id":
+            q = q.join(Employee, getattr(Model, link["column"]) == Employee.id)
+        elif link["type"] == "code":
+            q = q.join(Employee, getattr(Model, link["column"]) == Employee.employee_id)
+        elif link["type"] == "email":
+            q = q.join(Employee, func.lower(getattr(Model, link["column"])) == func.lower(Employee.email))
+    else:
+        q = db.query(grp_col.label("grp"), metric_expr.label("val"))
     q = q.filter(grp_col.isnot(None))
 
     if intent.period and date_col_name:
@@ -1030,8 +1126,18 @@ def _execute_grouped_query(db: Session, intent: BuilderIntent, src_id: Optional[
     if not subtitle and intent.period:
         subtitle = f"Last {intent.period}"
 
+    # A label-per-category chart (bar/pie/radar/funnel/composed) becomes unreadable well
+    # before 290 categories — the LLM picks chart_type before it knows how many rows come
+    # back, so cap it here instead. Treemap scales to many categories without axis/legend
+    # clutter, so it's the fallback rather than silently truncating the data.
+    chart_type = intent.chart_type
+    if chart_type in _LABEL_HEAVY_TYPES and len(data) > _MANY_CATEGORIES_THRESHOLD:
+        chart_type = "treemap"
+        note = f"{len(data)} categories — showing as treemap for readability"
+        subtitle = f"{subtitle} · {note}" if subtitle else note
+
     return ChartSpec(
-        type=intent.chart_type,
+        type=chart_type,
         title=intent.title,
         subtitle=subtitle,
         data=data,
@@ -1453,6 +1559,9 @@ def builder_chat(
         "- For treemap, any headcount or groupable dynamic query works.\n"
         "- For 'my team/reportees attendance', use mode='template', query_id=reportee_attendance_split, chart_type=pie.\n"
         "- Never invent a query_id, data_source, primary_source, or filter_sources entry — only use exactly what is listed.\n"
+        "- If the request is a knowledge/policy question rather than a chartable data request "
+        "(e.g. 'what is the maternity leave policy', 'how do I apply for leave'), set off_topic=true "
+        "instead of forcing it into a chart.\n"
     )
 
     messages = [{"role": "system", "content": system}]
@@ -1463,6 +1572,14 @@ def builder_chat(
     from app.services.llm_resilience import resilient_invoke
 
     def _invoke_intent(msgs: list) -> BuilderIntent:
+        # Ideally "service" tier (llama3.1:8b) — this schema spans ~35 data sources,
+        # group_by/filter/chart_type fields, and combine-mode joins, a much harder
+        # structured-extraction job than the domain classification "router" was sized for.
+        # Reverted to "router" for now: ml01 currently has only llama3.2:3b resident (on
+        # CPU) and is rejecting new model loads, so requesting "service" just burns retries
+        # against the load-reject rescue and sometimes times out outright — worse than
+        # answering promptly on 3b. Flip this back to "service" once ml01 has spare capacity
+        # to hold llama3.1:8b resident (see ml01-load-reject-rescue).
         result = resilient_invoke(
             "router", msgs, build=lambda llm: llm.with_structured_output(BuilderIntent),
         )
@@ -1492,6 +1609,9 @@ def builder_chat(
                 ],
             }
 
+        if intent.off_topic:
+            return {"ok": False, "chart": None, "off_topic": True, "explanation": "", "suggestions": []}
+
         # Validate chart type
         if intent.chart_type not in CHART_TYPES:
             intent.chart_type = "bar"
@@ -1520,6 +1640,50 @@ def builder_chat(
                 intent.mode = "dynamic"
                 intent.data_source = intent.primary_source
                 intent.filter_sources = []
+                intent.title = _default_title(intent.data_source, intent.group_by or "")
+
+        # The router LLM occasionally anchors to an unrelated worked example from its own
+        # prompt instead of the actual request (e.g. "leave by department" comes back as the
+        # skills chart, the Finance/attendance example, or the right source but wrong column).
+        # When the user's own words unambiguously name a source/field, trust that over the model.
+        if intent.mode in ("dynamic", "combine"):
+            chosen = _normalize_source_id(intent.data_source if intent.mode == "dynamic" else intent.primary_source)
+            source_hint = _unambiguous_source_hint(message)
+            effective_source = source_hint or chosen
+            field_hint = _field_hint(
+                message,
+                list(_DATA_SOURCES.get(effective_source, {}).get("groupable", {})) + list(_EMPLOYEE_GROUPABLE),
+            ) if effective_source in _DATA_SOURCES else None
+            source_mismatch = bool(source_hint) and chosen != source_hint
+            field_mismatch = bool(field_hint) and field_hint != (intent.group_by or "").strip()
+
+            if source_mismatch or field_mismatch:
+                if attempt == 0:
+                    log.info("Builder intent mismatch: message implies source=%s field=%s, model picked "
+                              "source=%s field=%s — retrying", source_hint, field_hint, chosen, intent.group_by)
+                    messages.append({"role": "assistant", "content": intent.model_dump_json()})
+                    src_note = f"data_source='{source_hint}' (or primary_source='{source_hint}' for mode='combine')" \
+                        if source_mismatch else f"data_source='{chosen}'"
+                    group_note = f", grouped by '{field_hint}'" if field_mismatch else ""
+                    messages.append({"role": "user", "content": (
+                        f"Your request clearly refers to '{effective_source}' data{group_note or ''}. "
+                        f"Re-read the DYNAMIC/COMBINE docs and return a corrected configuration using "
+                        f"{src_note}{group_note}."
+                    )})
+                    continue
+                # Last attempt still wrong — trust the user's words over the model.
+                log.warning("Builder intent mismatch persisted; forcing source=%s field=%s",
+                            effective_source, field_hint or intent.group_by)
+                intent.mode = "dynamic"
+                intent.data_source = effective_source
+                intent.filter_sources = []
+                intent.filters = []
+                src_groupable = _DATA_SOURCES[effective_source].get("groupable", {})
+                if field_hint:
+                    intent.group_by = field_hint
+                elif intent.group_by not in src_groupable and intent.group_by not in _EMPLOYEE_GROUPABLE:
+                    intent.group_by = next(iter(src_groupable), intent.group_by or "")
+                intent.title = _default_title(intent.data_source, intent.group_by or "")
 
         try:
             spec = _run_query(db, intent, user_email=user_email)

@@ -279,6 +279,22 @@ export function ProactiveNudgeFeed() {
     saveDismissed(updated);
   };
 
+  const readAll = () => {
+    // Dismiss every nudge server-side (same call as the per-item X).
+    nudges.forEach((n) =>
+      fetch(`/api/nudges/${n.id}/dismiss`, { method: "POST", headers: authHeaders }).catch(() => {}),
+    );
+    setNudges([]);
+    setNudgesUnread(0);
+    // Announcements clear locally (same as the per-item dismiss).
+    const updated = [
+      ...dismissedAnnouncements,
+      ...visibleAnnouncements.map((a) => a.id),
+    ];
+    setDismissedAnnouncements(updated);
+    saveDismissed(updated);
+  };
+
   const deleteAnnouncement = (id: number, recall: boolean) => {
     fetch(`/api/announcements/${id}?recall=${recall}`, { method: "DELETE", headers: authHeaders })
       .then(() => {
@@ -348,9 +364,19 @@ export function ProactiveNudgeFeed() {
             <Bell className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold">Notifications</span>
           </div>
-          <span className="text-xs text-muted-foreground">
-            {nudges.length + visibleAnnouncements.length} active
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {nudges.length + visibleAnnouncements.length} active
+            </span>
+            {!isEmpty && (
+              <button
+                onClick={readAll}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Read all
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="max-h-[28rem] overflow-y-auto">
