@@ -67,7 +67,7 @@ import { getPortalCopilot } from "@/lib/portal-copilot";
 import type { Turn, DynamicFormField } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
 import { useQuickQueries } from "@/hooks/useQuickQueries";
-import { Search } from "lucide-react";
+import { Search, Lock } from "lucide-react";
 
 function getGreeting(name: string): { heading: string; subheading: string } {
   const firstName = name.split(" ")[0];
@@ -1112,7 +1112,11 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
             role: "ai",
-            text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.\n\nType \`/exit\` to return to general mode.`,
+            text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.${
+              modeCmd === "me"
+                ? "\n\n🔒 This is your private space — nothing here is logged or traced in AI observability."
+                : ""
+            }\n\nType \`/exit\` to return to general mode.`,
           });
         }
         setInput("");
@@ -2588,6 +2592,13 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                       <p className="text-xs text-muted-foreground max-w-xs leading-relaxed mb-5">
                         {activeMode ? CHAT_MODES[activeMode].description : portal.tagline}
                       </p>
+
+                      {activeMode === "me" && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80 max-w-xs leading-relaxed -mt-3 mb-5">
+                          <Lock className="h-3 w-3 shrink-0" />
+                          Your private space — nothing here is logged or traced in AI observability.
+                        </p>
+                      )}
 
                       {activeMode && CHAT_MODES[activeMode].cards ? (
                         <div className="flex flex-col gap-2 w-full max-w-xs">

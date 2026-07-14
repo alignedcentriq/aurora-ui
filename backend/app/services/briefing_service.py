@@ -51,6 +51,9 @@ def _attention_items(email: str) -> list[dict]:
     except Exception:
         logger.exception("[briefing] nudge lookup failed")
         return []
+    # answer_ready nudges are ephemeral toasts (see ProactiveNudgeFeed), not
+    # briefing items — their title is a status message, not a prompt.
+    nudges = [n for n in nudges if n.get("nudge_type") != "answer_ready"]
     items = []
     for n in nudges[:_MAX_ATTENTION]:
         items.append({

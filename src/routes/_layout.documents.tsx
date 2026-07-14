@@ -34,6 +34,10 @@ import {
   ExternalLink,
   Mail,
   BookOpen,
+  Plus,
+  Pencil,
+  MoreVertical,
+  Sparkle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -63,6 +67,23 @@ import {
   SheetClose,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import {
@@ -76,42 +97,12 @@ export const Route = createFileRoute("/_layout/documents")({
   component: DocumentsPage,
 });
 
-const HR_ROLES = new Set(["HR", "Admin"]);
 const LIBRARY_ADMIN_ROLES = new Set(["HR", "Admin", "Super Admin"]);
-
-type FieldType = "text" | "textarea" | "date" | "select";
-
-interface DocField {
-  name: string;
-  label: string;
-  type: FieldType;
-  required: boolean;
-  source: "user" | "auto";
-  options?: string[];
-}
-
-interface DocTemplate {
-  id: number;
-  doc_type: string;
-  label: string;
-  filename: string;
-  source_format: string | null;
-  source_key: string;
-  enabled: boolean;
-  requires_approval: boolean;
-  setup_status: string; // needs_review | ready
-  fields: DocField[];
-  updated_at: string | null;
-}
-
+const HR_ROLES = new Set(["HR", "Admin"]);
 
 function DocumentsPage() {
   const { user } = useAuth();
   const isHr = !!user && HR_ROLES.has(user.role);
-  // Which roles may approve & release is configurable in Document settings (HR always; Admin opt-in).
-  // approverRoles holds the lowercase role names returned by the backend.
-  const [approverRoles, setApproverRoles] = useState<string[]>([]);
-  const canRelease = !!user && approverRoles.includes(user.role.toLowerCase());
 
   const authHeaders = useMemo<Record<string, string>>(
     () => ({
@@ -122,23 +113,9 @@ function DocumentsPage() {
     [user?.email, user?.role],
   );
 
-  const [mode, setMode] = useState<"manage" | "library" | "hr-letters">("hr-letters");
+  const [mode, setMode] = useState<"library" | "hr-letters" | "manage-letters">("hr-letters");
   const isLibraryAdmin = !!user && LIBRARY_ADMIN_ROLES.has(user.role);
-
-  // Approver-role config (only HR/Admin can read this endpoint).
-  const fetchCatalogue = useCallback(() => {}, []);
-
-  const fetchApprovers = useCallback(() => {
-    if (!isHr) return;
-    fetch("/api/documents/settings", { headers: authHeaders })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setApproverRoles(d.approver_roles || []))
-      .catch(() => {});
-  }, [isHr, authHeaders]);
-
-  useEffect(() => {
-    fetchApprovers();
-  }, [fetchApprovers]);
+  const [lettersVersion, setLettersVersion] = useState(0);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -167,8 +144,8 @@ function DocumentsPage() {
               <Library className="mr-1.5 h-3.5 w-3.5" /> Document Library
             </PillTab>
             {isHr && (
-              <PillTab active={mode === "manage"} onClick={() => setMode("manage")}>
-                <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Manage templates
+              <PillTab active={mode === "manage-letters"} onClick={() => setMode("manage-letters")}>
+                <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Manage letters
               </PillTab>
             )}
           </div>
@@ -176,16 +153,12 @@ function DocumentsPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {isHr && mode === "manage" ? (
-          <ManageTemplates
-            authHeaders={authHeaders}
-            onChanged={fetchCatalogue}
-            onApproversChanged={fetchApprovers}
-          />
-        ) : mode === "library" ? (
+        {mode === "library" ? (
           <DocumentLibrary authHeaders={authHeaders} isLibraryAdmin={isLibraryAdmin} />
+        ) : mode === "manage-letters" && isHr ? (
+          <ManageLetters authHeaders={authHeaders} onChanged={() => setLettersVersion((v) => v + 1)} />
         ) : (
-          <ZohoHRLetters />
+          <ZohoHRLetters refreshKey={lettersVersion} />
         )}
       </div>
     </div>
@@ -193,121 +166,80 @@ function DocumentsPage() {
 }
 
 // ── Zoho HR Letters ───────────────────────────────────────────────────────────
+// Generation happens entirely in Zoho People — this tab is a directory of deep links,
+// backed by /api/hr-letters (HR manages the list from the "Manage letters" tab below).
 
-const ZOHO_ORG = "alignedautomationservices";
-const ZOHO_BASE = `https://people.zoho.com/${ZOHO_ORG}/zp#hrservices`;
+type LetterCategory = "employment" | "certification" | "separation" | "admin";
 
-interface HRLetterDef {
+interface HRLetter {
+  id: number;
   key: string;
   label: string;
-  desc: string;
-  icon: typeof FileText;
-  /** Zoho People hrservices URL slug. null = not yet enabled in Zoho instance. */
-  zohoPath: string | null;
-  fields?: string[];
-  category: "employment" | "certification" | "separation" | "admin";
+  description: string;
+  icon: string;
+  category: LetterCategory | string;
+  zoho_path: string | null;
+  zoho_url: string | null;
+  fields: string[];
+  enabled: boolean;
+  sort_order: number;
 }
 
-const HR_LETTER_DEFS: HRLetterDef[] = [
-  // ── Employment proofs (most requested) ────────────────────────
-  {
-    key: "bonafide",
-    label: "Bonafide Letter",
-    desc: "Confirms current employment status for official or external use (bank account, higher studies, visa).",
-    icon: ShieldCheck,
-    zohoPath: "bonafideletter",
-    fields: ["Reason for request"],
-    category: "employment",
-  },
-  {
-    key: "experience",
-    label: "Experience Letter",
-    desc: "Certifies tenure, designation and function — required by future employers or background checks.",
-    icon: Award,
-    zohoPath: "experienceletter",
-    fields: ["Reason for request"],
-    category: "employment",
-  },
-  {
-    key: "employment_verification",
-    label: "Employment Verification Letter",
-    desc: "Formal letter verifying you are an active employee, issued to third parties on request.",
-    icon: UserRound,
-    zohoPath: null,
-    category: "employment",
-  },
-  {
-    key: "address_proof",
-    label: "Address Proof Letter",
-    desc: "Company-certified address verification for banks, government offices, or visa applications.",
-    icon: Home,
-    zohoPath: null,
-    fields: ["Purpose"],
-    category: "employment",
-  },
-  {
-    key: "noc",
-    label: "No Objection Certificate",
-    desc: "States the company has no objection to you pursuing a specific activity (studies, travel, side project).",
-    icon: CheckCircle2,
-    zohoPath: null,
-    fields: ["Purpose"],
-    category: "employment",
-  },
-  // ── Certifications ─────────────────────────────────────────────
-  {
-    key: "internship",
-    label: "Internship Completion Certificate",
-    desc: "Certifies successful completion of your internship, including duration and role.",
-    icon: GraduationCap,
-    zohoPath: null,
-    fields: ["Internship duration"],
-    category: "certification",
-  },
-  {
-    key: "recommendation",
-    label: "Recommendation Letter",
-    desc: "Professional recommendation from the company for higher studies or career opportunities.",
-    icon: ThumbsUp,
-    zohoPath: null,
-    fields: ["Purpose", "Recipient"],
-    category: "certification",
-  },
-  // ── Separation ─────────────────────────────────────────────────
-  {
-    key: "relieving",
-    label: "Relieving Letter",
-    desc: "Issued upon separation — confirms last working date, role, and formal clearance.",
-    icon: LogOut,
-    zohoPath: null,
-    fields: ["Last working date"],
-    category: "separation",
-  },
-  // ── Other admin letters ────────────────────────────────────────
-  {
-    key: "travel_support",
-    label: "Travel / Visa Support Letter",
-    desc: "Official letter supporting your visa application or business travel abroad.",
-    icon: Plane,
-    zohoPath: null,
-    fields: ["Destination", "Travel purpose", "Travel dates"],
-    category: "admin",
-  },
-];
+const ICON_MAP: Record<string, typeof FileText> = {
+  ShieldCheck,
+  Award,
+  UserRound,
+  Home,
+  CheckCircle2,
+  GraduationCap,
+  ThumbsUp,
+  LogOut,
+  Plane,
+  FileText,
+};
 
-const CATEGORY_LABELS: Record<HRLetterDef["category"], string> = {
+const CATEGORY_ORDER: LetterCategory[] = ["employment", "certification", "separation", "admin"];
+const CATEGORY_LABELS: Record<string, string> = {
   employment: "Employment Proofs",
   certification: "Certificates",
   separation: "Separation Letters",
   admin: "Other Letters",
 };
 
-function ZohoHRLetters() {
-  const categories = Array.from(
-    new Set(HR_LETTER_DEFS.map((d) => d.category)),
-  ) as HRLetterDef["category"][];
+function useHrLetters(authHeaders: Record<string, string>, refreshKey?: number) {
+  const [letters, setLetters] = useState<HRLetter[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const availableCount = HR_LETTER_DEFS.filter((d) => !!d.zohoPath).length;
+  const load = useCallback(() => {
+    setLoading(true);
+    fetch("/api/hr-letters", { headers: authHeaders })
+      .then((r) => r.json())
+      .then((d) => setLetters(d.letters || []))
+      .catch(() => toast.error("Failed to load letters & certificates"))
+      .finally(() => setLoading(false));
+  }, [authHeaders]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshKey]);
+
+  return { letters, loading, reload: load };
+}
+
+function ZohoHRLetters({ refreshKey }: { refreshKey?: number }) {
+  const { user } = useAuth();
+  const authHeaders = useMemo<Record<string, string>>(
+    () => ({
+      ...(user?.email ? { "x-user-email": user.email } : {}),
+      ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+    }),
+    [user?.email, user?.role],
+  );
+  const { letters, loading } = useHrLetters(authHeaders, refreshKey);
+
+  const categories = CATEGORY_ORDER.filter((c) => letters.some((d) => d.category === c));
+  const availableCount = letters.filter((d) => d.enabled && d.zoho_url).length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-8 py-6">
@@ -318,115 +250,124 @@ function ZohoHRLetters() {
             Clicking "Request" opens the form — your details are pre-filled there.
           </p>
         </div>
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          {availableCount} of {HR_LETTER_DEFS.length} available now
-        </span>
+        {!loading && letters.length > 0 && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {availableCount} of {letters.length} available now
+          </span>
+        )}
       </div>
 
-      <div className="space-y-6">
-        {categories.map((cat) => {
-          const defs = HR_LETTER_DEFS.filter((d) => d.category === cat);
-          return (
-            <div key={cat}>
-              <h3 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
-                {CATEGORY_LABELS[cat]}
-              </h3>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {defs.map((def) => {
-                  const Icon = def.icon;
-                  const available = !!def.zohoPath;
-                  const zohoUrl = available ? `${ZOHO_BASE}/${def.zohoPath}/add` : null;
+      {loading ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 rounded-2xl" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {categories.map((cat) => {
+            const defs = letters.filter((d) => d.category === cat);
+            return (
+              <div key={cat}>
+                <h3 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {CATEGORY_LABELS[cat] || cat}
+                </h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {defs.map((def) => {
+                    const Icon = ICON_MAP[def.icon] || FileText;
+                    const available = def.enabled && !!def.zoho_url;
 
-                  return (
-                    <div
-                      key={def.key}
-                      className={cn(
-                        "relative flex flex-col gap-3 overflow-hidden rounded-2xl border p-4 shadow-sm transition-shadow",
-                        available
-                          ? "border-[var(--border)] bg-card/70 hover:shadow-md"
-                          : "border-[var(--border)]/50 bg-muted/20",
-                      )}
-                    >
-                      {available && (
-                        <div
-                          className="pointer-events-none absolute inset-x-0 top-0 h-[2.5px]"
-                          style={{ background: "var(--gradient-primary)" }}
-                        />
-                      )}
-
-                      <div className="flex items-start gap-3 pt-0.5">
-                        <div
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                          style={{
-                            background: available
-                              ? "color-mix(in oklab, var(--connectivity) 12%, transparent)"
-                              : "color-mix(in oklab, var(--muted-foreground) 6%, transparent)",
-                          }}
-                        >
-                          <Icon
-                            className="h-4.5 w-4.5"
-                            style={{
-                              color: available ? "var(--connectivity)" : "var(--muted-foreground)",
-                              opacity: available ? 1 : 0.5,
-                            }}
+                    return (
+                      <div
+                        key={def.id}
+                        className={cn(
+                          "relative flex flex-col gap-3 overflow-hidden rounded-2xl border p-4 shadow-sm transition-shadow",
+                          available
+                            ? "border-[var(--border)] bg-card/70 hover:shadow-md"
+                            : "border-[var(--border)]/50 bg-muted/20",
+                        )}
+                      >
+                        {available && (
+                          <div
+                            className="pointer-events-none absolute inset-x-0 top-0 h-[2.5px]"
+                            style={{ background: "var(--gradient-primary)" }}
                           />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <p
-                              className={cn(
-                                "text-[13px] font-semibold leading-snug",
-                                available ? "text-foreground" : "text-muted-foreground",
+                        )}
+
+                        <div className="flex items-start gap-3 pt-0.5">
+                          <div
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                            style={{
+                              background: available
+                                ? "color-mix(in oklab, var(--connectivity) 12%, transparent)"
+                                : "color-mix(in oklab, var(--muted-foreground) 6%, transparent)",
+                            }}
+                          >
+                            <Icon
+                              className="h-4.5 w-4.5"
+                              style={{
+                                color: available ? "var(--connectivity)" : "var(--muted-foreground)",
+                                opacity: available ? 1 : 0.5,
+                              }}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p
+                                className={cn(
+                                  "text-[13px] font-semibold leading-snug",
+                                  available ? "text-foreground" : "text-muted-foreground",
+                                )}
+                              >
+                                {def.label}
+                              </p>
+                              {!available && (
+                                <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground/70">
+                                  Coming soon
+                                </span>
                               )}
-                            >
-                              {def.label}
+                            </div>
+                            <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                              {def.description}
                             </p>
-                            {!available && (
-                              <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground/70">
-                                Coming soon
-                              </span>
+                            {def.fields && def.fields.length > 0 && (
+                              <p className="mt-1.5 text-[11px] text-muted-foreground/60">
+                                You'll need: {def.fields.join(", ")}
+                              </p>
                             )}
                           </div>
-                          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                            {def.desc}
-                          </p>
-                          {def.fields && def.fields.length > 0 && (
-                            <p className="mt-1.5 text-[11px] text-muted-foreground/60">
-                              You'll need: {def.fields.join(", ")}
-                            </p>
-                          )}
                         </div>
-                      </div>
 
-                      {zohoUrl ? (
-                        <a
-                          href={zohoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 sm:w-auto sm:self-start"
-                          style={{ background: "var(--gradient-primary)" }}
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Request in Zoho People
-                        </a>
-                      ) : (
-                        <button
-                          disabled
-                          className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-[var(--border)]/50 px-4 py-2 text-[12px] font-semibold text-muted-foreground/40 sm:w-auto sm:self-start"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Request in Zoho People
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+                        {available ? (
+                          <a
+                            href={def.zoho_url!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 sm:w-auto sm:self-start"
+                            style={{ background: "var(--gradient-primary)" }}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            Request in Zoho People
+                          </a>
+                        ) : (
+                          <button
+                            disabled
+                            className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-[var(--border)]/50 px-4 py-2 text-[12px] font-semibold text-muted-foreground/40 sm:w-auto sm:self-start"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            Request in Zoho People
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-6 flex items-start gap-3 rounded-xl border border-[var(--border)]/60 bg-muted/30 p-4">
         <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -439,143 +380,121 @@ function ZohoHRLetters() {
   );
 }
 
-// ── HR: manage document templates ─────────────────────────────────────────────
+// ── HR: manage the Letters & Certificates directory ───────────────────────────
 
-function ManageTemplates({
+const EMPTY_LETTER_FORM = {
+  id: null as number | null,
+  label: "",
+  description: "",
+  category: "employment" as LetterCategory,
+  zoho_path: "",
+  fieldsText: "",
+  enabled: false,
+};
+
+function ManageLetters({
   authHeaders,
   onChanged,
-  onApproversChanged,
 }: {
   authHeaders: Record<string, string>;
   onChanged: () => void;
-  onApproversChanged?: () => void;
 }) {
-  const [templates, setTemplates] = useState<DocTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [edits, setEdits] = useState<Record<number, Partial<DocTemplate>>>({});
-  const [saving, setSaving] = useState<number | null>(null);
+  const { letters, loading, reload } = useHrLetters(authHeaders);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_LETTER_FORM);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  // Approver-role settings
-  const [approverRoles, setApproverRoles] = useState<string[]>([]);
-  const [assignableRoles, setAssignableRoles] = useState<string[]>([]);
-  const [canEditApprovers, setCanEditApprovers] = useState(false);
-  const [savingApprovers, setSavingApprovers] = useState(false);
-
-  const loadApprovers = useCallback(() => {
-    fetch("/api/documents/settings", { headers: authHeaders })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d) return;
-        setApproverRoles(d.approver_roles || []);
-        setAssignableRoles(d.assignable_roles || []);
-        setCanEditApprovers(!!d.can_edit);
-      })
-      .catch(() => {});
-  }, [authHeaders]);
-
-  useEffect(() => {
-    loadApprovers();
-  }, [loadApprovers]);
-
-  const toggleApprover = (role: string) => {
-    if (!canEditApprovers || role === "hr") return; // HR is always an approver
-    setApproverRoles((rs) => (rs.includes(role) ? rs.filter((r) => r !== role) : [...rs, role]));
+  const openCreate = () => {
+    setForm(EMPTY_LETTER_FORM);
+    setSheetOpen(true);
   };
 
-  const saveApprovers = async () => {
-    setSavingApprovers(true);
-    try {
-      const res = await fetch("/api/documents/settings", {
-        method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({ approver_roles: approverRoles }),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      const d = await res.json();
-      setApproverRoles(d.approver_roles || []);
-      flyBanner("Approval settings updated");
-      onApproversChanged?.();
-    } catch {
-      toast.error("Could not save approval settings.");
-    } finally {
-      setSavingApprovers(false);
+  const openEdit = (l: HRLetter) => {
+    setForm({
+      id: l.id,
+      label: l.label,
+      description: l.description,
+      category: (l.category as LetterCategory) || "employment",
+      zoho_path: l.zoho_path || "",
+      fieldsText: (l.fields || []).join(", "),
+      enabled: l.enabled,
+    });
+    setSheetOpen(true);
+  };
+
+  const toggleEnabled = async (l: HRLetter, enabled: boolean) => {
+    if (enabled && !l.zoho_path) {
+      toast.error("Add a Zoho URL slug before enabling this letter.");
+      return;
     }
-  };
-
-  const load = useCallback(() => {
-    setLoading(true);
-    fetch("/api/documents/admin/templates", { headers: authHeaders })
-      .then((r) => r.json())
-      .then((d) => setTemplates(d.templates || []))
-      .catch(() => toast.error("Failed to load templates"))
-      .finally(() => setLoading(false));
-  }, [authHeaders]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const merged = (t: DocTemplate): DocTemplate => ({ ...t, ...edits[t.id] });
-
-  const patch = (id: number, p: Partial<DocTemplate>) =>
-    setEdits((e) => ({ ...e, [id]: { ...e[id], ...p } }));
-
-  const patchField = (id: number, name: string, p: Partial<DocField>) => {
-    const t = merged(templates.find((x) => x.id === id)!);
-    const fields = t.fields.map((f) => (f.name === name ? { ...f, ...p } : f));
-    patch(id, { fields });
-  };
-
-  const isDirty = (id: number) => !!edits[id] && Object.keys(edits[id]).length > 0;
-
-  const save = async (t: DocTemplate) => {
-    const m = merged(t);
-    setSaving(t.id);
     try {
-      const res = await fetch(`/api/documents/admin/templates/${t.id}`, {
+      const res = await fetch(`/api/hr-letters/${l.id}`, {
         method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({
-          enabled: m.enabled,
-          requires_approval: m.requires_approval,
-          label: m.label,
-          fields: m.fields,
-        }),
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
       });
-      if (!res.ok) throw new Error("Save failed");
-      flyBanner("Template updated");
-      setEdits((e) => {
-        const n = { ...e };
-        delete n[t.id];
-        return n;
-      });
-      load();
+      if (!res.ok) throw new Error();
+      reload();
       onChanged();
     } catch {
-      toast.error("Could not save the template.");
-    } finally {
-      setSaving(null);
+      toast.error("Could not update this letter.");
     }
   };
 
-  const sync = async () => {
-    setSyncing(true);
+  const save = async () => {
+    if (!form.label.trim()) {
+      toast.error("Label is required.");
+      return;
+    }
+    setSaving(true);
+    const body = {
+      label: form.label.trim(),
+      description: form.description.trim(),
+      category: form.category,
+      zoho_path: form.zoho_path.trim() || null,
+      fields: form.fieldsText
+        .split(",")
+        .map((f) => f.trim())
+        .filter(Boolean),
+      enabled: form.enabled,
+    };
     try {
-      const res = await fetch("/api/documents/admin/templates/sync", {
-        method: "POST",
+      const res = await fetch(
+        form.id ? `/api/hr-letters/${form.id}` : "/api/hr-letters",
+        {
+          method: form.id ? "PUT" : "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) throw new Error();
+      flyBanner(form.id ? "Letter updated" : "Letter added");
+      setSheetOpen(false);
+      reload();
+      onChanged();
+    } catch {
+      toast.error("Could not save this letter.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id: number) => {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/hr-letters/${id}`, {
+        method: "DELETE",
         headers: authHeaders,
       });
-      if (!res.ok) throw new Error("Sync failed");
-      toast.success("Sync started — new templates will appear shortly. Refreshing…");
-      setTimeout(() => {
-        load();
-        onChanged();
-      }, 2500);
+      if (!res.ok) throw new Error();
+      toast.success("Letter removed");
+      reload();
+      onChanged();
     } catch {
-      toast.error("Could not start the sync.");
+      toast.error("Could not remove this letter.");
     } finally {
-      setSyncing(false);
+      setDeletingId(null);
     }
   };
 
@@ -583,220 +502,187 @@ function ManageTemplates({
     <div className="mx-auto max-w-4xl px-4 sm:px-8 py-6">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-[15px] font-semibold text-foreground">Document templates</h2>
+          <h2 className="text-[15px] font-semibold text-foreground">Manage letters</h2>
           <p className="text-[12px] text-muted-foreground">
-            Synced from SharePoint. Enable a template to add it to the dropdown, set whether it
-            needs approval, and review the fields the app detected.
+            Control which letters &amp; certificates employees see. Enabling one requires a
+            Zoho People URL slug to deep-link to.
           </p>
         </div>
-        <button
-          onClick={sync}
-          disabled={syncing}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] px-3.5 py-2 text-[12px] font-semibold text-foreground hover:bg-muted/60 w-full sm:w-auto shrink-0"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
-          Sync from SharePoint
-        </button>
-      </div>
-
-      {/* ── Who can approve & release ── */}
-      <div className="mb-6 rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4" style={{ color: "var(--connectivity)" }} />
-          <h3 className="text-[14px] font-semibold text-foreground">
-            Who can approve &amp; release
-          </h3>
-        </div>
-        <p className="mt-1 text-[12px] text-muted-foreground">
-          Select which roles may approve a draft and release the final document. HR is always an
-          approver. {canEditApprovers ? "" : "Only HR can change this."}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-6">
-          {assignableRoles.map((role) => {
-            const checked = approverRoles.includes(role);
-            const locked = role === "hr" || !canEditApprovers;
-            return (
-              <label
-                key={role}
-                className={cn(
-                  "flex items-center gap-2 text-[12px] capitalize text-foreground",
-                  locked ? "cursor-default opacity-90" : "cursor-pointer",
-                )}
-              >
-                <Switch
-                  checked={checked}
-                  disabled={locked}
-                  onCheckedChange={() => toggleApprover(role)}
-                />
-                {role}
-                {role === "hr" && (
-                  <span className="text-[10px] text-muted-foreground">(always)</span>
-                )}
-              </label>
-            );
-          })}
-        </div>
-        {canEditApprovers && (
-          <div className="mt-3 flex justify-end">
-            <button
-              onClick={saveApprovers}
-              disabled={savingApprovers}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all hover:opacity-90 w-full sm:w-auto"
-              style={{ background: "var(--gradient-primary)" }}
-            >
-              {savingApprovers ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              Save approval settings
-            </button>
-          </div>
-        )}
+        <Button onClick={openCreate} size="sm" className="gap-2 shrink-0 w-full sm:w-auto">
+          <Plus className="h-3.5 w-3.5" /> Add letter
+        </Button>
       </div>
 
       {loading ? (
         <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading templates…
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
         </div>
-      ) : templates.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">
-          No templates yet. Drop PDF/DOCX files into the SharePoint templates folder and click “Sync
-          from SharePoint”.
-        </p>
       ) : (
-        <div className="space-y-4">
-          {templates.map((t0) => {
-            const t = merged(t0);
+        <div className="space-y-3">
+          {letters.map((l) => {
+            const Icon = ICON_MAP[l.icon] || FileText;
             return (
               <div
-                key={t.id}
-                className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm"
+                key={l.id}
+                className="flex flex-col gap-3 rounded-2xl border border-[var(--border)] bg-card/60 p-4 shadow-sm sm:flex-row sm:items-center"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <input
-                      value={t.label}
-                      onChange={(e) => patch(t.id, { label: e.target.value })}
-                      className="w-full rounded-lg border border-transparent bg-transparent text-[14px] font-semibold text-foreground hover:border-[var(--border)] focus:border-[var(--border)] focus:outline-none focus:ring-0 px-1 py-0.5"
-                    />
-                    <div className="mt-0.5 px-1 font-mono text-[11px] text-muted-foreground">
-                      {t.filename}
-                      {t.updated_at ? ` · synced ${new Date(t.updated_at).toLocaleString()}` : ""}
-                    </div>
-                  </div>
-                  {t.setup_status === "needs_review" && (
-                    <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                      Needs review
-                    </span>
-                  )}
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted">
+                  <Icon className="h-4.5 w-4.5 text-muted-foreground" />
                 </div>
-
-                <div className="mt-3 flex flex-wrap gap-6">
-                  <label className="flex items-center gap-2 text-[12px] text-foreground">
-                    <Switch
-                      checked={t.enabled}
-                      onCheckedChange={(v) => patch(t.id, { enabled: v })}
-                    />
-                    Enabled (show in dropdown)
-                  </label>
-                  <label className="flex items-center gap-2 text-[12px] text-foreground">
-                    <Switch
-                      checked={t.requires_approval}
-                      onCheckedChange={(v) => patch(t.id, { requires_approval: v })}
-                    />
-                    Requires approval
-                  </label>
-                </div>
-
-                {t.fields.length > 0 && (
-                  <div className="mt-4 rounded-xl border border-[var(--border)] bg-muted/20 p-3">
-                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Detected fields
-                    </div>
-                    <div className="space-y-3">
-                      {t.fields.map((f) => (
-                        <div
-                          key={f.name}
-                          className="flex flex-col gap-2 p-2.5 rounded-xl bg-card border border-[var(--border)]/30 sm:flex-row sm:items-center sm:bg-transparent sm:border-0 sm:p-0 sm:gap-2"
-                        >
-                          <span className="w-full sm:w-40 shrink-0 truncate font-mono text-[11px] text-muted-foreground">
-                            {`{{${f.name}}}`}
-                          </span>
-                          <div className="flex flex-col gap-2 w-full sm:flex-row sm:flex-1 sm:items-center">
-                            <Input
-                              value={f.label}
-                              onChange={(e) => patchField(t.id, f.name, { label: e.target.value })}
-                              className="h-8 w-full text-[12px]"
-                            />
-                            <div className="flex flex-col gap-2 w-full sm:flex-row sm:items-center sm:gap-2 sm:w-auto">
-                              <select
-                                value={f.type}
-                                onChange={(e) =>
-                                  patchField(t.id, f.name, { type: e.target.value as FieldType })
-                                }
-                                className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[85px]"
-                              >
-                                <option value="text">text</option>
-                                <option value="textarea">textarea</option>
-                                <option value="date">date</option>
-                                <option value="select">select</option>
-                              </select>
-                              <select
-                                value={f.source}
-                                onChange={(e) =>
-                                  patchField(t.id, f.name, {
-                                    source: e.target.value as "auto" | "user",
-                                  })
-                                }
-                                className="h-8 rounded-md border border-[var(--border)] bg-background px-2 text-[11px] w-full sm:w-auto sm:min-w-[110px]"
-                                title="auto = filled from employee record; user = entered at generation"
-                              >
-                                <option value="user">user-entered</option>
-                                <option value="auto">auto-filled</option>
-                              </select>
-                              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0 select-none px-1 w-full sm:w-auto">
-                                <input
-                                  type="checkbox"
-                                  checked={f.required}
-                                  onChange={(e) =>
-                                    patchField(t.id, f.name, { required: e.target.checked })
-                                  }
-                                  className="rounded border-[var(--border)] text-primary focus:ring-primary h-3.5 w-3.5"
-                                />
-                                required
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="text-[13px] font-semibold text-foreground">{l.label}</p>
+                    <Badge variant="secondary" className="text-[9px] uppercase">
+                      {CATEGORY_LABELS[l.category] || l.category}
+                    </Badge>
                   </div>
-                )}
-
-                <div className="mt-3 flex justify-end">
-                  <button
-                    onClick={() => save(t0)}
-                    disabled={!isDirty(t.id) || saving === t.id}
-                    className={cn(
-                      "inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[12px] font-semibold text-white transition-all w-full sm:w-auto",
-                      isDirty(t.id) ? "hover:opacity-90" : "cursor-not-allowed opacity-40",
-                    )}
-                    style={{ background: "var(--gradient-primary)" }}
-                  >
-                    {saving === t.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    Save
-                  </button>
+                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {l.zoho_path ? `/${l.zoho_path}` : "No Zoho URL slug set"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 sm:shrink-0">
+                  <label className="flex items-center gap-2 text-[12px] text-foreground">
+                    <Switch checked={l.enabled} onCheckedChange={(v) => toggleEnabled(l, v)} />
+                    Enabled
+                  </label>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(l)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        disabled={deletingId === l.id}
+                      >
+                        {deletingId === l.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove "{l.label}"?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This removes it from the Letters &amp; Certificates list for everyone.
+                          This cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => remove(l.id)}>Remove</AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </div>
             );
           })}
         </div>
       )}
+
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
+          <SheetHeader className="border-b border-border px-6 py-5">
+            <SheetTitle>{form.id ? "Edit letter" : "Add a new letter"}</SheetTitle>
+            <SheetDescription>
+              This only manages the directory entry — the letter itself is still generated in
+              Zoho People.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="hl-label">
+                Label <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="hl-label"
+                value={form.label}
+                onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+                placeholder="e.g. Salary Certificate"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hl-desc">Description</Label>
+              <Textarea
+                id="hl-desc"
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Shown under the title on the employee-facing card…"
+                className="resize-none"
+                rows={3}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Category</Label>
+              <Select
+                value={form.category}
+                onValueChange={(v) => setForm((f) => ({ ...f, category: v as LetterCategory }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORY_ORDER.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {CATEGORY_LABELS[c]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hl-zoho">Zoho People URL slug</Label>
+              <Input
+                id="hl-zoho"
+                value={form.zoho_path}
+                onChange={(e) => setForm((f) => ({ ...f, zoho_path: e.target.value }))}
+                placeholder="e.g. bonafideletter"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                From the Zoho People hrservices form URL. Leave blank to keep this as "Coming soon".
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="hl-fields">What the employee will need (optional)</Label>
+              <Input
+                id="hl-fields"
+                value={form.fieldsText}
+                onChange={(e) => setForm((f) => ({ ...f, fieldsText: e.target.value }))}
+                placeholder="Comma-separated, e.g. Purpose, Recipient"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-[12px] text-foreground">
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+              />
+              Enabled (visible as available, not "Coming soon")
+            </label>
+          </div>
+
+          <SheetFooter className="border-t border-border px-6 py-4 gap-2 sm:gap-2">
+            <SheetClose asChild>
+              <Button variant="outline" className="w-full sm:w-auto">
+                Cancel
+              </Button>
+            </SheetClose>
+            <Button onClick={save} disabled={saving} className="w-full sm:w-auto gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {form.id ? "Save changes" : "Add letter"}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
@@ -833,10 +719,40 @@ const FILE_TYPE_ICON: Record<string, typeof FileText> = {
   rar: FileArchive,
 };
 
+// Per-type accent so the grid doesn't read as one flat color — mirrors the app's
+// semantic accent set (clarity/connectivity/collaboration/capacity + destructive for PDFs).
+const FILE_TYPE_ACCENT: Record<string, string> = {
+  pdf: "var(--destructive)",
+  doc: "var(--clarity)",
+  docx: "var(--clarity)",
+  ppt: "var(--accent-amber)",
+  pptx: "var(--accent-amber)",
+  xls: "var(--collaboration)",
+  xlsx: "var(--collaboration)",
+  csv: "var(--collaboration)",
+  png: "var(--capacity)",
+  jpg: "var(--capacity)",
+  jpeg: "var(--capacity)",
+  gif: "var(--capacity)",
+  zip: "var(--muted-foreground)",
+  rar: "var(--muted-foreground)",
+};
+
+function accentFor(fileType: string) {
+  return FILE_TYPE_ACCENT[fileType] || "var(--connectivity)";
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isRecent(iso: string | null, days = 3) {
+  if (!iso) return false;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then < days * 24 * 60 * 60 * 1000;
 }
 
 function DocumentLibrary({
@@ -1206,9 +1122,12 @@ function DocumentLibrary({
                 size="sm"
                 variant={!filterCat ? "default" : "secondary"}
                 onClick={() => setFilterCat("")}
-                className="shrink-0 rounded-full"
+                className="shrink-0 rounded-full gap-1.5"
               >
                 All
+                <span className={cn("text-[10px]", !filterCat ? "text-white/70" : "text-muted-foreground")}>
+                  {allDocs.length}
+                </span>
               </Button>
               {categories.map((c) => (
                 <Button
@@ -1216,9 +1135,12 @@ function DocumentLibrary({
                   size="sm"
                   variant={filterCat === c ? "default" : "secondary"}
                   onClick={() => setFilterCat(filterCat === c ? "" : c)}
-                  className="shrink-0 rounded-full whitespace-nowrap"
+                  className="shrink-0 rounded-full whitespace-nowrap gap-1.5"
                 >
                   {c}
+                  <span className={cn("text-[10px]", filterCat === c ? "text-white/70" : "text-muted-foreground")}>
+                    {allDocs.filter((d) => d.category === c).length}
+                  </span>
                 </Button>
               ))}
             </div>
@@ -1287,104 +1209,124 @@ function DocumentLibrary({
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((doc) => {
-                const Icon = FILE_TYPE_ICON[doc.file_type] ?? FileText;
-                const canPreview = doc.file_type === "pdf";
-                return (
-                  <Card
-                    key={`${doc.source ?? "upload"}-${doc.id}`}
-                    className="group/card flex flex-col [&>div:last-child]:flex [&>div:last-child]:flex-col"
-                  >
-                    <div
-                      className="h-[3px] w-full shrink-0"
-                      style={{ background: "var(--gradient-primary)" }}
-                    />
+              <AnimatePresence initial={false} mode="popLayout">
+                {filtered.map((doc, i) => {
+                  const Icon = FILE_TYPE_ICON[doc.file_type] ?? FileText;
+                  const canPreview = doc.file_type === "pdf";
+                  const canDelete = isLibraryAdmin && doc.source !== "sharepoint";
+                  const accent = accentFor(doc.file_type);
+                  const fresh = isRecent(doc.created_at);
+                  return (
+                    <motion.div
+                      key={`${doc.source ?? "upload"}-${doc.id}`}
+                      layout
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.96 }}
+                      transition={{ duration: 0.25, delay: Math.min(i, 8) * 0.03 }}
+                    >
+                      <Card className="group/card flex h-full flex-col overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)]">
+                        <div className="h-[3px] w-full shrink-0" style={{ background: accent }} />
 
-                    <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-4">
-                      {/* Icon + title */}
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                          <Icon className="h-5 w-5 text-primary" />
-                        </div>
-                        <p className="line-clamp-2 flex-1 pt-0.5 text-[13px] font-semibold leading-snug text-foreground">
-                          {doc.title}
-                        </p>
-                      </div>
-
-                      {/* Category badge */}
-                      {doc.category && (
-                        <div className="flex flex-wrap gap-1.5">
-                          <Badge variant="default">{doc.category}</Badge>
-                        </div>
-                      )}
-
-                      {/* Description */}
-                      {doc.description && (
-                        <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
-                          {doc.description}
-                        </p>
-                      )}
-
-                      {/* Footer */}
-                      <div className="mt-auto">
-                        <Separator className="mb-3" />
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-medium text-muted-foreground">
-                            {doc.file_type.toUpperCase()}
-                            {doc.file_size > 0 && (
-                              <span className="text-muted-foreground/60">
-                                {" · "}{formatBytes(doc.file_size)}
-                              </span>
-                            )}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {isLibraryAdmin && doc.source !== "sharepoint" && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
+                        <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-4">
+                          {/* Icon + title */}
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl"
+                              style={{ background: `color-mix(in oklab, ${accent} 14%, transparent)` }}
+                            >
+                              <Icon className="h-5 w-5" style={{ color: accent }} />
+                            </div>
+                            <div className="min-w-0 flex-1 pt-0.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-foreground">
+                                  {doc.title}
+                                </p>
+                                {fresh && (
+                                  <Badge className="gap-1 border-none bg-emerald-500/10 text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                                    <Sparkle className="h-2.5 w-2.5" /> New
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            {(canDelete || canPreview) && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    onClick={() => handleDelete(doc.id)}
-                                    disabled={deleting === doc.id}
-                                    className="h-7 w-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive opacity-0 group-hover/card:opacity-100 transition-opacity"
+                                    className="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 data-[state=open]:opacity-100"
                                   >
-                                    {deleting === doc.id ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    )}
+                                    <MoreVertical className="h-3.5 w-3.5" />
                                   </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Delete document</TooltipContent>
-                              </Tooltip>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {canPreview && (
+                                    <DropdownMenuItem onClick={() => handleView(doc)} className="gap-2">
+                                      <FileText className="h-3.5 w-3.5" /> View
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canDelete && (
+                                    <DropdownMenuItem
+                                      onClick={() => handleDelete(doc.id)}
+                                      disabled={deleting === doc.id}
+                                      className="gap-2 text-destructive focus:text-destructive"
+                                    >
+                                      {deleting === doc.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      )}
+                                      Delete
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             )}
-                            {canPreview && (
+                          </div>
+
+                          {/* Category badge */}
+                          {doc.category && (
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge variant="secondary">{doc.category}</Badge>
+                            </div>
+                          )}
+
+                          {/* Description */}
+                          {doc.description && (
+                            <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
+                              {doc.description}
+                            </p>
+                          )}
+
+                          {/* Footer */}
+                          <div className="mt-auto">
+                            <Separator className="mb-3" />
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-medium text-muted-foreground">
+                                {doc.file_type.toUpperCase()}
+                                {doc.file_size > 0 && (
+                                  <span className="text-muted-foreground/60">
+                                    {" · "}{formatBytes(doc.file_size)}
+                                  </span>
+                                )}
+                              </span>
                               <Button
-                                variant="ghost"
                                 size="sm"
-                                onClick={() => handleView(doc)}
+                                onClick={() => handleDownload(doc)}
                                 className="h-7 gap-1.5 px-3 text-[11px]"
                               >
-                                <FileText className="h-3.5 w-3.5" />
-                                View
+                                <Download className="h-3.5 w-3.5" />
+                                Download
                               </Button>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleDownload(doc)}
-                              className="h-7 gap-1.5 px-3 text-[11px]"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                              Download
-                            </Button>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
             </div>
           )}
         </div>

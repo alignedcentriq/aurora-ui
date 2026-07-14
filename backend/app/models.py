@@ -1246,6 +1246,30 @@ class DocumentTemplate(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class HRLetterType(Base):
+    """A row in the "Letters & Certificates" directory (Documents page). Generation itself
+    happens in Zoho People — this table only controls what employees see and where the
+    "Request" button deep-links to. HR manages this list (add/enable/disable/remove) from
+    the Documents page; `zoho_path` is the Zoho People hrservices URL slug and `enabled`
+    gates whether the request button is live or shows "Coming soon"."""
+    __tablename__ = "hr_letter_types"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True)       # stable slug, e.g. "bonafide"
+    label = Column(String)
+    description = Column(Text, nullable=True)
+    icon = Column(String, default="FileText")           # lucide icon name (frontend-side map)
+    category = Column(String, default="admin")          # employment | certification | separation | admin
+    zoho_path = Column(String, nullable=True)            # Zoho People hrservices slug; null = not set up yet
+    fields = Column(JSON, nullable=True)                 # ["Reason for request", ...] — display hint only
+    enabled = Column(Boolean, default=False)
+    sort_order = Column(Integer, default=0)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class FormTemplate(Base):
     """An admin-defined fillable form (visitor pass, parking request, desk booking, …).
 

@@ -145,7 +145,7 @@ interface RuleFormState {
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const NON_EMPLOYEE_ROLES = ["hr", "admin", "it", "pmo", "functional manager", "super admin"];
 
-function blankFormFromKind(item: CatalogItem): RuleFormState {
+function blankFormFromKind(item: CatalogItem, defaultEmail?: string, defaultName?: string): RuleFormState {
   const extra: Record<string, any> = {};
   for (const p of item.params) {
     if (p.default !== undefined) extra[p.key] = p.default;
@@ -162,7 +162,7 @@ function blankFormFromKind(item: CatalogItem): RuleFormState {
     extra_config: extra,
     email_subject: item.defaultSubject,
     email_body: "",
-    recipients_json: [],
+    recipients_json: defaultEmail ? [{ type: "individual", email: defaultEmail, name: defaultName || defaultEmail }] : [],
   };
 }
 
@@ -620,27 +620,25 @@ function TypePicker({
       <button
         type="button"
         onClick={onAiCompose}
-        className="flex items-center gap-3 p-3 rounded-xl border-2 border-violet-200 dark:border-violet-800/40 bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-900/10 dark:to-indigo-900/10 hover:from-violet-100 hover:to-indigo-100 dark:hover:from-violet-900/20 transition-all text-left group"
+        className="flex items-center gap-3 p-4 rounded-2xl border border-violet-200/50 dark:border-violet-800/20 bg-gradient-to-r from-violet-50/50 to-fuchsia-50/50 dark:from-violet-900/10 dark:to-fuchsia-900/10 hover:from-violet-50 hover:to-fuchsia-50 dark:hover:from-violet-900/20 transition-all text-left group overflow-hidden relative"
       >
-        <div className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-          <Wand2 className="h-4.5 w-4.5 text-violet-600" />
+        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+          <Wand2 className="w-16 h-16 text-violet-600" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm text-violet-800 dark:text-violet-300">Let AI build it for you</div>
-          <div className="text-xs text-violet-600 dark:text-violet-400">Describe what you want in plain English — AI picks the right type and fills the form</div>
+        <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/50 flex items-center justify-center flex-shrink-0 group-hover:rotate-12 transition-transform shadow-sm">
+          <Wand2 className="h-4 w-4 text-violet-600 dark:text-violet-400" />
         </div>
-        <ArrowLeft className="h-4 w-4 text-violet-400 rotate-180 group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
+        <div className="flex-1 min-w-0 z-10">
+          <div className="font-medium text-sm text-violet-900 dark:text-violet-100">Create with AI</div>
+        </div>
+        <div className="text-xs font-medium text-violet-600 dark:text-violet-400 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          Try it <ArrowLeft className="h-3 w-3 rotate-180" />
+        </div>
       </button>
 
-      <div className="flex items-center gap-2">
-        <Separator className="flex-1" />
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2">or browse types</span>
-        <Separator className="flex-1" />
-      </div>
-
-      <div className="relative">
+      <div className="relative mt-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <Input className="pl-9" placeholder="Search automation types…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Input className="pl-9 bg-muted/40 border-border/50 h-10 rounded-xl" placeholder="Search templates…" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
       {portalId && portalItemIds.size > 0 && !search && (
@@ -1162,26 +1160,21 @@ function CatalogShelf({
   const items = getCatalogForPortal(portalId).filter((i) => i.portalIds.length > 0).slice(0, 4);
   if (items.length === 0) return null;
   return (
-    <div className="mb-5">
-      <div className="flex items-center gap-1.5 mb-3">
-        <Sparkles className="h-3.5 w-3.5" style={{ color: accent }} />
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Quick start</span>
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className="mb-6">
+      <div className="flex flex-wrap gap-2">
         {items.map((item) => {
           const Icon = CATEGORY_ICONS[item.category] ?? Zap;
           return (
-            <Card key={item.id} className="cursor-pointer group hover:shadow-sm hover:ring-1 hover:ring-primary/20 transition-all" onClick={() => onSelect(item)}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${item.accent}18` }}>
-                    <Icon className="h-3 w-3" style={{ color: item.accent }} />
-                  </div>
-                  <span className="font-semibold text-xs group-hover:text-primary transition-colors truncate">{item.label}</span>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{item.description}</p>
-              </CardContent>
-            </Card>
+            <button
+              key={item.id}
+              onClick={() => onSelect(item)}
+              className="group flex items-center gap-2.5 px-3 py-2 rounded-xl bg-muted/40 hover:bg-muted transition-all border border-border/50 hover:border-border"
+            >
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 bg-background shadow-sm" style={{ color: item.accent }}>
+                <Icon className="h-3 w-3" />
+              </div>
+              <span className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">{item.label}</span>
+            </button>
           );
         })}
       </div>
@@ -1533,8 +1526,8 @@ export function AutomationHub({
     : aiPreset
       ? (aiPreset as RuleFormState)
       : selectedKind
-        ? blankFormFromKind(selectedKind)
-        : blankFormFromKind(AUTOMATION_CATALOG.find((c) => c.id === "custom_email")!);
+        ? blankFormFromKind(selectedKind, user?.email, user?.name)
+        : blankFormFromKind(AUTOMATION_CATALOG.find((c) => c.id === "custom_email")!, user?.email, user?.name);
 
   const managedRules = rules.filter((r) => r.can_manage);
   const sharedRules = rules.filter((r) => !r.can_manage && (r.co_owners_json ?? []).map((e) => e.toLowerCase()).includes(email.toLowerCase()));
@@ -1580,11 +1573,8 @@ export function AutomationHub({
         <div className="px-5 py-4 space-y-4">
           {/* Compact drawer header */}
           {compact && userCanCreate && !showForm && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {portalId ? "Quick start or create from scratch" : "Your scheduled email automations"}
-              </span>
-              <Button size="sm" onClick={openNew} className="h-7 text-xs gap-1">
+            <div className="flex justify-end mb-2">
+              <Button size="sm" onClick={openNew} className="h-8 rounded-full shadow-sm gap-1.5 px-4 bg-foreground text-background hover:bg-foreground/90 transition-all">
                 <Plus className="h-3.5 w-3.5" /> New
               </Button>
             </div>
@@ -1615,7 +1605,7 @@ export function AutomationHub({
                 <div className="rounded-xl border border-border bg-background shadow-sm">
                   <div className="flex items-center justify-between px-5 py-3 border-b border-border">
                     <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                      {wizardStep === 1 ? "Step 1 — Choose type" : wizardStep === 3 ? "AI Automation Composer" : editingRule ? "Edit Automation" : "Step 2 — Configure"}
+                      {wizardStep === 1 ? "Choose type" : wizardStep === 3 ? "AI Composer" : editingRule ? "Edit Automation" : "Configure"}
                     </span>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={closeWizard}>
                       <X className="h-4 w-4" />
@@ -1671,17 +1661,17 @@ export function AutomationHub({
               </CardContent>
             </Card>
           ) : rules.length === 0 && !showForm ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-900/20 flex items-center justify-center mb-4">
-                <Zap className="h-7 w-7 text-amber-500" />
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="w-16 h-16 rounded-full bg-muted/30 flex items-center justify-center mb-5 ring-1 ring-border/50 shadow-sm">
+                <Zap className="h-6 w-6 text-muted-foreground/60" />
               </div>
-              <h3 className="font-semibold mb-1">{userCanCreate ? "No automations yet" : "No automations shared with you"}</h3>
-              <p className="text-sm text-muted-foreground max-w-xs mb-4">
+              <h3 className="text-base font-medium mb-1.5">{userCanCreate ? "No automations" : "No shared automations"}</h3>
+              <p className="text-xs text-muted-foreground max-w-[200px] mb-6">
                 {userCanCreate
-                  ? "Create a smart automation — it pulls live data and composes the email automatically."
-                  : "Ask an automation creator to add you as a co-owner."}
+                  ? "Set up a new automation to get started."
+                  : "You don't have access to any automations yet."}
               </p>
-              {userCanCreate && <Button size="sm" onClick={openNew} className="gap-2"><Plus className="h-4 w-4" /> Create Automation</Button>}
+              {userCanCreate && <Button size="sm" onClick={openNew} className="rounded-full shadow-sm gap-1.5 px-5 h-8"><Plus className="h-3.5 w-3.5" /> Create</Button>}
             </div>
           ) : (
             <div className="space-y-6">

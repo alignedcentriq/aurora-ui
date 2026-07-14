@@ -1725,17 +1725,38 @@ def builder_chat(
     return {
         "ok": True,
         "chart": spec.model_dump(),
-        "explanation": _explanation(intent, spec),
+        "explanation": _explanation(intent, spec, message),
         "suggestions": suggestions,
     }
 
 
-def _explanation(intent: BuilderIntent, spec: ChartSpec) -> str:
+# reportee_attendance_split is the ONLY team-scoped template; every other metric is
+# org-wide. Templates also can't slice finer than their period (30d/90d/6m/12m) — no
+# week/day granularity. When the user asked for a team or sub-month cut we can't deliver,
+# say so instead of presenting the broader figure as if it answered the question (P2).
+_TEAM_SCOPE_KW = ("my team", "my reportees", "reportees", "direct report", "our team", "my people")
+_SUBMONTH_KW = ("this week", "last week", "past week", "this fortnight", "today", "yesterday")
+
+
+def _scope_caveat(intent: BuilderIntent, message: str) -> str:
+    msg = (message or "").lower()
+    notes = []
+    if any(k in msg for k in _TEAM_SCOPE_KW) and intent.query_id != "reportee_attendance_split":
+        notes.append("your whole organisation, not just your team")
+    if any(k in msg for k in _SUBMONTH_KW):
+        period = intent.params.get("period")
+        notes.append(f"the {period} window" if period else "all available history")
+    if not notes:
+        return ""
+    return f"⚠️ I don't have that exact cut — this covers {' and '.join(notes)}.\n\n"
+
+
+def _explanation(intent: BuilderIntent, spec: ChartSpec, message: str = "") -> str:
     n = len(spec.data)
     if n == 0:
         return f"No data found for \"{intent.title}\". The database may not have records for this period."
     suffix = f" ({intent.params.get('period', '')} period)" if intent.params.get("period") else ""
-    return f"Showing **{intent.title}**{suffix} — {n} data point{'s' if n != 1 else ''}."
+    return f"{_scope_caveat(intent, message)}Showing **{intent.title}**{suffix} — {n} data point{'s' if n != 1 else ''}."
 
 
 def _next_suggestions(query_id: str, data_source: Optional[str] = None) -> list[str]:

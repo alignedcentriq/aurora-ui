@@ -1028,6 +1028,44 @@ def _inject_pdf_tool_call(project_name: str, scope: str) -> dict:
 
 _REPORT_INTENTS = {"generate_report", "download_report", "pdf_report", "export_report", "create_report"}
 
+# Project IQ mode pins sub_intent="project_iq". Pick the right project-IQ tool by
+# keyword and inject the call directly — the weak 8B model, especially with semantic
+# routing degraded, otherwise mis-selects (e.g. reads "find similar projects" as
+# create_te_training and leaks raw course-spec JSON). All four are passthrough tools,
+# so output is display-ready. ponytail: keyword pick, upgrade to embeddings if it drifts.
+_PIQ_EXPERT_KW = ("expert", "who has", "who's done", "whos done", "who did", "sme", "skilled in", "experience in", "worked on")
+_PIQ_ASSET_KW = ("reusable", "reuse", "accelerator", "template", "component", "connector", "existing module", "asset")
+_PIQ_LESSON_KW = ("lesson", "learned", "goes wrong", "went wrong", "pitfall", "retro")
+_PIQ_SIMILAR_KW = ("similar", "like ", "prior", "done before", "built before", "comparable", "past project")
+
+
+def _inject_project_iq_tool_call(text: str) -> dict:
+    """Inject the matching Project IQ tool call directly — zero LLM tool selection."""
+    blob = (text or "").lower()
+    if any(k in blob for k in _PIQ_EXPERT_KW):
+        name, arg = "find_project_experts", "skills"
+    elif any(k in blob for k in _PIQ_ASSET_KW):
+        name, arg = "find_reusable_assets", "need"
+    elif any(k in blob for k in _PIQ_LESSON_KW) and not any(k in blob for k in _PIQ_SIMILAR_KW):
+        name, arg = "project_lessons", "topic"
+    else:
+        # Default: similar projects — render_similar_projects already includes each
+        # project's lessons, so "similar + lessons learned" is covered here.
+        name, arg = "find_similar_projects", "description"
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": name,
+                    "args": {arg: (text or "").strip()},
+                    "id": str(uuid.uuid4()),
+                    "type": "tool_call",
+                }],
+            )
+        ]
+    }
+
 
 def smart_dispatcher(state: PMOState) -> dict:
     sub_intent = (state.get("sub_intent") or "").lower().strip()
@@ -1051,6 +1089,10 @@ def smart_dispatcher(state: PMOState) -> dict:
         if project_name:
             return _db_project_achievements(project_name)
         return _db_list_all_projects()
+
+    if sub_intent == "project_iq":
+        last = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
+        return _inject_project_iq_tool_call(getattr(last, "content", "") if last else "")
 
     if sub_intent == "udemy_license":
         last = state["messages"][-1]

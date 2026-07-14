@@ -36,6 +36,7 @@ import {
   TrendingUp,
   TrendingDown,
   ArrowUpRight,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FeedbackTriageTab } from "./FeedbackTriageTab";
@@ -254,6 +255,10 @@ export function ObservabilityDashboard() {
             <div>
               <p className="text-[12px] text-muted-foreground">
                 Activity logs, performance metrics & analytics
+              </p>
+              <p className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                <Lock className="h-2.5 w-2.5 shrink-0" />
+                My Workspace (personal) chats are private and never logged here.
               </p>
             </div>
           </div>

@@ -14,7 +14,7 @@ from app.database import SessionLocal
 from app.services.attendance_service import resolve_employee
 
 # Roles that may view any employee's personal HR data (legitimate HR function).
-_PRIVILEGED_ROLES = {"hr", "admin", "super_admin"}
+_PRIVILEGED_ROLES = {"hr", "super_admin"}
 
 
 @dataclass
