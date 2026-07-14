@@ -38,37 +38,40 @@ export function EmailAutomationDrawer() {
           />
 
           {/* Popup panel */}
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 pointer-events-none">
             <motion.div
               key="popup"
-              initial={{ opacity: 0, scale: 0.97, y: 15 }}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: 15 }}
-              transition={{ type: "spring", damping: 25, stiffness: 350 }}
-              className="w-full max-w-2xl h-[80vh] flex flex-col bg-background border border-border shadow-2xl rounded-2xl overflow-hidden pointer-events-auto"
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="w-full max-w-3xl h-[85vh] flex flex-col bg-background/95 backdrop-blur-xl border border-white/10 shadow-2xl rounded-3xl overflow-hidden pointer-events-auto ring-1 ring-black/5 dark:ring-white/5 relative"
             >
-              {/* Header */}
-              <div
-                className="flex-shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-border"
-                style={{ borderTopColor: accent, borderTopWidth: 3 }}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
+              {/* Subtle top glow */}
+              <div 
+                className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-32 bg-gradient-to-b opacity-20 blur-3xl pointer-events-none"
+                style={{ backgroundImage: `linear-gradient(to bottom, ${accent}, transparent)` }}
+              />
+
+              {/* Minimalist Header */}
+              <div className="flex-shrink-0 flex items-center justify-between gap-4 px-6 py-5 z-10 border-b border-border/40">
+                <div className="flex items-center gap-3 min-w-0">
                   <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: `${accent}20` }}
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-sm"
+                    style={{ backgroundColor: `${accent}15`, color: accent }}
                   >
-                    <Zap className="h-4 w-4" style={{ color: accent }} />
+                    <Zap className="h-5 w-5" />
                   </div>
                   <div className="min-w-0">
-                    <h2 className="text-sm font-bold text-foreground truncate">Email Automations</h2>
-                    <p className="text-[11px] text-muted-foreground truncate">
-                      {portalId ? `Context: ${displayLabel}` : "All portals"}
+                    <h2 className="text-base font-semibold text-foreground tracking-tight truncate">Automations</h2>
+                    <p className="text-xs text-muted-foreground/80 truncate font-medium">
+                      {portalId ? displayLabel : "Global Hub"}
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={closeDrawer}
-                  className="p-1.5 rounded-lg hover:bg-muted/60 text-muted-foreground transition-colors flex-shrink-0 cursor-pointer"
+                  className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-muted-foreground transition-all flex-shrink-0"
                   aria-label="Close"
                 >
                   <X className="h-4 w-4" />
@@ -76,7 +79,7 @@ export function EmailAutomationDrawer() {
               </div>
 
               {/* Automation hub content */}
-              <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0 flex flex-col z-10 px-1 pb-1">
                 <AutomationHub
                   portalId={portalId}
                   portalLabel={portalLabel}

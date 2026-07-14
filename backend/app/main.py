@@ -56,6 +56,7 @@ from app.routes.installation_routes import router as installation_router
 from app.routes.software_catalog_routes import router as software_catalog_router
 from app.routes.ms365_routes import router as ms365_router
 from app.routes.document_routes import router as document_router, public_router as document_public_router
+from app.routes.hr_letter_routes import router as hr_letter_router
 from app.routes.document_library_routes import router as document_library_router
 from app.routes.manager_routes import router as manager_router
 from app.routes.attendance_routes import router as attendance_router
@@ -186,6 +187,7 @@ app.include_router(software_catalog_router)
 app.include_router(ms365_router)
 app.include_router(document_router)
 app.include_router(document_public_router)
+app.include_router(hr_letter_router)
 app.include_router(document_library_router)
 app.include_router(manager_router)
 app.include_router(attendance_router)
@@ -339,6 +341,17 @@ async def startup_event():
             db.close()
     except Exception as e:
         pass
+
+    try:
+        from app.database import SessionLocal
+        from app.services.hr_letter_service import seed_hr_letter_types
+        db = SessionLocal()
+        try:
+            await asyncio.to_thread(seed_hr_letter_types, db)
+        finally:
+            db.close()
+    except Exception as e:
+        logging.warning("HR letter type seed failed (non-fatal): %s", e)
 
     try:
         from app.services.udemy_business_service import configured as udemy_configured, _ensure_index
@@ -1536,6 +1549,13 @@ async def chat(
     start_time = time.time()
     user_email = x_user_email or settings.DEFAULT_USER_EMAIL
     user_role = (x_user_role or "employee").lower()
+
+    # My Workspace ("me") is the user's personal MS365 space (their own inbox, chats,
+    # calendar). Treat it as private so it's never written to AI observability, never
+    # cached, and its message text never surfaces in the queue snippet — the same gates
+    # the is_private flag already controls everywhere below.
+    if request.active_mode == "me":
+        request.is_private = True
 
     # Token + location are resolved INSIDE generate() so cache/fastpath requests
     # never block on the live MS Graph call. input_data is assembled lazily there.

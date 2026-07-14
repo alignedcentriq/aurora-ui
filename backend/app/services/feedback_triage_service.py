@@ -24,7 +24,6 @@ are deterministic writes into stores that already exist.
 from __future__ import annotations
 
 import datetime
-import math
 import re
 from typing import Optional
 
@@ -55,25 +54,7 @@ def _keywords(text: str) -> set[str]:
     return {w for w in re.findall(r"\w+", (text or "").lower()) if len(w) > 3 and w not in _STOP}
 
 
-def _as_list(emb) -> Optional[list]:
-    """pgvector may hand back a numpy array or a list — normalise to a plain list, or None."""
-    if emb is None:
-        return None
-    try:
-        return [float(x) for x in list(emb)]
-    except Exception:
-        return None
-
-
-def _cosine(a: list, b: list) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+from app.services.vector_utils import cosine as _cosine, to_list as _as_list
 
 
 # ── Gather the failure signals ───────────────────────────────────────────────

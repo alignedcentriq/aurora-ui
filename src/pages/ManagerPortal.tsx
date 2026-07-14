@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   UserCog,
   Users,
@@ -70,6 +70,7 @@ import {
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { format } from "date-fns";
 import { Progress } from "@/components/ui/progress";
 
@@ -695,11 +696,13 @@ function MemberCalendarDialog({
 }) {
   const [data, setData] = useState<MemberCalendar | null>(null);
   const [loading, setLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     if (!member) return;
     setLoading(true);
     setData(null);
+    setSelectedDate(null);
     fetch(
       `/api/portal/manager/attendance/calendar?email=${encodeURIComponent(member.email)}&month=${month}&year=${year}`,
       { headers: auth },
@@ -746,46 +749,74 @@ function MemberCalendarDialog({
         ) : (
           <>
             {/* Calendar grid */}
-            <div className="overflow-hidden rounded-xl border border-border">
-              <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-                  <div key={d} className="py-1.5">{d}</div>
-                ))}
+            <TooltipProvider delayDuration={200}>
+              <div className="overflow-hidden rounded-xl border border-border">
+                <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                    <div key={d} className="py-1.5">{d}</div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7">
+                  {Array.from({ length: firstDow }).map((_, i) => (
+                    <div key={`pre-${i}`} className="aspect-square" />
+                  ))}
+                  {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+                    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                    const record = dayMap[dateStr];
+                    const isFuture = dateStr > todayStr;
+                    const dow = new Date(dateStr).getDay();
+                    const isWeekend = dow === 0 || dow === 6;
+                    const isToday = dateStr === todayStr;
+                    const tooltip = record
+                      ? [
+                          record.status + (record.late ? " (Late)" : ""),
+                          record.check_in ? `In: ${record.check_in}` : null,
+                          record.check_out ? `Out: ${record.check_out}` : null,
+                        ].filter(Boolean).join(" · ")
+                      : undefined;
+                    const cell = (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={!record}
+                        onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
+                        className={cn(
+                          "aspect-square h-auto w-full rounded-none p-0 text-[11px] font-medium transition-colors",
+                          calDayClass(record, isFuture, isWeekend),
+                          isToday ? "ring-2 ring-primary ring-inset" : "",
+                          selectedDate === dateStr ? "ring-2 ring-primary" : "",
+                        )}
+                      >
+                        {day}
+                      </Button>
+                    );
+                    return record ? (
+                      <Tooltip key={day}>
+                        <TooltipTrigger asChild>{cell}</TooltipTrigger>
+                        <TooltipContent>{tooltip}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <Fragment key={day}>{cell}</Fragment>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="grid grid-cols-7">
-                {Array.from({ length: firstDow }).map((_, i) => (
-                  <div key={`pre-${i}`} className="aspect-square" />
-                ))}
-                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
-                  const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const record = dayMap[dateStr];
-                  const isFuture = dateStr > todayStr;
-                  const dow = new Date(dateStr).getDay();
-                  const isWeekend = dow === 0 || dow === 6;
-                  const isToday = dateStr === todayStr;
-                  const tooltip = record
-                    ? [
-                        record.status + (record.late ? " (Late)" : ""),
-                        record.check_in ? `In: ${record.check_in}` : null,
-                        record.check_out ? `Out: ${record.check_out}` : null,
-                      ].filter(Boolean).join(" · ")
-                    : undefined;
-                  return (
-                    <div
-                      key={day}
-                      title={tooltip}
-                      className={cn(
-                        "flex aspect-square items-center justify-center text-[11px] font-medium transition-colors",
-                        calDayClass(record, isFuture, isWeekend),
-                        isToday ? "ring-2 ring-primary ring-inset" : "",
-                      )}
-                    >
-                      {day}
-                    </div>
-                  );
-                })}
+            </TooltipProvider>
+
+            {/* Selected day detail */}
+            {selectedDate && dayMap[selectedDate] && (
+              <div className="mt-1 flex items-center justify-between rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
+                <span className="font-semibold">
+                  {new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+                </span>
+                <span className="text-muted-foreground">
+                  {dayMap[selectedDate].status}
+                  {dayMap[selectedDate].late ? " (Late)" : ""}
+                  {" · In: "}{dayMap[selectedDate].check_in ?? "—"}
+                  {" · Out: "}{dayMap[selectedDate].check_out ?? "—"}
+                </span>
               </div>
-            </div>
+            )}
 
             {/* Legend */}
             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">

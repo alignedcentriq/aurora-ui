@@ -522,6 +522,65 @@ function ExportOverlay({
   );
 }
 
+// ── Export bar (always-visible variant of the overlay) ─────────────────────────
+
+function ExportBar({
+  spec,
+  containerRef,
+}: {
+  spec: ChartSpec;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const { user } = useAuth();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const authHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  const server = async (format: "pdf" | "pptx") => {
+    setBusy(format);
+    try {
+      const ok = await exportServer(spec, format, authHeaders);
+      if (!ok) toast.error(`${format.toUpperCase()} export failed`);
+    } catch {
+      toast.error(`${format.toUpperCase()} export failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const btn = (label: string, onClick: () => void, loading?: boolean) => (
+    <button
+      onClick={onClick}
+      disabled={!!busy}
+      className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:border-ring transition-colors disabled:opacity-40"
+    >
+      {loading ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" style={{ animation: "spin 0.8s linear infinite" }}>
+          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+      ) : (
+        <DownloadIcon />
+      )}
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex items-center justify-end gap-1.5 mb-2">
+      {btn("PNG", () => exportPng(containerRef, spec.title))}
+      {btn("CSV", () => exportCsv(spec))}
+      {btn("PDF", () => server("pdf"), busy === "pdf")}
+      {btn("PPTX", () => server("pptx"), busy === "pptx")}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
 // ── Bar Chart ─────────────────────────────────────────────────────────────────
 
 function BarCanvas({ spec, height }: { spec: ChartSpec; height: number }) {
@@ -1009,11 +1068,15 @@ export function ChartCanvas({
   height = 320,
   className,
   showExport = false,
+  exportBar = false,
 }: {
   spec: ChartSpec;
   height?: number;
   className?: string;
+  /** hover overlay export button (top-right) */
   showExport?: boolean;
+  /** always-visible export toolbar row above the chart */
+  exportBar?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -1038,6 +1101,7 @@ export function ChartCanvas({
 
   return (
     <div ref={containerRef} className={cn("relative chart-export-wrap", className)}>
+      {exportBar && <ExportBar spec={spec} containerRef={containerRef} />}
       {spec.type === "bar" && <BarCanvas {...props} />}
       {spec.type === "line" && <LineCanvas {...props} />}
       {spec.type === "area" && <AreaCanvas {...props} />}

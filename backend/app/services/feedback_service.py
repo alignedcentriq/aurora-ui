@@ -4,14 +4,15 @@ from app.models import ChatFeedback
 
 
 def _get_embedding(text: str) -> list | None:
-    try:
-        from openai import OpenAI
-        from app.config import settings
-        client = OpenAI(base_url=settings.EMBEDDING_BASE_URL, api_key=settings.EMBEDDING_API_KEY)
-        resp = client.embeddings.create(input=text[:2000], model=settings.EMBEDDING_MODEL_NAME)
-        return resp.data[0].embedding
-    except Exception:
-        return None
+    """Delegate to the shared, cached, fail-fast embedder.
+
+    Previously this built a fresh OpenAI client per call with no L1/L2 cache and the
+    SDK's default retries — every feedback record/lookup was a guaranteed cold ml01
+    round-trip that amplified load on a saturated box. Routing through PolicyService
+    reuses the pooled client, the in-process + Redis caches, and max_retries=0.
+    """
+    from app.services.policy_service import PolicyService
+    return PolicyService._get_embedding(text)
 
 
 _STOP_WORDS = {

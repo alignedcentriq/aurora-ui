@@ -933,6 +933,74 @@ function LayoutComponent() {
                   })}
               </div>
 
+              {/* Recent Conversations */}
+              <div className="border-t border-blue-950/60 pt-3 mt-3 px-1 shrink-0 max-h-[35vh] flex flex-col">
+                <div className="flex items-center justify-between px-2 mb-1.5 shrink-0">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-500">
+                    Recent Chats
+                  </span>
+                  <button
+                    onClick={() => {
+                      const newId = createThread();
+                      setActiveId(newId);
+                      if (location.pathname !== "/") {
+                        navigate({ to: "/" });
+                      }
+                      setMobileMenuOpen(false);
+                    }}
+                    className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 hover:bg-primary/20 hover:text-primary transition-all cursor-pointer"
+                    title="New Conversation"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </div>
+
+                <div className="space-y-0.5 overflow-y-auto no-scrollbar">
+                  {Object.keys(threads).length === 0 ? (
+                    <div className="text-[10px] text-zinc-600 italic px-2 py-1.5">
+                      No conversations yet
+                    </div>
+                  ) : (
+                    Object.values(threads)
+                      .filter((t) => t.turns.length > 0)
+                      .sort((a, b) => b.updatedAt - a.updatedAt)
+                      .map((t) => {
+                        const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
+                        const chatTitle = firstUserMsg
+                          ? firstUserMsg.length > 32 ? firstUserMsg.slice(0, 32) + "…" : firstUserMsg
+                          : "New conversation";
+                        const isActiveChat = activeId === t.id && location.pathname === "/";
+                        return (
+                          <div
+                            key={t.id}
+                            className={cn(
+                              "group relative flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
+                              isActiveChat
+                                ? "bg-primary/12 text-white"
+                                : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200"
+                            )}
+                            onClick={() => {
+                              setActiveId(t.id);
+                              if (location.pathname !== "/") navigate({ to: "/" });
+                              setMobileMenuOpen(false);
+                            }}
+                          >
+                            <MessageSquare className={cn("h-3 w-3 shrink-0", isActiveChat ? "text-primary" : "text-zinc-600")} />
+                            <span className="truncate flex-1 text-[11px] font-medium pr-4">{chatTitle}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                              className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-2.5 w-2.5" />
+                            </button>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+
               {/* Drawer Footer Actions */}
               <div className="border-t border-blue-950/60 pt-4 mt-4 space-y-3 px-2 shrink-0">
                 {/* Utilities */}

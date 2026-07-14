@@ -67,7 +67,7 @@ import { getPortalCopilot } from "@/lib/portal-copilot";
 import type { Turn, DynamicFormField } from "@/lib/chat-store";
 import { ICON_MAP } from "@/lib/quickQueries";
 import { useQuickQueries } from "@/hooks/useQuickQueries";
-import { Search } from "lucide-react";
+import { Search, Lock } from "lucide-react";
 
 function getGreeting(name: string): { heading: string; subheading: string } {
   const firstName = name.split(" ")[0];
@@ -1055,7 +1055,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
 
   const send = useCallback(
     (override?: string) => {
-      const text = (override ?? input).trim();
+      let text = (override ?? input).trim();
       if (!text || !activeId) return;
 
       const now = Date.now();
@@ -1063,6 +1063,23 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
         return;
       }
       lastSendRef.current = { text, at: now };
+
+      // ── "/exit <question>" — a focus-mode agent decided this turn wasn't actually
+      // for its mode (e.g. a policy question asked while in Analytics Builder) and
+      // asked the user to confirm leaving the mode to get a real answer. Clicking
+      // "Yes" sends this token: turn the mode off and re-send the question as a
+      // normal message, in one step. `activeMode` (component state) won't reflect
+      // the change until next render, so `effectiveMode` below carries the override
+      // through the rest of this call.
+      let effectiveMode: ModeKey | null = activeMode;
+      if (activeMode) {
+        const exitAndAsk = /^\/exit\s+(.+)/is.exec(text);
+        if (exitAndAsk) {
+          text = exitAndAsk[1].trim();
+          setActiveMode(null);
+          effectiveMode = null;
+        }
+      }
 
       // ── Mode command detection ─────────────────────────────────────────────
       // On an empty thread we skip the chat-turn confirmation entirely — the mode
@@ -1095,7 +1112,11 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           addTurn(activeId, { role: "user", text });
           addTurn(activeId, {
             role: "ai",
-            text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.\n\nType \`/exit\` to return to general mode.`,
+            text: `**${mode.label}** mode on. I'll focus on ${mode.description.toLowerCase()}.${
+              modeCmd === "me"
+                ? "\n\n🔒 This is your private space — nothing here is logged or traced in AI observability."
+                : ""
+            }\n\nType \`/exit\` to return to general mode.`,
           });
         }
         setInput("");
@@ -1994,7 +2015,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       // so a slow-but-progressing answer (e.g. a long policy reply on a busy LLM server)
       // streams to completion instead of being killed at a fixed wall-clock deadline.
       let timeoutId = window.setTimeout(() => controller.abort(), 180000);
-      const activitySteps = getActivitySteps(text, activeMode);
+      const activitySteps = getActivitySteps(text, effectiveMode);
       setActivity(activitySteps[0]);
       const activityTimers = activitySteps
         .slice(1)
@@ -2037,7 +2058,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           session_id: threadId,
           preferences: {},
           is_private: false,
-          active_mode: activeMode ?? undefined,
+          active_mode: effectiveMode ?? undefined,
           portal_context: portalContext
             ? { page: portalContext.replace(/^\//, "").replace(/-/g, "_") || "home", active_filters: {} }
             : undefined,
@@ -2572,6 +2593,13 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                         {activeMode ? CHAT_MODES[activeMode].description : portal.tagline}
                       </p>
 
+                      {activeMode === "me" && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80 max-w-xs leading-relaxed -mt-3 mb-5">
+                          <Lock className="h-3 w-3 shrink-0" />
+                          Your private space — nothing here is logged or traced in AI observability.
+                        </p>
+                      )}
+
                       {activeMode && CHAT_MODES[activeMode].cards ? (
                         <div className="flex flex-col gap-2 w-full max-w-xs">
                           {CHAT_MODES[activeMode].cards!.map((c) => (
@@ -3036,13 +3064,20 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                                 />
                               )}
                             {t.interactive?.type === "chart" && t.interactive.data && (
-                              <div className="mt-2 rounded-xl border border-border/70 bg-card/60 p-3">
+                              // Explicit clamp width: the parent chat bubble is a flex item
+                              // that shrinks to its intrinsic content, and ResponsiveContainer
+                              // has zero intrinsic width — so without this the chart collapses
+                              // to the caption width. clamp keeps it full yet responsive.
+                              <div
+                                className="mt-2 rounded-xl border border-border/70 bg-card/60 p-3 max-w-full"
+                                style={{ width: "clamp(320px, 62vw, 820px)" }}
+                              >
                                 <ChartCanvas
                                   spec={
                                     t.interactive.data as import("@/components/analytics/ChartCanvas").ChartSpec
                                   }
-                                  height={300}
-                                  showExport
+                                  height={360}
+                                  exportBar
                                 />
                               </div>
                             )}

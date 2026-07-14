@@ -4143,6 +4143,22 @@ async def analytics_agent_node(state: AgentState):
     finally:
         db.close()
 
+    if result.get("off_topic"):
+        # Not a chartable request — offer to leave Analytics mode and answer it directly
+        # instead of forcing a bogus chart. "/exit <question>" is the same token the
+        # frontend already recognizes for a plain mode-exit; the trailing question tells
+        # it to re-send that text as a normal message once the mode is cleared.
+        payload = {
+            "question": "This looks like a policy/knowledge question, not a chart request. "
+                        "Switch off Analytics mode and answer it?",
+            "options": [
+                {"label": "Yes, answer it", "action": "message", "value": f"/exit {last_human}"},
+                {"label": "No, stay in Analytics mode", "action": "message", "value": "Show me a chart instead"},
+            ],
+        }
+        content = f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+        return {"messages": [AIMessage(content=content)]}
+
     explanation = result.get("explanation") or "Here's your chart."
     chart = result.get("chart")
     if result.get("ok") and chart:
@@ -4428,7 +4444,7 @@ async def admin_agent_node(state: AgentState):
                 "",
             )
             if original_topic:
-                policy_result = HRService.search_policies(str(original_topic), limit=2)
+                policy_result = await asyncio.to_thread(HRService.search_policies, str(original_topic), limit=2)
                 if policy_result and "No policies found" not in policy_result:
                     feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
 

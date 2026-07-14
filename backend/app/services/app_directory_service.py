@@ -14,7 +14,6 @@ Mirrors AnswerCacheService for the embed + cosine-k-NN pattern and reuses the sh
 cached, fail-soft PolicyService._get_embedding (no new embedding client).
 """
 
-import math
 import re
 
 from app.config import settings
@@ -38,15 +37,8 @@ _KW_STOP = {
 }
 
 
-def _cosine(a: list, b: list) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
+# Shared impl (also re-exported so `from ...app_directory_service import _cosine` keeps working).
+from app.services.vector_utils import cosine as _cosine
 
 
 class AppDirectoryService:
