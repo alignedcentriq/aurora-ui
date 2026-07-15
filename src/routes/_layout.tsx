@@ -25,7 +25,7 @@ import {
   Moon,
   PlayCircle,
   Rocket,
-  UserCog,
+  UsersRound,
   RotateCcw,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -480,7 +480,7 @@ function LayoutComponent() {
     { to: "/documents", icon: FileText, label: "Documents", show: true },
     { to: "/directory", icon: Users, label: "Directory", show: true },
     { to: "/my-requests", icon: ClipboardCheck, label: "My Requests", show: true },
-    { to: "/team", icon: UserCog, label: "My Team", show: hasTeam },
+    { to: "/team", icon: UsersRound, label: "My Team", show: hasTeam },
     {
       to: "/control-hub",
       icon: Shield,
@@ -1084,7 +1084,7 @@ function LayoutComponent() {
 
             {/* Page Title (Desktop Only) / Logo + Brand (Mobile Only) */}
             <div className="flex items-center gap-2">
-              {location.pathname !== "/" && (
+              {location.pathname !== "/" && !location.pathname.startsWith("/team") && (
                 <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
                   {getPageTitle(location.pathname)}
                 </span>

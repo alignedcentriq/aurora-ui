@@ -7,7 +7,7 @@ import { seo } from "../utils/seo";
 import { MsalProvider } from "@azure/msal-react";
 import { msalInstance } from "../lib/msal";
 import { AuthProvider, useAuth } from "../lib/auth-store";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { cn } from "../lib/utils";
 import { Logo } from "../components/Logo";
 import { BrandName } from "../components/BrandName";
@@ -25,6 +25,10 @@ import { AuroraBackground } from "../components/ui/aurora-background";
 import { SparklesCore } from "../components/ui/sparkles";
 import { HoverBorderGradient } from "../components/ui/hover-border-gradient";
 import { FlipWords } from "../components/ui/flip-words";
+import { useServerLoad } from "../hooks/use-server-load";
+
+const SERVER_BUSY_TOAST_ID = "server-busy";
+const SERVER_SLOW_TOAST_ID = "server-slow";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -1295,6 +1299,52 @@ function AuthenticatedApp() {
   } = useIntroStore();
   const [showSplash, setShowSplash] = React.useState(true);
   const [ssoCompleted, setSsoCompleted] = React.useState(false);
+  const { serverBusy, waiting, serverSlow } = useServerLoad();
+  const appVisible = !isLoading && !!user && !accessDenied && ssoCompleted;
+  const wasServerBusyRef = React.useRef(false);
+  const wasServerSlowRef = React.useRef(false);
+
+  // Global heads-up: whenever the shared AI server saturates (queue/concurrency),
+  // surface it as a top toast (independent of which screen/panel is open) so
+  // users see it before they start typing a prompt, not just after they send one.
+  React.useEffect(() => {
+    if (!appVisible) return;
+
+    if (serverBusy && !wasServerBusyRef.current) {
+      toast.warning("AI server is busy right now", {
+        id: SERVER_BUSY_TOAST_ID,
+        description:
+          waiting > 0
+            ? `Requests are queued (${waiting} ahead). Replies may take longer than usual.`
+            : "Replies may take longer than usual right now.",
+        duration: Infinity,
+      });
+    } else if (!serverBusy && wasServerBusyRef.current) {
+      toast.success("AI server load is back to normal", {
+        id: SERVER_BUSY_TOAST_ID,
+        duration: 4000,
+      });
+    }
+    wasServerBusyRef.current = serverBusy;
+  }, [appVisible, serverBusy, waiting]);
+
+  // Separate signal: generation runs on CPU, so it can be slow to start even
+  // with a free concurrency slot (serverBusy stays false). Skipped while the
+  // busy toast is already up so users don't get two overlapping warnings.
+  React.useEffect(() => {
+    if (!appVisible) return;
+
+    if (serverSlow && !serverBusy && !wasServerSlowRef.current) {
+      toast.warning("AI responses are slower than usual", {
+        id: SERVER_SLOW_TOAST_ID,
+        description: "The model server is under heavy load — replies may take a bit longer to start.",
+        duration: Infinity,
+      });
+    } else if ((!serverSlow || serverBusy) && wasServerSlowRef.current) {
+      toast.dismiss(SERVER_SLOW_TOAST_ID);
+    }
+    wasServerSlowRef.current = serverSlow && !serverBusy;
+  }, [appVisible, serverSlow, serverBusy]);
 
   // Auto-play the guided intro once, after the splash overlay finishes.
   React.useEffect(() => {
