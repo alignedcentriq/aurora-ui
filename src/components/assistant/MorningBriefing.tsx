@@ -115,7 +115,7 @@ export function MorningBriefing({ onAction }: { onAction: (prompt: string) => vo
   return (
     <Dialog open={!dismissed} onOpenChange={(open) => { if (!open) dismiss(); }}>
       <DialogContent className="sm:max-w-2xl p-0 border-none bg-transparent shadow-none [&>button]:hidden">
-        <div className="relative w-full rounded-3xl border border-amber-500/20 dark:border-amber-500/20 bg-gradient-to-br from-amber-500/[0.14] via-orange-400/[0.06] to-amber-500/[0.1] dark:from-amber-500/[0.09] dark:via-orange-500/[0.04] dark:to-amber-500/[0.06] p-5 md:p-6 shadow-2xl backdrop-blur-xl overflow-hidden group">
+        <div className="relative w-full rounded-3xl border border-amber-500/20 dark:border-amber-500/20 bg-background/95 bg-gradient-to-br from-amber-500/[0.14] via-orange-400/[0.06] to-amber-500/[0.1] dark:from-amber-500/[0.09] dark:via-orange-500/[0.04] dark:to-amber-500/[0.06] p-5 md:p-6 shadow-2xl backdrop-blur-xl overflow-hidden group">
           {/* Subtle background glow */}
           <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-amber-500/20 dark:bg-amber-500/10 blur-3xl pointer-events-none group-hover:bg-amber-500/25 transition-all duration-500" />
           <div className="absolute -left-20 -bottom-20 h-40 w-40 rounded-full bg-orange-500/15 dark:bg-orange-500/10 blur-3xl pointer-events-none group-hover:bg-orange-500/20 transition-all duration-500" />

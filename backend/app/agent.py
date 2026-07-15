@@ -4935,7 +4935,7 @@ def general_agent(state: AgentState):
     try:
         response = resilient_invoke("general", messages,
                                     build=lambda l: l.bind_tools(general_tools),
-                                    default_timeout=20)
+                                    default_timeout=45)
     except APIConnectionError:
         return {"messages": [AIMessage(content="I'm sorry, I'm having trouble connecting right now.")]}
 
@@ -5490,7 +5490,7 @@ workflow.add_conditional_edges("context_gate", route_after_context_gate)
 workflow.add_conditional_edges("hr_agent", should_continue_hr)
 workflow.add_conditional_edges("general_agent", should_continue_general)
 workflow.add_edge("hr_tools", "summarizer")
-workflow.add_edge("general_tools", "general_agent")
+workflow.add_edge("general_tools", "summarizer")
 # Substantive answer-producing paths flow through state_tracker (records `focus` for
 # the next turn's coref) before ending. UI-flow / placeholder / disabled paths don't
 # produce a subject, so they end directly.
