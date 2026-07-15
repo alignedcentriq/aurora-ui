@@ -15,6 +15,7 @@ import {
   FolderKanban,
   X,
   History,
+  Building2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
@@ -1108,6 +1109,12 @@ export function EmployeeDirectory() {
   const [query, setQuery] = useState("");
   const [dept, setDept] = useState("");
   const [desig, setDesig] = useState("");
+  // Department/designation named in a copilot query ("from TSS", "Sr. Engineer") — a
+  // free-text SUBSTRING match, unlike `dept`/`desig` above which are exact values driven
+  // by the header dropdowns (the copilot can't know the exact stored string, e.g. "TSS"
+  // vs. "TSS - Technical Support Services").
+  const [deptQuery, setDeptQuery] = useState("");
+  const [desigQuery, setDesigQuery] = useState("");
   // Skill / certification / experience / recency / project filters — driven by the copilot
   // sidebar (centriq:directory-filter) and clearable from the header. All match against the
   // Alchemy enrichment bundled in the directory payload (skills[] + projects[]). Skills/
@@ -1116,11 +1123,24 @@ export function EmployeeDirectory() {
   const [skillFilters, setSkillFilters] = useState<string[]>([]);
   const [minYears, setMinYears] = useState<number | null>(null);
   const [maxYears, setMaxYears] = useState<number | null>(null);
+  // Independent per-skill experience bounds ("power bi" with no bound + "python" with
+  // >1yr), ANDed together and against `skillFilters` — distinct from the single broad
+  // minYears/maxYears above, which applies to whichever skill a query names with no
+  // number attached to it specifically (e.g. a lone "5+ years").
+  const [skillConstraints, setSkillConstraints] = useState<
+    { skill: string; minYears?: number; maxYears?: number }[]
+  >([]);
   const [certifiedOnly, setCertifiedOnly] = useState(false);
   const [projectFilters, setProjectFilters] = useState<string[]>([]);
+  // "and" (must have worked on every named project) vs "or"/plain list (at least one).
+  const [projectMode, setProjectMode] = useState<"and" | "or">("or");
   const [usedWithinMonths, setUsedWithinMonths] = useState<number | null>(null);
   // Allocation-aware availability filter (current free capacity from the latest snapshot).
   const [availableOnly, setAvailableOnly] = useState(false);
+  // Specific "at least N% free" threshold, distinct from the bare availableOnly flag above
+  // — combined via OR at filter time (see the `filtered` memo) since a plain "free"
+  // mention is a superset of any percentage threshold.
+  const [minAvailabilityPercent, setMinAvailabilityPercent] = useState<number | null>(null);
   // Free-text query fallback: when the copilot's regex parser can't find a filterable
   // dimension, the backend translates the query into SQL over the composed directory and
   // returns the matching employee codes directly (see directory_query_service on the
@@ -1136,32 +1156,45 @@ export function EmployeeDirectory() {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const enrichFilterActive =
     skillFilters.length > 0 ||
+    skillConstraints.length > 0 ||
     minYears !== null ||
+    maxYears !== null ||
     certifiedOnly ||
     projectFilters.length > 0 ||
     usedWithinMonths !== null ||
     availableOnly ||
+    minAvailabilityPercent !== null ||
+    !!deptQuery ||
+    !!desigQuery ||
     queryResultCodes !== null;
   const activeFilterCount = useMemo(
     () =>
       (dept ? 1 : 0) +
       (desig ? 1 : 0) +
       (skillFilters.length ? 1 : 0) +
-      (minYears !== null ? 1 : 0) +
+      (skillConstraints.length ? 1 : 0) +
+      (minYears !== null || maxYears !== null ? 1 : 0) +
       (certifiedOnly ? 1 : 0) +
       (projectFilters.length ? 1 : 0) +
       (usedWithinMonths !== null ? 1 : 0) +
-      (availableOnly ? 1 : 0) +
+      (availableOnly || minAvailabilityPercent !== null ? 1 : 0) +
+      (deptQuery ? 1 : 0) +
+      (desigQuery ? 1 : 0) +
       (queryResultCodes !== null ? 1 : 0),
     [
       dept,
       desig,
       skillFilters,
+      skillConstraints,
       minYears,
+      maxYears,
       certifiedOnly,
       projectFilters,
       usedWithinMonths,
       availableOnly,
+      minAvailabilityPercent,
+      deptQuery,
+      desigQuery,
       queryResultCodes,
     ],
   );
@@ -1177,12 +1210,17 @@ export function EmployeeDirectory() {
   // the next chat turn would keep merging on top of a search the user just cleared.
   const clearAssistantFilters = () => {
     setSkillFilters([]);
+    setSkillConstraints([]);
     setMinYears(null);
     setMaxYears(null);
     setCertifiedOnly(false);
     setProjectFilters([]);
+    setProjectMode("or");
     setUsedWithinMonths(null);
     setAvailableOnly(false);
+    setMinAvailabilityPercent(null);
+    setDeptQuery("");
+    setDesigQuery("");
     setQueryResultCodes(null);
     setQueryResultSummary("");
     setAppliedSteps([]);
@@ -1241,9 +1279,15 @@ export function EmployeeDirectory() {
             return d;
           })()
         : null;
+    const deptQ = deptQuery.trim().toLowerCase();
+    const desigQ = desigQuery.trim().toLowerCase();
     return all.filter((e) => {
       if (dept && e.department !== dept) return false;
       if (desig && e.designation !== desig) return false;
+      // Copilot-driven department/designation — substring match, since the free-text
+      // query names ("TSS") rarely matches the exact stored value character-for-character.
+      if (deptQ && !(e.department || "").toLowerCase().includes(deptQ)) return false;
+      if (desigQ && !(e.designation || "").toLowerCase().includes(desigQ)) return false;
       // Skill / certification / experience / recency filters operate on the bundled Alchemy
       // enrichment. A row with no skills array (not yet synced) can't satisfy them, so it's
       // excluded. Several named skills match on ANY of them (OR); the other conditions
@@ -1267,24 +1311,48 @@ export function EmployeeDirectory() {
         );
         if (!ok) return false;
       }
-      // Project filter (partial match, OR across named projects): allocations the person
-      // was staffed on (project name or client), plus the Alchemy profile projects + skills-used.
-      if (projectQs.length) {
-        const ok = projectQs.some(
-          (projectQ) =>
-            (e.allocation_projects ?? []).some((p) => p.toLowerCase().includes(projectQ)) ||
-            (e.allocation_clients ?? []).some((c) => c.toLowerCase().includes(projectQ)) ||
-            (e.projects ?? []).some(
-              (p) =>
-                p.name.toLowerCase().includes(projectQ) ||
-                (p.skills_used || "").toLowerCase().includes(projectQ),
-            ),
-        );
+      // Per-skill experience constraints ("power bi" + "python: 1+ yrs"): unlike the OR
+      // block above, EVERY named constraint must be satisfied — each against its OWN
+      // matching skill row — since these came from independent clauses in the same query
+      // (e.g. "power bi developer with less than 3 years and more than 1 year in python").
+      if (skillConstraints.length) {
+        const skills = e.skills ?? [];
+        const ok = skillConstraints.every((sc) => {
+          const skillQ = sc.skill.trim().toLowerCase();
+          return skills.some((s) => {
+            if (!s.skill.toLowerCase().includes(skillQ)) return false;
+            const yrs = parseFloat(s.years_experience || "0") || 0;
+            if (sc.minYears !== undefined && yrs < sc.minYears) return false;
+            if (sc.maxYears !== undefined && yrs > sc.maxYears) return false;
+            return true;
+          });
+        });
         if (!ok) return false;
       }
-      // Availability (allocation-aware): only people with current free capacity, from
-      // the latest allocation snapshot bundled in the payload.
-      if (availableOnly && !e.available) return false;
+      // Project filter: "and" (projectMode) requires EVERY named project matched — the
+      // person must have worked on all of them; "or" (the default, also used for a plain
+      // comma list) requires only one. Allocations the person was staffed on (project name
+      // or client), plus the Alchemy profile projects + skills-used, all count as a match.
+      if (projectQs.length) {
+        const matchesProject = (projectQ: string) =>
+          (e.allocation_projects ?? []).some((p) => p.toLowerCase().includes(projectQ)) ||
+          (e.allocation_clients ?? []).some((c) => c.toLowerCase().includes(projectQ)) ||
+          (e.projects ?? []).some(
+            (p) => p.name.toLowerCase().includes(projectQ) || (p.skills_used || "").toLowerCase().includes(projectQ),
+          );
+        const ok = projectMode === "and" ? projectQs.every(matchesProject) : projectQs.some(matchesProject);
+        if (!ok) return false;
+      }
+      // Availability (allocation-aware): a bare mention requires any current free
+      // capacity; a specific "N% free" threshold requires that percentage. When both are
+      // set they combine via OR — a plain "free" mention is a superset of any percentage
+      // threshold, so "50% free or free" correctly relaxes to "any availability" exactly
+      // as asked, while "at least 50% free" alone (no separate bare mention) stays strict.
+      if (availableOnly || minAvailabilityPercent !== null) {
+        const percentOk = minAvailabilityPercent !== null && (e.availability_percent ?? 0) >= minAvailabilityPercent;
+        const boolOk = availableOnly && !!e.available;
+        if (!percentOk && !boolOk) return false;
+      }
       // Free-text query fallback (LLM-generated SQL over the composed directory).
       if (queryResultCodes && !queryResultCodes.has(e.employee_code || "")) return false;
       if (!q) return true;
@@ -1296,12 +1364,17 @@ export function EmployeeDirectory() {
     dept,
     desig,
     skillFilters,
+    skillConstraints,
     minYears,
     maxYears,
     certifiedOnly,
     projectFilters,
+    projectMode,
     usedWithinMonths,
     availableOnly,
+    minAvailabilityPercent,
+    deptQuery,
+    desigQuery,
     queryResultCodes,
   ]);
 
@@ -1312,12 +1385,17 @@ export function EmployeeDirectory() {
     dept,
     desig,
     skillFilters,
+    skillConstraints,
     minYears,
     maxYears,
     certifiedOnly,
     projectFilters,
+    projectMode,
     usedWithinMonths,
     availableOnly,
+    minAvailabilityPercent,
+    deptQuery,
+    desigQuery,
     queryResultCodes,
   ]);
 
@@ -1333,12 +1411,17 @@ export function EmployeeDirectory() {
         (
           e as CustomEvent<{
             skills?: string[];
+            skillConstraints?: { skill: string; minYears?: number; maxYears?: number }[];
             minYears?: number;
             maxYears?: number;
             certified?: boolean;
             projects?: string[];
+            projectMode?: "and" | "or";
             usedWithinMonths?: number;
             available?: boolean;
+            minAvailabilityPercent?: number;
+            department?: string;
+            designation?: string;
           }>
         ).detail || {};
       const steps: string[] = [];
@@ -1346,17 +1429,50 @@ export function EmployeeDirectory() {
         setSkillFilters((prev) => Array.from(new Set([...prev, ...detail.skills!])));
         steps.push(detail.skills.join(", "));
       }
+      if (detail.skillConstraints?.length) {
+        setSkillConstraints((prev) => {
+          const next = prev.map((sc) => ({ ...sc }));
+          for (const sc of detail.skillConstraints!) {
+            const existing = next.find((x) => x.skill.toLowerCase() === sc.skill.toLowerCase());
+            if (existing) {
+              if (sc.minYears !== undefined) existing.minYears = sc.minYears;
+              if (sc.maxYears !== undefined) existing.maxYears = sc.maxYears;
+            } else {
+              next.push({ ...sc });
+            }
+          }
+          return next;
+        });
+        steps.push(
+          detail.skillConstraints
+            .map((sc) =>
+              sc.minYears !== undefined && sc.maxYears !== undefined
+                ? `${sc.skill}: ${sc.minYears}-${sc.maxYears}y`
+                : sc.minYears !== undefined
+                  ? `${sc.skill}: ${sc.minYears}+y`
+                  : `${sc.skill}: <${sc.maxYears}y`,
+            )
+            .join(", "),
+        );
+      }
       if (detail.projects?.length) {
         setProjectFilters((prev) => Array.from(new Set([...prev, ...detail.projects!])));
-        steps.push(`project ${detail.projects.join(", ")}`);
+        setProjectMode(detail.projectMode ?? "or");
+        steps.push(
+          detail.projects.length > 1
+            ? `${detail.projectMode === "and" ? "all of" : "any of"} projects ${detail.projects.join(", ")}`
+            : `project ${detail.projects.join(", ")}`,
+        );
       }
-      if (detail.minYears !== undefined) {
-        setMinYears(detail.minYears);
+      if (detail.minYears !== undefined || detail.maxYears !== undefined) {
+        setMinYears(detail.minYears ?? null);
         setMaxYears(detail.maxYears ?? null);
         steps.push(
-          detail.maxYears !== undefined
+          detail.minYears !== undefined && detail.maxYears !== undefined
             ? `${detail.minYears}-${detail.maxYears} yrs`
-            : `${detail.minYears}+ yrs`,
+            : detail.minYears !== undefined
+              ? `${detail.minYears}+ yrs`
+              : `<${detail.maxYears} yrs`,
         );
       }
       if (detail.certified) {
@@ -1370,6 +1486,18 @@ export function EmployeeDirectory() {
       if (detail.available) {
         setAvailableOnly(true);
         steps.push("available");
+      }
+      if (detail.minAvailabilityPercent !== undefined) {
+        setMinAvailabilityPercent(detail.minAvailabilityPercent);
+        steps.push(`≥${detail.minAvailabilityPercent}% free`);
+      }
+      if (detail.department) {
+        setDeptQuery(detail.department);
+        steps.push(`dept ${detail.department}`);
+      }
+      if (detail.designation) {
+        setDesigQuery(detail.designation);
+        steps.push(detail.designation);
       }
       if (steps.length) setAppliedSteps((prev) => [...prev, steps.join(" · ")].slice(-6));
     };
@@ -1524,10 +1652,35 @@ export function EmployeeDirectory() {
                   </button>
                 </span>
               )}
-              {minYears !== null && (
+              {skillConstraints.map((sc, i) => (
+                <span
+                  key={`${sc.skill}-${i}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#1f86e0]/30 bg-[#1f86e0]/10 dark:bg-primary/15 px-2.5 py-1 text-[12px] font-bold text-[#1f86e0] dark:text-primary"
+                >
+                  <Briefcase className="h-3.5 w-3.5" />
+                  {sc.skill}:{" "}
+                  {sc.minYears !== undefined && sc.maxYears !== undefined
+                    ? `${sc.minYears}-${sc.maxYears}y`
+                    : sc.minYears !== undefined
+                      ? `${sc.minYears}+y`
+                      : `<${sc.maxYears}y`}
+                  <button
+                    onClick={() => setSkillConstraints((prev) => prev.filter((_, j) => j !== i))}
+                    className="ml-0.5 rounded-full hover:bg-[#1f86e0]/20 p-0.5 transition-colors"
+                    title="Remove skill experience filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {(minYears !== null || maxYears !== null) && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
                   <Briefcase className="h-3.5 w-3.5" />
-                  {maxYears !== null ? `${minYears}-${maxYears} yrs` : `${minYears}+ yrs`}
+                  {minYears !== null && maxYears !== null
+                    ? `${minYears}-${maxYears} yrs`
+                    : minYears !== null
+                      ? `${minYears}+ yrs`
+                      : `<${maxYears} yrs`}
                   <button
                     onClick={() => {
                       setMinYears(null);
@@ -1556,9 +1709,17 @@ export function EmployeeDirectory() {
               {projectFilters.length > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[12px] font-bold text-amber-600 dark:text-amber-400">
                   <FolderKanban className="h-3.5 w-3.5" />
+                  {projectFilters.length > 1 && (
+                    <span className="uppercase text-[9px] tracking-wide opacity-70">
+                      {projectMode === "and" ? "all:" : "any:"}
+                    </span>
+                  )}
                   {projectFilters.join(", ")}
                   <button
-                    onClick={() => setProjectFilters([])}
+                    onClick={() => {
+                      setProjectFilters([]);
+                      setProjectMode("or");
+                    }}
                     className="ml-0.5 rounded-full hover:bg-amber-500/20 p-0.5 transition-colors"
                     title="Remove project filter"
                   >
@@ -1574,6 +1735,45 @@ export function EmployeeDirectory() {
                     onClick={() => setAvailableOnly(false)}
                     className="ml-0.5 rounded-full hover:bg-teal-500/20 p-0.5 transition-colors"
                     title="Remove availability filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {minAvailabilityPercent !== null && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-1 text-[12px] font-bold text-teal-600 dark:text-teal-400">
+                  <Users className="h-3.5 w-3.5" />
+                  ≥{minAvailabilityPercent}% free
+                  <button
+                    onClick={() => setMinAvailabilityPercent(null)}
+                    className="ml-0.5 rounded-full hover:bg-teal-500/20 p-0.5 transition-colors"
+                    title="Remove availability threshold"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {deptQuery && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[12px] font-bold text-indigo-600 dark:text-indigo-400">
+                  <Building2 className="h-3.5 w-3.5" />
+                  {deptQuery}
+                  <button
+                    onClick={() => setDeptQuery("")}
+                    className="ml-0.5 rounded-full hover:bg-indigo-500/20 p-0.5 transition-colors"
+                    title="Remove department filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {desigQuery && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[12px] font-bold text-indigo-600 dark:text-indigo-400">
+                  <Briefcase className="h-3.5 w-3.5" />
+                  {desigQuery}
+                  <button
+                    onClick={() => setDesigQuery("")}
+                    className="ml-0.5 rounded-full hover:bg-indigo-500/20 p-0.5 transition-colors"
+                    title="Remove designation filter"
                   >
                     <X className="h-3 w-3" />
                   </button>
