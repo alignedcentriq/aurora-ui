@@ -168,16 +168,108 @@ function detectBookIntent(text: string): { path: string; label: string; reply: s
 // the backend. Deterministic, zero-LLM, strictly scoped to /directory by the caller.
 export interface DirectoryFilter {
   skills?: string[];
+  // Independent per-skill experience bounds ("more than 1 years experience in python"),
+  // ANDed together and against `skills` — distinct from the single broad `minYears`/
+  // `maxYears` below, which applies to whichever skill row a query names with no
+  // per-skill number attached (e.g. a lone "5+ years").
+  skillConstraints?: Array<{ skill: string; minYears?: number; maxYears?: number }>;
   minYears?: number;
   maxYears?: number;
   certified?: boolean;
   projects?: string[];
+  // How multiple named projects combine: "worked on Alpha and Beta" requires BOTH (every
+  // named project matched); "worked on Alpha or Beta" / a plain comma list ("Alpha, Beta")
+  // requires at least one. Only meaningful when `projects` has 2+ entries.
+  projectMode?: "and" | "or";
   usedWithinMonths?: number;
   available?: boolean;
+  // A specific "N% free" threshold, distinct from the bare `available` flag above (see
+  // parseDirectoryFilter's availability block for how the two combine).
+  minAvailabilityPercent?: number;
+  // Substring matches against the employee's department/designation fields — free text,
+  // not the exact dropdown values, so "TSS" matches "TSS - Technical Support Services".
+  department?: string;
+  designation?: string;
 }
 
 const _DIR_STOPWORDS =
   /^(the|a|an|of|in|with|on|and|or|more|than|over|at|least|min|years?|yrs?|experience|expertise|skills?|project|projects|certified|certification|certificate|last|past|within|months?|weeks?|days?|recently|developers?|engineers?|experts?)$/i;
+
+// Stripped from the start of the query before skill/experience extraction so a leading
+// command verb ("find", "show me", ...) can never be swept into a lazy skill capture —
+// e.g. without this, "find power bi developer" could capture "find power bi" as the skill.
+const _DIR_LEADING_INTENT_RE =
+  /^\s*(?:please\s+)?(?:find|show(?:\s+me)?|list|search(?:\s+for)?|get(?:\s+me)?|display|pull\s+up|i\s+(?:want|need)|looking\s+for|who\s+(?:is|are)|which\s+(?:employees?|people|resources?|developers?|engineers?)|give\s+me)\s+/i;
+
+// Bound-direction vocabulary for a "N years [of experience]" clause.
+const _DIR_MAX_BOUND_WORDS =
+  "less\\s+than|under|fewer\\s+than|no\\s+more\\s+than|at\\s+most|up\\s+to|maximum\\s+of|max(?:imum)?";
+const _DIR_MIN_BOUND_WORDS = "more\\s+than|over|at\\s+least|minimum\\s+of|min(?:imum)?|greater\\s+than|above";
+
+interface _DirYearsClause {
+  minYears?: number;
+  maxYears?: number;
+  skill?: string;
+}
+
+// Scans the whole query for every years-of-experience clause (a naive single .match() only
+// ever sees the first one, silently dropping the rest when a query names more than one — the
+// original bug behind "less than 3 years ... and more than 1 years experience in python"
+// collapsing to a single misread constraint). Each clause is returned with the skill it's
+// attached to ("... experience in python"), if any; unattached clauses apply broadly.
+// Strips a stray leading connector ("and python" → "python") that a lazy, boundary-agnostic
+// capture can sweep in when the word immediately before it was already consumed by an
+// earlier clause match, leaving only the joining "and"/"or" behind.
+function _stripLeadingConnector(s: string): string {
+  return s.replace(/^\s*(?:and|or|&|,)\s*/i, "").trim();
+}
+
+function _extractYearsClauses(src: string): { clauses: _DirYearsClause[]; masked: string } {
+  const clauses: _DirYearsClause[] = [];
+  let masked = src;
+  const blank = (index: number, len: number) => {
+    masked = masked.slice(0, index) + " ".repeat(len) + masked.slice(index + len);
+  };
+
+  // Terminated by the shared clause-boundary lookahead (not just and/or/punctuation/end)
+  // so a clause followed by an unrelated new clause ("3 years worked on PMP", "5+ years
+  // certified") still matches instead of failing outright and silently dropping the whole
+  // years constraint.
+  const rangeRes = [
+    new RegExp(
+      `\\bbetween\\s+(\\d+(?:\\.\\d+)?)\\s+and\\s+(\\d+(?:\\.\\d+)?)\\s*\\+?\\s*(?:years?|yrs?)(?:\\s+(?:of\\s+)?experience)?(?:\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?))?${_DIR_LIST_END}`,
+      "gi",
+    ),
+    new RegExp(
+      `\\b(\\d+(?:\\.\\d+)?)\\s*(?:-|to)\\s*(\\d+(?:\\.\\d+)?)\\s*\\+?\\s*(?:years?|yrs?)(?:\\s+(?:of\\s+)?experience)?(?:\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?))?${_DIR_LIST_END}`,
+      "gi",
+    ),
+  ];
+  for (const re of rangeRes) {
+    for (const m of masked.matchAll(re)) {
+      const a = parseFloat(m[1]);
+      const b = parseFloat(m[2]);
+      clauses.push({ minYears: Math.min(a, b), maxYears: Math.max(a, b), skill: m[3]?.trim() });
+      blank(m.index!, m[0].length);
+    }
+  }
+
+  const boundRe = new RegExp(
+    `\\b(?:(${_DIR_MAX_BOUND_WORDS})|(${_DIR_MIN_BOUND_WORDS}))?\\s*(\\d+(?:\\.\\d+)?)(\\+)?\\s*(?:years?|yrs?)(?:\\s+(?:of\\s+)?experience)?(?:\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?))?${_DIR_LIST_END}`,
+    "gi",
+  );
+  for (const m of masked.matchAll(boundRe)) {
+    const isMax = !!m[1];
+    const isMin = !!m[2] || !!m[4];
+    const n = parseFloat(m[3]);
+    const skill = m[5]?.trim();
+    if (isMax) clauses.push({ maxYears: n, skill });
+    else if (isMin) clauses.push({ minYears: n, skill });
+    else clauses.push({ minYears: n, skill }); // bare "N years" defaults to a minimum threshold
+    blank(m.index!, m[0].length);
+  }
+  return { clauses, masked };
+}
 
 const _DIR_PROJECT_STOPWORDS =
   /^(a|an|the|any|some|this|that|particular|certain|specific|which|what|various|and|or)$/i;
@@ -200,9 +292,15 @@ function _splitDirList(chunk: string, stopwords: RegExp, maxLen: number): string
 }
 
 // Lookahead marking where a skill/project list chunk ends — the next filter clause
-// (experience, role noun, certification, recency, punctuation) or end of string.
+// (experience, role noun, certification, availability, recency, a new "and is/are/has/
+// have" compound clause, punctuation) or end of string. Shared by skill AND project
+// capture so a query that keeps going after the list ("worked on PMP and is 50% free")
+// doesn't get swallowed whole — only "and <name>" (another list item) passes through.
 const _DIR_LIST_END =
-  "(?=\\s+(?:experience|developers?|engineers?|experts?|specialists?|who|that|having|for|in\\s+the\\s+last|within|during|certified|certification)\\b|,?\\s*(?:more\\s+than|over|at\\s+least|minimum|min|\\d+(?:\\.\\d+)?\\+?\\s*(?:years?|yrs?))|[?.!]|$)";
+  "(?=\\s+(?:experience|developers?|engineers?|experts?|specialists?|who|that|having|for|with|worked|working|in\\s+the\\s+last|within|during|certified|certification|available|availability|unallocated|free|spare|projects?)\\b" +
+  "|\\s+and\\s+(?:is|are|has|have|who|that|worked|working|certified|available|more\\s+than|over|at\\s+least|minimum|min|less\\s+than|under|fewer\\s+than|no\\s+more\\s+than|at\\s+most|max(?:imum)?|\\d+(?:\\.\\d+)?\\+?\\s*(?:years?|yrs?)|\\d+(?:\\.\\d+)?\\s*%)\\b" +
+  "|,?\\s*(?:more\\s+than|over|at\\s+least|minimum|min|\\d+(?:\\.\\d+)?\\+?\\s*(?:years?|yrs?)|\\d+(?:\\.\\d+)?\\s*%)" +
+  "|[?.!]|$)";
 
 function parseDirectoryFilter(text: string): DirectoryFilter | null {
   const t = text.trim();
@@ -219,21 +317,82 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
   // Certification: "certified in React", "who has a React certificate".
   const certified = /\bcertif(?:ied|ication|icate)\b/i.test(lower) || undefined;
 
-  // Availability: "who is available", "free React devs", "on the bench", "unallocated".
-  // Drives an allocation-aware filter (current free capacity from the latest snapshot).
+  // Strip a leading command verb ("find", "show me", ...) before any lazy skill capture
+  // runs, so it can never be swept into the captured phrase (see _DIR_LEADING_INTENT_RE).
+  let core = t.replace(_DIR_LEADING_INTENT_RE, "").trim();
+
+  // Designation: a title-adjective + role-noun combo ("Sr. Engineer", "Senior Consultant"),
+  // or an explicit "designation of/: X". Checked — and masked out of `core` — BEFORE the
+  // generic skill/role-noun capture further down, since that capture also keys off a
+  // trailing "engineer/developer/..." word and would otherwise misread "Sr. Engineer" as a
+  // skill named "Sr" for an "engineer" role.
+  let designation: string | undefined;
+  const desigTitleRe =
+    /\b((?:sr\.?|senior|jr\.?|junior|lead|principal|staff|chief|head|associate|assistant)\s+(?:engineers?|developers?|consultants?|managers?|architects?|analysts?|directors?|specialists?|designers?|leads?|executives?|officers?|administrators?|coordinators?))\b/i;
+  const desigExplicitRe = new RegExp(
+    `\\bdesignation\\s*(?:of|:|as)?\\s*([A-Za-z][A-Za-z0-9&/.\\- ]{1,40}?)${_DIR_LIST_END}`,
+    "i",
+  );
+  const desigM = core.match(desigTitleRe) || core.match(desigExplicitRe);
+  if (desigM) {
+    designation = desigM[1].trim();
+    core = core.slice(0, desigM.index!) + " ".repeat(desigM[0].length) + core.slice(desigM.index! + desigM[0].length);
+  }
+
+  // Department: "from <Dept>", "in the <Dept> department", "department of <Dept>" — masked
+  // out of `core` for the same reason as designation above, so a department name (e.g.
+  // "TSS") never leaks into the skill/project capture that follows.
+  let department: string | undefined;
+  const deptRe1 = new RegExp(`\\bfrom\\s+(?:the\\s+)?([A-Za-z][A-Za-z0-9&/.\\- ]{1,40}?)${_DIR_LIST_END}`, "i");
+  // Requires a leading "in (the)?" anchor and caps the name at 3 words — otherwise the
+  // capture has no left-side anchor and greedily sweeps back to the start of the query
+  // (e.g. "react developers in Engineering department" would capture "react developers in
+  // Engineering" instead of just "Engineering").
+  const deptRe2 = /\bin\s+(?:the\s+)?([A-Za-z][A-Za-z0-9&.-]*(?:\s+[A-Za-z][A-Za-z0-9&.-]*){0,2})\s+department\b/i;
+  const deptRe3 = new RegExp(`\\bdepartment\\s*(?:of|:)?\\s*([A-Za-z][A-Za-z0-9&/.\\- ]{1,40}?)${_DIR_LIST_END}`, "i");
+  const deptM = core.match(deptRe1) || core.match(deptRe2) || core.match(deptRe3);
+  if (deptM) {
+    department = deptM[1].trim();
+    core = core.slice(0, deptM.index!) + " ".repeat(deptM[0].length) + core.slice(deptM.index! + deptM[0].length);
+  }
+
+  const coreLower = core.toLowerCase();
+
+  // Availability — either a bare mention ("who is available", "free React devs", "on the
+  // bench", "unallocated") or a specific "N% free" threshold ("50% free", "at least 60%
+  // available"). The percentage clause is masked out before testing for a bare mention so
+  // "50% free" alone doesn't ALSO trip the generic flag — if it did, the threshold would be
+  // pointless, since any positive availability would already satisfy the (broader) generic
+  // flag. A genuinely separate mention elsewhere ("50% free or free") still sets it,
+  // correctly loosening the filter to "any availability" exactly as literally asked.
+  let minAvailabilityPercent: number | undefined;
+  const availPctRe =
+    /\b(?:at\s+least|over|more\s+than|min(?:imum)?(?:\s+of)?)?\s*(\d+(?:\.\d+)?)\s*%\s*\+?\s*(?:free|available|availab(?:le|ility)|capacity)\b/i;
+  const availPctM = coreLower.match(availPctRe);
+  let availabilitySource = coreLower;
+  if (availPctM) {
+    minAvailabilityPercent = parseFloat(availPctM[1]);
+    availabilitySource =
+      coreLower.slice(0, availPctM.index!) +
+      " ".repeat(availPctM[0].length) +
+      coreLower.slice(availPctM.index! + availPctM[0].length);
+  }
   const available =
-    /\b(available|availability|unallocated|not\s+allocated|on\s+(?:the\s+)?bench|free\s+(?:capacity|now|developers?|resources?|engineers?)|spare\s+capacity)\b/i.test(
-      lower,
+    /\b(available|availability|unallocated|not\s+allocated|on\s+(?:the\s+)?bench|free|spare\s+capacity)\b/i.test(
+      availabilitySource,
     ) || undefined;
 
   // Recency on last-used: "used X in the last 2 months", "past 6 weeks", "within 1 year".
+  // Matched first and masked out of the years-experience source below so it can't also be
+  // misread as an experience-years clause.
   let usedWithinMonths: number | undefined;
-  const recM = lower.match(
-    /\b(?:last|past|within|in\s+the\s+last|over\s+the\s+last)\s+(\d+)\s*(year|years|month|months|week|weeks|day|days)\b/,
-  );
+  const recRe =
+    /\b(?:last|past|within|in\s+the\s+last|over\s+the\s+last)\s+(\d+)\s*(year|years|month|months|week|weeks|day|days)\b/i;
+  const recM = core.match(recRe);
+  let yearsSource = core;
   if (recM) {
     const n = parseInt(recM[1], 10);
-    const unit = recM[2];
+    const unit = recM[2].toLowerCase();
     usedWithinMonths = unit.startsWith("year")
       ? n * 12
       : unit.startsWith("week")
@@ -241,74 +400,124 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
         : unit.startsWith("day")
           ? Math.max(1, Math.round(n / 30))
           : n;
+    yearsSource = core.slice(0, recM.index!) + " ".repeat(recM[0].length) + core.slice(recM.index! + recM[0].length);
   }
 
   // Project(s): "worked on <X>", "on the <X> project", "project <X>, <Y>", "<X> and <Y>
   // projects". A placeholder like "a particular project" yields no concrete name and is
   // ignored (falls through to backend).
   let projects: string[] | undefined;
+  // Explicit "and" between project names means the person must have worked on ALL of
+  // them; anything else (an "or", or a plain comma list with no connector) means at
+  // least one — checked on the un-split candidate so the connector word itself is seen
+  // before _splitDirList discards it as a delimiter.
+  let projectMode: "and" | "or" | undefined;
   const projM =
-    t.match(
-      /\b(?:worked|work(?:ing)?)\s+on\s+(?:the\s+)?(?:projects?\s+)?["“']?([A-Za-z0-9][\w .&/,-]{1,120}?)["”']?(?:\s+projects?)?\s*[?.!]*$/i,
+    core.match(
+      new RegExp(
+        `\\b(?:worked|work(?:ing)?)\\s+on\\s+(?:the\\s+)?(?:projects?\\s+)?["“']?([A-Za-z0-9][\\w .&/,-]{1,120}?)["”']?(?:\\s+projects?)?${_DIR_LIST_END}`,
+        "i",
+      ),
     ) ||
-    t.match(/\bprojects?\s+(?:called\s+|named\s+|titled\s+)?["“']?([A-Za-z0-9][\w .&/,-]{1,120}?)["”']?\s*[?.!]*$/i);
+    core.match(
+      new RegExp(
+        `\\bprojects?\\s+(?:called\\s+|named\\s+|titled\\s+)?["“']?([A-Za-z0-9][\\w .&/,-]{1,120}?)["”']?${_DIR_LIST_END}`,
+        "i",
+      ),
+    );
   if (projM) {
     const cand = projM[1].trim().replace(/\s+projects?$/i, "").trim();
     const list = _splitDirList(cand, _DIR_PROJECT_STOPWORDS, 60);
-    if (list.length) projects = list;
-  }
-
-  // Years of experience — either a range ("between 3 and 5 years", "3-5 years", "3 to 5
-  // yrs") or a minimum ("more than 5 years", "5+ years", "at least 3 yrs"). Guarded so a
-  // recency phrase ("last 2 years") is not misread as a minimum.
-  let minYears: number | undefined;
-  let maxYears: number | undefined;
-  const rangeM =
-    lower.match(/\bbetween\s+(\d+(?:\.\d+)?)\s+(?:and|to)\s+(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)/) ||
-    lower.match(
-      /\b(\d+(?:\.\d+)?)\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
-    );
-  if (rangeM) {
-    const a = parseFloat(rangeM[1]);
-    const b = parseFloat(rangeM[2]);
-    minYears = Math.min(a, b);
-    maxYears = Math.max(a, b);
-  } else {
-    const yearsM = lower.match(
-      /(?:more than|over|at least|minimum|min|greater than|>=?|above)?\s*(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+(?:of\s+)?experience)?\b/,
-    );
-    if (yearsM && !/\b(?:last|past|within)\s+\d+\s*(?:years?|yrs?)/.test(lower)) {
-      minYears = parseFloat(yearsM[1]);
+    if (list.length) {
+      projects = list;
+      projectMode = /\band\b/i.test(cand) ? "and" : "or";
     }
   }
 
-  // Skill(s) / technology: "experience in React, Node and AWS", "certified in AWS",
-  // "used Python or Java", "knows SAP", "React and Node developers", "with Node".
-  let skills: string[] | undefined;
-  const skillM =
-    t.match(
-      new RegExp(
-        `\\b(?:experience|expertise|skill(?:s|ed)?|proficien\\w*|knowledge|hands?[- ]on|certified|certification)\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
-        "i",
-      ),
-    ) ||
-    t.match(
-      new RegExp(
-        `\\b(?:used|using|use|worked\\s+with|working\\s+with)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
-        "i",
-      ),
-    ) ||
-    t.match(/\b([A-Za-z][A-Za-z0-9+.#/&, ]{1,60}?)\s+(?:developers?|engineers?|experts?|specialists?)\b/i) ||
-    t.match(/\b(?:know|knows|knowing|in|with|on)\s+([A-Za-z][A-Za-z0-9+.#/&, ]{1,60})\s*[?.!]*\s*$/i);
-  if (skillM) {
-    const list = _splitDirList(skillM[1], _DIR_STOPWORDS, 24);
-    if (list.length) skills = list;
+  // Years of experience — every clause in the query is scanned (not just the first), each
+  // recognizing both a minimum ("more than 5 years", "5+ years", "at least 3 yrs") and a
+  // maximum ("less than 3 years", "under 3 yrs", "at most 3 years") direction, plus ranges
+  // ("between 3 and 5 years", "3-5 years"). A clause naming its own skill ("more than 1
+  // years experience in python") becomes an independent per-skill constraint; an unattached
+  // clause ("5+ years" on its own) applies broadly to any matched skill row.
+  let minYears: number | undefined;
+  let maxYears: number | undefined;
+  const skillConstraints: Array<{ skill: string; minYears?: number; maxYears?: number }> = [];
+  const { clauses: yearsClauses, masked: maskedForSkills } = _extractYearsClauses(yearsSource);
+  for (const clause of yearsClauses) {
+    if (clause.skill) {
+      for (const s of _splitDirList(_stripLeadingConnector(clause.skill), _DIR_STOPWORDS, 24)) {
+        const existing = skillConstraints.find((sc) => sc.skill.toLowerCase() === s.toLowerCase());
+        if (existing) {
+          if (clause.minYears !== undefined) existing.minYears = clause.minYears;
+          if (clause.maxYears !== undefined) existing.maxYears = clause.maxYears;
+        } else {
+          skillConstraints.push({ skill: s, minYears: clause.minYears, maxYears: clause.maxYears });
+        }
+      }
+    } else {
+      if (clause.minYears !== undefined)
+        minYears = minYears === undefined ? clause.minYears : Math.max(minYears, clause.minYears);
+      if (clause.maxYears !== undefined)
+        maxYears = maxYears === undefined ? clause.maxYears : Math.min(maxYears, clause.maxYears);
+    }
   }
 
-  // Don't double-capture a project name's trailing word as a skill.
+  // Skill(s) / technology mentioned WITHOUT their own experience clause: "experience in
+  // React, Node and AWS", "certified in AWS", "used Python or Java", "knows SAP", "React and
+  // Node developers", "power bi developer". Scanned globally (not just the first match) so
+  // an earlier skill/role mention survives even when a later clause names another skill.
+  const skillMatches: string[] = [];
+  const expRe = new RegExp(
+    `\\b(?:experience|expertise|skill(?:s|ed)?|proficien\\w*|knowledge|hands?[- ]on|certified|certification)\\s+(?:in|with|on|of)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
+    "gi",
+  );
+  const useRe = new RegExp(
+    `\\b(?:used|using|use|worked\\s+with|working\\s+with)\\s+([A-Za-z][A-Za-z0-9+.#/&, ]*?)${_DIR_LIST_END}`,
+    "gi",
+  );
+  const roleRe = /\b([A-Za-z][A-Za-z0-9+.#/&, ]{1,60}?)\s+(?:developers?|engineers?|experts?|specialists?)\b/gi;
+  // Scanned over the years-clauses-masked text so an already-consumed clause ("under 3
+  // years") can never bleed into the next capture as leftover words. Each pattern's own
+  // matches are then ALSO masked before the next pattern runs — expRe/useRe are anchored
+  // by an explicit keyword ("experience in", "used") and take precedence; without this,
+  // roleRe's unanchored capture can sweep up an already-claimed clause from its own
+  // leftmost starting point ("experience in React and Node **developers**" would
+  // otherwise also match roleRe starting at "experience", capturing the whole prefix).
+  let skillScanSource = maskedForSkills;
+  const blankSkillMatch = (index: number, len: number) => {
+    skillScanSource = skillScanSource.slice(0, index) + " ".repeat(len) + skillScanSource.slice(index + len);
+  };
+  for (const re of [expRe, useRe, roleRe]) {
+    for (const m of skillScanSource.matchAll(re)) {
+      skillMatches.push(_stripLeadingConnector(m[1]));
+      blankSkillMatch(m.index!, m[0].length);
+    }
+  }
+  if (!skillMatches.length) {
+    const knowM = skillScanSource.match(
+      /\b(?:know|knows|knowing|in|with|on)\s+([A-Za-z][A-Za-z0-9+.#/&, ]{1,60})\s*[?.!]*\s*$/i,
+    );
+    if (knowM) skillMatches.push(_stripLeadingConnector(knowM[1]));
+  }
+  let skills: string[] | undefined;
+  if (skillMatches.length) {
+    const list = _splitDirList(skillMatches.join(", "), _DIR_STOPWORDS, 24);
+    // A skill that already has its own experience clause is tracked via skillConstraints,
+    // not the plain skill list — keep it in exactly one place.
+    const rest = list.filter((s) => !skillConstraints.some((sc) => sc.skill.toLowerCase() === s.toLowerCase()));
+    if (rest.length) skills = rest;
+  }
+
+  // Don't double-capture a project mention (or its surrounding words, from the "on X
+  // project" fallback capture below) as a skill — check both directions since either
+  // string can be the more specific one ("Alpha" vs. a leaked "the alpha project").
   if (projects && skills) {
     skills = skills.filter(
-      (s) => !projects!.some((p) => p.toLowerCase().includes(s.toLowerCase())),
+      (s) =>
+        !projects!.some(
+          (p) => p.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(p.toLowerCase()),
+        ),
     );
     if (!skills.length) skills = undefined;
   }
@@ -316,14 +525,32 @@ function parseDirectoryFilter(text: string): DirectoryFilter | null {
   // Only act when we actually parsed a filterable dimension.
   if (
     !skills &&
+    !skillConstraints.length &&
     minYears === undefined &&
+    maxYears === undefined &&
     !certified &&
     !projects &&
     usedWithinMonths === undefined &&
-    !available
+    !available &&
+    minAvailabilityPercent === undefined &&
+    !department &&
+    !designation
   )
     return null;
-  return { skills, minYears, maxYears, certified, projects, usedWithinMonths, available };
+  return {
+    skills,
+    skillConstraints: skillConstraints.length ? skillConstraints : undefined,
+    minYears,
+    maxYears,
+    certified,
+    projects,
+    projectMode,
+    usedWithinMonths,
+    minAvailabilityPercent,
+    available,
+    department,
+    designation,
+  };
 }
 
 // ── My Requests filter parsing ───────────────────────────────────────────────
@@ -1151,6 +1378,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           if (dirFilter) {
             addTurn(activeId, { role: "user", text });
             const parts = [
+              dirFilter.designation ? `**${dirFilter.designation}**` : null,
               dirFilter.certified && dirFilter.skills?.length
                 ? `**${dirFilter.skills.join(", ")}**-certified`
                 : dirFilter.skills?.length
@@ -1158,16 +1386,38 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                   : dirFilter.certified
                     ? "certified"
                     : null,
-              dirFilter.minYears !== undefined
-                ? dirFilter.maxYears !== undefined
+              dirFilter.skillConstraints?.length
+                ? dirFilter.skillConstraints
+                    .map((sc) =>
+                      sc.minYears !== undefined && sc.maxYears !== undefined
+                        ? `**${sc.skill}** (${sc.minYears}-${sc.maxYears}y)`
+                        : sc.minYears !== undefined
+                          ? `**${sc.skill}** (${sc.minYears}+y)`
+                          : `**${sc.skill}** (<${sc.maxYears}y)`,
+                    )
+                    .join(", ")
+                : null,
+              dirFilter.minYears !== undefined || dirFilter.maxYears !== undefined
+                ? dirFilter.minYears !== undefined && dirFilter.maxYears !== undefined
                   ? `${dirFilter.minYears}-${dirFilter.maxYears} years' experience`
-                  : `${dirFilter.minYears}+ years' experience`
+                  : dirFilter.minYears !== undefined
+                    ? `${dirFilter.minYears}+ years' experience`
+                    : `under ${dirFilter.maxYears} years' experience`
                 : null,
               dirFilter.usedWithinMonths !== undefined
                 ? `used in the last ${dirFilter.usedWithinMonths} month${dirFilter.usedWithinMonths === 1 ? "" : "s"}`
                 : null,
-              dirFilter.projects?.length ? `project **${dirFilter.projects.join(", ")}**` : null,
-              dirFilter.available ? "currently **available**" : null,
+              dirFilter.projects?.length
+                ? dirFilter.projects.length > 1
+                  ? `${dirFilter.projectMode === "and" ? "all of" : "any of"} projects **${dirFilter.projects.join(", ")}**`
+                  : `project **${dirFilter.projects.join(", ")}**`
+                : null,
+              dirFilter.minAvailabilityPercent !== undefined
+                ? `at least ${dirFilter.minAvailabilityPercent}% free`
+                : dirFilter.available
+                  ? "currently **available**"
+                  : null,
+              dirFilter.department ? `in **${dirFilter.department}**` : null,
             ].filter(Boolean);
             const isFollowUp = dirHasActiveFilterRef.current;
             addTurn(activeId, {

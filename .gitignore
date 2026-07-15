@@ -67,6 +67,9 @@ ENV/
 *.sw?
 scratch/
 
+*.db-shm
+*.db-wal
+
 
 # MCP session cookies (SSO portal sessions — never commit)
 backend/mcp_server/sessions/
