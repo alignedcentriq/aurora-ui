@@ -1,7 +1,7 @@
 import { useAuth } from "@/lib/auth-store";
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
-  UserCog,
+  UsersRound,
   Users,
   CalendarClock,
   Mail,
@@ -22,7 +22,6 @@ import {
   Server,
   ShieldX,
   ChevronDown,
-  ChevronUp,
   Search,
   UserPlus,
   Trophy,
@@ -32,6 +31,9 @@ import {
   ZoomIn,
   Star,
   CalendarIcon,
+  Home,
+  TrendingUp,
+  UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -290,13 +292,17 @@ export function ManagerPortal() {
   return (
     <div className="h-full overflow-y-auto w-full px-4 sm:px-6 py-6 sm:py-8 bg-gradient-to-b from-background via-background to-muted/20">
       {/* Header */}
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-border/60 motion-safe:animate-fade-in">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className="flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
-            <UserCog className="h-6 w-6 sm:h-7 sm:w-7 text-[var(--collaboration)] animate-pulse" />
+          <div className="relative flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
+            <UsersRound className="h-6 w-6 sm:h-7 sm:w-7 text-[var(--collaboration)]" />
+            <span className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-[var(--collaboration)] ring-2 ring-background motion-safe:animate-pulse" />
           </div>
           <div>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-foreground leading-tight">
+              Team
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 max-w-2xl leading-relaxed">
               {isFM
                 ? "Manage hierarchy allocations, track readiness, onboarding, and team operations."
                 : "View your team's attendance, allocations, readiness, and skills."}
@@ -316,7 +322,7 @@ export function ManagerPortal() {
                   <TabsTrigger
                     key={t.id}
                     value={t.id}
-                    className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50 data-[state=inactive]:text-muted-foreground"
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-all duration-200 ease-out data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50 data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground data-[state=inactive]:hover:bg-background/50"
                   >
                     <Icon className="h-3.5 w-3.5" />
                     <span className="whitespace-nowrap hidden sm:inline">{t.label}</span>
@@ -514,17 +520,14 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
           {/* Stats grid */}
           <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              { label: "Team Size", value: report.headcount, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
-              { label: "Present", value: totals!.present, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-              { label: "Absent", value: totals!.absent, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-              { label: "WFH", value: totals!.wfh, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-              { label: "Late", value: totals!.late, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-              { label: "Half-day", value: totals!.half_day, color: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20" },
-            ].map((c) => (
-              <div key={c.label} className={`rounded-2xl border ${c.border} ${c.bg} px-4 py-4 backdrop-blur-sm hover:shadow-md transition-all duration-200 group`}>
-                <p className={`text-[10.5px] font-bold uppercase tracking-[0.1em] ${c.color} mb-2`}>{c.label}</p>
-                <p className="text-2xl sm:text-3xl font-extrabold text-foreground group-hover:scale-105 transition-transform origin-left">{c.value}</p>
-              </div>
+              { label: "Team Size", value: report.headcount, icon: Users, tone: "violet" as const },
+              { label: "Present", value: totals!.present, icon: CheckCircle2, tone: "emerald" as const },
+              { label: "Absent", value: totals!.absent, icon: AlertCircle, tone: "rose" as const },
+              { label: "WFH", value: totals!.wfh, icon: Home, tone: "sky" as const },
+              { label: "Late", value: totals!.late, icon: Clock, tone: "amber" as const },
+              { label: "Half-day", value: totals!.half_day, icon: Power, tone: "orange" as const },
+            ].map((c, i) => (
+              <StatTile key={c.label} label={c.label} value={c.value} icon={c.icon} tone={c.tone} index={i} />
             ))}
           </div>
 
@@ -913,21 +916,21 @@ function EmailAutomationTab({ auth }: { auth: Record<string, string> }) {
             </div>
           )}
           {loading ? (
-            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading automations…
-            </div>
+            <LoadingState label="Loading automations…" />
           ) : schedules.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                <CalendarClock className="h-5 w-5" />
-              </span>
-              <p className="text-sm font-medium text-muted-foreground">No automations yet</p>
-              <p className="text-xs text-muted-foreground/70">Add one to get attendance reports emailed on a schedule.</p>
-            </div>
+            <EmptyState
+              label="No automations yet"
+              icon={CalendarClock}
+              hint="Add one to get attendance reports emailed on a schedule."
+            />
           ) : (
             <div className="space-y-2.5">
-              {schedules.map((s) => (
-                <Card key={s.id} className="shadow-none">
+              {schedules.map((s, i) => (
+                <Card
+                  key={s.id}
+                  className="shadow-none motion-safe:animate-fade-in"
+                  style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+                >
                   <CardContent className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1256,15 +1259,12 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         {[
-          { label: "Team Members", value: totalMembers, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
-          { label: "Active Projects", value: uniqueActiveProjects, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-          { label: "Avg Effort", value: `${avgEffort}%`, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-          { label: "Avg Billability", value: `${avgBillability}%`, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-        ].map((c) => (
-          <div key={c.label} className={cn("rounded-2xl border px-4 py-4 backdrop-blur-sm", c.border, c.bg)}>
-            <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em] mb-2", c.color)}>{c.label}</p>
-            <p className="text-2xl sm:text-3xl font-extrabold text-foreground">{c.value}</p>
-          </div>
+          { label: "Team Members", value: totalMembers, icon: Users, tone: "violet" as const },
+          { label: "Active Projects", value: uniqueActiveProjects, icon: Briefcase, tone: "emerald" as const },
+          { label: "Avg Effort", value: `${avgEffort}%`, icon: Gauge, tone: "sky" as const },
+          { label: "Avg Billability", value: `${avgBillability}%`, icon: TrendingUp, tone: "amber" as const },
+        ].map((c, i) => (
+          <StatTile key={c.label} label={c.label} value={c.value} icon={c.icon} tone={c.tone} index={i} />
         ))}
       </div>
 
@@ -1294,7 +1294,11 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
       </Card>
 
       {grouped.size === 0 ? (
-        <EmptyState label="No allocations found matching your criteria." />
+        <EmptyState
+          label="No allocations found"
+          icon={Briefcase}
+          hint="Try adjusting your search or clearing the active-only filter."
+        />
       ) : (
         <div className="space-y-4">
           {[...grouped.entries()].map(([name, rows]) => {
@@ -1423,7 +1427,7 @@ function SkillsTab({ auth }: { auth: Record<string, string> }) {
         />
       </div>
       {grouped.size === 0 ? (
-        <EmptyState label="No skills on record for your team." />
+        <EmptyState label="No skills on record" icon={Wrench} hint="Skills recorded against your team members will appear here." />
       ) : (
         <div className="space-y-4">
           {[...grouped.entries()].map(([name, rows]) => (
@@ -1526,7 +1530,7 @@ function OnboardingTab({ auth, team }: { auth: Record<string, string>; team: Tea
       {loading ? (
         <LoadingState label="Loading onboarding requests…" />
       ) : requests.length === 0 ? (
-        <EmptyState label="No onboarding requests yet." />
+        <EmptyState label="No onboarding requests yet" icon={ClipboardList} hint="Requests you submit for your team will show up here." />
       ) : (
         <div className="space-y-3">
           {requests.map((r) => {
@@ -1831,7 +1835,7 @@ function PMORequestsTab({
       {loading ? (
         <LoadingState label="Loading PMO requests…" />
       ) : requests.length === 0 ? (
-        <EmptyState label="No PMO requests yet." />
+        <EmptyState label="No PMO requests yet" icon={Server} hint="VDI and access requests you submit will appear here." />
       ) : (
         <div className="space-y-3">
           {requests.map((r) => (
@@ -2357,11 +2361,11 @@ function CapacityStrip({ insights }: { insights: Insights | null }) {
   const c = insights?.capacity;
   if (!c) return null;
   const tiles = [
-    { label: "Avg Load", value: `${c.avg_load}%`, color: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20" },
-    { label: "Fully Utilized", value: c.fully_utilized, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-    { label: "Overloaded", value: c.overloaded, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
-    { label: "On Bench", value: c.on_bench, color: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-    { label: "Available Now", value: c.available, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+    { label: "Avg Load", value: `${c.avg_load}%`, icon: Gauge, tone: "violet" as const },
+    { label: "Fully Utilized", value: c.fully_utilized, icon: CheckCircle2, tone: "emerald" as const },
+    { label: "Overloaded", value: c.overloaded, icon: AlertCircle, tone: "rose" as const },
+    { label: "On Bench", value: c.on_bench, icon: Briefcase, tone: "sky" as const },
+    { label: "Available Now", value: c.available, icon: UserCheck, tone: "amber" as const },
   ];
   const buckets = [
     { key: "in_30" as const, label: "Next 30 days" },
@@ -2377,11 +2381,8 @@ function CapacityStrip({ insights }: { insights: Insights | null }) {
         Team Capacity
       </h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-        {tiles.map((t) => (
-          <div key={t.label} className={cn("rounded-2xl border px-4 py-4 backdrop-blur-sm", t.border, t.bg)}>
-            <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em] mb-2", t.color)}>{t.label}</p>
-            <p className="text-2xl sm:text-3xl font-extrabold text-foreground">{t.value}</p>
-          </div>
+        {tiles.map((t, i) => (
+          <StatTile key={t.label} label={t.label} value={t.value} icon={t.icon} tone={t.tone} index={i} />
         ))}
       </div>
 
@@ -2650,14 +2651,80 @@ function ReadinessLeaderboard({ insights }: { insights: Insights | null }) {
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2.5 py-8 text-sm text-muted-foreground">
-      <Loader2 className="h-4 w-4 animate-spin text-primary" /> {label}
+    <div className="flex flex-col items-center justify-center gap-3 py-14 text-center motion-safe:animate-fade-in">
+      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      </div>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
     </div>
   );
 }
 
-function EmptyState({ label }: { label: string }) {
-  return <p className="py-6 text-sm text-muted-foreground">{label}</p>;
+function EmptyState({
+  label,
+  icon: Icon = Search,
+  hint,
+}: {
+  label: string;
+  icon?: typeof Search;
+  hint?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2.5 py-14 text-center motion-safe:animate-fade-in">
+      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-muted/60 border border-border/60 text-muted-foreground">
+        <Icon className="h-5 w-5" />
+      </div>
+      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+      {hint && <p className="text-xs text-muted-foreground/60 max-w-xs leading-relaxed">{hint}</p>}
+    </div>
+  );
+}
+
+// Elevated KPI/stat tile — used across Attendance, Allocations, and Readiness (Team Capacity).
+type StatTone = "violet" | "emerald" | "rose" | "sky" | "amber" | "orange";
+const STAT_TONE_CLS: Record<StatTone, { text: string; bg: string; border: string; iconBg: string }> = {
+  violet: { text: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20", iconBg: "bg-violet-500/15" },
+  emerald: { text: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20", iconBg: "bg-emerald-500/15" },
+  rose: { text: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20", iconBg: "bg-rose-500/15" },
+  sky: { text: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20", iconBg: "bg-sky-500/15" },
+  amber: { text: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20", iconBg: "bg-amber-500/15" },
+  orange: { text: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20", iconBg: "bg-orange-500/15" },
+};
+
+function StatTile({
+  label,
+  value,
+  icon: Icon,
+  tone,
+  index = 0,
+}: {
+  label: string;
+  value: React.ReactNode;
+  icon: typeof Gauge;
+  tone: StatTone;
+  index?: number;
+}) {
+  const c = STAT_TONE_CLS[tone];
+  return (
+    <div
+      className={cn(
+        "group rounded-2xl border px-4 py-4 backdrop-blur-sm shadow-sm transition-all duration-200 ease-out motion-safe:hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-fade-in",
+        c.border,
+        c.bg,
+      )}
+      style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em]", c.text)}>{label}</p>
+        <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-lg", c.iconBg)}>
+          <Icon className={cn("h-3.5 w-3.5", c.text)} />
+        </span>
+      </div>
+      <p className="text-2xl sm:text-3xl font-extrabold text-foreground tabular-nums motion-safe:group-hover:scale-105 transition-transform duration-200 origin-left">
+        {value}
+      </p>
+    </div>
+  );
 }
 
 function ExpandableGroup({
@@ -2676,7 +2743,7 @@ function ExpandableGroup({
     <Card className="overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 text-left hover:bg-muted/30 transition-colors"
+        className="flex w-full items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 text-left hover:bg-muted/30 transition-colors duration-200"
       >
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold text-foreground truncate">{title}</span>
@@ -2684,13 +2751,14 @@ function ExpandableGroup({
             {count} {unit}{count !== 1 ? "s" : ""}
           </Badge>
         </div>
-        {open ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        )}
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-200 ease-out",
+            open && "rotate-180",
+          )}
+        />
       </button>
-      {open && children}
+      {open && <div className="motion-safe:animate-fade-in">{children}</div>}
     </Card>
   );
 }
@@ -2964,13 +3032,11 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
       {loading ? (
         <LoadingState label="Loading appreciations…" />
       ) : list.length === 0 ? (
-        <div className="flex flex-col items-center py-12 text-center">
-          <Trophy className="h-10 w-10 text-amber-400/40 mb-3" />
-          <p className="text-sm font-medium text-muted-foreground">No appreciations recorded yet</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            Start by adding the first client appreciation above.
-          </p>
-        </div>
+        <EmptyState
+          label="No appreciations recorded yet"
+          icon={Trophy}
+          hint="Start by adding the first client appreciation above."
+        />
       ) : (
         <div className="space-y-4">
           {Object.entries(grouped).map(([email, rows]) => (

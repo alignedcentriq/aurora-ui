@@ -584,6 +584,11 @@ async def chat_load():
         stats["ml01_load_rejects"] = get_load_reject_status()
     except Exception:
         pass
+    try:
+        from app.services.latency_tracker import get_speed_stats
+        stats.update(get_speed_stats())
+    except Exception:
+        pass
     return stats
 
 
@@ -1866,6 +1871,8 @@ async def chat(
                             if isinstance(content, str) and content:
                                 if ttft_ms is None:
                                     ttft_ms = int((time.time() - start_time) * 1000)
+                                    from app.services.latency_tracker import record_ttft
+                                    record_ttft(ttft_ms)
                                 if not st["client_gone"]:
                                     st["streamed"] = True
                                 accumulated_text += content

@@ -9,6 +9,8 @@ interface ChatLoad {
   max_concurrency?: number;
   max_queue?: number;
   error?: string;
+  avg_ttft_ms?: number | null;
+  speed?: "fast" | "normal" | "slow" | null;
 }
 
 interface ServerLoad {
@@ -18,6 +20,12 @@ interface ServerLoad {
   waiting: number;
   active: number;
   maxConcurrency: number;
+  /** True when recent responses are taking noticeably long to start (CPU-bound
+   * generation can be slow even with a free slot — a separate signal from
+   * queueing/concurrency). Null/false when there isn't enough recent traffic
+   * to say anything meaningful. */
+  serverSlow: boolean;
+  avgTtftMs: number | null;
 }
 
 const IDLE_POLL_MS = 15_000;
@@ -35,6 +43,8 @@ export function useServerLoad(): ServerLoad {
     waiting: 0,
     active: 0,
     maxConcurrency: 0,
+    serverSlow: false,
+    avgTtftMs: null,
   });
   // Keep the latest busy flag in a ref so the interval can re-pace itself
   // (faster while busy) without resubscribing on every poll.
@@ -56,10 +66,18 @@ export function useServerLoad(): ServerLoad {
         // Unknown load (Redis error or missing counters) → never report busy.
         const known = data.error == null && max > 0;
         const serverBusy = known && (waiting > 0 || active >= max);
+        const serverSlow = data.speed === "slow";
 
         if (!cancelled) {
-          busyRef.current = serverBusy;
-          setLoad({ serverBusy, waiting, active, maxConcurrency: max });
+          busyRef.current = serverBusy || serverSlow;
+          setLoad({
+            serverBusy,
+            waiting,
+            active,
+            maxConcurrency: max,
+            serverSlow,
+            avgTtftMs: data.avg_ttft_ms ?? null,
+          });
         }
       } catch {
         // Backend unreachable / non-JSON — fail quiet, leave state as-is.
