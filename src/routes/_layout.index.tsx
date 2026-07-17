@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AssistantView } from "@/components/assistant/AssistantView";
+import { MasterModeLanding } from "@/components/three/MasterModeLanding";
+import { useMasterModeStore } from "@/lib/master-mode-store";
 
 export const Route = createFileRoute("/_layout/")({
   head: () => ({
@@ -22,5 +24,6 @@ export const Route = createFileRoute("/_layout/")({
 });
 
 function Index() {
-  return <AssistantView />;
+  const isMasterMode = useMasterModeStore((s) => s.isMasterMode);
+  return isMasterMode ? <MasterModeLanding /> : <AssistantView />;
 }

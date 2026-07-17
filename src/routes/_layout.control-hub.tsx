@@ -66,6 +66,9 @@ const ConnectorStudio = lazy(() => import("@/pages/ConnectorStudio"));
 const ObservabilityDashboard = lazy(() =>
   import("@/pages/ObservabilityDashboard").then((m) => ({ default: m.ObservabilityDashboard })),
 );
+const MemoryBrainTab = lazy(() =>
+  import("@/pages/MemoryBrainTab").then((m) => ({ default: m.MemoryBrainTab })),
+);
 const AnalyticsBuilder = lazy(() =>
   import("@/pages/AnalyticsBuilder").then((m) => ({ default: m.AnalyticsBuilder })),
 );
@@ -107,6 +110,7 @@ type TabId =
   | "dashboard"
   | "analytics-builder"
   | "observability"
+  | "memory-brain"
   | "llm-controls"
   | "role-control"
   | "audit-trail"
@@ -186,6 +190,15 @@ const TABS: TabItem[] = [
     show: (role) => role === "Super Admin" || role === "IT",
     requireScope: "observability",
     component: ObservabilityDashboard,
+  },
+  {
+    id: "memory-brain",
+    label: "Memory Brain",
+    category: "System & Ops",
+    icon: Brain,
+    color: "#00c4bb",
+    show: (role) => role === "Super Admin" || role === "IT" || role === "Admin",
+    component: MemoryBrainTab,
   },
   {
     id: "llm-controls",
@@ -357,6 +370,8 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "audit-trail":
     "Complete history of role, access, automation, and settings changes — who, what, when, before and after.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
+  "memory-brain":
+    "Explore everything the assistant knows and has learned from chat as a living neuron graph.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
   "automation-hub": "Automate email sequences, rule actions, and triggers.",
   "admin-portal": "Submit transport claims, desk keys, parking stickers, and library books.",

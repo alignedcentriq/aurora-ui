@@ -336,17 +336,33 @@ async def context_manager_node(state: AgentState) -> dict:
             _summarize_conversation_async(session_id, messages[:-6], state.get("domain"))
         )
 
-    if not persisted_summary:
+    # Long-term memory: semantically retrieve facts saved about this user in past
+    # sessions (via remember_user_fact) that are relevant to the current message.
+    user_email = state.get("user_email")
+    query_text = state.get("resolved_query") or next(
+        (getattr(m, "content", "") for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+    )
+    memories = []
+    if user_email and query_text:
+        memories = await asyncio.to_thread(_retrieve_user_memories, user_email, query_text)
+
+    if not persisted_summary and not memories:
         return {}
 
     existing_feedback = state.get("feedback_context") or ""
-    updated_feedback = (
-        f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{persisted_summary}\n\n{existing_feedback}"
-    )
-    return {
-        "conversation_summary": persisted_summary,
-        "feedback_context": updated_feedback,
-    }
+    updated_feedback = existing_feedback
+    if memories:
+        facts_block = "\n".join(f"- {m}" for m in memories)
+        updated_feedback = f"[REMEMBERED FACTS ABOUT THIS USER]:\n{facts_block}\n\n{updated_feedback}"
+    if persisted_summary:
+        updated_feedback = (
+            f"[CONVERSATION SUMMARY — earlier turns compressed]:\n{persisted_summary}\n\n{updated_feedback}"
+        )
+
+    result = {"feedback_context": updated_feedback}
+    if persisted_summary:
+        result["conversation_summary"] = persisted_summary
+    return result
 
 
 def _load_conversation_summary(thread_id: str) -> str:
@@ -364,6 +380,72 @@ def _load_conversation_summary(thread_id: str) -> str:
             db.close()
     except Exception:
         return ""
+
+
+def _save_user_memory(user_email: str, fact: str, domain: Optional[str] = None) -> str:
+    """Persist a durable fact about the user (long-term memory), embedded for later
+    semantic retrieval by `_retrieve_user_memories`. Dedupes on exact fact text."""
+    fact = (fact or "").strip()
+    if not user_email or not fact:
+        return "No fact given."
+    from app.database import SessionLocal
+    from app.models import UserMemory
+    from app.services.policy_service import PolicyService
+    db = SessionLocal()
+    try:
+        existing = db.query(UserMemory).filter(
+            UserMemory.user_email == user_email, UserMemory.fact == fact,
+        ).first()
+        if not existing:
+            db.add(UserMemory(
+                user_email=user_email, fact=fact, domain=domain,
+                embedding=PolicyService._get_embedding(fact),
+            ))
+            db.commit()
+        return "Got it, I'll remember that."
+    except Exception:
+        db.rollback()
+        return "Got it, I'll remember that."
+    finally:
+        db.close()
+
+
+def _retrieve_user_memories(user_email: str, query: str, limit: int = 3) -> list:
+    """Semantic search over a user's saved long-term facts. [] on no match or any failure.
+
+    Skips the embedding call entirely when the user has no saved facts yet (the common
+    case) — an embedding round-trip to the shared LLM server is expensive per-turn latency
+    to pay for a guaranteed-empty result."""
+    if not user_email or not query:
+        return []
+    from app.database import SessionLocal
+    from app.models import UserMemory
+    from app.services.policy_service import PolicyService
+    try:
+        db = SessionLocal()
+        try:
+            if not db.query(UserMemory.id).filter(UserMemory.user_email == user_email).first():
+                return []
+            emb = PolicyService._get_embedding(query)
+            if not emb:
+                return []
+            dist_expr = UserMemory.embedding.cosine_distance(emb)
+            rows = (
+                db.query(UserMemory)
+                .filter(
+                    UserMemory.user_email == user_email,
+                    UserMemory.embedding.isnot(None),
+                    dist_expr < 0.65,
+                )
+                .order_by(dist_expr)
+                .limit(limit)
+                .all()
+            )
+            return [r.fact for r in rows]
+        finally:
+            db.close()
+    except Exception:
+        return []
 
 
 async def _summarize_conversation_async(thread_id: str, messages_to_summarize, domain: str) -> None:
@@ -517,6 +599,15 @@ def find_apps(query: str):
     matching apps with their links — present them with the link; do not invent apps or URLs."""
     from app.services.app_directory_service import AppDirectoryService
     return AppDirectoryService.search(query)
+
+
+@tool
+def remember_user_fact(fact: str, domain: str = "", state: Annotated[dict, InjectedState] = None):
+    """Save a durable personal fact or preference the user shared, for future conversations
+    (e.g. "prefers WFH on Fridays", "laptop is a Dell XPS 15"). Only call when the user states
+    something clearly worth remembering long-term — not for one-off request details."""
+    email = (state or {}).get("user_email") or settings.DEFAULT_USER_EMAIL
+    return _save_user_memory(email, fact, domain or None)
 
 
 # ── HR Employee Directory Tools ──────────────────────────────────────────────
@@ -4857,7 +4948,7 @@ async def ms365_agent_node(state: AgentState):
     return {"messages": [last_ai]}
 
 
-general_tools = [get_announcements, search_hr_policies, search_company_projects, find_apps]
+general_tools = [get_announcements, search_hr_policies, search_company_projects, find_apps, remember_user_fact]
 general_tool_node = ToolNode(general_tools)
 
 
@@ -4944,7 +5035,9 @@ def general_agent(state: AgentState):
         "You handle company announcements, general policy questions, and company-project questions. "
         "Tools: get_announcements (news/updates), search_hr_policies (policy lookups), "
         "search_company_projects (what projects the company has done, a project's summary/details, demos), "
-        "find_apps (which internal app/tool/portal/website to use for a task, e.g. 'where do I book travel'). "
+        "find_apps (which internal app/tool/portal/website to use for a task, e.g. 'where do I book travel'), "
+        "remember_user_fact (save a durable personal fact/preference the user shares, e.g. 'remember my laptop "
+        "is a Dell XPS' — call it once, silently, then confirm briefly; don't call it for one-off request details). "
         "Always use tools first, never guess. Only suggest contacting HR/Admin if tools return no results. "
         "Do not offer further assistance unless asked.\n\n"
         "Company fact — the 4 C's (core values): Caring, Curious, Collaborative, Courageous.",

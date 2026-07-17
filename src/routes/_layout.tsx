@@ -27,6 +27,7 @@ import {
   Rocket,
   UsersRound,
   RotateCcw,
+  BrainCircuit,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -43,6 +44,8 @@ import {
   POPULAR_CLOCK_TZS,
 } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
+import { useMasterModeStore } from "@/lib/master-mode-store";
+import { setChatSyncUser, hydrateChatFromServer } from "@/lib/chat-sync";
 import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
 import { cn } from "@/lib/utils";
@@ -311,6 +314,8 @@ function LayoutComponent() {
   const removeClock = useSettings((s) => s.removeClock);
   const resetClocks = useSettings((s) => s.resetClocks);
   const openIntro = useIntroStore((s) => s.open);
+  const isMasterMode = useMasterModeStore((s) => s.isMasterMode);
+  const toggleMasterMode = useMasterModeStore((s) => s.toggle);
   // Intro tour play button is restricted to the app owner only.
   const canWatchIntro = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
 
@@ -324,6 +329,14 @@ function LayoutComponent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [userWantsCollapsed, setUserWantsCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Recent Chats is tied to the account, not the device: pull the user's server-saved
+  // threads once on login and merge them into the local store, then let chat-sync.ts's
+  // subscriber push any further local changes back up for the same account.
+  useEffect(() => {
+    setChatSyncUser(user?.email ?? null);
+    if (user?.email) hydrateChatFromServer(user.email);
+  }, [user?.email]);
 
   // Close mobile drawer when route changes
   useEffect(() => {
@@ -450,7 +463,10 @@ function LayoutComponent() {
     setDeleteConfirmId(null);
     deleteThread(id);
     try {
-      await fetch(`/api/chat/${id}`, { method: "DELETE" });
+      await fetch(`/api/chat/${id}`, {
+        method: "DELETE",
+        headers: user?.email ? { "x-user-email": user.email } : {},
+      });
     } catch {
       // failed silently
     }
@@ -752,6 +768,19 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
+
+              <button
+                onClick={toggleMasterMode}
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-lg transition-all cursor-pointer",
+                  isMasterMode
+                    ? "bg-[#00c4bb]/20 text-[#00c4bb]"
+                    : "hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
+                )}
+                title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+              >
+                <BrainCircuit className="h-4 w-4" />
+              </button>
             </div>
           )}
 
@@ -784,6 +813,18 @@ function LayoutComponent() {
                 ) : (
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
+              </button>
+              <button
+                onClick={toggleMasterMode}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer shadow-sm",
+                  isMasterMode
+                    ? "bg-[#00c4bb]/20 text-[#00c4bb]"
+                    : "bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
+                )}
+                title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+              >
+                <BrainCircuit className="h-4 w-4" />
               </button>
             </div>
           )}

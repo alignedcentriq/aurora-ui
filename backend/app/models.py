@@ -978,7 +978,8 @@ class ConversationSummary(Base):
 
 class UserMemory(Base):
     """Long-term memory: persistent facts about individual users.
-    Written by remember_user_fact tool; retrieved semantically by memory_retriever_node.
+    Written by the remember_user_fact tool; retrieved semantically inside context_manager_node
+    (agent.py) and injected into feedback_context each turn.
     E.g. "user's laptop is Dell XPS 15", "user prefers WFH on Fridays".
     """
     __tablename__ = "user_memories"
@@ -991,6 +992,22 @@ class UserMemory(Base):
     domain = Column(String, nullable=True)  # "it_support", "hr", etc.
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_accessed_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ChatSession(Base):
+    """Server-side mirror of a frontend chat thread, keyed by user account rather than
+    device/browser — the sync target for the Recent Chats list so it matches across
+    devices for the same logged-in user. The frontend still keeps an offline-first copy
+    in localStorage (see src/lib/chat-store.ts); this table is what it syncs against.
+    Private threads (Thread.isPrivate) are never written here.
+    """
+    __tablename__ = "chat_sessions"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(String, primary_key=True)  # same id as the frontend Thread / LangGraph thread_id
+    user_email = Column(String, index=True, nullable=False)
+    turns = Column(JSON, nullable=False)  # serialized Turn[] (matches the frontend Thread shape)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, index=True)
 
 
 class ToolSession(Base):
