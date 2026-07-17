@@ -182,6 +182,16 @@ def _cache_set(key: str, data):
     _cache[key] = (time.monotonic() + _CACHE_TTL, data)
 
 
+def _status_for_hours(hours: float) -> str:
+    if hours >= 4:
+        return "Present"
+    if hours >= 1:
+        return "Half-day"
+    # Record exists but duration is very short — treat as Present
+    # (could be a forgotten punch-out; check-in is the authoritative signal)
+    return "Present"
+
+
 def _map_row(row: dict) -> dict:
     check_date = row.get("CHECKDATE")
     if isinstance(check_date, datetime.datetime):
@@ -198,22 +208,44 @@ def _map_row(row: dict) -> dict:
     if check_out is not None and check_in is not None and check_out <= check_in:
         check_out = None
 
-    if hours >= 4:
-        status = "Present"
-    elif hours >= 1:
-        status = "Half-day"
-    else:
-        # Record exists but duration is very short — treat as Present
-        # (could be a forgotten punch-out; check-in is the authoritative signal)
-        status = "Present"
-
     return {
         "date": check_date,
         "check_in": check_in,
         "check_out": check_out,
-        "status": status,
+        "status": _status_for_hours(hours),
         "hours": float(hours),
     }
+
+
+def _collapse_by_date(rows: list[dict]) -> list[dict]:
+    """Merge multiple same-day rows into one per date. The eSSL view logs a
+    separate CHECKINTIME/CHECKOUTTIME pair for every door swipe, so an
+    employee who re-enters the building later in the day (a meeting, lunch,
+    a site visit) gets a second row for that date. A naive last-wins read of
+    that list would show the LATE re-entry punch as the day's "check-in"
+    instead of the actual first arrival. Collapse to earliest check-in,
+    latest check-out, and summed hours per date."""
+    by_date: dict[datetime.date, dict] = {}
+    for r in rows:
+        d = r["date"]
+        existing = by_date.get(d)
+        if existing is None:
+            by_date[d] = dict(r)
+            continue
+        if r["check_in"] is not None and (
+            existing["check_in"] is None or r["check_in"] < existing["check_in"]
+        ):
+            existing["check_in"] = r["check_in"]
+        if r["check_out"] is not None and (
+            existing["check_out"] is None or r["check_out"] > existing["check_out"]
+        ):
+            existing["check_out"] = r["check_out"]
+        existing["hours"] += r["hours"]
+
+    for r in by_date.values():
+        r["status"] = _status_for_hours(r["hours"])
+
+    return sorted(by_date.values(), key=lambda r: r["date"])
 
 
 def _norm(name: str) -> str:
@@ -345,7 +377,7 @@ def fetch_employee_records(
         logger.warning("eSSL attendance fetch failed for %r: %s", employee_name, e)
         raise AttendanceSourceError(str(e)) from e
 
-    result = [_map_row(r) for r in rows]
+    result = _collapse_by_date([_map_row(r) for r in rows])
     if not live:
         _cache_set(cache_key, result)
     return result
@@ -420,6 +452,9 @@ def fetch_team_records(
         mapped = _map_row(r)
         for req in essl_to_req.get(essl_key, []):
             result[req].append(mapped)
+
+    for name in result:
+        result[name] = _collapse_by_date(result[name])
 
     if not live:
         _cache_set(cache_key, result)
