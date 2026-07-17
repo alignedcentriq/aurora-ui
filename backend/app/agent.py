@@ -532,7 +532,10 @@ def search_employee_directory(query: str, function: str = "", designation: str =
 
 @tool
 def get_employee_profile(name_or_email: str):
-    """Get the full non-sensitive profile for an employee by name or email."""
+    """Get the full non-sensitive profile for an employee by name or email.
+    Pass the person's name or email EXACTLY as given by the user — never guess
+    or construct an email address (e.g. don't turn "Jane Doe" into
+    "jane.doe@company.com"); if no email was given, pass the name as typed."""
     return EmployeeService.get_profile(name_or_email)
 
 @tool
@@ -1451,7 +1454,7 @@ _KW_HR_REFERRAL = re.compile(
 )
 
 _KW_HR_DOC = re.compile(
-    r'\b(experience\s+certificate|generate\s+.{0,15}(certificate|letter|noc)|'
+    r'\b(experience\s+(?:certificate|letter)|generate\s+.{0,15}(certificate|letter|noc)|'
     r'relieving\s+letter|salary\s+certificate|noc\s+for)\b', re.I
 )
 
@@ -1476,7 +1479,14 @@ _KW_HR_GRIEVANCE = re.compile(
 
 _KW_HR_PEOPLE = re.compile(
     r'\b(employee\s+directory|org\s+chart|department\s+headcount|'
-    r'who\s+is\s+\w+\s+\w+|find\s+(employee|person|people)\s+with|'
+    # "who is <name/role>" is a person lookup ("who is Shivam Sharma", "who is the
+    # CEO") -- but NOT when it's really asking who owns/handles something ("who is
+    # responsible for the wifi outage", "who is the contact for expense approvals").
+    # Those aren't person-name queries; excluding them here lets the message fall
+    # through to its real domain (IT/admin/etc.) instead of a bogus employee lookup.
+    r'who\s+is\s+(?!responsible\b|accountable\b|in\s+charge\b|'
+    r'the\s+(?:contact|owner|point\s+of\s+contact)\b|handling\b|managing\b)\w+\s+\w+|'
+    r'find\s+(employee|person|people)\s+with|'
     r'who\s+has\s+\w+\s+skills?)\b', re.I
 )
 
@@ -1570,9 +1580,13 @@ _KW_CONTACT_LOOKUP = re.compile(
     r"blood\s+group|blood\s+type|joining\s+date|join(?:ed|ing)\s+(?:on|date)|"
     r"date\s+of\s+joining|doj|tenure|experience|grade|level|nationality)\b"
     r"|"
-    # "who is X", "tell me about X", "profile of X"
-    r"\b(?:who\s+is|profile\s+of|details?\s+(?:of|for|about)|info(?:rmation)?\s+(?:of|about|for)|"
-    r"tell\s+me\s+about|show\s+me\s+(?:the\s+)?(?:profile|card|details?)\s+(?:of|for))\b"
+    # "profile of X" / "details of X" — NOT bare "who is X" or "tell me about X": those are
+    # too generic (they also cover plain identity questions like "who is Yogesh Chandan" and
+    # off-topic questions like "tell me about aligned automation") and were hijacking
+    # employee_search / general queries into this profile-only fast-path. See
+    # routing_golden.json regressions for "who is <name>" and "tell me about <topic>".
+    r"\b(?:profile\s+of|details?\s+(?:of|for|about)|info(?:rmation)?\s+(?:of|about|for)|"
+    r"show\s+me\s+(?:the\s+)?(?:profile|card|details?)\s+(?:of|for))\b"
     r")",
     re.I
 )
@@ -2214,12 +2228,18 @@ def _try_keyword_route(message: str) -> dict | None:
     # HR — direct contact / profile lookup (phone, seat, joining date, blood group, etc.)
     # Must come BEFORE generic people search so "phone number of X" emits employee_contact,
     # not employee_search, enabling the deterministic fast-path in hr_agent.
+    # Requires an actual person name: without one, a bare field word ("floor", "desk",
+    # "contact", "experience"...) is far more likely to be a facility complaint, desk-key
+    # request, or document request than a specific person's profile — e.g. "the AC on my
+    # floor isn't working" or "desk key for B-07" carry no name and must NOT be captured
+    # here (see routing_golden.json regressions for those exact messages).
     if _KW_CONTACT_LOOKUP.search(text):
         _cname = _extract_person_name(text)
-        return {"domain": "hr", "confidence": 0.95,
-                "reasoning": "Keyword: contact/profile field lookup",
-                "sub_intent": "employee_contact",
-                "entities": {"person_name": _cname} if _cname else {}}
+        if _cname:
+            return {"domain": "hr", "confidence": 0.95,
+                    "reasoning": "Keyword: contact/profile field lookup",
+                    "sub_intent": "employee_contact",
+                    "entities": {"person_name": _cname}}
 
     # HR — people search
     if _KW_HR_PEOPLE.search(text) or _KW_HR_PEOPLE_ROLE.search(text):

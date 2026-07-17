@@ -1,6 +1,17 @@
 """
-Employee directory service — queries EmployeeZohoProfile (non-sensitive ZOHO fields).
-Used by the HR agent for directory search, org-chart, skill-matching, etc.
+Employee directory service — used by the HR agent for directory search, org-chart,
+skill-matching, etc.
+
+Primary source is the live Zoho HR view (see services/zoho_directory_service.py — the
+same authoritative roster the Employee Directory page uses), tried first via the
+`_zoho_*` helpers below. EmployeeZohoProfile (a local CSV-synced overlay table) and
+MS365User are the fallback when the Zoho view is unset/unreachable/empty — mirroring
+_compose_directory()'s "Zoho primary, MS365 fallback" pattern in employee_routes.py.
+
+Skills always come from Alchemy (the org's system of record for skills), via the cached
+alchemy_profile_cache table (see alchemy_service.get_cached_enrichment_map) — never from
+Zoho's own skill fields. find_skills_expert() below is a last-resort fallback used only
+when Alchemy (search_alchemy_skill_experts, the preferred tool) is disabled/unreachable.
 """
 
 from typing import Optional
@@ -27,11 +38,202 @@ def _employee_table(headers: list[str], rows: list[list[str]]) -> str:
 
 class EmployeeService:
 
+    # ── Live Zoho HR view helpers ────────────────────────────────────────────────
+    # All of these are fail-soft: None means "unconfigured, unreachable, or no match" —
+    # callers fall through to the local MS365/EmployeeZohoProfile-based logic below.
+
+    @staticmethod
+    def _zoho_rows() -> Optional[list[dict]]:
+        """Fetch the live Zoho roster, or None if unavailable (unconfigured/unreachable/empty)."""
+        from app.services import zoho_directory_service
+        if not zoho_directory_service.is_configured():
+            return None
+        try:
+            rows = zoho_directory_service.fetch_directory()
+        except Exception:
+            return None
+        return rows or None
+
+    @staticmethod
+    def _zoho_skills_lines(employee_code: Optional[str]) -> list[str]:
+        """Format an employee's skills from the cached Alchemy enrichment (never from
+        Zoho's own skill fields — Alchemy is the org's system of record for skills)."""
+        if not employee_code:
+            return ["- None on file"]
+        try:
+            from app.services import alchemy_service
+            cache = alchemy_service.get_cached_enrichment_map([employee_code])
+            skills = cache.get(employee_code, {}).get("skills") or []
+        except Exception:
+            skills = []
+        if not skills:
+            return ["- None on file"]
+        lines = []
+        for s in skills:
+            name = s.get("skill", "Unknown")
+            extra = " | ".join(x for x in [
+                s.get("competency"),
+                (f"{s['years_experience']} yrs"
+                 if s.get("years_experience") not in (None, "", "0", "0.00") else None),
+                ("Certified" if s.get("certified") else None),
+            ] if x)
+            lines.append(f"- {name}" + (f" ({extra})" if extra else ""))
+        return lines
+
+    @staticmethod
+    def _zoho_profile(identifier: str) -> Optional[str]:
+        rows = EmployeeService._zoho_rows()
+        if not rows:
+            return None
+        term = (identifier or "").strip().lower()
+        if not term:
+            return None
+        matches = [r for r in rows if term in r["name"].lower()
+                   or (r["email"] and term in r["email"].lower())]
+        if not matches:
+            return None
+        exact = [r for r in matches
+                 if r["name"].lower() == term or (r["email"] or "").lower() == term]
+        r = exact[0] if exact else matches[0]
+
+        def _row(label: str, value) -> Optional[list]:
+            v = str(value).strip() if value else None
+            return [label, v] if v else None
+
+        table_rows: list[list[str]] = [
+            ["Email", r["email"] or "N/A"],
+            ["Designation", r["designation"] or "N/A"],
+            ["Department / Function", r["department"] or "N/A"],
+            ["Office Location", r["location"] or "N/A"],
+            ["Reporting Manager", r["reporting_manager"] or "N/A"],
+        ]
+        for row in filter(None, [
+            _row("Functional Manager", r.get("functional_manager")),
+            _row("Phone", r.get("phone")),
+            _row("Extension", r.get("extension")),
+            _row("Birthday", r.get("birthday")),
+        ]):
+            table_rows.append(row)
+
+        lines = [f"### 👤 Employee Profile: **{r['name']}**\n",
+                 _employee_table(["Field", "Detail"], table_rows), "",
+                 "**Skills & Certifications:**"]
+        lines.extend(EmployeeService._zoho_skills_lines(r.get("employee_code")))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _zoho_search(query: str, function: Optional[str], designation: Optional[str],
+                      limit: int) -> Optional[str]:
+        rows = EmployeeService._zoho_rows()
+        if not rows:
+            return None
+        q = (query or "").strip().lower()
+        fn = (function or "").strip().lower()
+        des = (designation or "").strip().lower()
+
+        def match(r: dict) -> bool:
+            if q and not (
+                q in r["name"].lower()
+                or q in (r["designation"] or "").lower()
+                or q in (r["department"] or "").lower()
+                or q in (r["email"] or "").lower()
+            ):
+                return False
+            if fn and fn not in (r["department"] or "").lower():
+                return False
+            if des and des not in (r["designation"] or "").lower():
+                return False
+            return True
+
+        matches = [r for r in rows if match(r)][:limit]
+        if not matches:
+            return None
+        table_rows = [
+            [r["name"], r["designation"] or "N/A", r["department"] or "N/A",
+             r["reporting_manager"] or "N/A", r["email"] or "N/A", r["phone"] or "N/A"]
+            for r in matches
+        ]
+        table = _employee_table(
+            ["Name", "Designation", "Department", "Reporting To", "Email", "Phone"], table_rows
+        )
+        return f"Found {len(matches)} employee(s):\n\n{table}"
+
+    @staticmethod
+    def _zoho_org_chart(name_or_email: str) -> Optional[str]:
+        rows = EmployeeService._zoho_rows()
+        if not rows:
+            return None
+        term = (name_or_email or "").strip().lower()
+        if not term:
+            return None
+        matches = [r for r in rows if term in r["name"].lower()
+                   or (r["email"] and term in r["email"].lower())]
+        if not matches:
+            return None
+        exact = [r for r in matches
+                 if r["name"].lower() == term or (r["email"] or "").lower() == term]
+        person = exact[0] if exact else matches[0]
+        name = person["name"]
+
+        lines = [f"**Org Chart for {name}**"]
+        if person.get("reporting_manager"):
+            lines.append(f"\n**Reports to:** {person['reporting_manager']}")
+        if person.get("functional_manager") and person["functional_manager"] != person.get("reporting_manager"):
+            lines.append(f"**Functional Manager:** {person['functional_manager']}")
+
+        reports = [r for r in rows
+                   if r.get("reporting_manager") and name.lower() in r["reporting_manager"].lower()]
+        if reports:
+            lines.append(f"\n**Direct Reports ({len(reports)}):**")
+            for r in reports:
+                lines.append(f"  • {r['name']} — {r['designation'] or 'N/A'} ({r['email'] or 'N/A'})")
+        else:
+            lines.append("\nNo direct reports found.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _zoho_team_roster(manager_name: str) -> Optional[str]:
+        rows = EmployeeService._zoho_rows()
+        if not rows:
+            return None
+        term = (manager_name or "").strip().lower()
+        if not term:
+            return None
+        reports = [r for r in rows if r.get("reporting_manager") and term in r["reporting_manager"].lower()]
+        if not reports:
+            return None
+        table_rows = [[r["name"], r["designation"] or "N/A", r["email"] or "N/A"] for r in reports]
+        table = _employee_table(["Name", "Designation", "Email"], table_rows)
+        return f"**Team roster for {manager_name} ({len(reports)} members):**\n\n{table}"
+
+    @staticmethod
+    def _zoho_headcount(function: Optional[str] = None) -> Optional[str]:
+        rows = EmployeeService._zoho_rows()
+        if not rows:
+            return None
+        if function:
+            fn = function.strip().lower()
+            count = sum(1 for r in rows if fn in (r.get("department") or "").lower())
+            return f"Active headcount in '{function}': **{count} employees**."
+        counts: dict[str, int] = {}
+        for r in rows:
+            dept = r.get("department") or "Unknown"
+            counts[dept] = counts.get(dept, 0) + 1
+        lines = ["**Headcount by Function:**"]
+        for dept, cnt in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"  • {dept}: {cnt}")
+        return "\n".join(lines)
+
+    # ── Public API — Zoho view first, local tables as fallback ─────────────────
+
     @staticmethod
     def search_directory(query: str, function: Optional[str] = None,
                          designation: Optional[str] = None,
                          limit: int = 10) -> str:
         """Full-text search across name, function, designation, skill_set, expertise."""
+        zoho_hit = EmployeeService._zoho_search(query, function, designation, limit)
+        if zoho_hit is not None:
+            return zoho_hit
         db = SessionLocal()
         try:
             q = db.query(EmployeeZohoProfile)
@@ -153,11 +355,15 @@ class EmployeeService:
     def get_profile(identifier: str) -> str:
         """Get a non-sensitive profile by name or email.
 
-        Authoritative live fields (designation, office location, manager,
-        department) come from the MS365 / Azure AD directory (User.Read.All).
-        Skills come from the self-entered employee_skills table. The Zoho CSV
-        profile is used only to fill fields MS365 doesn't carry.
+        Tries the live Zoho HR view first (authoritative roster — see _zoho_profile).
+        Falls back to MS365 / Azure AD (User.Read.All) + the local Zoho CSV overlay
+        when the person isn't in the Zoho view (unconfigured, unreachable, or a very
+        recent joiner not yet synced there). Skills come from the self-entered
+        employee_skills table in this fallback path.
         """
+        zoho_hit = EmployeeService._zoho_profile(identifier)
+        if zoho_hit:
+            return zoho_hit
         db = SessionLocal()
         try:
             term = f"%{identifier}%"
@@ -177,7 +383,15 @@ class EmployeeService:
             )).first()
 
             if not ms and not profile:
-                return f"No employee profile found for '{identifier}'."
+                # No exact name/email match — this is a single-record lookup, so a person
+                # whose display name doesn't contain `identifier` as a contiguous substring
+                # (word order, nickname, or the caller passed something that isn't a real
+                # name/email at all — e.g. a guessed "first.last@domain" email) falls through
+                # here even though they may be findable another way. Retry with the broader,
+                # multi-field directory search (name/designation/function/skills/email, plus
+                # its own MS365 fallback) instead of failing outright — same DB, no LLM call,
+                # and its "no match" message doesn't echo back a possibly-fabricated identifier.
+                return EmployeeService.search_directory(identifier)
 
             def pick(*vals):
                 for v in vals:
@@ -278,6 +492,9 @@ class EmployeeService:
     @staticmethod
     def get_org_chart(name_or_email: str) -> str:
         """Show the reporting chain above and direct reports below a given employee."""
+        zoho_hit = EmployeeService._zoho_org_chart(name_or_email)
+        if zoho_hit:
+            return zoho_hit
         db = SessionLocal()
         try:
             term = f"%{name_or_email}%"
@@ -319,6 +536,9 @@ class EmployeeService:
     @staticmethod
     def get_team_roster(manager_name: str) -> str:
         """List all direct reports for a given manager."""
+        zoho_hit = EmployeeService._zoho_team_roster(manager_name)
+        if zoho_hit:
+            return zoho_hit
         db = SessionLocal()
         try:
             reports = db.query(EmployeeZohoProfile).filter(
@@ -369,6 +589,9 @@ class EmployeeService:
     @staticmethod
     def get_department_headcount(function: Optional[str] = None) -> str:
         """Count of active employees by function/department."""
+        zoho_hit = EmployeeService._zoho_headcount(function)
+        if zoho_hit is not None:
+            return zoho_hit
         db = SessionLocal()
         try:
             q = db.query(EmployeeZohoProfile).filter(

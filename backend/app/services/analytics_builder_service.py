@@ -1610,7 +1610,20 @@ def builder_chat(
             }
 
         if intent.off_topic:
-            return {"ok": False, "chart": None, "off_topic": True, "explanation": "", "suggestions": []}
+            return {
+                "ok": False,
+                "chart": None,
+                "off_topic": True,
+                "explanation": "That doesn't look like a chartable data request — try describing "
+                               "a metric to visualize, e.g. \"headcount by function as a bar chart\" "
+                               "or \"IT tickets by category last 3 months\".",
+                "suggestions": [
+                    "Headcount by function as bar chart",
+                    "IT tickets by category last 3 months",
+                    "Reimbursements by type as pie chart",
+                    "Training assignments by status",
+                ],
+            }
 
         # Validate chart type
         if intent.chart_type not in CHART_TYPES:
