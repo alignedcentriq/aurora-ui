@@ -703,7 +703,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                 variants={item}
                 layout
                 exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.15 } }}
-                className="relative h-full w-[145px] sm:w-[170px] lg:w-auto shrink-0 lg:shrink"
+                className="relative h-full w-[calc(50%-0.375rem)] sm:w-[calc(33.333%-0.5rem)] lg:w-auto shrink-0 lg:shrink"
               >
                 {/* Remove button — visible in edit mode */}
                 <AnimatePresence>

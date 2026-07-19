@@ -76,7 +76,7 @@ from app.routes.techelevate_local_routes import router as techelevate_local_rout
 from app.routes.udemy_routes import router as udemy_router
 from app.routes.project_iq_routes import router as project_iq_router
 from app.routes.onboarding_routes import router as onboarding_router
-from app.routes.manager_call_routes import public_router as manager_call_public_router
+from app.routes.manager_call_routes import public_router as manager_call_public_router, router as manager_call_router
 from app.routes.offboarding_routes import router as offboarding_router
 from app.services.feedback_service import FeedbackService
 
@@ -212,6 +212,7 @@ app.include_router(udemy_router)
 app.include_router(project_iq_router)
 app.include_router(onboarding_router)
 app.include_router(manager_call_public_router)
+app.include_router(manager_call_router)
 app.include_router(offboarding_router)
 
 _uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")

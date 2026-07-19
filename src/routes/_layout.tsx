@@ -361,18 +361,6 @@ function LayoutComponent() {
     setUserWantsCollapsed(newState);
   };
 
-  const getPageTitle = (path: string) => {
-    if (path === "/") return "Chat Hub";
-    if (path.startsWith("/onboarding")) return "Onboarding Portal";
-    if (path.startsWith("/documents")) return "Document Center";
-    if (path.startsWith("/directory")) return "Employee Directory";
-    if (path.startsWith("/my-requests")) return "My Requests";
-    if (path.startsWith("/team")) return "Team Manager";
-    if (path.startsWith("/control-hub")) return "Control Hub";
-    if (path.startsWith("/settings")) return "Settings";
-    return "Workspace";
-  };
-
   useEffect(() => {
     if (
       location.pathname === "/" ||
@@ -1126,11 +1114,10 @@ function LayoutComponent() {
 
       {/* --- RIGHT SIDE CONTENT AREA --- */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
-        {/* --- PREMIUM WORKSPACE HEADER --- */}
+        {/* --- WORKSPACE TOP BAR (all screen sizes) --- */}
         <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-20 shrink-0 select-none">
-          {/* Left Side: Mobile Hamburger OR Page Title on desktop */}
-          <div className="flex items-center gap-3">
-              {/* Hamburger Button (Mobile Only) */}
+          {/* Left: Hamburger (mobile) + Logo/Brand (mobile only) */}
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
@@ -1139,29 +1126,15 @@ function LayoutComponent() {
             >
               <Menu className="h-5 w-5" />
             </button>
-
-            {/* Page Title (Desktop Only) / Logo + Brand (Mobile Only) */}
-            <div className="flex items-center gap-2">
-              {location.pathname !== "/" && !location.pathname.startsWith("/team") && (
-                <span className="hidden lg:inline text-sm font-bold tracking-tight text-foreground select-none">
-                  {getPageTitle(location.pathname)}
-                </span>
-              )}
-
-              {/* Logo + Brand (Mobile Only) */}
-              <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
-                <Logo size="sm" />
-                <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
-              </Link>
-            </div>
+            <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
+              <Logo size="sm" />
+              <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
+            </Link>
           </div>
 
-          {/* Right Side Utilities */}
+          {/* Right: Bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Notifications: announcements + proactive nudges, merged into one bell */}
             <ProactiveNudgeFeed />
-
-            {/* Admin/system Activity feed */}
             <ActivityBell />
           </div>
         </header>

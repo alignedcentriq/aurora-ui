@@ -234,6 +234,22 @@ def _get_graph_token(user_email: str) -> str | None:
         return None
 
 
+def check_email_health() -> dict:
+    """Check whether the configured system-sender mailbox has a valid, connected MS365
+    token right now. Every onboarding email (welcome, HR-notify, manager-call invite,
+    doc-to-HR) depends on this one mailbox — this powers the HR Portal delivery-health
+    banner so a dead/disconnected token gets noticed instead of failing silently."""
+    mailbox = settings.NOTIFY_TO_EMAIL or settings.PARKING_REMINDER_SENDER or ""
+    if not mailbox:
+        return {"connected": False, "mailbox": "", "reason": "no_mailbox_configured"}
+    token = _get_graph_token(mailbox)
+    return {
+        "connected": bool(token),
+        "mailbox": mailbox,
+        "reason": None if token else "not_connected_or_expired",
+    }
+
+
 def _send(
     user_email: str,
     to: "str | list[str]",

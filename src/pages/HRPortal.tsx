@@ -2,16 +2,8 @@ import { useAuth } from "@/lib/auth-store";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   X,
-  Clock,
   Loader2,
   RefreshCw,
-  Gift,
-  Settings2,
-  Plus,
-  Pencil,
-  Trash2,
-  Send,
-  RotateCcw,
   Inbox,
   AlertCircle,
   FileText,
@@ -19,23 +11,13 @@ import {
   ShieldAlert,
   ChevronDown,
   CheckCircle2,
+  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import {
   Table,
   TableHeader,
@@ -47,9 +29,7 @@ import {
 import {
   Pagination,
   PaginationContent,
-  PaginationEllipsis,
   PaginationItem,
-  PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
@@ -66,7 +46,6 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type PortalTab = "requests" | "welcome-logs" | "welcome-config";
 type RequestType = "escalation" | "document" | "query" | "grievance";
 
 interface RequestItem {
@@ -83,52 +62,7 @@ interface RequestItem {
   raw: Record<string, unknown>;
 }
 
-interface WelcomeLog {
-  id: number;
-  employee_name: string;
-  employee_email: string;
-  status: "pending_hr" | "welcome_sent" | "skipped";
-  created_at: string;
-  acted_at: string | null;
-  acted_by: string | null;
-}
-
-interface WelcomeResource {
-  id: number;
-  name: string;
-  url: string | null;
-  description: string | null;
-  category: string | null;
-  icon: string | null;
-  is_active: boolean;
-  sort_order: number;
-}
-
 // ── Constants ────────────────────────────────────────────────────────────────
-
-const CATEGORY_OPTIONS = [
-  "App Guide",
-  "HR",
-  "Policy",
-  "IT",
-  "Admin",
-  "Facilities",
-  "Video",
-  "Deck",
-  "General",
-];
-
-const CATEGORY_DEFAULT_ICON: Record<string, string> = {
-  Video: "🎬",
-  Deck: "📊",
-  "App Guide": "📱",
-  HR: "👥",
-  Policy: "📋",
-  IT: "💻",
-  Admin: "🏢",
-  Facilities: "🏗️",
-  General: "📌",
-};
 
 const TYPE_BADGE: Record<RequestType, string> = {
   escalation: "bg-rose-500/15 text-rose-400",
@@ -152,10 +86,16 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
+//
+// This page now covers HR case management only (escalations, document requests,
+// HR queries, grievances). Everything onboarding-related — adding employees,
+// triggering/resending welcome emails and manager intro-call invites, welcome
+// content, and manager-call settings — lives in one place: the "Kickoff" view
+// inside Onboarding Tracker (see OnboardingKickoffAdmin.tsx), alongside the
+// journey tracker and step/document/video content admin.
 
 export function HRPortal() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<PortalTab>("requests");
 
   const authHeaders = {
     "Content-Type": "application/json",
@@ -171,47 +111,19 @@ export function HRPortal() {
     );
   }
 
-  const TABS: { id: PortalTab; label: string; icon: React.ElementType }[] = [
-    { id: "requests", label: "Requests", icon: Inbox },
-    { id: "welcome-logs", label: "Welcome Logs", icon: Gift },
-    { id: "welcome-config", label: "Welcome Resources", icon: Settings2 },
-  ];
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
         <div>
           <p className="text-[13px] text-muted-foreground mt-0.5">
-            Manage requests and new employee onboarding
+            Handle escalations, document requests, HR queries, and grievances.
           </p>
         </div>
       </div>
 
-      {/* Top tabs */}
-      <div className="flex gap-1 overflow-x-auto px-4 sm:px-8 pt-4 pb-0 border-b border-[var(--border)] shrink-0 no-scrollbar">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={cn(
-              "flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium rounded-t-lg border-b-2 transition-colors -mb-px",
-              tab === id
-                ? "border-primary text-primary bg-primary/5"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/50",
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {tab === "requests" && <RequestsTab authHeaders={authHeaders} />}
-        {tab === "welcome-logs" && <WelcomeLogsTab authHeaders={authHeaders} />}
-        {tab === "welcome-config" && <WelcomeConfigTab authHeaders={authHeaders} />}
+        <RequestsTab authHeaders={authHeaders} />
       </div>
     </div>
   );
@@ -978,668 +890,3 @@ function ActionPanel({
   );
 }
 
-// ── Welcome Logs Tab ──────────────────────────────────────────────────────────
-
-function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [logs, setLogs] = useState<WelcomeLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [resending, setResending] = useState<number | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
-
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/portal/hr/welcome/logs", { headers: authHeaders });
-      if (!res.ok) throw new Error("Failed");
-      setLogs(await res.json());
-    } catch {
-      toast.error("Failed to load welcome logs");
-    } finally {
-      setLoading(false);
-    }
-  }, [authHeaders]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
-
-  const handleResend = async (logId: number, name: string) => {
-    setResending(logId);
-    try {
-      const res = await fetch(`/api/portal/hr/welcome/resend/${logId}`, {
-        method: "POST",
-        headers: authHeaders,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Failed");
-      }
-      toast.success(`Welcome email sent to ${name}`);
-      fetchLogs();
-    } catch (e: unknown) {
-      toast.error((e as Error).message);
-    } finally {
-      setResending(null);
-    }
-  };
-
-  const stats = {
-    pending: logs.filter((l) => l.status === "pending_hr").length,
-    sent: logs.filter((l) => l.status === "welcome_sent").length,
-    skipped: logs.filter((l) => l.status === "skipped").length,
-  };
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 px-8 py-4 shrink-0">
-        {[
-          {
-            label: "Pending HR Action",
-            value: stats.pending,
-            color: "text-amber-400",
-            icon: Clock,
-          },
-          { label: "Welcome Sent", value: stats.sent, color: "text-emerald-400", icon: Send },
-          { label: "Skipped", value: stats.skipped, color: "text-zinc-400", icon: X },
-        ].map(({ label, value, color, icon: Icon }) => (
-          <div
-            key={label}
-            className="rounded-xl border border-[var(--border)] bg-card/40 px-5 py-4 flex items-center gap-4"
-          >
-            <div className={cn("rounded-lg bg-white/5 p-2.5", color)}>
-              <Icon className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-[22px] font-bold text-foreground">{value}</p>
-              <p className="text-[12px] text-muted-foreground">{label}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 pb-3 shrink-0">
-        <p className="text-[12px] text-muted-foreground">
-          HR receives an email when a new employee is detected. Click Yes in that email to send them
-          the welcome package.
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={fetchLogs}
-          className="flex items-center gap-2 text-muted-foreground"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
-      </div>
-
-      <div className="flex-1 overflow-auto px-8 pb-8">
-        {loading ? (
-          <TableLoader />
-        ) : logs.length === 0 ? (
-          <TableEmpty icon={<Gift className="h-4 w-4" />}>
-            <span>No welcome logs yet — they appear when new employees are detected</span>
-          </TableEmpty>
-        ) : (
-          <div className="space-y-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {["Employee", "Detected On", "Status", "Acted", "Actions"].map((h) => (
-                    <TableHead key={h}>{h}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {logs.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((l) => (
-                  <TableRow key={l.id}>
-                    <TableCell className="py-3.5 pr-4">
-                      <div className="font-medium text-foreground">{l.employee_name}</div>
-                      <div className="text-[11px] text-muted-foreground">{l.employee_email}</div>
-                    </TableCell>
-                    <TableCell className="py-3.5 pr-4 text-foreground/60">{l.created_at.slice(0, 10)}</TableCell>
-                    <TableCell className="py-3.5 pr-4">
-                      <StatusBadge status={l.status} />
-                    </TableCell>
-                    <TableCell className="py-3.5 pr-4 text-foreground/50 text-[12px]">
-                      {l.acted_at ? (
-                        <span title={l.acted_by ?? ""}>{l.acted_at.slice(0, 10)}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="py-3.5 pr-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleResend(l.id, l.employee_name)}
-                        disabled={resending === l.id}
-                        className="bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary border-primary/20"
-                      >
-                        {resending === l.id ? (
-                          <Loader2 className="h-3 w-3 animate-spin mr-1.5" />
-                        ) : (
-                          <RotateCcw className="h-3 w-3 mr-1.5" />
-                        )}
-                        {l.status === "welcome_sent" ? "Resend" : "Send Now"}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            
-            {Math.ceil(logs.length / itemsPerPage) > 1 && (
-              <Pagination>
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setCurrentPage((p) => Math.max(1, p - 1));
-                      }}
-                    />
-                  </PaginationItem>
-                  <PaginationItem>
-                    <span className="text-sm text-muted-foreground px-4">
-                      Page {currentPage} of {Math.ceil(logs.length / itemsPerPage)}
-                    </span>
-                  </PaginationItem>
-                  <PaginationItem>
-                    <PaginationNext
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setCurrentPage((p) => Math.min(Math.ceil(logs.length / itemsPerPage), p + 1));
-                      }}
-                    />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Welcome Config Tab ────────────────────────────────────────────────────────
-
-const DEFAULT_WELCOME_MESSAGE =
-  "Welcome to the team, {name}! 🎉\n\nWe're thrilled to have you on board. Below are the tools and resources available to you through Centriq AI — your digital workplace assistant. Just open the app and ask anything!";
-
-function WelcomeConfigTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [resources, setResources] = useState<WelcomeResource[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<number | "new" | null>(null);
-  const [form, setForm] = useState<Partial<WelcomeResource>>({});
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<number | null>(null);
-  const [resourceToDelete, setResourceToDelete] = useState<{ id: number; name: string } | null>(
-    null,
-  );
-
-  // Message editor state
-  const [message, setMessage] = useState("");
-  const [messageSaving, setMessageSaving] = useState(false);
-  const [messageEditing, setMessageEditing] = useState(false);
-
-  const fetchResources = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/portal/hr/welcome/config", { headers: authHeaders });
-      if (!res.ok) throw new Error("Failed");
-      setResources(await res.json());
-    } catch {
-      toast.error("Failed to load resources");
-    } finally {
-      setLoading(false);
-    }
-  }, [authHeaders]);
-
-  const fetchMessage = useCallback(async () => {
-    try {
-      const res = await fetch("/api/portal/hr/welcome/message", { headers: authHeaders });
-      if (res.ok) {
-        const data = await res.json();
-        setMessage(data.text ?? DEFAULT_WELCOME_MESSAGE);
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }, [authHeaders]);
-
-  useEffect(() => {
-    fetchResources();
-    fetchMessage();
-  }, [fetchResources, fetchMessage]);
-
-  const saveMessage = async () => {
-    if (!message.trim()) {
-      toast.error("Message cannot be empty");
-      return;
-    }
-    setMessageSaving(true);
-    try {
-      const res = await fetch("/api/portal/hr/welcome/message", {
-        method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({ text: message }),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      toast.success("Welcome message saved");
-      setMessageEditing(false);
-    } catch {
-      toast.error("Failed to save message");
-    } finally {
-      setMessageSaving(false);
-    }
-  };
-
-  const startEdit = (r: WelcomeResource) => {
-    setEditingId(r.id);
-    setForm({ ...r });
-  };
-
-  const startNew = () => {
-    setEditingId("new");
-    setForm({
-      name: "",
-      url: "",
-      description: "",
-      category: "App Guide",
-      icon: CATEGORY_DEFAULT_ICON["App Guide"],
-      is_active: true,
-      sort_order: resources.length,
-    });
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setForm({});
-  };
-
-  const saveResource = async () => {
-    if (!form.name?.trim()) {
-      toast.error("Name is required");
-      return;
-    }
-    setSaving(true);
-    try {
-      const isNew = editingId === "new";
-      const url = isNew
-        ? "/api/portal/hr/welcome/config"
-        : `/api/portal/hr/welcome/config/${editingId}`;
-      const res = await fetch(url, {
-        method: isNew ? "POST" : "PUT",
-        headers: authHeaders,
-        body: JSON.stringify(form),
-      });
-      if (!res.ok) throw new Error("Save failed");
-      toast.success(isNew ? "Resource added" : "Resource updated");
-      setEditingId(null);
-      setForm({});
-      fetchResources();
-    } catch {
-      toast.error("Failed to save resource");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const deleteResource = async (id: number) => {
-    setDeleting(id);
-    try {
-      const res = await fetch(`/api/portal/hr/welcome/config/${id}`, {
-        method: "DELETE",
-        headers: authHeaders,
-      });
-      if (!res.ok) throw new Error("Delete failed");
-      toast.success("Resource deleted");
-      fetchResources();
-    } catch {
-      toast.error("Failed to delete resource");
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  const toggleActive = async (r: WelcomeResource) => {
-    try {
-      const res = await fetch(`/api/portal/hr/welcome/config/${r.id}`, {
-        method: "PUT",
-        headers: authHeaders,
-        body: JSON.stringify({ ...r, is_active: !r.is_active }),
-      });
-      if (!res.ok) throw new Error();
-      fetchResources();
-    } catch {
-      toast.error("Failed to update");
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Welcome message editor */}
-      <div className="mx-8 mt-4 mb-2 rounded-xl border border-[var(--border)] bg-card/40 shrink-0">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-5 py-3.5 border-b border-[var(--border)]/50">
-          <div>
-            <p className="text-[13px] font-medium text-foreground">Welcome Message</p>
-            <p className="text-[12px] text-muted-foreground mt-0.5">
-              Intro text sent to new employees. Use{" "}
-              <code className="bg-primary/10 text-primary rounded px-1">{"{name}"}</code> as a
-              placeholder for their name.
-            </p>
-          </div>
-          {!messageEditing && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setMessageEditing(true)}
-              className="flex items-center gap-1.5 text-muted-foreground"
-            >
-              <Pencil className="h-3 w-3" />
-              Edit
-            </Button>
-          )}
-        </div>
-        <div className="px-5 py-4">
-          {messageEditing ? (
-            <div className="space-y-3">
-              <Textarea
-                rows={5}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Welcome to the team, {name}!…"
-              />
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => {
-                    setMessage(DEFAULT_WELCOME_MESSAGE);
-                  }}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  Reset to default
-                </Button>
-                <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setMessageEditing(false);
-                      fetchMessage();
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={saveMessage}
-                    disabled={messageSaving}
-                  >
-                    {messageSaving && <Loader2 className="h-3 w-3 animate-spin mr-1.5" />}
-                    Save
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <p className="text-[13px] text-foreground/80 leading-relaxed whitespace-pre-wrap">
-              {message || DEFAULT_WELCOME_MESSAGE}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-8 py-3 shrink-0">
-        <p className="text-[13px] text-muted-foreground">
-          Resources below appear in the email. Supports links, videos, and slide decks.
-        </p>
-        <Button
-          onClick={startNew}
-          className="flex items-center gap-1.5 bg-primary/10 text-primary hover:bg-primary/20 shrink-0"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add Resource
-        </Button>
-      </div>
-
-      {/* Inline editor */}
-      {editingId !== null && (
-        <div className="mx-8 mb-4 rounded-xl border border-primary/20 bg-primary/5 p-5 shrink-0">
-          <p className="text-[13px] font-semibold text-foreground mb-4">
-            {editingId === "new" ? "New Resource" : "Edit Resource"}
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2 flex gap-3">
-              <div className="flex-1">
-                <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
-                  Name *
-                </label>
-                <Input
-                  value={form.name ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Onboarding Video, Policy Deck"
-                />
-              </div>
-              <div className="w-24">
-                <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
-                  Icon
-                </label>
-                <Input
-                  value={form.icon ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, icon: e.target.value }))}
-                  placeholder="🎬"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
-                Type / Category
-              </label>
-              <Select 
-                value={form.category ?? "App Guide"} 
-                onValueChange={(cat) => {
-                  setForm((f) => ({
-                    ...f,
-                    category: cat,
-                    icon: CATEGORY_DEFAULT_ICON[cat] ?? f.icon ?? "📌",
-                  }));
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
-                URL (link, YouTube, Google Slides…)
-              </label>
-              <Input
-                value={form.url ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                placeholder="https://…"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-[11px] text-muted-foreground mb-1 uppercase tracking-wide">
-                Description
-              </label>
-              <Input
-                value={form.description ?? ""}
-                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="Brief description shown in the email"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 mt-4">
-            <Button
-              variant="secondary"
-              onClick={cancelEdit}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={saveResource}
-              disabled={saving}
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
-              Save
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-auto px-8 pb-8">
-        {loading ? (
-          <div className="space-y-2 py-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
-                <Skeleton className="h-9 w-9 rounded-xl" />
-                <div className="flex-1 space-y-1.5">
-                  <Skeleton className="h-4 w-48" />
-                  <Skeleton className="h-3 w-64" />
-                </div>
-                <Skeleton className="h-7 w-16 rounded-lg" />
-              </div>
-            ))}
-          </div>
-        ) : resources.length === 0 ? (
-          <div className="flex h-40 items-center justify-center gap-2 text-muted-foreground">
-            <Gift className="h-4 w-4" />
-            <span className="text-[13px]">No resources yet — add some above</span>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {resources.map((r) => (
-              <div
-                key={r.id}
-                className={cn(
-                  "flex items-center gap-4 rounded-xl border px-5 py-3.5 transition-all",
-                  r.is_active
-                    ? "border-[var(--border)] bg-card/40"
-                    : "border-[var(--border)]/40 bg-card/20 opacity-50",
-                )}
-              >
-                <span className="text-[22px] w-8 text-center shrink-0">{r.icon || "•"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-[13px] text-foreground">{r.name}</span>
-                    {r.category && (
-                      <span
-                        className={cn(
-                          "text-[10px] rounded-full px-2 py-0.5 font-medium",
-                          r.category === "Video"
-                            ? "bg-rose-500/10 text-rose-400"
-                            : r.category === "Deck"
-                              ? "bg-violet-500/10 text-violet-400"
-                              : "bg-primary/10 text-primary",
-                        )}
-                      >
-                        {r.category}
-                      </span>
-                    )}
-                    {r.url && (
-                      <a
-                        href={r.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] text-muted-foreground hover:text-primary transition-colors truncate max-w-[180px]"
-                      >
-                        {r.url}
-                      </a>
-                    )}
-                  </div>
-                  {r.description && (
-                    <p className="text-[12px] text-muted-foreground mt-0.5 truncate">
-                      {r.description}
-                    </p>
-                  )}
-                </div>
-
-                {/* Toggle */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => toggleActive(r)}
-                  className={cn(
-                    "h-7 text-[11px] px-3",
-                    r.is_active
-                      ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-400 border-emerald-500/20"
-                      : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20 hover:text-zinc-400 border-zinc-500/20",
-                  )}
-                >
-                  {r.is_active ? "Active" : "Inactive"}
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => startEdit(r)}
-                  className="h-8 w-8 text-muted-foreground"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setResourceToDelete({ id: r.id, name: r.name })}
-                  disabled={deleting === r.id}
-                  className="h-8 w-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-400"
-                >
-                  {deleting === r.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <AlertDialog
-        open={!!resourceToDelete}
-        onOpenChange={(open) => !open && setResourceToDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Welcome Resource</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{resourceToDelete?.name}"? This action cannot be
-              undone and this resource will no longer be included in welcome emails sent to new
-              employees.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (resourceToDelete) {
-                  deleteResource(resourceToDelete.id);
-                  setResourceToDelete(null);
-                }
-              }}
-              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}

@@ -634,13 +634,63 @@ def submit_document(db, journey: OnboardingJourney, doc_key: str, content: bytes
     # 3. Email HR with the file attached + ring the Teams bell. Best-effort: a failure here
     #    leaves the submission recorded and visible in the HR tracker.
     emailed = _email_doc_to_hr(emp, doc, content, original_name or safe_name, content_type)
+    sub.attempt_count = (sub.attempt_count or 0) + 1
+    sub.last_attempt_at = _now()
     if emailed:
         sub.status = "emailed"
         sub.emailed_to = settings.ONBOARDING_HR_EMAIL
-        db.commit()
+    else:
+        # Distinct from "submitted" — this was actually attempted and failed, so it's
+        # surfaced to HR (with a resend action) instead of looking identical to "not
+        # processed yet".
+        sub.status = "failed"
+    db.commit()
 
     recompute(db, journey)
     return {"id": sub.id, "doc_key": doc_key, "status": sub.status, "emailed": emailed}
+
+
+def resend_doc_submission(submission_id: int) -> dict:
+    """HR-triggered manual resend of a failed (or stuck) document-to-HR email.
+    Re-reads the saved file from disk and retries _email_doc_to_hr."""
+    db = SessionLocal()
+    try:
+        sub = db.query(OnboardingDocSubmission).filter(OnboardingDocSubmission.id == submission_id).first()
+        if not sub:
+            return {"ok": False, "error": "Submission not found."}
+
+        doc = get_doc(sub.doc_key)
+        if doc is None:
+            return {"ok": False, "error": f"Unknown document type: {sub.doc_key}."}
+
+        if not os.path.exists(sub.file_path):
+            return {"ok": False, "error": "The uploaded file is no longer available on disk."}
+
+        journey = db.query(OnboardingJourney).filter(OnboardingJourney.id == sub.journey_id).first()
+        emp = db.query(Employee).filter(Employee.id == journey.employee_id).first() if journey else None
+
+        with open(sub.file_path, "rb") as fh:
+            content = fh.read()
+
+        content_type = _guess_content_type(sub.file_path)
+        emailed = _email_doc_to_hr(emp, doc, content, sub.original_name or os.path.basename(sub.file_path), content_type)
+
+        sub.attempt_count = (sub.attempt_count or 0) + 1
+        sub.last_attempt_at = _now()
+        sub.status = "emailed" if emailed else "failed"
+        if emailed:
+            sub.emailed_to = settings.ONBOARDING_HR_EMAIL
+        db.commit()
+
+        return {"ok": emailed, "status": sub.status}
+    finally:
+        db.close()
+
+
+def _guess_content_type(file_path: str) -> str:
+    import mimetypes
+    ctype, _ = mimetypes.guess_type(file_path)
+    return ctype or "application/octet-stream"
 
 
 def _email_doc_to_hr(emp: Optional[Employee], doc: "tmpl.OnboardingDoc", content: bytes,

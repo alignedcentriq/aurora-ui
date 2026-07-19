@@ -216,6 +216,16 @@ def overview_one(employee_email: str, _: CurrentUser = Depends(require_hr)):
     return view
 
 
+@router.post("/admin/doc-submissions/{submission_id}/resend")
+def resend_doc_submission(submission_id: int, _: CurrentUser = Depends(require_hr)):
+    """HR: manually retry emailing a joining document to HR that previously failed
+    (or is otherwise stuck) — see onboarding_service.resend_doc_submission."""
+    result = svc.resend_doc_submission(submission_id)
+    if not result.get("ok") and result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 # ── Admin: induction video management (Control Hub) ───────────────────────────────
 
 class InductionVideoBody(BaseModel):

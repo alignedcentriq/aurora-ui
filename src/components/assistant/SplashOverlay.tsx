@@ -47,6 +47,18 @@ export function SplashOverlay({ onComplete }: SplashOverlayProps) {
           />
 
           <div className="relative flex flex-col items-center justify-center">
+            {/* Soft ambient glow beneath the ring — sells it as an object floating in space, not a flat sticker */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.55 }}
+              transition={{ delay: 0.15, duration: 0.8 }}
+              className="absolute w-56 h-56 rounded-full blur-3xl pointer-events-none"
+              style={{
+                background:
+                  "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
+              }}
+            />
+
             {/* Rotating Logo Ring */}
             <motion.div
               initial={{ opacity: 0, scale: 0.7, rotate: -45 }}
@@ -56,24 +68,37 @@ export function SplashOverlay({ onComplete }: SplashOverlayProps) {
                 scale: { type: "spring", stiffness: 150, damping: 15 },
                 rotate: { duration: 6, repeat: Infinity, ease: "linear" },
               }}
-              className="w-48 h-48 rounded-3xl flex items-center justify-center"
+              className="relative w-48 h-48 rounded-full flex items-center justify-center"
               style={{
                 background:
                   "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
                 padding: "3px",
+                boxShadow:
+                  "0 25px 50px -12px rgba(0,0,0,0.6), 0 0 60px -10px color-mix(in oklab, var(--connectivity) 50%, transparent)",
               }}
             >
-              <div className="w-full h-full bg-[#020617] rounded-3xl" />
+              <div className="w-full h-full bg-[#020617] rounded-full" />
+              {/* Fixed specular highlight painted on the ring surface, like light catching a curved rim */}
+              <div
+                className="absolute inset-0 rounded-full pointer-events-none"
+                style={{
+                  background: "radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35), transparent 45%)",
+                  mixBlendMode: "screen",
+                }}
+              />
             </motion.div>
 
-            {/* Centriq Inner Logo Image inside the Ring */}
+            {/* Centriq Inner Logo Image inside the Ring — masked circular so no square backdrop peeks through */}
             <motion.img
               initial={{ opacity: 0, scale: 0.3 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.3, duration: 0.5, ease: "easeOut" }}
               src={`${import.meta.env.BASE_URL}logo.png`}
               alt="Centriq AI"
-              className="absolute w-24 h-24 object-contain rounded-2xl pointer-events-none bg-[#020617] p-1.5"
+              className="absolute w-24 h-24 object-contain rounded-full pointer-events-none bg-[#020617] p-1.5"
+              style={{
+                boxShadow: "inset 0 0 20px rgba(0,0,0,0.5)",
+              }}
             />
           </div>
 

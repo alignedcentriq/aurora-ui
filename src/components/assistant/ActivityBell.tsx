@@ -3,6 +3,7 @@ import { History, UserCog, KeyRound, Workflow, Settings2 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth-store";
 import { AnimatePresence, motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 interface ActivityEntry {
   id: number;
@@ -41,7 +42,7 @@ function timeAgo(iso: string | null): string {
   return `${diffDay}d ago`;
 }
 
-export function ActivityBell() {
+export function ActivityBell({ triggerClassName }: { triggerClassName?: string } = {}) {
   const { user } = useAuth();
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [unread, setUnread] = useState(0);
@@ -92,7 +93,10 @@ export function ActivityBell() {
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <button
         onClick={() => handleOpenChange(true)}
-        className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+        className={cn(
+          "relative flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm",
+          triggerClassName,
+        )}
         title="Activity"
       >
         <History className="h-4 w-4 text-primary" />
