@@ -12,6 +12,9 @@ import {
 import { flyBanner } from "@/lib/fly-banner";
 import type { AttendanceSchedulePrefill } from "@/lib/chat-store";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -41,6 +44,11 @@ interface TeamReport {
   totals?: { present: number; absent: number; wfh: number; late: number; half_day: number };
 }
 
+function presentCount(m: { present: number; wfh: number; half_day: number }) {
+  // `present` already includes late arrivals; `late` is an informational subset, not exclusive.
+  return m.present + m.wfh + m.half_day;
+}
+
 const DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 interface Props {
@@ -65,10 +73,12 @@ function Shell({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 backdrop-blur-sm"
+      className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset,0_10px_30px_-16px_rgba(0,0,0,0.35)] backdrop-blur-sm"
     >
-      <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2.5">
-        {icon}
+      <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-[var(--collaboration)]/10 via-muted/40 to-muted/40 px-4 py-2.5">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-background/60">
+          {icon}
+        </span>
         <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
           {title}
         </span>
@@ -181,11 +191,8 @@ function ReportMode({
               <TableHeader>
                 <TableRow className="bg-muted/50 text-left uppercase text-muted-foreground">
                   <TableHead className="px-2.5 py-2">Employee</TableHead>
-                  <TableHead className="px-2.5 py-2 text-center">P</TableHead>
-                  <TableHead className="px-2.5 py-2 text-center">A</TableHead>
-                  <TableHead className="px-2.5 py-2 text-center">WFH</TableHead>
-                  <TableHead className="px-2.5 py-2 text-center">Late</TableHead>
-                  <TableHead className="px-2.5 py-2 text-center">Half</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">Present</TableHead>
+                  <TableHead className="px-2.5 py-2 text-center">Absent</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -195,20 +202,14 @@ function ReportMode({
                       <div className="font-medium text-foreground">{m.employee}</div>
                       <div className="text-[10px] text-muted-foreground">{m.department}</div>
                     </TableCell>
-                    <TableCell className="px-2.5 py-1.5 text-center">{m.present}</TableCell>
+                    <TableCell className="px-2.5 py-1.5 text-center">{presentCount(m)}</TableCell>
                     <TableCell className="px-2.5 py-1.5 text-center">{m.absent}</TableCell>
-                    <TableCell className="px-2.5 py-1.5 text-center">{m.wfh}</TableCell>
-                    <TableCell className="px-2.5 py-1.5 text-center">{m.late}</TableCell>
-                    <TableCell className="px-2.5 py-1.5 text-center">{m.half_day}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow className="border-t border-border bg-muted/40 font-semibold text-foreground">
                   <TableCell className="px-2.5 py-2">TOTAL</TableCell>
-                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.present}</TableCell>
+                  <TableCell className="px-2.5 py-2 text-center">{presentCount(report.totals!)}</TableCell>
                   <TableCell className="px-2.5 py-2 text-center">{report.totals!.absent}</TableCell>
-                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.wfh}</TableCell>
-                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.late}</TableCell>
-                  <TableCell className="px-2.5 py-2 text-center">{report.totals!.half_day}</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -218,10 +219,10 @@ function ReportMode({
               Showing 12 of {report.members!.length}. The emailed Excel has everyone.
             </p>
           )}
-          <button
+          <Button
             onClick={emailNow}
             disabled={emailing}
-            className="flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            className="bg-[var(--collaboration)] text-white hover:bg-[var(--collaboration)] hover:opacity-90"
           >
             {emailing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -229,7 +230,7 @@ function ReportMode({
               <Mail className="h-3.5 w-3.5" />
             )}
             Email me this report (with Excel)
-          </button>
+          </Button>
         </>
       )}
     </Shell>
@@ -309,8 +310,6 @@ function ScheduleMode({
     );
   }
 
-  const field =
-    "mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground";
   return (
     <Shell
       icon={<CalendarClock className="h-3.5 w-3.5 text-[var(--collaboration)]" />}
@@ -370,16 +369,16 @@ function ScheduleMode({
 
         {(frequency === "monthly" || frequency === "custom") && (
           <div className="flex flex-col">
-            <label className="text-xs font-semibold text-muted-foreground mb-1.5">
+            <Label className="text-xs font-semibold text-muted-foreground mb-1.5">
               Day of month (1–28)
-            </label>
-            <input
+            </Label>
+            <Input
               type="number"
               min={1}
               max={28}
               value={dayOfMonth}
               onChange={(e) => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))}
-              className="w-full h-[38px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-shadow"
+              className="h-[38px] rounded-xl"
             />
           </div>
         )}
@@ -398,20 +397,22 @@ function ScheduleMode({
             </SelectContent>
           </Select>
         </div>
-        <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
-          Recipients (comma-separated; blank = you)
-          <input
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label className="text-xs font-medium text-muted-foreground">
+            Recipients (comma-separated; blank = you)
+          </Label>
+          <Input
             value={recipients}
             onChange={(e) => setRecipients(e.target.value)}
             placeholder="you@alignedautomation.com"
-            className={field}
+            className="rounded-xl"
           />
-        </label>
+        </div>
       </div>
-      <button
+      <Button
         onClick={submit}
         disabled={saving}
-        className="mt-3 flex items-center gap-1.5 rounded-xl bg-[var(--collaboration)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        className="mt-3 bg-[var(--collaboration)] text-white hover:bg-[var(--collaboration)] hover:opacity-90"
       >
         {saving ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -419,7 +420,7 @@ function ScheduleMode({
           <CheckCircle2 className="h-3.5 w-3.5" />
         )}
         Save automation
-      </button>
+      </Button>
     </Shell>
   );
 }

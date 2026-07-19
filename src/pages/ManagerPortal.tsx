@@ -31,7 +31,6 @@ import {
   ZoomIn,
   Star,
   CalendarIcon,
-  Home,
   TrendingUp,
   UserCheck,
 } from "lucide-react";
@@ -39,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { flyBanner } from "@/lib/fly-banner";
 import { apiUrl } from "@/lib/api-base";
+import { AmbientField } from "@/components/three/AmbientField";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,6 +75,17 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { format } from "date-fns";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +100,11 @@ interface Member {
   wfh: number;
   late: number;
   half_day: number;
+}
+
+function presentCount(m: { present: number; wfh: number; half_day: number }) {
+  // `present` already includes late arrivals; `late` is an informational subset, not exclusive.
+  return m.present + m.wfh + m.half_day;
 }
 interface TeamReport {
   success: boolean;
@@ -290,11 +306,16 @@ export function ManagerPortal() {
   }, [auth]);
 
   return (
-    <div className="h-full overflow-y-auto w-full px-4 sm:px-6 py-6 sm:py-8 bg-gradient-to-b from-background via-background to-muted/20">
+    <div className="relative h-full overflow-y-auto w-full px-4 sm:px-6 py-6 sm:py-8 bg-gradient-to-b from-background via-background to-muted/20">
+      {/* Ambient three.js accent — device-tiered, mirrors the Control Hub's living backdrop */}
+      <div className="pointer-events-none absolute top-0 left-0 right-0 h-[220px] opacity-50">
+        <AmbientField colors={["#10b981", "#06b6d4"]} />
+      </div>
+
       {/* Header */}
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-border/60 motion-safe:animate-fade-in">
+      <div className="relative mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-border/60 motion-safe:animate-fade-in">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className="relative flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-inner border border-[var(--collaboration)]/25">
+          <div className="relative flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-[var(--collaboration)]/20 to-[var(--collaboration)]/5 shadow-[0_0_0_1px_color-mix(in_oklab,var(--collaboration)_20%,transparent),0_10px_30px_-8px_color-mix(in_oklab,var(--collaboration)_45%,transparent)] border border-[var(--collaboration)]/25">
             <UsersRound className="h-6 w-6 sm:h-7 sm:w-7 text-[var(--collaboration)]" />
             <span className="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-[var(--collaboration)] ring-2 ring-background motion-safe:animate-pulse" />
           </div>
@@ -312,7 +333,7 @@ export function ManagerPortal() {
       </div>
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)} className="relative">
         <div className="relative mb-6">
           <div className="overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="inline-flex h-auto w-max gap-1 rounded-2xl border border-border/60 bg-muted/40 p-1.5 backdrop-blur-sm">
@@ -322,7 +343,7 @@ export function ManagerPortal() {
                   <TabsTrigger
                     key={t.id}
                     value={t.id}
-                    className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-all duration-200 ease-out data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50 data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground data-[state=inactive]:hover:bg-background/50"
+                    className="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-all duration-200 ease-out data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_1px_0_0_rgba(255,255,255,0.06)_inset,0_0_0_1px_color-mix(in_oklab,var(--collaboration)_18%,transparent),0_6px_16px_-6px_color-mix(in_oklab,var(--collaboration)_35%,transparent)] data-[state=active]:border data-[state=active]:border-border/50 data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground data-[state=inactive]:hover:bg-background/50"
                   >
                     <Icon className="h-3.5 w-3.5" />
                     <span className="whitespace-nowrap hidden sm:inline">{t.label}</span>
@@ -439,18 +460,18 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
     if (!report?.success || !report.members) return;
     const head = [
       "Employee", "Email", "Department", "Designation", "Reports To",
-      "Present", "Absent", "WFH", "Late", "Half-day",
+      "Present", "Absent",
     ];
     const rowSource = report.self ? [report.self, ...report.members] : report.members;
     const rows = rowSource.map((m) =>
       [m.employee, m.email, m.department, m.designation, m.reports_to,
-       m.present, m.absent, m.wfh, m.late, m.half_day]
+       presentCount(m), m.absent]
         .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(","),
     );
     const t = report.totals!;
     rows.push(
-      ["TOTAL", "", "", "", "", t.present, t.absent, t.wfh, t.late, t.half_day]
+      ["TOTAL", "", "", "", "", presentCount(t), t.absent]
         .map((v) => `"${v}"`)
         .join(","),
     );
@@ -518,14 +539,11 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
       ) : (
         <>
           {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3">
             {[
               { label: "Team Size", value: report.headcount, icon: Users, tone: "violet" as const },
-              { label: "Present", value: totals!.present, icon: CheckCircle2, tone: "emerald" as const },
+              { label: "Present", value: totals ? presentCount(totals) : 0, icon: CheckCircle2, tone: "emerald" as const },
               { label: "Absent", value: totals!.absent, icon: AlertCircle, tone: "rose" as const },
-              { label: "WFH", value: totals!.wfh, icon: Home, tone: "sky" as const },
-              { label: "Late", value: totals!.late, icon: Clock, tone: "amber" as const },
-              { label: "Half-day", value: totals!.half_day, icon: Power, tone: "orange" as const },
             ].map((c, i) => (
               <StatTile key={c.label} label={c.label} value={c.value} icon={c.icon} tone={c.tone} index={i} />
             ))}
@@ -541,9 +559,6 @@ function AttendanceTab({ auth }: { auth: Record<string, string> }) {
                   <TableHead className="px-4 py-3 hidden lg:table-cell">Reports To</TableHead>
                   <TableHead className="px-4 py-3 text-center">Present</TableHead>
                   <TableHead className="px-4 py-3 text-center">Absent</TableHead>
-                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">WFH</TableHead>
-                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">Late</TableHead>
-                  <TableHead className="px-4 py-3 text-center hidden sm:table-cell">Half-day</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -625,19 +640,10 @@ function AttendanceRow({
       </TableCell>
       <TableCell className="px-4 py-3 text-sm text-muted-foreground hidden lg:table-cell">{m.reports_to}</TableCell>
       <TableCell className="px-4 py-3 text-center">
-        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{m.present}</span>
+        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-emerald-500/10 text-sm font-bold text-emerald-600">{presentCount(m)}</span>
       </TableCell>
       <TableCell className="px-4 py-3 text-center">
         <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-rose-500/10 text-sm font-bold text-rose-600">{m.absent}</span>
-      </TableCell>
-      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sm font-bold text-sky-600">{m.wfh}</span>
-      </TableCell>
-      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-sm font-bold text-amber-600">{m.late}</span>
-      </TableCell>
-      <TableCell className="px-4 py-3 text-center hidden sm:table-cell">
-        <span className="inline-flex h-7 w-9 items-center justify-center rounded-lg bg-orange-500/10 text-sm font-bold text-orange-600">{m.half_day}</span>
       </TableCell>
     </TableRow>
   );
@@ -664,24 +670,19 @@ interface MemberCalendar {
 
 const CAL_LEGEND = [
   { color: "bg-emerald-400", label: "Present" },
-  { color: "bg-amber-400", label: "Late" },
-  { color: "bg-purple-400", label: "Half-day" },
   { color: "bg-red-400", label: "Absent" },
 ];
+
+function isCalPresent(record: CalDay) {
+  return record.status !== "Absent";
+}
 
 function calDayClass(record: CalDay | undefined, isFuture: boolean, isWeekend: boolean) {
   if (isFuture || (!record && isWeekend)) return "text-muted-foreground/30";
   if (!record) return "text-muted-foreground/40";
-  if (record.late) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
-  if (record.status === "Present")
+  if (isCalPresent(record))
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
-  if (record.status === "Absent")
-    return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
-  if (record.status === "WFH")
-    return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200";
-  if (record.status === "Half-day")
-    return "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200";
-  return "text-muted-foreground/40";
+  return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
 }
 
 function MemberCalendarDialog({
@@ -770,13 +771,7 @@ function MemberCalendarDialog({
                     const dow = new Date(dateStr).getDay();
                     const isWeekend = dow === 0 || dow === 6;
                     const isToday = dateStr === todayStr;
-                    const tooltip = record
-                      ? [
-                          record.status + (record.late ? " (Late)" : ""),
-                          record.check_in ? `In: ${record.check_in}` : null,
-                          record.check_out ? `Out: ${record.check_out}` : null,
-                        ].filter(Boolean).join(" · ")
-                      : undefined;
+                    const tooltip = record ? (isCalPresent(record) ? "Present" : "Absent") : undefined;
                     const cell = (
                       <Button
                         type="button"
@@ -784,7 +779,8 @@ function MemberCalendarDialog({
                         disabled={!record}
                         onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
                         className={cn(
-                          "aspect-square h-auto w-full rounded-none p-0 text-[11px] font-medium transition-colors",
+                          "relative m-[1.5px] aspect-square h-auto w-[calc(100%-3px)] rounded-md p-0 text-[11px] font-medium transition-all duration-150",
+                          "enabled:hover:scale-110 enabled:hover:shadow-sm enabled:hover:z-10",
                           calDayClass(record, isFuture, isWeekend),
                           isToday ? "ring-2 ring-primary ring-inset" : "",
                           selectedDate === dateStr ? "ring-2 ring-primary" : "",
@@ -813,10 +809,7 @@ function MemberCalendarDialog({
                   {new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                 </span>
                 <span className="text-muted-foreground">
-                  {dayMap[selectedDate].status}
-                  {dayMap[selectedDate].late ? " (Late)" : ""}
-                  {" · In: "}{dayMap[selectedDate].check_in ?? "—"}
-                  {" · Out: "}{dayMap[selectedDate].check_out ?? "—"}
+                  {isCalPresent(dayMap[selectedDate]) ? "Present" : "Absent"}
                 </span>
               </div>
             )}
@@ -1059,98 +1052,103 @@ function ScheduleForm({
   return (
     <Card className="shadow-none">
       <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
-        <label className="text-xs font-medium text-muted-foreground">
-          Frequency
-          <select
-            value={frequency}
-            onChange={(e) => setFrequency(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="daily">Daily (weekdays)</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <div className="text-xs font-medium text-muted-foreground">
-          Send time
-          <div className="mt-1 flex gap-1.5">
-            <select
-              value={hour}
-              onChange={(e) => setHour(Number(e.target.value))}
-              className="flex-1 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
-            >
-              {Array.from({ length: 24 }, (_, h) => (
-                <option key={h} value={h}>
-                  {h % 12 || 12} {h >= 12 ? "PM" : "AM"}
-                </option>
-              ))}
-            </select>
-            <select
-              value={minute}
-              onChange={(e) => setMinute(Number(e.target.value))}
-              className="w-20 rounded-xl border border-border bg-background px-2 py-2 text-sm text-foreground"
-            >
-              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
-                <option key={m} value={m}>
-                  {m.toString().padStart(2, "0")}
-                </option>
-              ))}
-            </select>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Frequency</Label>
+          <Select value={frequency} onValueChange={setFrequency}>
+            <SelectTrigger className="w-full rounded-xl">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="daily">Daily (weekdays)</SelectItem>
+              <SelectItem value="weekly">Weekly</SelectItem>
+              <SelectItem value="monthly">Monthly</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Send time</Label>
+          <div className="flex gap-1.5">
+            <Select value={String(hour)} onValueChange={(v) => setHour(Number(v))}>
+              <SelectTrigger className="flex-1 rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-60">
+                {Array.from({ length: 24 }, (_, h) => (
+                  <SelectItem key={h} value={String(h)}>
+                    {h % 12 || 12} {h >= 12 ? "PM" : "AM"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(minute)} onValueChange={(v) => setMinute(Number(v))}>
+              <SelectTrigger className="w-20 rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                  <SelectItem key={m} value={String(m)}>
+                    {m.toString().padStart(2, "0")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         {(frequency === "weekly" || frequency === "custom") && (
-          <label className="text-xs font-medium text-muted-foreground">
-            Day of week
-            <select
-              value={dayOfWeek}
-              onChange={(e) => setDayOfWeek(Number(e.target.value))}
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-            >
-              {DOW.map((d, i) => (
-                <option key={d} value={i}>{d}</option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Day of week</Label>
+            <Select value={String(dayOfWeek)} onValueChange={(v) => setDayOfWeek(Number(v))}>
+              <SelectTrigger className="w-full rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DOW.map((d, i) => (
+                  <SelectItem key={d} value={String(i)}>{d}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
         {(frequency === "monthly" || frequency === "custom") && (
-          <label className="text-xs font-medium text-muted-foreground">
-            Day of month (1–28)
-            <input
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Day of month (1–28)</Label>
+            <Input
               type="number"
               min={1}
               max={28}
               value={dayOfMonth}
               onChange={(e) => setDayOfMonth(Math.min(28, Math.max(1, Number(e.target.value))))}
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              className="rounded-xl"
             />
-          </label>
+          </div>
         )}
-        <label className="text-xs font-medium text-muted-foreground">
-          Report period
-          <select
-            value={periodMode}
-            onChange={(e) => setPeriodMode(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-          >
-            <option value="prev_period">Previous month</option>
-            <option value="current">Current month-to-date</option>
-          </select>
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Report period</Label>
+          <Select value={periodMode} onValueChange={setPeriodMode}>
+            <SelectTrigger className="w-full rounded-xl">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="prev_period">Previous month</SelectItem>
+              <SelectItem value="current">Current month-to-date</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
         {/* Recipient picker */}
-        <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
-          Recipients
-          <div className="mt-1 relative">
+        <div className="sm:col-span-2 flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
+          <Label className="text-xs font-medium text-muted-foreground">Recipients</Label>
+          <div className="relative">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              <input
+              <Input
                 value={recipientSearch}
                 onChange={(e) => handleRecipientSearch(e.target.value)}
                 onFocus={() => recipientSearch.length >= 2 && setShowRecipientDrop(true)}
                 onBlur={() => setTimeout(() => setShowRecipientDrop(false), 150)}
                 placeholder="Search people by name or email… (blank = send to yourself)"
-                className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm text-foreground"
+                className="pl-8 rounded-xl"
               />
             </div>
             {showRecipientDrop && recipientResults.length > 0 && (
@@ -1272,23 +1270,21 @@ function AllocationsTab({ auth }: { auth: Record<string, string> }) {
         <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1 min-w-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <input
+            <Input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Search by name, project, client…"
-              className="w-full pl-9 pr-3 rounded-xl border border-border bg-background py-2 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--collaboration)]"
+              className="pl-9 rounded-xl"
             />
           </div>
           <div className="flex items-center">
-            <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/40 border border-border cursor-pointer select-none text-sm font-medium hover:bg-muted/60 transition-colors">
-              <input
-                type="checkbox"
+            <Label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-muted/40 border border-border cursor-pointer select-none text-sm font-medium hover:bg-muted/60 transition-colors">
+              <Checkbox
                 checked={showActive}
-                onChange={(e) => setShowActive(e.target.checked)}
-                className="rounded text-[var(--collaboration)] focus:ring-[var(--collaboration)]"
+                onCheckedChange={(checked) => setShowActive(checked === true)}
               />
               Show Active Only
-            </label>
+            </Label>
           </div>
         </CardContent>
       </Card>
@@ -1419,11 +1415,11 @@ function SkillsTab({ auth }: { auth: Record<string, string> }) {
     <div className="space-y-4">
       <div className="relative max-w-sm">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-        <input
+        <Input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by name, skill…"
-          className="w-full pl-8 pr-3 rounded-xl border border-border bg-background py-2 text-sm"
+          className="pl-8 rounded-xl"
         />
       </div>
       {grouped.size === 0 ? (
@@ -1570,15 +1566,16 @@ function OnboardingTab({ auth, team }: { auth: Record<string, string>; team: Tea
                       <p className="mt-1 text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</p>
                     </div>
                     <div className="shrink-0">
-                      <select
-                        value={r.status}
-                        onChange={(e) => updateStatus(r.id, e.target.value)}
-                        className="rounded-xl border border-border bg-background px-2 py-1 text-xs"
-                      >
-                        <option>Pending</option>
-                        <option>In Progress</option>
-                        <option>Completed</option>
-                      </select>
+                      <Select value={r.status} onValueChange={(v) => updateStatus(r.id, v)}>
+                        <SelectTrigger className="h-7 rounded-xl text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Pending">Pending</SelectItem>
+                          <SelectItem value="In Progress">In Progress</SelectItem>
+                          <SelectItem value="Completed">Completed</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 </CardContent>
@@ -1664,48 +1661,46 @@ function OnboardingForm({
     <Card>
       <CardContent className="p-4 space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium text-muted-foreground">
-            Team member
-            <select
-              value={employeeName}
-              onChange={(e) => handleTeamSelect(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-            >
-              <option value="">— Select or type below —</option>
-              {team.map((m) => (
-                <option key={m.id} value={m.name}>{m.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium text-muted-foreground">
-            <span className="flex items-center gap-1.5">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Team member</Label>
+            <Select value={employeeName || undefined} onValueChange={handleTeamSelect}>
+              <SelectTrigger className="w-full rounded-xl">
+                <SelectValue placeholder="— Select or type below —" />
+              </SelectTrigger>
+              <SelectContent>
+                {team.map((m) => (
+                  <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
               Employee email
               {emailAutoFilled && (
                 <span className="text-[10px] font-semibold text-[var(--collaboration)]">auto-filled</span>
               )}
-            </span>
-            <input
+            </Label>
+            <Input
               value={employeeEmail}
               onChange={(e) => { setEmployeeEmail(e.target.value); setEmailAutoFilled(false); }}
               placeholder="employee@company.com"
               className={cn(
-                "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
-                emailAutoFilled
-                  ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
-                  : "border-border bg-background",
+                "rounded-xl",
+                emailAutoFilled && "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5",
               )}
             />
-          </label>
+          </div>
           {!team.length && (
-            <label className="text-xs font-medium text-muted-foreground sm:col-span-2">
-              Employee name (manual entry)
-              <input
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <Label className="text-xs font-medium text-muted-foreground">Employee name (manual entry)</Label>
+              <Input
                 value={employeeName}
                 onChange={(e) => setEmployeeName(e.target.value)}
                 placeholder="Full name"
-                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                className="rounded-xl"
               />
-            </label>
+            </div>
           )}
         </div>
 
@@ -1717,36 +1712,36 @@ function OnboardingForm({
               { key: "bg", label: "Background Verification", val: bgCheck, set: setBgCheck },
               { key: "client", label: "Client-Side Onboarding", val: clientOnboarding, set: setClientOnboarding },
             ].map(({ key, label, val, set }) => (
-              <label key={key} className="flex items-center gap-2 cursor-pointer select-none text-sm">
-                <input type="checkbox" checked={val} onChange={(e) => set(e.target.checked)} className="rounded" />
+              <Label key={key} className="flex items-center gap-2 cursor-pointer select-none text-sm font-normal">
+                <Checkbox checked={val} onCheckedChange={(c) => set(c === true)} />
                 {label}
-              </label>
+              </Label>
             ))}
           </div>
         </div>
 
         {clientOnboarding && (
-          <label className="text-xs font-medium text-muted-foreground">
-            Client name
-            <input
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Client name</Label>
+            <Input
               value={clientName}
               onChange={(e) => setClientName(e.target.value)}
               placeholder="e.g. Accenture, TCS"
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+              className="rounded-xl"
             />
-          </label>
+          </div>
         )}
 
-        <label className="text-xs font-medium text-muted-foreground">
-          Notes (optional)
-          <textarea
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Notes (optional)</Label>
+          <Textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
             placeholder="Any additional context for PMO team…"
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
+            className="rounded-xl resize-none"
           />
-        </label>
+        </div>
 
         <Button size="sm" onClick={submit} disabled={saving}>
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -1952,42 +1947,40 @@ function PMORequestForm({
           {isRevoke ? "Revoke VDI / Access" : "Request VDI Provision"}
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium text-muted-foreground">
-            Team member
-            <select
-              value={employeeName}
-              onChange={(e) => handleTeamSelect(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-            >
-              <option value="">— Select —</option>
-              {team.map((m) => (
-                <option key={m.id} value={m.name}>{m.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs font-medium text-muted-foreground">
-            <span className="flex items-center gap-1.5">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Team member</Label>
+            <Select value={employeeName || undefined} onValueChange={handleTeamSelect}>
+              <SelectTrigger className="w-full rounded-xl">
+                <SelectValue placeholder="— Select —" />
+              </SelectTrigger>
+              <SelectContent>
+                {team.map((m) => (
+                  <SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
               Employee email
               {emailAutoFilled && (
                 <span className="text-[10px] font-semibold text-[var(--collaboration)]">auto-filled</span>
               )}
-            </span>
-            <input
+            </Label>
+            <Input
               value={employeeEmail}
               onChange={(e) => { setEmployeeEmail(e.target.value); setEmailAutoFilled(false); }}
               placeholder="employee@company.com"
               className={cn(
-                "mt-1 w-full rounded-xl border px-3 py-2 text-sm text-foreground",
-                emailAutoFilled
-                  ? "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5"
-                  : "border-border bg-background",
+                "rounded-xl",
+                emailAutoFilled && "border-[var(--collaboration)]/40 bg-[var(--collaboration)]/5",
               )}
             />
-          </label>
+          </div>
         </div>
-        <label className="text-xs font-medium text-muted-foreground">
-          Details / reason
-          <textarea
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Details / reason</Label>
+          <Textarea
             value={details}
             onChange={(e) => setDetails(e.target.value)}
             rows={2}
@@ -1996,9 +1989,9 @@ function PMORequestForm({
                 ? "Reason for revocation, systems to revoke…"
                 : "VDI specs, project context, urgency…"
             }
-            className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
+            className="rounded-xl resize-none"
           />
-        </label>
+        </div>
         <Button
           size="sm"
           variant={isRevoke ? "destructive" : "default"}
@@ -2255,12 +2248,12 @@ function ReadinessTab({ auth }: { auth: Record<string, string> }) {
             who's a gap.
           </p>
           <div className="flex gap-2">
-            <input
+            <Input
               value={skills}
               onChange={(e) => setSkills(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && check()}
               placeholder="e.g. React, Node, AWS"
-              className="flex-1 min-w-0 rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 min-w-0 rounded-xl"
             />
             <Button
               size="sm"
@@ -2682,13 +2675,34 @@ function EmptyState({
 
 // Elevated KPI/stat tile — used across Attendance, Allocations, and Readiness (Team Capacity).
 type StatTone = "violet" | "emerald" | "rose" | "sky" | "amber" | "orange";
-const STAT_TONE_CLS: Record<StatTone, { text: string; bg: string; border: string; iconBg: string }> = {
-  violet: { text: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20", iconBg: "bg-violet-500/15" },
-  emerald: { text: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20", iconBg: "bg-emerald-500/15" },
-  rose: { text: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20", iconBg: "bg-rose-500/15" },
-  sky: { text: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20", iconBg: "bg-sky-500/15" },
-  amber: { text: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20", iconBg: "bg-amber-500/15" },
-  orange: { text: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20", iconBg: "bg-orange-500/15" },
+const STAT_TONE_CLS: Record<
+  StatTone,
+  { text: string; bg: string; border: string; iconBg: string; glow: string }
+> = {
+  violet: {
+    text: "text-violet-500", bg: "bg-violet-500/10", border: "border-violet-500/20", iconBg: "bg-violet-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(139,92,246,0.25),0_16px_40px_-14px_rgba(139,92,246,0.45)]",
+  },
+  emerald: {
+    text: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20", iconBg: "bg-emerald-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(16,185,129,0.25),0_16px_40px_-14px_rgba(16,185,129,0.45)]",
+  },
+  rose: {
+    text: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20", iconBg: "bg-rose-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(244,63,94,0.25),0_16px_40px_-14px_rgba(244,63,94,0.45)]",
+  },
+  sky: {
+    text: "text-sky-500", bg: "bg-sky-500/10", border: "border-sky-500/20", iconBg: "bg-sky-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(14,165,233,0.25),0_16px_40px_-14px_rgba(14,165,233,0.45)]",
+  },
+  amber: {
+    text: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20", iconBg: "bg-amber-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(245,158,11,0.25),0_16px_40px_-14px_rgba(245,158,11,0.45)]",
+  },
+  orange: {
+    text: "text-orange-500", bg: "bg-orange-500/10", border: "border-orange-500/20", iconBg: "bg-orange-500/15",
+    glow: "hover:shadow-[0_0_0_1px_rgba(249,115,22,0.25),0_16px_40px_-14px_rgba(249,115,22,0.45)]",
+  },
 };
 
 function StatTile({
@@ -2708,15 +2722,18 @@ function StatTile({
   return (
     <div
       className={cn(
-        "group rounded-2xl border px-4 py-4 backdrop-blur-sm shadow-sm transition-all duration-200 ease-out motion-safe:hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-fade-in",
+        "group relative overflow-hidden rounded-2xl border px-4 py-4 backdrop-blur-sm shadow-sm transition-all duration-200 ease-out motion-safe:hover:-translate-y-0.5 motion-safe:animate-fade-in",
         c.border,
         c.bg,
+        c.glow,
       )}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
     >
+      {/* subtle top sheen for depth */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
       <div className="flex items-center justify-between gap-2 mb-2">
         <p className={cn("text-[10.5px] font-bold uppercase tracking-[0.1em]", c.text)}>{label}</p>
-        <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-lg", c.iconBg)}>
+        <span className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-transform duration-200 group-hover:scale-110", c.iconBg)}>
           <Icon className={cn("h-3.5 w-3.5", c.text)} />
         </span>
       </div>
@@ -2914,15 +2931,15 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="text-xs font-medium text-muted-foreground">
-                Employee Email *
-                <div className="relative mt-1">
-                  <input
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Employee Email *</Label>
+                <div className="relative">
+                  <Input
                     value={fEmployeeEmail}
                     onChange={(e) => { setFEmployeeEmail(e.target.value); autoFillFromTeam(e.target.value); }}
                     placeholder="employee@company.com"
                     list="appreciation-team-emails"
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                    className="rounded-xl"
                   />
                   <datalist id="appreciation-team-emails">
                     {team.map((m) => (
@@ -2930,49 +2947,49 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
                     ))}
                   </datalist>
                 </div>
-              </label>
-              <label className="text-xs font-medium text-muted-foreground">
-                Employee Name *
-                <input
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Employee Name *</Label>
+                <Input
                   value={fEmployeeName}
                   onChange={(e) => setFEmployeeName(e.target.value)}
                   placeholder="Full name"
-                  className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  className="rounded-xl"
                 />
-              </label>
-              <label className="text-xs font-medium text-muted-foreground">
-                Appreciation Title *
-                <input
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Appreciation Title *</Label>
+                <Input
                   value={fTitle}
                   onChange={(e) => setFTitle(e.target.value)}
                   placeholder="e.g. Outstanding delivery on Q2 release"
-                  className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  className="rounded-xl"
                 />
-              </label>
-              <label className="text-xs font-medium text-muted-foreground">
-                Client Name
-                <div className="relative mt-1 flex items-center">
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Client Name</Label>
+                <div className="relative flex items-center">
                   <Building2 className="absolute left-3 h-3.5 w-3.5 text-muted-foreground/50" />
-                  <input
+                  <Input
                     value={fClientName}
                     onChange={(e) => setFClientName(e.target.value)}
                     placeholder="e.g. Eli Lilly, Dell, Worley"
-                    className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-2 text-sm text-foreground"
+                    className="pl-8 rounded-xl"
                   />
                 </div>
-              </label>
+              </div>
             </div>
 
-            <label className="text-xs font-medium text-muted-foreground">
-              Description / Context
-              <textarea
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Description / Context</Label>
+              <Textarea
                 value={fDescription}
                 onChange={(e) => setFDescription(e.target.value)}
                 rows={3}
                 placeholder="Paste the appreciation email content or add context about the recognition…"
-                className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground resize-none"
+                className="rounded-xl resize-none"
               />
-            </label>
+            </div>
 
             {/* Screenshot Upload */}
             <div>
@@ -2988,6 +3005,7 @@ function AppreciationsTab({ auth, team }: { auth: Record<string, string>; team: 
                   />
                   <button
                     onClick={() => { setFFile(null); setFPreview(null); if (fileRef.current) fileRef.current.value = ""; }}
+                    aria-label="Remove screenshot"
                     className="absolute -top-2 -right-2 rounded-full bg-destructive p-1 text-white shadow"
                   >
                     <X className="h-3 w-3" />

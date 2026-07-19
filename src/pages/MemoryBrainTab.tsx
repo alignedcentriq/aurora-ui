@@ -12,11 +12,15 @@
 // add per-node dragging only if someone actually asks to rearrange it.
 
 import { useAuth } from "@/lib/auth-store";
+import { useDeviceTier } from "@/hooks/use-device-tier";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Search, X, Brain } from "lucide-react";
 import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 
 interface GNode {
   id: string;
@@ -170,11 +174,13 @@ function GraphScene({
   links,
   query,
   onSelect,
+  sparkleCount,
 }: {
   nodes: PNode[];
   links: { s: PNode; t: PNode }[];
   query: string;
   onSelect: (n: PNode) => void;
+  sparkleCount: number;
 }) {
   const [hover, setHover] = useState<PNode | null>(null);
   const q = query.trim().toLowerCase();
@@ -196,7 +202,7 @@ function GraphScene({
     <>
       <ambientLight intensity={0.35} />
       <pointLight position={[0, 4, 4]} intensity={40} color="#7dd8ff" />
-      <Sparkles count={120} scale={9} size={1.6} speed={0.3} color="#4fa9ff" opacity={0.5} />
+      <Sparkles count={sparkleCount} scale={9} size={1.6} speed={0.3} color="#4fa9ff" opacity={0.5} />
 
       {links.map(({ s, t }, i) => {
         const lit = hover ? near.has(s.id) && near.has(t.id) : true;
@@ -231,6 +237,7 @@ function GraphScene({
 
 export function MemoryBrainTab() {
   const { user } = useAuth();
+  const { tier, canRender3D } = useDeviceTier();
   const authHeaders = useMemo(
     () => ({
       "Content-Type": "application/json",
@@ -290,19 +297,22 @@ export function MemoryBrainTab() {
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-            <input
+            <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search memory…"
-              className="w-48 rounded-lg border border-white/10 bg-white/5 py-1.5 pl-8 pr-3 text-[12px] text-white placeholder:text-slate-500 focus:border-[#00c4bb]/50 focus:outline-none"
+              aria-label="Search memory"
+              className="w-48 h-auto rounded-lg border-white/10 bg-white/5 py-1.5 pl-8 pr-3 text-[12px] text-white placeholder:text-slate-500 focus-visible:border-[#00c4bb]/50 focus-visible:ring-[#00c4bb]/30"
             />
           </div>
-          <button
+          <Button
             onClick={load}
-            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[12px] font-medium text-slate-200 hover:bg-white/10"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 rounded-lg border-white/10 bg-white/5 text-[12px] font-medium text-slate-200 hover:bg-white/10 hover:text-white"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -317,23 +327,52 @@ export function MemoryBrainTab() {
           ["User facts", stats.user_memories, "usermem"],
           ["Lessons", stats.lessons_learned, "lessons"],
         ].map(([label, val, group]) => (
-          <span key={label as string} className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-300">
+          <Badge
+            key={label as string}
+            variant="secondary"
+            className="group gap-1.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-slate-300 transition-transform duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--tone)_45%,transparent)] hover:shadow-[0_6px_16px_-8px_color-mix(in_oklab,var(--tone)_50%,transparent)]"
+            style={{ "--tone": GROUP_COLOR[group as string] } as React.CSSProperties}
+          >
             <span className="h-2 w-2 rounded-full" style={{ background: GROUP_COLOR[group as string], boxShadow: `0 0 6px ${GROUP_COLOR[group as string]}` }} />
             {label} <span className="font-semibold text-white">{(val as number) ?? 0}</span>
-          </span>
+          </Badge>
         ))}
       </div>
 
       {/* 3D graph + detail panel */}
       <div className="relative flex-1 overflow-hidden">
-        <Canvas camera={{ position: [0, 3.5, 9], fov: 50 }}>
-          <GraphScene nodes={nodes} links={links} query={query} onSelect={setSelected} />
-        </Canvas>
+        {canRender3D ? (
+          <Canvas
+            camera={{ position: [0, 3.5, 9], fov: 50 }}
+            dpr={tier === "high" ? [1, 2] : 1}
+            gl={{ antialias: tier === "high", powerPreference: "low-power" }}
+          >
+            <GraphScene
+              nodes={nodes}
+              links={links}
+              query={query}
+              onSelect={setSelected}
+              sparkleCount={tier === "high" ? 120 : 45}
+            />
+          </Canvas>
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
+            The 3D memory graph is disabled on this device (low power or reduced-motion) to save
+            battery — search above still works.
+          </div>
+        )}
 
         {selected && (
-          <div className="absolute right-3 top-3 bottom-3 w-[320px] overflow-y-auto rounded-xl border border-white/10 bg-[#0a1428]/95 p-4 shadow-2xl backdrop-blur">
+          <div
+            className="absolute right-3 top-3 bottom-3 w-[320px] overflow-y-auto rounded-xl bg-[#0a1428]/95 p-4 backdrop-blur motion-safe:animate-fade-in"
+            style={{
+              border: `1px solid color-mix(in oklab, ${GROUP_COLOR[selected.group]} 35%, transparent)`,
+              boxShadow: `0 0 0 1px color-mix(in oklab, ${GROUP_COLOR[selected.group]} 12%, transparent), 0 20px 60px -20px color-mix(in oklab, ${GROUP_COLOR[selected.group]} 40%, black)`,
+            }}
+          >
             <button
               onClick={() => setSelected(null)}
+              aria-label="Close detail panel"
               className="absolute right-3 top-3 text-slate-400 hover:text-white"
             >
               <X className="h-4 w-4" />

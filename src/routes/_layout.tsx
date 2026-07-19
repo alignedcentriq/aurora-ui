@@ -206,6 +206,7 @@ function TimezoneOrbitClockCard({
         <button
           onClick={onRemove}
           title={`Remove ${country.name}`}
+          aria-label={`Remove ${country.name}`}
           className="absolute top-3 left-3 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-background/70 text-muted-foreground opacity-0 group-hover/clock:opacity-100 hover:bg-destructive/15 hover:text-destructive transition-all cursor-pointer"
         >
           <X className="h-3.5 w-3.5" />
@@ -318,6 +319,8 @@ function LayoutComponent() {
   const toggleMasterMode = useMasterModeStore((s) => s.toggle);
   // Intro tour play button is restricted to the app owner only.
   const canWatchIntro = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
+  // Master Mode is an internal/experimental view — restricted to the app owner only.
+  const canUseMasterMode = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -547,15 +550,7 @@ function LayoutComponent() {
         {/* Brand Header */}
         <div className={cn("flex items-center py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5", sidebarCollapsed ? "justify-center px-0" : "px-4")}>
           <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity overflow-hidden">
-            <div className="relative shrink-0 flex items-center justify-center">
-              <Logo size="sm" />
-              <motion.div
-                className="absolute -inset-1 rounded-xl opacity-30 blur-sm pointer-events-none"
-                style={{ background: "var(--gradient-primary)" }}
-                animate={{ opacity: [0.2, 0.4, 0.2] }}
-                transition={{ duration: 3, repeat: Infinity }}
-              />
-            </div>
+            <Logo size="sm" className="shrink-0" />
             {!sidebarCollapsed && (
               <BrandName className="text-sm font-bold tracking-tight text-white whitespace-nowrap" withAI={true} />
             )}
@@ -659,6 +654,7 @@ function LayoutComponent() {
                   }}
                   className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 hover:bg-primary/20 hover:text-primary transition-all cursor-pointer"
                   title="New Conversation"
+                  aria-label="New Conversation"
                 >
                   <Plus className="h-3 w-3" />
                 </button>
@@ -699,6 +695,7 @@ function LayoutComponent() {
                             onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
                             className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
                             title="Delete"
+                            aria-label="Delete"
                           >
                             <Trash2 className="h-2.5 w-2.5" />
                           </button>
@@ -722,6 +719,7 @@ function LayoutComponent() {
               "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
             )}
             title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {sidebarCollapsed ? (
               <ChevronRight className="h-4 w-4 shrink-0" />
@@ -744,6 +742,7 @@ function LayoutComponent() {
                   onClick={openIntro}
                   className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
                   title="Watch intro tour"
+                  aria-label="Watch intro tour"
                 >
                   <PlayCircle className="h-4 w-4 text-primary" />
                 </button>
@@ -753,6 +752,7 @@ function LayoutComponent() {
                 onClick={() => setClocksOverlayOpen(true)}
                 className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
                 title="Office Clocks"
+                aria-label="Office Clocks"
               >
                 <Globe className="h-4 w-4 text-primary" />
               </button>
@@ -761,6 +761,7 @@ function LayoutComponent() {
                 onClick={handleThemeToggle}
                 className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
                 title="Toggle Theme"
+                aria-label="Toggle Theme"
               >
                 {activeTheme === "dark" ? (
                   <Sun className="h-4 w-4 text-amber-400" />
@@ -769,18 +770,21 @@ function LayoutComponent() {
                 )}
               </button>
 
-              <button
-                onClick={toggleMasterMode}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-lg transition-all cursor-pointer",
-                  isMasterMode
-                    ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                    : "hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                )}
-                title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-              >
-                <BrainCircuit className="h-4 w-4" />
-              </button>
+              {canUseMasterMode && (
+                <button
+                  onClick={toggleMasterMode}
+                  className={cn(
+                    "flex h-7 w-7 items-center justify-center rounded-lg transition-all cursor-pointer",
+                    isMasterMode
+                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
+                      : "hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
+                  )}
+                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+                >
+                  <BrainCircuit className="h-4 w-4" />
+                </button>
+              )}
             </div>
           )}
 
@@ -792,6 +796,7 @@ function LayoutComponent() {
                   onClick={openIntro}
                   className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
                   title="Watch intro tour"
+                  aria-label="Watch intro tour"
                 >
                   <PlayCircle className="h-4 w-4 text-primary" />
                 </button>
@@ -800,6 +805,7 @@ function LayoutComponent() {
                 onClick={() => setClocksOverlayOpen(true)}
                 className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
                 title="Office Clocks"
+                aria-label="Office Clocks"
               >
                 <Globe className="h-4 w-4 text-primary" />
               </button>
@@ -807,6 +813,7 @@ function LayoutComponent() {
                 onClick={handleThemeToggle}
                 className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white transition-all cursor-pointer"
                 title="Toggle Theme"
+                aria-label="Toggle Theme"
               >
                 {activeTheme === "dark" ? (
                   <Sun className="h-4 w-4 text-amber-400" />
@@ -814,18 +821,21 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
-              <button
-                onClick={toggleMasterMode}
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer shadow-sm",
-                  isMasterMode
-                    ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                    : "bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                )}
-                title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-              >
-                <BrainCircuit className="h-4 w-4" />
-              </button>
+              {canUseMasterMode && (
+                <button
+                  onClick={toggleMasterMode}
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer shadow-sm",
+                    isMasterMode
+                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
+                      : "bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
+                  )}
+                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+                >
+                  <BrainCircuit className="h-4 w-4" />
+                </button>
+              )}
             </div>
           )}
 
@@ -991,6 +1001,7 @@ function LayoutComponent() {
                     }}
                     className="flex h-5 w-5 items-center justify-center rounded-md bg-zinc-800 text-zinc-400 hover:bg-primary/20 hover:text-primary transition-all cursor-pointer"
                     title="New Conversation"
+                    aria-label="New Conversation"
                   >
                     <Plus className="h-3 w-3" />
                   </button>
@@ -1032,6 +1043,7 @@ function LayoutComponent() {
                               onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
                               className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
                               title="Delete"
+                              aria-label="Delete"
                             >
                               <Trash2 className="h-2.5 w-2.5" />
                             </button>
@@ -1054,6 +1066,7 @@ function LayoutComponent() {
                       }}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                       title="Watch intro tour"
+                      aria-label="Watch intro tour"
                     >
                       <PlayCircle className="h-4.5 w-4.5 text-primary" />
                     </button>
@@ -1066,6 +1079,7 @@ function LayoutComponent() {
                     }}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Office Clocks"
+                    aria-label="Office Clocks"
                   >
                     <Globe className="h-4.5 w-4.5 text-primary" />
                   </button>
@@ -1074,6 +1088,7 @@ function LayoutComponent() {
                     onClick={handleThemeToggle}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:text-white transition-all cursor-pointer"
                     title="Toggle Theme"
+                    aria-label="Toggle Theme"
                   >
                     {activeTheme === "dark" ? (
                       <Sun className="h-4.5 w-4.5 text-amber-400" />
@@ -1097,6 +1112,7 @@ function LayoutComponent() {
                     }}
                     className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer shrink-0"
                     title="Sign Out"
+                    aria-label="Sign Out"
                   >
                     <LogOut className="h-4 w-4" />
                   </button>
@@ -1114,11 +1130,12 @@ function LayoutComponent() {
         <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-20 shrink-0 select-none">
           {/* Left Side: Mobile Hamburger OR Page Title on desktop */}
           <div className="flex items-center gap-3">
-            {/* Hamburger Button (Mobile Only) */}
+              {/* Hamburger Button (Mobile Only) */}
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
               title="Open Navigation"
+              aria-label="Open Navigation"
             >
               <Menu className="h-5 w-5" />
             </button>
@@ -1225,6 +1242,7 @@ function LayoutComponent() {
                 <button
                   onClick={resetClocks}
                   title="Reset to default clocks"
+                  aria-label="Reset to default clocks"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-border/60 bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground transition-all cursor-pointer"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
