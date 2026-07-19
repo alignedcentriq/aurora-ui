@@ -33,6 +33,7 @@ class Employee(Base):
     tax_regime = Column(String) # Old, New
     shift_type = Column(String) # Day, Night
     role = Column(String, nullable=True) # Employee, HR, IT, PMO, Admin, Functional Manager, Super Admin
+    created_at = Column(DateTime, nullable=True, default=datetime.datetime.utcnow)  # record creation time (null for pre-existing rows)
 
     # Relationships
     leaves = relationship("Leave", back_populates="employee")
@@ -1813,6 +1814,8 @@ class WelcomeLog(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     acted_at = Column(DateTime, nullable=True)
     acted_by = Column(String, nullable=True)
+    resources_sent = Column(Text, nullable=True)  # JSON snapshot of resources included at send time
+    initiated_by = Column(String, nullable=True)  # HR user (or "system") who triggered onboarding
 
 
 class OnboardingRequest(Base):
@@ -2317,9 +2320,11 @@ class OnboardingDocSubmission(Base):
     doc_key = Column(String, nullable=False)
     file_path = Column(String, nullable=False)               # path under uploads/onboarding_docs/<email>/
     original_name = Column(String, nullable=True)
-    status = Column(String, default="submitted")             # submitted | emailed
+    status = Column(String, default="submitted")             # submitted | emailed | failed
     emailed_to = Column(String, nullable=True)               # HR address the file was sent to
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    attempt_count = Column(Integer, default=0)                # how many times an HR email was attempted
+    last_attempt_at = Column(DateTime, nullable=True)         # when the most recent attempt happened
 
     journey = relationship("OnboardingJourney", back_populates="documents")
 

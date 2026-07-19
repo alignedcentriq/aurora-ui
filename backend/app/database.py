@@ -441,6 +441,15 @@ def init_db():
                 f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS allow_rsvp BOOLEAN DEFAULT FALSE',
                 f'ALTER TABLE "{SCHEMA}".announcements ADD COLUMN IF NOT EXISTS require_ack BOOLEAN DEFAULT FALSE',
                 f'CREATE INDEX IF NOT EXISTS idx_announcement_receipts_ann ON "{SCHEMA}".announcement_receipts(announcement_id)',
+                # Welcome email Phase 2: audit snapshot of which resources were actually sent
+                f'ALTER TABLE "{SCHEMA}".welcome_logs ADD COLUMN IF NOT EXISTS resources_sent TEXT',
+                # Onboarding Phase 3: audit trail — when an employee record was created, and
+                # who triggered their onboarding kickoff
+                f'ALTER TABLE "{SCHEMA}".employees ADD COLUMN IF NOT EXISTS created_at TIMESTAMP',
+                f'ALTER TABLE "{SCHEMA}".welcome_logs ADD COLUMN IF NOT EXISTS initiated_by VARCHAR',
+                # Onboarding Phase 4: doc-to-HR email delivery tracking (submitted/emailed/failed)
+                f'ALTER TABLE "{SCHEMA}".onboarding_doc_submissions ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0',
+                f'ALTER TABLE "{SCHEMA}".onboarding_doc_submissions ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMP',
             ]:
                 try:
                     conn.execute(text(stmt))

@@ -2286,6 +2286,18 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
       let aiTurnAdded = false;
       let accumulatedText = "";
 
+      // Per-request slow warning: independent of the aggregate serverBusy/serverSlow
+      // stats (those need real concurrency contention or historical TTFT samples to
+      // trip, so a solo session rarely sees them) — this fires whenever THIS request
+      // specifically hasn't produced a token within SLOW_WARN_MS.
+      const SLOW_WARN_MS = 8000;
+      const slowWarnTimer = window.setTimeout(() => {
+        toast.warning("Still working on it", {
+          description: "This response is taking longer than usual — hang tight.",
+          duration: 6000,
+        });
+      }, SLOW_WARN_MS);
+
       const fetchSuggestions = (userText: string, aiText: string, domain: string) => {
         fetch("/api/suggestions", {
           method: "POST",
@@ -2374,6 +2386,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               });
             } else if (evt.type === "busy") {
               // Queue is full — degrade gracefully instead of timing out.
+              window.clearTimeout(slowWarnTimer);
               setThinking(threadId, false);
               activityTimers.forEach((t) => window.clearTimeout(t));
               setActivity("");
@@ -2392,6 +2405,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               }
             } else if (evt.type === "token") {
               // Output is flowing — restart the idle window so streaming isn't cut off.
+              window.clearTimeout(slowWarnTimer);
               window.clearTimeout(timeoutId);
               timeoutId = window.setTimeout(() => controller.abort(), 180000);
               const content = (evt.content as string) ?? "";
@@ -2431,6 +2445,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               });
               fetchSuggestions(text, accumulatedText, (evt.domain as string) ?? "general");
             } else if (evt.type === "error") {
+              window.clearTimeout(slowWarnTimer);
               if (!aiTurnAdded) {
                 setThinking(threadId, false);
                 setActivity("");
@@ -2517,6 +2532,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           });
         })
         .finally(() => {
+          window.clearTimeout(slowWarnTimer);
           window.clearTimeout(timeoutId);
           activityTimers.forEach((timer) => window.clearTimeout(timer));
           setActivity("");
@@ -2977,7 +2993,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: 0.3 }}
-                    className="w-full max-w-4xl mb-4 sm:mb-6 hidden sm:block"
+                    className="w-full max-w-4xl mb-4 sm:mb-6"
                   >
                     <SmartWidgets onAction={(prompt) => !busy && send(prompt)} />
                   </motion.div>
@@ -2987,7 +3003,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.4, delay: 0.4 }}
-                    className="w-full max-w-4xl mb-3 sm:mb-5 hidden sm:block"
+                    className="w-full max-w-4xl mb-3 sm:mb-5"
                   >
                     <div className="try-asking-container">
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">

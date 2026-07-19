@@ -258,7 +258,7 @@ def detect_stalled_onboarding(db, now: Optional[datetime.datetime] = None) -> li
         .filter(OnboardingJourney.status == "active")
         .all()
     )
-    tracker_route = "/control-hub?tab=onboarding-tracker"
+    tracker_route = "/onboarding"
 
     specs: list[NudgeSpec] = []
     for journey, emp in journeys:
@@ -324,6 +324,51 @@ def detect_stalled_onboarding(db, now: Optional[datetime.datetime] = None) -> li
                 entity_type="onboarding_journey",
                 entity_id=str(journey.id),
             ))
+    return specs
+
+
+def detect_manager_call_pending(db, now: Optional[datetime.datetime] = None) -> list[NudgeSpec]:
+    """Manager-call invites still 'pending' past the HR-configured reminder cadence →
+    nudge the manager to schedule it. Weekly dedup so a slow manager gets at most one
+    reminder per week, not one every scan tick. Distinct from detect_stalled_onboarding,
+    which is about the hire's own journey steps, not the manager intro call."""
+    from app.models import ManagerCallInvite
+    from app.services import manager_call_service as mc
+
+    cfg = mc.get_settings()
+    now = now or _now()
+    cutoff = now - datetime.timedelta(days=cfg["reminder_days"])
+    week = now.strftime("%Y-W%W")
+
+    invites = (
+        db.query(ManagerCallInvite)
+        .filter(
+            ManagerCallInvite.status == "pending",
+            ManagerCallInvite.manager_email.isnot(None),
+            ManagerCallInvite.created_at < cutoff,
+        )
+        .all()
+    )
+
+    specs: list[NudgeSpec] = []
+    for inv in invites:
+        if not inv.manager_email or "@" not in inv.manager_email:
+            continue
+        new_hire_label = inv.new_hire_name or inv.new_hire_email
+        days_idle = (now - inv.created_at).days if inv.created_at else 0
+        specs.append(NudgeSpec(
+            user_email=inv.manager_email,
+            nudge_type="manager_call_pending",
+            dedup_key=f"manager_call_pending:{inv.id}:{week}",
+            title=f"Schedule your intro call with {new_hire_label}",
+            body=(f"{new_hire_label} joined {days_idle} days ago and your intro call with "
+                  f"them still isn't scheduled. Pick a time — it only takes a minute."),
+            severity="action",
+            action_type="open_manager_call_schedule",
+            action_payload={"route": f"/api/manager-call/schedule/{inv.token}"},
+            entity_type="manager_call_invite",
+            entity_id=str(inv.id),
+        ))
     return specs
 
 
@@ -588,6 +633,15 @@ def run_due() -> int:
             db.rollback()
             log.warning("[nudge] stalled-onboarding detector failed: %s", exc)
 
+        # Manager-call invites still pending past the configured cadence: nudge the manager.
+        try:
+            for spec in detect_manager_call_pending(db):
+                if upsert(db, spec) == "created":
+                    created += 1
+        except Exception as exc:
+            db.rollback()
+            log.warning("[nudge] manager-call-pending detector failed: %s", exc)
+
         # New mail / new community posts: only for users with a connected Microsoft
         # account (no point hitting Graph/Yammer for accounts that aren't linked).
         # Window padded past the scan interval so a slow tick can't drop an email.
@@ -778,7 +832,7 @@ def act(email: str, nudge_id: int) -> dict:
             result = _act_nudge_manager(db, row)
         elif row.action_type == "open_onboarding":
             result = _act_open_onboarding(row)
-        elif row.action_type in ("open_team_digest", "open_onboarding_tracker"):
+        elif row.action_type in ("open_team_digest", "open_onboarding_tracker", "open_manager_call_schedule"):
             result = _act_navigate(row)
         else:
             return {"success": False, "error": "no_action"}
@@ -821,8 +875,9 @@ def _act_open_onboarding(row: ProactiveNudge) -> dict:
 def _act_navigate(row: ProactiveNudge) -> dict:
     """Generic deep-link action — hand the client a route to open."""
     route = (row.action_payload or {}).get("route", "/control-hub")
+    label = "the link" if row.action_type == "open_manager_call_schedule" else "the team digest"
     return {"success": True, "action": "navigate", "route": route,
-            "message": f"Opening [the team digest]({route})."}
+            "message": f"Opening [{label}]({route})."}
 
 
 def _act_nudge_manager(db, row: ProactiveNudge) -> dict:

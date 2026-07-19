@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, CurrentUser
 from app.database import SessionLocal, get_db
-from app.models import Appreciation
+from app.models import Appreciation, Employee
 
 router = APIRouter(prefix="/api/appreciations", tags=["Appreciations"])
 
@@ -58,6 +58,8 @@ async def add_appreciation(
         screenshot_name = screenshot.filename
         screenshot_ct = content_type
 
+    added_by = db.query(Employee).filter(Employee.email == user.email).first()
+
     row = Appreciation(
         employee_email=employee_email.lower().strip(),
         employee_name=employee_name.strip(),
@@ -68,7 +70,7 @@ async def add_appreciation(
         screenshot_name=screenshot_name,
         screenshot_content_type=screenshot_ct,
         added_by_email=user.email,
-        added_by_name=user.name,
+        added_by_name=added_by.name if added_by else None,
     )
     db.add(row)
     db.commit()

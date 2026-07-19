@@ -15,6 +15,7 @@ HR-authenticated:
 
 import datetime
 import html as html_mod
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -94,6 +95,15 @@ def list_welcome_logs(
     db: Session = Depends(get_db),
 ):
     rows = db.query(WelcomeLog).order_by(WelcomeLog.created_at.desc()).all()
+
+    def _resources_sent(raw: str | None) -> list:
+        if not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except Exception:
+            return []
+
     return [
         {
             "id": r.id,
@@ -103,6 +113,7 @@ def list_welcome_logs(
             "created_at": r.created_at.isoformat(),
             "acted_at": r.acted_at.isoformat() if r.acted_at else None,
             "acted_by": r.acted_by,
+            "resources_sent": _resources_sent(r.resources_sent),
         }
         for r in rows
     ]
@@ -213,25 +224,69 @@ def delete_resource(
     return {"ok": True}
 
 
-# ── HR: Welcome Message (editable intro) ──────────────────────────────────────
+# ── HR: Email delivery health check ───────────────────────────────────────────
+
+@router.get("/api/portal/hr/email-health")
+def get_email_health(_: CurrentUser = Depends(require_hr)):
+    from app.services.email_service import check_email_health
+    return check_email_health()
+
+
+# ── HR: Welcome Email Mode (auto vs. review) ──────────────────────────────────
+
+_VALID_WELCOME_MODES = {"auto", "review"}
+
+
+@router.get("/api/portal/hr/welcome/mode")
+def get_welcome_mode(_: CurrentUser = Depends(require_hr)):
+    from app.services.company_settings_service import CompanySettingsService
+    mode = (CompanySettingsService.get("welcome_email_mode") or "auto").strip().lower()
+    return {"mode": mode if mode in _VALID_WELCOME_MODES else "auto"}
+
+
+class WelcomeModeBody(BaseModel):
+    mode: str
+
+
+@router.put("/api/portal/hr/welcome/mode")
+def update_welcome_mode(
+    body: WelcomeModeBody,
+    user: CurrentUser = Depends(require_hr),
+):
+    from app.services.company_settings_service import CompanySettingsService
+    mode = (body.mode or "").strip().lower()
+    if mode not in _VALID_WELCOME_MODES:
+        raise HTTPException(status_code=400, detail="mode must be 'auto' or 'review'.")
+    CompanySettingsService.set("welcome_email_mode", mode, updated_by=user.email)
+    return {"ok": True, "mode": mode}
+
+
+# ── HR: Welcome Message (editable subject + intro) ────────────────────────────
 
 DEFAULT_WELCOME_MESSAGE = (
     "Welcome to the team, {name}! 🎉\n\n"
-    "We're thrilled to have you on board. Below are the tools and resources "
-    "available to you through Centriq AI — your digital workplace assistant. "
-    "Just open the app and ask anything!"
+    "We're thrilled to have you on board as our new {designation} in {department}. "
+    "Below are the tools and resources available to you through Centriq AI — your "
+    "digital workplace assistant. Just open the app and ask anything!"
 )
+
+DEFAULT_WELCOME_SUBJECT = "Welcome to the team, {name}!"
 
 
 @router.get("/api/portal/hr/welcome/message")
 def get_welcome_message(_: CurrentUser = Depends(require_hr)):
     from app.services.company_settings_service import CompanySettingsService
     text = CompanySettingsService.get("welcome_email_intro")
-    return {"text": text or DEFAULT_WELCOME_MESSAGE}
+    subject = CompanySettingsService.get("welcome_email_subject")
+    return {
+        "text": text or DEFAULT_WELCOME_MESSAGE,
+        "subject": subject or DEFAULT_WELCOME_SUBJECT,
+    }
 
 
 class WelcomeMessageBody(BaseModel):
     text: str
+    subject: Optional[str] = None
 
 
 @router.put("/api/portal/hr/welcome/message")
@@ -244,4 +299,36 @@ def update_welcome_message(
     if not text:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
     CompanySettingsService.set("welcome_email_intro", text, updated_by=user.email)
-    return {"ok": True, "text": text}
+
+    subject = (body.subject or "").strip()
+    if subject:
+        CompanySettingsService.set("welcome_email_subject", subject, updated_by=user.email)
+
+    return {"ok": True, "text": text, "subject": subject or DEFAULT_WELCOME_SUBJECT}
+
+
+# ── HR: Welcome Email Preview (renders, never sends) ──────────────────────────
+
+class WelcomePreviewBody(BaseModel):
+    name: Optional[str] = None
+    department: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date_label: Optional[str] = None
+    manager_name: Optional[str] = None
+
+
+@router.post("/api/portal/hr/welcome/preview")
+def preview_welcome_email(
+    body: WelcomePreviewBody,
+    _: CurrentUser = Depends(require_hr),
+    db: Session = Depends(get_db),
+):
+    from app.services.welcome_service import render_welcome_preview
+    return render_welcome_preview(
+        db,
+        name=(body.name or "").strip(),
+        department=(body.department or "").strip(),
+        designation=(body.designation or "").strip(),
+        joining_date_label=(body.joining_date_label or "").strip(),
+        manager_name=(body.manager_name or "").strip(),
+    )

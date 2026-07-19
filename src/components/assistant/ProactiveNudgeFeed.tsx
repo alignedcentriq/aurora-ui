@@ -112,7 +112,7 @@ function getFlown(): number[] {
   }
 }
 
-export function ProactiveNudgeFeed() {
+export function ProactiveNudgeFeed({ triggerClassName }: { triggerClassName?: string } = {}) {
   const { user } = useAuth();
   const [nudges, setNudges] = useState<Nudge[]>([]);
   const [nudgesUnread, setNudgesUnread] = useState(0);
@@ -346,7 +346,10 @@ export function ProactiveNudgeFeed() {
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
-          className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+          className={cn(
+            "relative flex h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm",
+            triggerClassName,
+          )}
           title="Notifications"
         >
           <Bell className="h-4 w-4 text-primary" />

@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import OnboardingContentAdmin from "./OnboardingContentAdmin";
+import OnboardingKickoffAdmin from "./OnboardingKickoffAdmin";
 
 interface JourneyRow {
   employee_name: string;
@@ -175,7 +176,7 @@ export function OnboardingTracker() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "completed" | "stalled">("all");
-  const [view, setView] = useState<"tracker" | "content" | "preview">("tracker");
+  const [view, setView] = useState<"tracker" | "kickoff" | "content" | "preview">("tracker");
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [deviceInput, setDeviceInput] = useState("");
@@ -369,7 +370,7 @@ export function OnboardingTracker() {
                 <Rocket className="h-3.5 w-3.5 text-white" />
               </div>
               <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
-                HR Portal
+                Onboarding
               </span>
             </div>
             <p className="text-[13px] text-muted-foreground mt-0.5">
@@ -389,6 +390,17 @@ export function OnboardingTracker() {
                 )}
               >
                 <Users className="h-3.5 w-3.5" /> Tracker
+              </button>
+              <button
+                onClick={() => setView("kickoff")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all",
+                  view === "kickoff"
+                    ? "bg-violet-600 text-white shadow-sm shadow-violet-600/30"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Zap className="h-3.5 w-3.5" /> Kickoff
               </button>
               <button
                 onClick={() => setView("content")}
@@ -465,6 +477,7 @@ export function OnboardingTracker() {
       </div>
 
       {/* ── Content management view ── */}
+      {view === "kickoff" && <OnboardingKickoffAdmin authHeaders={authHeaders} />}
       {view === "content" && <OnboardingContentAdmin authHeaders={authHeaders} />}
 
       {/* ── Preview view (what a new hire sees) ── */}

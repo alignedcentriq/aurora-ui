@@ -47,7 +47,14 @@ def _serialize(e: Employee, skills: list[EmployeeSkill]) -> dict:
 
 
 def _get_or_create_employee(db, email: str) -> Employee:
-    """Get-or-create employee by email (never return 'not found')."""
+    """Get-or-create a placeholder employee stub by email (never return 'not found').
+
+    This is a fallback for routes that need *some* Employee row to hang data off of
+    (e.g. viewing the Skills tab) — it is NOT a "new employee joined" event and must
+    never trigger onboarding kickoff (welcome email / manager-call invite). Those only
+    fire from a deliberate employee-creation action — see PeopleService.add_employee /
+    PeopleService.import_employees, which call welcome_service.kickoff_new_hire().
+    """
     emp = db.query(Employee).filter(Employee.email == email).first()
     if not emp:
         name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
@@ -64,18 +71,6 @@ def _get_or_create_employee(db, email: str) -> Employee:
         db.add(emp)
         db.commit()
         db.refresh(emp)
-        # Notify HR about the new employee so they can send a welcome email
-        try:
-            from app.services.welcome_service import notify_hr_new_employee
-            notify_hr_new_employee(emp.email, emp.name, db)
-        except Exception as _e:
-            pass
-        # Email the new hire's manager a magic link to schedule their intro call
-        try:
-            from app.services.manager_call_service import ensure_invite
-            ensure_invite(emp.email, emp.name, db)
-        except Exception as _e:
-            pass
     return emp
 
 

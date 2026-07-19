@@ -31,7 +31,6 @@ import {
   ShieldCheck,
   TrendingUp,
   Globe,
-  Rocket,
   Brain,
   ScrollText,
 } from "lucide-react";
@@ -94,9 +93,6 @@ const UdemyBusinessPortal = lazy(() =>
 const ProjectIQPortal = lazy(() =>
   import("@/pages/ProjectIQPortal").then((m) => ({ default: m.ProjectIQPortal })),
 );
-const OnboardingTracker = lazy(() =>
-  import("@/pages/OnboardingTracker").then((m) => ({ default: m.OnboardingTracker })),
-);
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
@@ -117,7 +113,6 @@ type TabId =
   | "audit-trail"
   | "admin-portal"
   | "hr-portal"
-  | "onboarding-tracker"
   | "it-portal"
   | "pmo-portal"
   | "leadership-command"
@@ -235,22 +230,13 @@ const TABS: TabItem[] = [
   },
   {
     id: "hr-portal",
-    label: "HR Portal",
+    label: "HR Requests",
     category: "Management Portals",
     icon: CalendarDays,
     color: "#16A34A",
     show: (role) => role === "HR",
     requireScope: "leave_management",
     component: HRPortal,
-  },
-  {
-    id: "onboarding-tracker",
-    label: "Onboarding Tracker",
-    category: "Management Portals",
-    icon: Rocket,
-    color: "#7C3AED",
-    show: (role) => role === "HR",
-    component: OnboardingTracker,
   },
   {
     id: "it-portal",
@@ -376,9 +362,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
   "automation-hub": "Automate email sequences, rule actions, and triggers.",
   "admin-portal": "Submit transport claims, desk keys, parking stickers, and library books.",
-  "hr-portal": "Request leave, review pending approvals, and download payroll reports.",
-  "onboarding-tracker":
-    "Track every new joiner's onboarding progress, steps, and joining documents.",
+  "hr-portal": "Handle escalations, document requests, HR queries, and grievances.",
   "it-portal": "Open IT tickets, view device status, and check active support incidents.",
   "pmo-portal": "Monitor project delivery status, milestones, and training compliance.",
   "leadership-command":

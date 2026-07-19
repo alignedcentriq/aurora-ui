@@ -9,7 +9,7 @@ import datetime
 from typing import Optional
 
 import pandas as pd
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, exists
 from app.database import SessionLocal
 from app.models import Employee, EmployeeZohoProfile, EmployeeAllocation, Project, Appreciation
 
@@ -112,7 +112,7 @@ class PeopleService:
     # ── Import ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def import_employees(file_bytes: bytes) -> dict:
+    def import_employees(file_bytes: bytes, actor_email: str = "") -> dict:
         df = pd.read_excel(io.BytesIO(file_bytes))
         df = df.dropna(how="all")
         if df.empty:
@@ -120,6 +120,7 @@ class PeopleService:
 
         db = SessionLocal()
         imported = skipped = 0
+        new_hires: list[tuple[str, str]] = []
         try:
             for _, row in df.iterrows():
                 name = _safe(row.get("Name"))
@@ -148,6 +149,8 @@ class PeopleService:
                     )
                     db.add(emp)
                     db.flush()
+                    if emp.email:
+                        new_hires.append((emp.email, emp.name or ""))
                 else:
                     if name:
                         emp.name = name
@@ -188,10 +191,220 @@ class PeopleService:
                 imported += 1
 
             db.commit()
+
+            # Kick off onboarding (auto welcome email + manager intro-call invite) for
+            # every genuinely new employee this import created — never for rows that
+            # matched an existing Employee.
+            if new_hires:
+                from app.services.welcome_service import kickoff_new_hire
+                initiator = actor_email or "system:import"
+                for hire_email, hire_name in new_hires:
+                    try:
+                        kickoff_new_hire(hire_email, hire_name, db, initiated_by=initiator)
+                    except Exception:
+                        pass
+
             return {"imported": imported, "skipped": skipped, "message": f"Imported {imported} employee records."}
         except Exception as e:
             db.rollback()
             raise RuntimeError(f"Import failed: {e}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def add_employee(data: dict, actor_email: str = "") -> dict:
+        """Create a single Employee record directly (the "Add Employee" HR action) and
+        immediately kick off onboarding — welcome email + manager intro-call invite —
+        for the new hire. This is the deliberate, auditable counterpart to the lazy
+        get-or-create-employee stub paths used elsewhere in the app."""
+        name = (data.get("name") or "").strip()
+        email = (data.get("email") or "").strip().lower()
+        if not name or not email:
+            raise ValueError("Name and email are required.")
+
+        db = SessionLocal()
+        try:
+            if db.query(Employee).filter(Employee.email == email).first():
+                raise ValueError(f"An employee with email {email} already exists.")
+
+            joining_date = _safe_date(data.get("joining_date")) or datetime.date.today()
+            emp = Employee(
+                employee_id=(data.get("employee_id") or "").strip() or f"EMP{abs(hash(email)) % 9000 + 1000}",
+                name=name,
+                email=email,
+                department=(data.get("department") or "").strip(),
+                designation=(data.get("designation") or "").strip(),
+                location=(data.get("location") or "").strip(),
+                joining_date=joining_date,
+                employment_type=(data.get("employment_type") or "Full-time").strip(),
+            )
+            db.add(emp)
+            db.commit()
+            db.refresh(emp)
+
+            from app.services.welcome_service import kickoff_new_hire
+            kickoff_new_hire(emp.email, emp.name, db, initiated_by=actor_email or "system")
+
+            return {
+                "ok": True,
+                "employee": {
+                    "id": emp.id,
+                    "employee_id": emp.employee_id,
+                    "name": emp.name,
+                    "email": emp.email,
+                    "department": emp.department,
+                    "designation": emp.designation,
+                    "joining_date": emp.joining_date.isoformat() if emp.joining_date else None,
+                },
+                "message": f"{emp.name} added. Welcome email and manager intro-call invite are being sent automatically.",
+            }
+        finally:
+            db.close()
+
+    # ── Onboarding audit + manual trigger ────────────────────────────────────────
+
+    @staticmethod
+    def get_onboarding_audit(search: str = "", limit: int = 20, offset: int = 0) -> dict:
+        """Unified onboarding audit: one row per employee showing when onboarding was
+        initiated/completed across the welcome email, manager-call invite, document, and
+        journey subsystems — so HR can see the whole picture instead of four disconnected
+        tabs. Powers the HR Portal Onboarding tab's audit table. Server-side paginated —
+        returns {total, offset, limit, results}, same shape as search_people()."""
+        from app.models import WelcomeLog, ManagerCallInvite, OnboardingJourney, OnboardingDocSubmission
+        from app.services.onboarding_service import required_doc_keys
+
+        db = SessionLocal()
+        try:
+            q = db.query(Employee)
+            term = (search or "").strip()
+            search_filters = []
+            if term:
+                like = f"%{term}%"
+                search_filters.append(or_(Employee.name.ilike(like), Employee.email.ilike(like)))
+                q = q.filter(*search_filters)
+            total = q.count()
+
+            # Aggregate counts over the FULL filtered set (not just this page), via
+            # correlated EXISTS subqueries — cheap even at thousands of employees.
+            welcome_exists = exists().where(WelcomeLog.employee_email == Employee.email)
+            invite_exists = exists().where(ManagerCallInvite.new_hire_email == Employee.email)
+            journey_completed_exists = exists().where(
+                and_(OnboardingJourney.employee_id == Employee.id, OnboardingJourney.status == "completed")
+            )
+            triggered_count = (
+                db.query(Employee.id)
+                .filter(*search_filters)
+                .filter(or_(welcome_exists, invite_exists))
+                .count()
+            )
+            completed_count = (
+                db.query(Employee.id)
+                .filter(*search_filters)
+                .filter(journey_completed_exists)
+                .count()
+            )
+            counts = {
+                "not_triggered": total - triggered_count,
+                "in_progress": triggered_count - completed_count,
+                "completed": completed_count,
+            }
+
+            employees = q.order_by(Employee.id.desc()).offset(offset).limit(limit).all()
+            if not employees:
+                return {"total": total, "counts": counts, "offset": offset, "limit": limit, "results": []}
+
+            emails = [e.email for e in employees if e.email]
+            emp_ids = [e.id for e in employees]
+
+            welcome_by_email = {
+                w.employee_email: w
+                for w in db.query(WelcomeLog).filter(WelcomeLog.employee_email.in_(emails)).all()
+            }
+            invite_by_email = {
+                i.new_hire_email: i
+                for i in db.query(ManagerCallInvite).filter(ManagerCallInvite.new_hire_email.in_(emails)).all()
+            }
+            journeys = db.query(OnboardingJourney).filter(OnboardingJourney.employee_id.in_(emp_ids)).all()
+            journey_by_emp_id = {j.employee_id: j for j in journeys}
+            journey_ids = [j.id for j in journeys]
+
+            required_count = len(required_doc_keys())
+            docs_by_journey: dict[int, list] = {}
+            if journey_ids:
+                all_docs = (
+                    db.query(OnboardingDocSubmission)
+                    .filter(OnboardingDocSubmission.journey_id.in_(journey_ids))
+                    .order_by(OnboardingDocSubmission.submitted_at.desc())
+                    .all()
+                )
+                for d in all_docs:
+                    docs_by_journey.setdefault(d.journey_id, []).append(d)
+
+            rows = []
+            for emp in employees:
+                w = welcome_by_email.get(emp.email)
+                inv = invite_by_email.get(emp.email)
+                j = journey_by_emp_id.get(emp.id)
+
+                doc_summary = {"submitted": 0, "required": required_count, "failed": 0, "failed_ids": []}
+                if j:
+                    seen_keys = set()
+                    for d in docs_by_journey.get(j.id, []):
+                        if d.doc_key in seen_keys:
+                            continue  # keep only the latest submission per doc
+                        seen_keys.add(d.doc_key)
+                        if d.status in ("submitted", "emailed"):
+                            doc_summary["submitted"] += 1
+                        elif d.status == "failed":
+                            doc_summary["failed"] += 1
+                            doc_summary["failed_ids"].append(d.id)
+
+                rows.append({
+                    "employee_id": emp.id,
+                    "name": emp.name,
+                    "email": emp.email,
+                    "department": emp.department,
+                    "designation": emp.designation,
+                    "added_at": emp.created_at.isoformat() if emp.created_at else None,
+                    "welcome": {
+                        "log_id": w.id if w else None,
+                        "status": w.status if w else "not_started",
+                        "initiated_at": w.created_at.isoformat() if w and w.created_at else None,
+                        "initiated_by": w.initiated_by if w else None,
+                        "completed_at": w.acted_at.isoformat() if w and w.acted_at else None,
+                    },
+                    "manager_call": {
+                        "invite_id": inv.id if inv else None,
+                        "status": inv.status if inv else "not_started",
+                        "manager_name": inv.manager_name if inv else None,
+                        "manager_email": inv.manager_email if inv else None,
+                        "initiated_at": inv.created_at.isoformat() if inv and inv.created_at else None,
+                        "completed_at": inv.scheduled_at.isoformat() if inv and inv.scheduled_at else None,
+                    },
+                    "journey": {
+                        "status": j.status if j else "not_started",
+                        "started_at": j.started_at.isoformat() if j and j.started_at else None,
+                        "completed_at": j.completed_at.isoformat() if j and j.completed_at else None,
+                    },
+                    "documents": doc_summary,
+                    "onboarding_triggered": bool(w or inv),
+                })
+            return {"total": total, "counts": counts, "offset": offset, "limit": limit, "results": rows}
+        finally:
+            db.close()
+
+    @staticmethod
+    def trigger_onboarding(employee_id: int, actor_email: str = "") -> dict:
+        """HR's one-click 'Trigger Onboarding' action for an existing employee — see
+        welcome_service.trigger_onboarding_manual for the exact semantics (fresh kickoff
+        vs. retry vs. no-op)."""
+        db = SessionLocal()
+        try:
+            emp = db.query(Employee).filter(Employee.id == employee_id).first()
+            if not emp or not emp.email:
+                raise ValueError("Employee not found or has no email on file.")
+            from app.services.welcome_service import trigger_onboarding_manual
+            return trigger_onboarding_manual(emp.email, emp.name, actor_email or "system", db)
         finally:
             db.close()
 

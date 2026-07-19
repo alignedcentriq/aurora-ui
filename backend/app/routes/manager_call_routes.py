@@ -12,13 +12,71 @@ the frontend SPA isn't involved. The new hire's own status is read via the authe
 from __future__ import annotations
 
 import html as html_mod
+from typing import Optional
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from app.auth import require_hr, CurrentUser
+from app.database import get_db
 from app.services import manager_call_service as mc
 
 public_router = APIRouter(tags=["Manager Call (public)"])
+router = APIRouter(prefix="/api/manager-call", tags=["Manager Call (HR admin)"])
+
+
+# ── HR admin: settings + manual overrides ─────────────────────────────────────
+
+class ManagerCallSettingsBody(BaseModel):
+    sender_email: Optional[str] = None
+    subject: Optional[str] = None
+    intro: Optional[str] = None
+    reminder_days: Optional[int] = None
+
+
+@router.get("/settings")
+def get_manager_call_settings(_: CurrentUser = Depends(require_hr)):
+    return mc.get_settings()
+
+
+@router.put("/settings")
+def update_manager_call_settings(
+    body: ManagerCallSettingsBody,
+    user: CurrentUser = Depends(require_hr),
+):
+    return mc.set_settings(body.model_dump(exclude_unset=True), actor_email=user.email)
+
+
+@router.post("/invites/{invite_id}/resend")
+def resend_manager_invite(
+    invite_id: int,
+    _: CurrentUser = Depends(require_hr),
+    db: Session = Depends(get_db),
+):
+    result = mc.resend_invite(invite_id, db)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Resend failed."))
+    return result
+
+
+class UpdateInviteManagerBody(BaseModel):
+    manager_email: Optional[str] = None
+    manager_name: Optional[str] = None
+
+
+@router.put("/invites/{invite_id}")
+def update_invite_manager(
+    invite_id: int,
+    body: UpdateInviteManagerBody,
+    _: CurrentUser = Depends(require_hr),
+    db: Session = Depends(get_db),
+):
+    result = mc.update_invite_manager(invite_id, body.manager_email or "", body.manager_name or "", db)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Invite not found."))
+    return result
 
 
 def _page(title: str, inner_html: str, accent: str = "#1B6FC8") -> str:

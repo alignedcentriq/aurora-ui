@@ -30,10 +30,121 @@ _TZ_LABEL = "IST"
 _TZ_GRAPH = "Asia/Kolkata"
 
 
+_MC_SETTINGS_KEY = "manager_call_settings"
+
+_DEFAULT_MC_SUBJECT = "Schedule an intro call with {new_hire_name}"
+_DEFAULT_MC_INTRO = (
+    "Hi {manager_name_first},\n\n"
+    "{new_hire_name} has just joined your team. Please schedule a short intro call to "
+    "welcome them and help them get started.\n\n"
+    "Click below to pick a date and time — a Microsoft Teams meeting will be created and "
+    "sent to you both automatically."
+)
+
+
+def _mc_defaults() -> dict:
+    return {
+        "sender_email": "",  # blank = fall back to PARKING_REMINDER_SENDER / NOTIFY_TO_EMAIL
+        "subject": _DEFAULT_MC_SUBJECT,
+        "intro": _DEFAULT_MC_INTRO,
+        "reminder_days": 3,
+    }
+
+
+def get_settings() -> dict:
+    """Current manager-call config (sender/subject/intro/reminder cadence), merged over
+    defaults. HR-editable via /api/manager-call/settings."""
+    import json
+    from app.services.company_settings_service import CompanySettingsService
+
+    cfg = _mc_defaults()
+    raw = CompanySettingsService.get(_MC_SETTINGS_KEY)
+    if raw:
+        try:
+            stored = json.loads(raw)
+            if isinstance(stored, dict):
+                cfg.update({k: stored[k] for k in cfg if k in stored})
+        except Exception:
+            pass
+    try:
+        cfg["reminder_days"] = max(1, int(cfg["reminder_days"]))
+    except (TypeError, ValueError):
+        cfg["reminder_days"] = 3
+    return cfg
+
+
+def set_settings(data: dict, actor_email: str = "") -> dict:
+    """Persist (partial) manager-call config; returns the full merged, validated config."""
+    import json
+    from app.services.company_settings_service import CompanySettingsService
+
+    cfg = get_settings()
+    for key in ("sender_email", "subject", "intro"):
+        if key in data:
+            cfg[key] = (data.get(key) or "").strip()
+    if "reminder_days" in data:
+        try:
+            cfg["reminder_days"] = max(1, int(data["reminder_days"]))
+        except (TypeError, ValueError):
+            pass
+    CompanySettingsService.set(_MC_SETTINGS_KEY, json.dumps(cfg), updated_by=actor_email)
+    return cfg
+
+
+def _render_subject_template(tmpl: str, new_hire_label: str, manager_name: str) -> str:
+    first = (manager_name.split(" ")[0] if manager_name else "") or "there"
+    return (
+        tmpl.replace("{new_hire_name}", new_hire_label)
+        .replace("{manager_name_first}", first)
+        .replace("{manager_name}", manager_name or "there")
+    )
+
+
+def _render_intro_html(tmpl: str, new_hire_label: str, manager_name: str) -> str:
+    import html as html_mod
+
+    escaped = html_mod.escape(tmpl)
+    first = (manager_name.split(" ")[0] if manager_name else "") or "there"
+    escaped = escaped.replace("{new_hire_name}", f"<strong>{html_mod.escape(new_hire_label)}</strong>")
+    escaped = escaped.replace("{manager_name_first}", html_mod.escape(first))
+    escaped = escaped.replace("{manager_name}", html_mod.escape(manager_name or "there"))
+    paragraphs = [p.strip() for p in escaped.split("\n\n") if p.strip()]
+    return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+
+
+def _build_invite_email(new_hire_label: str, manager_name: str, token: str) -> tuple[str, str]:
+    """Build (subject, html_body) for the manager-call invite email — shared by the
+    automatic send (ensure_invite) and the HR "Resend" button (resend_invite)."""
+    import html as html_mod
+    from app.services.email_service import _email_shell, _detail_rows, _button_row
+
+    cfg = get_settings()
+    subject = _render_subject_template(cfg["subject"] or _DEFAULT_MC_SUBJECT, new_hire_label, manager_name)
+    intro_html = _render_intro_html(cfg["intro"] or _DEFAULT_MC_INTRO, new_hire_label, manager_name)
+
+    base_url = getattr(settings, "APP_BASE_URL", "http://localhost:8080").rstrip("/")
+    schedule_url = f"{base_url}/api/manager-call/schedule/{token}"
+    body = (
+        _detail_rows([
+            ("New team member", html_mod.escape(new_hire_label)),
+            ("Suggested length", "30 minutes"),
+        ])
+        + _button_row([("Schedule the intro call", schedule_url, "#1B6FC8")])
+    )
+    html_body = _email_shell(
+        "Schedule your intro call",
+        intro_html,
+        body,
+        preheader=f"{new_hire_label} joined your team — schedule a welcome call.",
+    )
+    return subject, html_body
+
+
 def _system_sender() -> str:
     """Mailbox used to send the manager invite + confirmation emails and (as a fallback)
     to host the Teams event. Must be an account with a connected MS365 mailbox."""
-    return settings.PARKING_REMINDER_SENDER or settings.NOTIFY_TO_EMAIL or ""
+    cfg = get_settings()
+    return cfg.get("sender_email") or settings.PARKING_REMINDER_SENDER or settings.NOTIFY_TO_EMAIL or ""
 
 
 # ── Manager resolution ───────────────────────────────────────────────────────────
@@ -103,42 +214,66 @@ def ensure_invite(new_hire_email: str, new_hire_name: str, db) -> None:
 def _send_manager_invite_email(token: str, manager_email: str, manager_name: str,
                                new_hire_label: str) -> None:
     try:
-        import html as html_mod
-        from app.services.email_service import _send_html, _email_shell, _detail_rows, _button_row
+        from app.services.email_service import _send_html
 
         sender = _system_sender()
         if not sender:
             logger.warning("[manager-call] No system sender configured — invite email skipped.")
             return
 
-        base_url = getattr(settings, "APP_BASE_URL", "http://localhost:8080").rstrip("/")
-        schedule_url = f"{base_url}/api/manager-call/schedule/{token}"
-
-        greeting = f"Hi {html_mod.escape(manager_name.split(' ')[0])}," if manager_name else "Hi,"
-        intro = (
-            f"<p>{greeting}</p>"
-            f"<p><strong>{html_mod.escape(new_hire_label)}</strong> has just joined your team. "
-            f"Please schedule a short intro call to welcome them and help them get started.</p>"
-            f"<p>Click below to pick a date and time — a Microsoft Teams meeting will be created "
-            f"and sent to you both automatically.</p>"
-        )
-        body = (
-            _detail_rows([
-                ("New team member", html_mod.escape(new_hire_label)),
-                ("Suggested length", "30 minutes"),
-            ])
-            + _button_row([("Schedule the intro call", schedule_url, "#1B6FC8")])
-        )
-        html_body = _email_shell(
-            "Schedule your intro call",
-            intro,
-            body,
-            preheader=f"{new_hire_label} joined your team — schedule a welcome call.",
-        )
-        _send_html(sender, manager_email, f"Schedule an intro call with {new_hire_label}", html_body)
+        subject, html_body = _build_invite_email(new_hire_label, manager_name, token)
+        _send_html(sender, manager_email, subject, html_body)
         logger.info("[manager-call] Invite email sent to manager %s", manager_email)
     except Exception as e:
         logger.error("[manager-call] Invite email failed for %s: %s", manager_email, e)
+
+
+def resend_invite(invite_id: int, db) -> dict:
+    """HR-triggered manual resend of the manager-call invite email. Synchronous (unlike
+    the fire-and-forget background thread used for the automatic send) since this is a
+    direct button click that should report success/failure immediately. Re-resolves the
+    manager first if none was ever found."""
+    from app.services.email_service import _send_html
+
+    inv = db.query(ManagerCallInvite).filter(ManagerCallInvite.id == invite_id).first()
+    if not inv:
+        return {"ok": False, "error": "Invite not found."}
+    if inv.status == "scheduled":
+        label = inv.new_hire_name or inv.new_hire_email
+        return {"ok": False, "error": f"{label} already scheduled their intro call."}
+
+    manager_email = inv.manager_email
+    manager_name = inv.manager_name or ""
+    if not manager_email:
+        manager_email, manager_name = _resolve_manager(inv.new_hire_email, db)
+        if manager_email:
+            inv.manager_email = manager_email
+            inv.manager_name = manager_name or None
+            db.commit()
+    if not manager_email:
+        return {"ok": False, "error": "No manager could be resolved. Set one manually first."}
+
+    sender = _system_sender()
+    if not sender:
+        return {"ok": False, "error": "No sender mailbox configured/connected."}
+
+    new_hire_label = inv.new_hire_name or inv.new_hire_email
+    subject, html_body = _build_invite_email(new_hire_label, manager_name, inv.token)
+    ok = _send_html(sender, manager_email, subject, html_body)
+    if ok:
+        logger.info("[manager-call] Invite manually resent to manager %s", manager_email)
+    return {"ok": ok, "manager_email": manager_email, "manager_name": manager_name}
+
+
+def update_invite_manager(invite_id: int, manager_email: str, manager_name: str, db) -> dict:
+    """HR override — correct a wrongly-resolved (or missing) manager for an invite."""
+    inv = db.query(ManagerCallInvite).filter(ManagerCallInvite.id == invite_id).first()
+    if not inv:
+        return {"ok": False, "error": "Invite not found."}
+    inv.manager_email = (manager_email or "").strip().lower() or None
+    inv.manager_name = (manager_name or "").strip() or None
+    db.commit()
+    return {"ok": True}
 
 
 # ── Reads ────────────────────────────────────────────────────────────────────────
