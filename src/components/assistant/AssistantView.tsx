@@ -26,6 +26,15 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { InteractiveEmailDraft } from "./InteractiveEmailDraft";
 import { ParkingForm } from "./ParkingForm";
 import { VisitorPassForm } from "./VisitorPassForm";
@@ -59,6 +68,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
+import { AmbientField } from "@/components/three/AmbientField";
 import { CitationsCard } from "@/components/assistant/CitationsCard";
 import { MorningBriefing } from "@/components/assistant/MorningBriefing";
 import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
@@ -2927,6 +2937,12 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                       particleColor="#3B8FE8"
                     />
                   </div>
+                  {/* Subtle three.js accent layered above the 2D sparkles — auto-skips on
+                      low-power/reduced-motion devices via useDeviceTier, so the 2D layer
+                      above always carries the effect on its own. */}
+                  <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-70">
+                    <AmbientField />
+                  </div>
                   {(() => {
                     const { heading, subheading } = getGreeting(user?.name || "there");
                     return (
@@ -3561,19 +3577,20 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Document Type</label>
-              <select
-                value={docType}
-                onChange={(event) => setDocType(event.target.value)}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
-              >
-                <option value="project_status_report">Project Status Report</option>
-                <option value="sprint_summary">Sprint Summary</option>
-                <option value="meeting_minutes">Meeting Minutes</option>
-              </select>
+              <Label className="text-sm font-medium text-foreground">Document Type</Label>
+              <Select value={docType} onValueChange={setDocType}>
+                <SelectTrigger className="w-full rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="project_status_report">Project Status Report</SelectItem>
+                  <SelectItem value="sprint_summary">Sprint Summary</SelectItem>
+                  <SelectItem value="meeting_minutes">Meeting Minutes</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Document Title</label>
+              <Label className="text-sm font-medium text-foreground">Document Title</Label>
               <Input
                 value={docTitle}
                 onChange={(event) => setDocTitle(event.target.value)}
@@ -3600,7 +3617,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Label</label>
+              <Label className="text-sm font-medium text-foreground">Label</Label>
               <Input
                 value={promptLabel}
                 onChange={(event) => setPromptLabel(event.target.value)}
@@ -3608,23 +3625,27 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Category</label>
-              <select
+              <Label className="text-sm font-medium text-foreground">Category</Label>
+              <Select
                 value={promptCategory}
-                onChange={(event) => setPromptCategory(event.target.value as "it" | "admin" | "hr")}
-                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow"
+                onValueChange={(v) => setPromptCategory(v as "it" | "admin" | "hr")}
               >
-                <option value="it">IT Support</option>
-                <option value="admin">Admin</option>
-                <option value="hr">HR</option>
-              </select>
+                <SelectTrigger className="w-full rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="it">IT Support</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="hr">HR</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Prompt Text</label>
-              <textarea
+              <Label className="text-sm font-medium text-foreground">Prompt Text</Label>
+              <Textarea
                 value={promptToSave}
                 onChange={(event) => setPromptToSave(event.target.value)}
-                className="w-full min-h-[80px] rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-shadow resize-none"
+                className="min-h-[80px] rounded-xl resize-none"
               />
             </div>
           </div>

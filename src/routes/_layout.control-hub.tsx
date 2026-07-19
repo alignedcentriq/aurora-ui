@@ -6,6 +6,7 @@ import { lazy, Suspense, useEffect, useMemo } from "react";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { HoverEffect } from "@/components/ui/card-hover-effect";
+import { AmbientField } from "@/components/three/AmbientField";
 import {
   Megaphone,
   BookOpen,
@@ -66,6 +67,9 @@ const ConnectorStudio = lazy(() => import("@/pages/ConnectorStudio"));
 const ObservabilityDashboard = lazy(() =>
   import("@/pages/ObservabilityDashboard").then((m) => ({ default: m.ObservabilityDashboard })),
 );
+const MemoryBrainTab = lazy(() =>
+  import("@/pages/MemoryBrainTab").then((m) => ({ default: m.MemoryBrainTab })),
+);
 const AnalyticsBuilder = lazy(() =>
   import("@/pages/AnalyticsBuilder").then((m) => ({ default: m.AnalyticsBuilder })),
 );
@@ -107,6 +111,7 @@ type TabId =
   | "dashboard"
   | "analytics-builder"
   | "observability"
+  | "memory-brain"
   | "llm-controls"
   | "role-control"
   | "audit-trail"
@@ -186,6 +191,15 @@ const TABS: TabItem[] = [
     show: (role) => role === "Super Admin" || role === "IT",
     requireScope: "observability",
     component: ObservabilityDashboard,
+  },
+  {
+    id: "memory-brain",
+    label: "Memory Brain",
+    category: "System & Ops",
+    icon: Brain,
+    color: "#00c4bb",
+    show: (role) => role === "Super Admin" || role === "IT" || role === "Admin",
+    component: MemoryBrainTab,
   },
   {
     id: "llm-controls",
@@ -357,6 +371,8 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "audit-trail":
     "Complete history of role, access, automation, and settings changes — who, what, when, before and after.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
+  "memory-brain":
+    "Explore everything the assistant knows and has learned from chat as a living neuron graph.",
   "llm-controls": "Tweak parameters, override models, and toggle regional model routing.",
   "automation-hub": "Automate email sequences, rule actions, and triggers.",
   "admin-portal": "Submit transport claims, desk keys, parking stickers, and library books.",
@@ -403,6 +419,11 @@ function ControlHubOverview({ allowedTabs, onTabChange, user }: ControlHubOvervi
     <div className="flex-1 h-full overflow-y-auto bg-gradient-to-br from-[#f5f7fa] to-[#e8eef8] dark:from-[#020d1a] dark:to-[#071428] mesh-accent px-4 sm:px-8 py-5 sm:py-6 select-none relative">
       {/* Glow highlight in background */}
       <div className="absolute top-10 left-1/2 -translate-x-1/2 w-[400px] h-[150px] bg-gradient-to-r from-primary/10 to-[#00a29a]/10 rounded-full blur-[80px] pointer-events-none" />
+
+      {/* Ambient three.js accent — device-tiered, skips itself on low-power/mobile-constrained hardware */}
+      <div className="absolute top-0 left-0 right-0 h-[280px] opacity-60">
+        <AmbientField colors={["#6366f1", "#00a29a"]} />
+      </div>
 
       {/* ── Top Header Section ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#e2e8f0] dark:border-white/[0.08] pb-6 mb-6">
@@ -453,6 +474,7 @@ function ControlHubPage() {
   const { open: openUdemyAutomations } = useUdemyAutomations();
 
   const role = user?.role ?? "";
+  const email = (user?.email ?? "").toLowerCase();
   const scopes = user?.scopes ?? [];
   const fullAccess = scopes.length === 0;
 
@@ -462,6 +484,9 @@ function ControlHubPage() {
   const allowedTabs = useMemo(() => {
     return TABS.filter((t) => {
       if (!t.show(role)) return false;
+      // Memory Brain exposes raw conversational memory across every user — restricted
+      // to the app owner regardless of role, on top of the normal role/scope gate above.
+      if (t.id === "memory-brain" && email !== "shivam.sharma@alignedautomation.com") return false;
       if (!fullAccess) {
         if (t.requireScope && !hasScopeAccess(t.requireScope)) return false;
         if (t.requireAnyScope && !t.requireAnyScope.some((s) => hasScopeAccess(s))) return false;
@@ -469,7 +494,7 @@ function ControlHubPage() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, fullAccess, scopes.join(",")]);
+  }, [role, email, fullAccess, scopes.join(",")]);
 
   const activeTabId = useMemo<TabId | "overview">(() => {
     const requested = (TAB_ALIASES[search.tab ?? ""] ?? search.tab) as TabId | "overview";

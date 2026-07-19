@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
 
 interface LogoProps {
   className?: string;
@@ -16,32 +15,19 @@ const sizes = {
 export function Logo({ className, size = "md" }: LogoProps) {
   return (
     <div
-      className={cn(
-        "relative flex items-center justify-center overflow-hidden rounded-xl shrink-0",
-        sizes[size],
-        className,
-      )}
+      className={cn("relative flex items-center justify-center shrink-0", sizes[size], className)}
     >
-      {/* 4C rotating gradient ring */}
-      <motion.div
-        className="absolute inset-0 rounded-xl"
-        style={{
-          background:
-            "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
-          padding: "1.5px",
-          WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
-          WebkitMaskComposite: "destination-out",
-          maskComposite: "exclude",
-        }}
-        animate={{ rotate: 360 }}
-        transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
-      />
-      {/* Logo image */}
+      {/* Logo image — screen blend drops the artwork's black backdrop; a radial mask feathers out
+          the JPEG's compression noise near the edges so no square backdrop line survives */}
       <img
         src={`${import.meta.env.BASE_URL}logo.png`}
         alt="Centriq AI Logo"
-        className="relative h-full w-full object-cover rounded-xl"
-        style={{ padding: "2px" }}
+        className="relative h-full w-full object-cover scale-125"
+        style={{
+          mixBlendMode: "screen",
+          WebkitMaskImage: "radial-gradient(circle, white 55%, transparent 78%)",
+          maskImage: "radial-gradient(circle, white 55%, transparent 78%)",
+        }}
       />
     </div>
   );

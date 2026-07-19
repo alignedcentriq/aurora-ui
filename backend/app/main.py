@@ -49,6 +49,7 @@ from app.routes.company_settings_routes import router as company_settings_router
 from app.routes.app_links_routes import router as app_links_router, public_router as app_links_public_router
 from app.routes.form_library_routes import router as form_library_router
 from app.routes.observability_routes import router as observability_router
+from app.routes.memory_graph_routes import router as memory_graph_router
 from app.routes.analytics_routes import router as analytics_router
 from app.routes.llm_controls_routes import router as llm_controls_router
 from app.routes.integration_routes import router as integration_router
@@ -179,6 +180,7 @@ app.include_router(app_links_router)
 app.include_router(app_links_public_router)
 app.include_router(form_library_router)
 app.include_router(observability_router)
+app.include_router(memory_graph_router)
 app.include_router(analytics_router)
 app.include_router(llm_controls_router)
 app.include_router(integration_router)
@@ -262,6 +264,10 @@ class FeedbackRequest(BaseModel):
     user_message: Optional[str] = None
     ai_response: Optional[str] = None
     feedback_text: Optional[str] = None
+
+class ChatSessionSyncRequest(BaseModel):
+    turns: List[dict]
+    updated_at: float
 
 class WebhookPolicyRequest(BaseModel):
     title: str
@@ -590,6 +596,60 @@ async def chat_load():
     except Exception:
         pass
     return stats
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(x_user_email: Optional[str] = Header(None)):
+    """Every non-private chat thread saved for this user account — the server-side
+    source for Recent Chats, so it's the same on every device (not just this browser's
+    localStorage). Returns the full Thread shape (id, turns, updatedAt) the frontend
+    already knows how to render."""
+    from app.models import ChatSession
+    import datetime as _dt
+    user_email = x_user_email or settings.DEFAULT_USER_EMAIL
+    db = SessionLocal()
+    try:
+        rows = db.query(ChatSession).filter(ChatSession.user_email == user_email).all()
+        return [
+            # updated_at is stored naive-UTC (matches the rest of this codebase's
+            # datetime.utcnow() convention) — attach tzinfo explicitly before
+            # converting to epoch ms, since naive .timestamp() assumes local time.
+            {
+                "id": r.id, "turns": r.turns,
+                "updatedAt": r.updated_at.replace(tzinfo=_dt.timezone.utc).timestamp() * 1000,
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
+
+
+@app.put("/api/chat/sessions/{session_id}")
+async def upsert_chat_session(
+    session_id: str, body: ChatSessionSyncRequest, x_user_email: Optional[str] = Header(None)
+):
+    """Save (create or update) one chat thread for this user account. Called by the
+    frontend whenever a thread changes locally — private threads are never sent here."""
+    from app.models import ChatSession
+    import datetime as _dt
+    user_email = x_user_email or settings.DEFAULT_USER_EMAIL
+    db = SessionLocal()
+    try:
+        row = db.query(ChatSession).filter(
+            ChatSession.id == session_id, ChatSession.user_email == user_email,
+        ).first()
+        updated_at = _dt.datetime.utcfromtimestamp(body.updated_at / 1000)
+        if row:
+            row.turns = body.turns
+            row.updated_at = updated_at
+        else:
+            db.add(ChatSession(
+                id=session_id, user_email=user_email, turns=body.turns, updated_at=updated_at,
+            ))
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
 
 
 @app.get("/api/chat/background-answer/{session_id}")
@@ -2896,8 +2956,9 @@ async def send_email_draft(req: SendEmailDraftRequest):
 
 
 @app.delete("/api/chat/{thread_id}")
-async def delete_chat(thread_id: str):
-    """Clear the LangGraph checkpoint for a chat thread (best-effort)."""
+async def delete_chat(thread_id: str, x_user_email: Optional[str] = Header(None)):
+    """Clear the LangGraph checkpoint for a chat thread (best-effort), and the
+    server-side session record so it also disappears from Recent Chats on every device."""
     try:
         cp = app_agent.checkpointer
         # MemorySaver: clear in-memory storage
@@ -2910,6 +2971,19 @@ async def delete_chat(thread_id: str):
             if keys:
                 await client.delete(*keys)
     except Exception as e:
+        pass
+    try:
+        from app.models import ChatSession
+        user_email = x_user_email or settings.DEFAULT_USER_EMAIL
+        db = SessionLocal()
+        try:
+            db.query(ChatSession).filter(
+                ChatSession.id == thread_id, ChatSession.user_email == user_email,
+            ).delete()
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
         pass
     return {"status": "deleted", "thread_id": thread_id}
 

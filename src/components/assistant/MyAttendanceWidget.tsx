@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Calendar, ChevronLeft, ChevronRight, Loader2, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 interface DayRecord {
   date: string;
@@ -8,6 +12,10 @@ interface DayRecord {
   check_in: string | null;
   check_out: string | null;
   late: boolean;
+}
+
+function isPresent(record: DayRecord) {
+  return record.status !== "Absent";
 }
 
 interface CalendarData {
@@ -27,25 +35,15 @@ interface Props {
 
 const LEGEND = [
   { color: "bg-emerald-400", label: "Present" },
-  { color: "bg-amber-400", label: "Late" },
-  { color: "bg-blue-400", label: "WFH" },
   { color: "bg-red-400", label: "Absent" },
-  { color: "bg-purple-400", label: "Half-day" },
 ];
 
 function dayClass(record: DayRecord | undefined, isFuture: boolean, isWeekend: boolean) {
   if (isFuture || (!record && isWeekend)) return "text-muted-foreground/30";
   if (!record) return "text-muted-foreground/40";
-  if (record.late) return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
-  if (record.status === "Present")
+  if (isPresent(record))
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
-  if (record.status === "Absent")
-    return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
-  if (record.status === "WFH")
-    return "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200";
-  if (record.status === "Half-day")
-    return "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-200";
-  return "text-muted-foreground/40";
+  return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
 }
 
 export function MyAttendanceWidget({ userEmail, userRole }: Props) {
@@ -91,14 +89,10 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
   });
 
   // Compute summary
-  const stats = { present: 0, absent: 0, wfh: 0, late: 0, half_day: 0 };
+  const stats = { present: 0, absent: 0 };
   (data?.days ?? []).forEach((d) => {
-    if (d.status === "Present") {
-      stats.present++;
-      if (d.late) stats.late++;
-    } else if (d.status === "Absent") stats.absent++;
-    else if (d.status === "WFH") stats.wfh++;
-    else if (d.status === "Half-day") stats.half_day++;
+    if (isPresent(d)) stats.present++;
+    else stats.absent++;
   });
 
   // Calendar geometry
@@ -114,11 +108,13 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 backdrop-blur-sm"
+      className="mt-3 overflow-hidden rounded-2xl border border-border bg-card/50 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset,0_10px_30px_-16px_rgba(0,0,0,0.35)] backdrop-blur-sm"
     >
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-4 py-2.5">
-        <Calendar className="h-3.5 w-3.5 text-[var(--collaboration)]" />
+      <div className="flex items-center gap-2 border-b border-border bg-gradient-to-r from-[var(--collaboration)]/10 via-muted/40 to-muted/40 px-4 py-2.5">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[var(--collaboration)]/15">
+          <Calendar className="h-3 w-3 text-[var(--collaboration)]" />
+        </span>
         <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
           My Attendance
         </span>
@@ -127,20 +123,26 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
       <div className="p-4">
         {/* Month navigation */}
         <div className="mb-3 flex items-center justify-between">
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={prevMonth}
-            className="rounded-lg p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            aria-label="Previous month"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <ChevronLeft className="h-4 w-4" />
-          </button>
+          </Button>
           <span className="text-sm font-semibold text-foreground">{periodLabel}</span>
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={nextMonth}
             disabled={isCurrentMonth}
-            className="rounded-lg p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-30"
+            aria-label="Next month"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <ChevronRight className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
 
         {loading ? (
@@ -157,91 +159,74 @@ export function MyAttendanceWidget({ userEmail, userRole }: Props) {
           <>
             {/* Summary chips */}
             <div className="mb-3 flex flex-wrap gap-1.5">
-              {[
-                {
-                  label: "Present",
-                  count: stats.present,
-                  cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-                },
-                {
-                  label: "Absent",
-                  count: stats.absent,
-                  cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
-                },
-                {
-                  label: "WFH",
-                  count: stats.wfh,
-                  cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-                },
-                {
-                  label: "Late",
-                  count: stats.late,
-                  cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-                },
-                {
-                  label: "Half-day",
-                  count: stats.half_day,
-                  cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
-                },
-              ].map(({ label, count, cls }) => (
-                <span
-                  key={label}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}
-                >
-                  {count} {label}
-                </span>
-              ))}
+              <Badge
+                variant="secondary"
+                className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/40 dark:text-emerald-300 rounded-full font-semibold"
+              >
+                {stats.present} Present
+              </Badge>
+              <Badge
+                variant="secondary"
+                className="bg-red-100 text-red-700 hover:bg-red-100 dark:bg-red-900/40 dark:text-red-300 rounded-full font-semibold"
+              >
+                {stats.absent} Absent
+              </Badge>
             </div>
 
             {/* Calendar grid */}
-            <div className="overflow-hidden rounded-xl border border-border">
-              {/* Day-of-week header */}
-              <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-                  <div key={d} className="py-1.5">
-                    {d}
-                  </div>
-                ))}
-              </div>
-              {/* Day cells */}
-              <div className="grid grid-cols-7">
-                {Array.from({ length: firstDow }).map((_, i) => (
-                  <div key={`pre-${i}`} className="aspect-square" />
-                ))}
-                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
-                  const dateStr = `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const record = dayMap[dateStr];
-                  const isFuture = dateStr > todayStr;
-                  const dow = new Date(dateStr).getDay();
-                  const isWeekend = dow === 0 || dow === 6;
-                  const isToday = dateStr === todayStr;
-
-                  const tooltip = record
-                    ? [
-                        record.status + (record.late ? " (Late)" : ""),
-                        record.check_in ? `In: ${record.check_in}` : null,
-                        record.check_out ? `Out: ${record.check_out}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : undefined;
-
-                  return (
-                    <div
-                      key={day}
-                      title={tooltip}
-                      className={[
-                        "flex aspect-square items-center justify-center text-[11px] font-medium transition-colors",
-                        dayClass(record, isFuture, isWeekend),
-                        isToday ? "ring-2 ring-primary ring-inset" : "",
-                      ].join(" ")}
-                    >
-                      {day}
+            <TooltipProvider delayDuration={200}>
+              <div className="overflow-hidden rounded-xl border border-border">
+                {/* Day-of-week header */}
+                <div className="grid grid-cols-7 bg-muted/50 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                    <div key={d} className="py-1.5">
+                      {d}
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+                {/* Day cells */}
+                <div className="grid grid-cols-7">
+                  {Array.from({ length: firstDow }).map((_, i) => (
+                    <div key={`pre-${i}`} className="aspect-square" />
+                  ))}
+                  {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+                    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                    const record = dayMap[dateStr];
+                    const isFuture = dateStr > todayStr;
+                    const dow = new Date(dateStr).getDay();
+                    const isWeekend = dow === 0 || dow === 6;
+                    const isToday = dateStr === todayStr;
+
+                    const tooltip = record ? (isPresent(record) ? "Present" : "Absent") : undefined;
+
+                    const cell = (
+                      <button
+                        type="button"
+                        disabled={!record}
+                        aria-label={tooltip ? `${day}: ${tooltip}` : `${day}`}
+                        className={cn(
+                          "relative m-[1.5px] flex aspect-square w-[calc(100%-3px)] items-center justify-center rounded-md text-[11px] font-medium transition-all duration-150 disabled:cursor-default",
+                          "enabled:hover:scale-110 enabled:hover:shadow-sm enabled:hover:z-10",
+                          dayClass(record, isFuture, isWeekend),
+                          isToday ? "ring-2 ring-primary ring-inset" : "",
+                        )}
+                      >
+                        {day}
+                      </button>
+                    );
+
+                    return tooltip ? (
+                      <Tooltip key={day}>
+                        <TooltipTrigger asChild>{cell}</TooltipTrigger>
+                        <TooltipContent>{tooltip}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <div key={day}>{cell}</div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            </TooltipProvider>
 
             {/* Legend */}
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
