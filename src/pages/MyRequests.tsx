@@ -24,6 +24,8 @@ import {
   Search,
   X,
   ClipboardList,
+  Headset,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -44,7 +46,8 @@ type RequestType =
   | "travel_request"
   | "travel_expense"
   | "udemy"
-  | "form";
+  | "form"
+  | "it_ticket";
 
 interface RequestItem {
   key: string;
@@ -59,6 +62,19 @@ interface RequestItem {
   /** Set only for `type === "form"` — identifies the originating Form Library template. */
   formTemplateId?: number;
   formName?: string;
+  /** Set only for `type === "it_ticket"` when synced — e.g. "RE-7964" from ManageEngine. */
+  externalRefId?: string;
+}
+
+// ManageEngine ServiceDesk — IT tickets live here, not in our own DB, so every IT-ticket
+// link points out to it rather than an in-app detail view.
+const MANAGE_ENGINE_BASE = "https://helpdesk.alignedautomation.com";
+const MANAGE_ENGINE_LIST_URL = `${MANAGE_ENGINE_BASE}/WOListView.do`;
+function manageEngineTicketUrl(externalRefId?: string): string {
+  const numericId = (externalRefId || "").replace(/\D/g, "");
+  return numericId
+    ? `${MANAGE_ENGINE_BASE}/WorkOrder.do?woMode=viewWO&woID=${numericId}`
+    : MANAGE_ENGINE_LIST_URL;
 }
 
 // ── Constants & Mappings ──────────────────────────────────────────────────────
@@ -76,6 +92,7 @@ const TYPE_LABEL: Record<RequestType, string> = {
   travel_expense: "Travel Expense",
   udemy: "Udemy License",
   form: "Form Submission",
+  it_ticket: "IT Ticket",
 };
 
 const TYPE_ICON: Record<RequestType, React.ElementType> = {
@@ -91,6 +108,7 @@ const TYPE_ICON: Record<RequestType, React.ElementType> = {
   travel_expense: Receipt,
   udemy: GraduationCap,
   form: ClipboardList,
+  it_ticket: Headset,
 };
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -142,6 +160,13 @@ const COLOR_4C: Record<
     text: "text-cyan-500",
   },
   parking: {
+    name: "Connectivity",
+    color: "text-cyan-500",
+    border: "border-l-4 border-l-cyan-500",
+    bg: "bg-cyan-500/10",
+    text: "text-cyan-500",
+  },
+  it_ticket: {
     name: "Connectivity",
     color: "text-cyan-500",
     border: "border-l-4 border-l-cyan-500",
@@ -226,6 +251,7 @@ const IN_PROGRESS_STATUSES = [
   "ticket_booked",
   "hotel_booked",
   "fm_approved",
+  "awaiting approval",
 ];
 
 function matchesStatusFilter(status: string, filter: StatusFilter): boolean {
@@ -455,6 +481,20 @@ export function MyRequests() {
           created_at: String(u.created_at ?? ""),
           raw: u,
         })),
+        // IT Tickets — the real state lives in ManageEngine ServiceDesk; we show our local
+        // record plus the synced reference id (when the backend has managed to match it).
+        ...(reqsData.it_tickets ?? []).map((t: Record<string, unknown>) => ({
+          key: `it-${t.id}`,
+          type: "it_ticket" as RequestType,
+          reference_id: String(t.ticket_id ?? `IT-${t.id}`),
+          subject: String(t.subject ?? "IT Support Ticket"),
+          description: String(t.description ?? ""),
+          status: String(t.status ?? "Open"),
+          priority: String(t.priority ?? "Medium"),
+          created_at: String(t.created_at ?? ""),
+          raw: t,
+          externalRefId: t.external_ref_id ? String(t.external_ref_id) : undefined,
+        })),
         // Dynamic Form Library submissions — one entry per submission, labelled by its form.
         ...(reqsData.form_submissions ?? []).map((s: Record<string, unknown>) => {
           const values = (s.field_values ?? {}) as Record<string, unknown>;
@@ -537,6 +577,7 @@ export function MyRequests() {
     travel_expense: items.filter((i) => i.type === "travel_expense").length,
     udemy: items.filter((i) => i.type === "udemy").length,
     form: items.filter((i) => i.type === "form").length,
+    it_ticket: items.filter((i) => i.type === "it_ticket").length,
   };
 
   // Distinct Form Library forms the user has submitted — each becomes its own filter option,
@@ -569,6 +610,7 @@ export function MyRequests() {
     { key: "travel_expense", label: `Travel Expenses (${counts.travel_expense})` },
     { key: "expense", label: `Expense Claims (${counts.expense})` },
     { key: "udemy", label: `Udemy Licenses (${counts.udemy})` },
+    { key: "it_ticket", label: `IT Tickets (${counts.it_ticket})` },
     { key: "facility", label: `Facility Issues (${counts.facility})` },
     { key: "parking", label: `Parking Permits (${counts.parking})` },
     { key: "query", label: `HR Queries (${counts.query})` },
@@ -606,6 +648,15 @@ export function MyRequests() {
             Monitor and track your leaves, expenses, travel bookings, and support tickets in one
             place.
           </p>
+          <a
+            href={MANAGE_ENGINE_LIST_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs text-cyan-500 hover:text-cyan-400 font-semibold mt-1.5"
+          >
+            IT tickets are managed in ManageEngine ServiceDesk
+            <ExternalLink className="h-3 w-3" />
+          </a>
         </div>
         <button
           onClick={fetchAll}
@@ -1273,6 +1324,32 @@ function DetailPanel({ item }: { item: RequestItem }) {
                 {String(raw.decision_reason)}
               </div>
             )}
+          </>
+        )}
+
+        {item.type === "it_ticket" && (
+          <>
+            <div className="flex items-center gap-2 flex-wrap">
+              {!!raw.category && (
+                <span className="text-[11px] font-semibold bg-cyan-500/15 text-cyan-400 rounded-full px-2.5 py-0.5 border border-cyan-500/20">
+                  {String(raw.category)}
+                </span>
+              )}
+              {!!item.externalRefId && (
+                <span className="text-[11px] text-muted-foreground font-semibold">
+                  ManageEngine ref: {item.externalRefId}
+                </span>
+              )}
+            </div>
+            <a
+              href={manageEngineTicketUrl(item.externalRefId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-500 hover:text-cyan-400 mt-1"
+            >
+              View in ManageEngine ServiceDesk
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
           </>
         )}
 

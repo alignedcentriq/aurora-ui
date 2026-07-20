@@ -199,6 +199,14 @@ def my_manager_call(user: CurrentUser = Depends(get_current_user)):
     return mc.get_for_new_hire(user.email)
 
 
+@router.get("/me/manager-team")
+def my_manager_team(user: CurrentUser = Depends(get_current_user)):
+    """This user's manager + the manager's other direct reports — a scoped hierarchy
+    card for the "Meet your manager & team" step (not the full company org chart)."""
+    from app.services import manager_call_service as mc
+    return mc.get_my_manager_team(user.email)
+
+
 # ── HR tracker ────────────────────────────────────────────────────────────────────
 
 @router.get("/overview")

@@ -306,6 +306,68 @@ def get_for_new_hire(email: str) -> dict:
         db.close()
 
 
+def _zoho_profiles_by_email(db, emails: list[str]) -> dict:
+    """official_email (lowercased) -> EmployeeZohoProfile, for the HR-directory fields
+    (designation, function, skills, tenure) that MS365 doesn't carry."""
+    from app.models import EmployeeZohoProfile
+
+    if not emails:
+        return {}
+    rows = (
+        db.query(EmployeeZohoProfile)
+        .filter(EmployeeZohoProfile.official_email.in_(emails))
+        .all()
+    )
+    return {(r.official_email or "").lower(): r for r in rows}
+
+
+def _person_card(email: str, ms365_row, zoho_row, fallback_name: str = "") -> dict:
+    name = (ms365_row.name if ms365_row else None) or fallback_name or email
+    return {
+        "name": name,
+        "email": email,
+        "designation": (zoho_row.designation if zoho_row else None)
+            or (ms365_row.job_title if ms365_row else None),
+        "department": (zoho_row.function if zoho_row else None)
+            or (ms365_row.department if ms365_row else None),
+        "skills": zoho_row.skill_set if zoho_row else None,
+        "total_experience": zoho_row.total_experience if zoho_row else None,
+        "office_location": ms365_row.office_location if ms365_row else None,
+    }
+
+
+def get_my_manager_team(email: str) -> dict:
+    """New-hire's manager + the manager's other direct reports (same manager_email in the
+    synced MS365 directory) — a scoped slice of the org hierarchy for the onboarding
+    "Meet your manager & team" step, not the full company tree. Enriched with the same
+    HR-directory fields (designation, department, skills, experience) the Directory page
+    shows, so it's not just a bare name/email."""
+    from app.models import MS365User
+
+    db = SessionLocal()
+    try:
+        manager_email, manager_name = _resolve_manager(email, db)
+        if not manager_email:
+            return {"manager": None, "team": []}
+
+        mgr_row = db.query(MS365User).filter(MS365User.email == manager_email).first()
+        peers = (
+            db.query(MS365User)
+            .filter(MS365User.manager_email == manager_email, MS365User.email != email.lower())
+            .order_by(MS365User.name)
+            .all()
+        )
+
+        all_emails = [manager_email] + [p.email for p in peers if p.email]
+        zoho_by_email = _zoho_profiles_by_email(db, all_emails)
+
+        manager = _person_card(manager_email, mgr_row, zoho_by_email.get(manager_email), manager_name)
+        team = [_person_card(p.email, p, zoho_by_email.get((p.email or "").lower())) for p in peers]
+        return {"manager": manager, "team": team}
+    finally:
+        db.close()
+
+
 def get_by_token(token: str) -> dict | None:
     """Invite dict for the public scheduling page, or None if the token is unknown."""
     db = SessionLocal()
