@@ -455,6 +455,7 @@ class ITTicket(Base):
     resolution_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+    external_ref_id = Column(String, nullable=True)  # ManageEngine ServiceDesk request id, e.g. "RE-7964"
 
 class SoftwareRequest(Base):
     __tablename__ = "software_requests"

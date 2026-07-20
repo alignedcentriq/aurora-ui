@@ -91,6 +91,19 @@ interface ManagerCallView {
   scheduled_label?: string;
   teams_join_url?: string | null;
 }
+interface PersonCard {
+  name: string;
+  email: string;
+  designation?: string | null;
+  department?: string | null;
+  skills?: string | null;
+  total_experience?: string | null;
+  office_location?: string | null;
+}
+interface ManagerTeamView {
+  manager: PersonCard | null;
+  team: PersonCard[];
+}
 interface VideoView {
   id?: string;
   title: string;
@@ -146,6 +159,8 @@ export function OnboardingJourney() {
   const [quickLinks, setQuickLinks] = useState<QuickLinkView[]>([]);
   const [activeVideo, setActiveVideo] = useState<VideoView | null>(null);
   const [managerCall, setManagerCall] = useState<ManagerCallView | null>(null);
+  const [keyPolicies, setKeyPolicies] = useState<{ title: string; category: string }[]>([]);
+  const [managerTeam, setManagerTeam] = useState<ManagerTeamView>({ manager: null, team: [] });
 
   const authHeaders = useMemo(
     () => ({
@@ -169,6 +184,18 @@ export function OnboardingJourney() {
       fetch("/api/onboard/me/manager-call", { headers: authHeaders })
         .then((r) => (r.ok ? r.json() : null))
         .then((mc) => mc && setManagerCall(mc))
+        .catch(() => { });
+      // Key policies — plain DB list (no LLM), preloaded so the policy step shows
+      // instantly instead of routing to chat and waiting on an answer.
+      fetch("/api/document-library/policies", { headers: authHeaders })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d?.documents && setKeyPolicies(d.documents))
+        .catch(() => { });
+      // Manager + team hierarchy — scoped to just this new hire's manager, so the
+      // "Meet your manager & team" step can render it directly instead of a chat prompt.
+      fetch("/api/onboard/me/manager-team", { headers: authHeaders })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setManagerTeam(d))
         .catch(() => { });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't load your onboarding.");
@@ -870,6 +897,121 @@ export function OnboardingJourney() {
                         </div>
                       )}
 
+                      {activeStep.key === "policy_ack" && (
+                        <div className="space-y-3">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                            Key Policies
+                          </span>
+                          {keyPolicies.length === 0 ? (
+                            <p className="text-[12.5px] text-muted-foreground">
+                              No policies published yet.
+                            </p>
+                          ) : (
+                            <div className="flex flex-col gap-2 max-h-[280px] overflow-y-auto pr-1">
+                              {Array.from(new Set(keyPolicies.map((p) => p.category)))
+                                .sort()
+                                .map((category) => {
+                                  const count = keyPolicies.filter((p) => p.category === category).length;
+                                  return (
+                                    <button
+                                      key={category}
+                                      onClick={() =>
+                                        askInChat(`What are the key ${category} policies a new joiner should know?`)
+                                      }
+                                      className="w-full flex items-center justify-between rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 px-3.5 py-2.5 text-left text-[12.5px] font-bold text-foreground hover:bg-violet-500/5 hover:border-violet-500/20 transition-all cursor-pointer group"
+                                    >
+                                      <span className="truncate">{category}</span>
+                                      <span className="flex items-center gap-2 shrink-0 ml-3">
+                                        <span className="text-[10px] font-bold text-muted-foreground">
+                                          {count} doc{count === 1 ? "" : "s"}
+                                        </span>
+                                        <ArrowRight className="h-4 w-4 text-slate-400 group-hover:text-violet-500 group-hover:translate-x-1 transition-all" />
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {activeStep.key === "meet_manager" && (
+                        <div className="space-y-3">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                            Your Reporting Line
+                          </span>
+                          {!managerTeam.manager ? (
+                            <p className="text-[12.5px] text-muted-foreground">
+                              Manager not resolved yet — check back once your directory record syncs.
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {/* Manager card */}
+                              <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3 flex items-center gap-3">
+                                <div className="grid place-items-center h-10 w-10 rounded-full bg-gradient-to-tr from-violet-500 to-indigo-600 text-white text-[13px] font-black shrink-0">
+                                  {managerTeam.manager.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-[13px] font-black text-foreground truncate">
+                                    {managerTeam.manager.name}
+                                    <span className="ml-2 text-[9px] font-extrabold uppercase tracking-wider text-violet-500 align-middle">
+                                      Your Manager
+                                    </span>
+                                  </p>
+                                  <p className="text-[11px] text-muted-foreground truncate">
+                                    {[managerTeam.manager.designation, managerTeam.manager.department]
+                                      .filter(Boolean)
+                                      .join(" · ") || managerTeam.manager.email}
+                                  </p>
+                                  <p className="text-[10.5px] text-muted-foreground/80 truncate mt-0.5">
+                                    {managerTeam.manager.email}
+                                    {managerTeam.manager.total_experience &&
+                                      ` · ${managerTeam.manager.total_experience} yrs experience`}
+                                  </p>
+                                  {managerTeam.manager.skills && (
+                                    <p className="text-[10.5px] text-violet-500 truncate mt-0.5">
+                                      {managerTeam.manager.skills}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Peers under the same manager */}
+                              {managerTeam.team.length > 0 && (
+                                <div className="pl-5 border-l-2 border-dashed border-slate-200 dark:border-white/10 ml-5 space-y-2">
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                                    On your team ({managerTeam.team.length})
+                                  </span>
+                                  <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1">
+                                    {managerTeam.team.map((p) => (
+                                      <div
+                                        key={p.email}
+                                        className="flex items-center gap-2.5 rounded-xl border border-slate-200/50 dark:border-white/[0.04] bg-white/40 dark:bg-zinc-950/20 px-3 py-2"
+                                      >
+                                        <div className="grid place-items-center h-7 w-7 rounded-full bg-slate-200/70 dark:bg-zinc-800 text-[10px] font-black text-foreground shrink-0">
+                                          {(p.name || p.email).split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                                        </div>
+                                        <div className="min-w-0">
+                                          <p className="text-[12px] font-bold text-foreground truncate">{p.name}</p>
+                                          <p className="text-[10.5px] text-muted-foreground truncate">
+                                            {[p.designation, p.department].filter(Boolean).join(" · ") || p.email}
+                                          </p>
+                                          {p.skills && (
+                                            <p className="text-[10px] text-violet-500 truncate mt-0.5">
+                                              {p.skills}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {activeStep.key === "explore_assistant" && (
                         <div className="space-y-3">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
@@ -879,7 +1021,7 @@ export function OnboardingJourney() {
                             {[
                               "What are my leave balances?",
                               "How do I request a parking sticker?",
-                              "Show my team allocations",
+                              "What are the key HR policies I should know?",
                             ].map((prompt, i) => (
                               <button
                                 key={i}
@@ -897,7 +1039,9 @@ export function OnboardingJourney() {
 
                     {/* Step Action Cta Block */}
                     <div className="flex items-center gap-3 border-t border-slate-200/60 dark:border-white/[0.04] pt-5">
-                      {activeStep.status !== "done" && activeStep.status !== "skipped" && (
+                      {activeStep.status !== "done" &&
+                        activeStep.status !== "skipped" &&
+                        activeStep.key !== "meet_manager" && (
                         <button
                           onClick={() => onStepCta(activeStep)}
                           className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-tr from-violet-500 to-indigo-600 px-5 py-2.5 text-[13px] font-bold text-white shadow-lg shadow-violet-500/10 hover:shadow-violet-500/20 hover:scale-[1.01] hover:brightness-[1.03] transition-all cursor-pointer"

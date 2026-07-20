@@ -524,14 +524,46 @@ def update_employee_role(
 
 
 
+_IT_TICKET_OPEN_STATUSES = {"Open", "Awaiting Approval", "In Progress"}
+
+
+async def _sync_it_ticket_ref(db, ticket, user_email: str) -> None:
+    """Best-effort: look up the ManageEngine request id + live status for one open ticket
+    from the user's helpdesk lifecycle emails, and persist it. Silently no-ops if the user
+    hasn't connected Microsoft or nothing matches — the ticket just keeps its local status.
+
+    ponytail: one Graph mail search per open ticket lacking a ref id. Fine at today's
+    volume (a handful of open tickets per user); if that stops being true, fetch the
+    mailbox once per request and match all open tickets against it instead.
+    """
+    from app.services import oauth_service, helpdesk_mail
+
+    try:
+        token = await oauth_service.get_valid_token(user_email.lower().strip(), "microsoft")
+        if not token:
+            return
+        found = await helpdesk_mail.find_request_status(token, ticket.subject or "")
+        if not found:
+            return
+        ticket.external_ref_id = found["request_id"]
+        status_map = {"logged": "Open", "assigned": "In Progress", "approved": "In Progress",
+                      "resolved": "Resolved", "closed": "Closed"}
+        mapped = status_map.get(found["status"])
+        if mapped:
+            ticket.status = mapped
+        db.commit()
+    except Exception:
+        pass  # sync failure must never break the requests page
+
+
 @router.get("/me/requests")
-def my_requests(
+async def my_requests(
     user: CurrentUser = Depends(get_current_user),
 ):
     from app.models import (
         Leave, ParkingSticker, FacilityComplaint, Reimbursement,
         TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
-        HRQuery, Grievance, Escalation, FormSubmission, FormTemplate
+        HRQuery, Grievance, Escalation, FormSubmission, FormTemplate, ITTicket
     )
 
     db = SessionLocal()
@@ -549,7 +581,8 @@ def my_requests(
                 "hr_queries": [],
                 "grievances": [],
                 "escalations": [],
-                "form_submissions": []
+                "form_submissions": [],
+                "it_tickets": []
             }
 
         # 1. Leaves
@@ -581,6 +614,12 @@ def my_requests(
 
         # 10. Escalations
         escalations = db.query(Escalation).filter(Escalation.user_email == emp.email).order_by(Escalation.created_at.desc()).all()
+
+        # 11a. IT Tickets — sync open ones lacking a ManageEngine ref against the mailbox first.
+        it_tickets = db.query(ITTicket).filter(ITTicket.employee_id == emp.id).order_by(ITTicket.created_at.desc()).all()
+        for t in it_tickets:
+            if t.status in _IT_TICKET_OPEN_STATUSES:
+                await _sync_it_ticket_ref(db, t, emp.email)
 
         # 11. Dynamic Form Library submissions (any admin-defined form, current or future).
         #     Joined to the template so the UI can label + filter by the originating form.
@@ -758,6 +797,20 @@ def my_requests(
                     "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
                 }
                 for s, t in form_subs
+            ],
+            "it_tickets": [
+                {
+                    "id": t.id,
+                    "ticket_id": t.ticket_id,
+                    "category": t.category or "",
+                    "subject": t.subject or "",
+                    "description": t.description or "",
+                    "priority": t.priority or "Medium",
+                    "status": t.status,
+                    "external_ref_id": t.external_ref_id or "",
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                }
+                for t in it_tickets
             ]
         }
     finally:

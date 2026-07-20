@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TableEmpty } from "@/components/ui/TableEmpty";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useUdemyAutomations } from "@/lib/udemy-automations-store";
 
@@ -1698,6 +1699,8 @@ function InactiveSeatsTab({
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("all");
   const [forceRefreshing, setForceRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pillsKey, setPillsKey] = useState(0); // increment to force SeatPills to re-fetch
@@ -1789,20 +1792,22 @@ function InactiveSeatsTab({
     if (days > 0) load(days); // wait for the configured default (set by SeatPills) before loading
   }, [load, days]);
 
+  const uniqueRoles = Array.from(new Set(rows.map((r) => r.role).filter(Boolean))).sort();
+  const uniqueGroups = Array.from(new Set(rows.flatMap((r) => r.groups || []))).sort();
+
   const filteredRows = rows.filter((r) => {
+    if (roleFilter !== "all" && r.role !== roleFilter) return false;
+    if (groupFilter !== "all" && !(r.groups || []).includes(groupFilter)) return false;
+
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return (
-      (r.name || "").toLowerCase().includes(q) ||
-      (r.email || "").toLowerCase().includes(q) ||
-      (ROLE_LABELS[r.role] || r.role || "").toLowerCase().includes(q) ||
-      (r.groups || []).some((g) => g.toLowerCase().includes(q))
-    );
+    return (r.name || "").toLowerCase().includes(q) || (r.email || "").toLowerCase().includes(q);
   });
 
-  useEffect(() => { setPage(0); }, [rows, search]);
+  useEffect(() => { setPage(0); }, [rows, search, roleFilter, groupFilter]);
 
   const pageRows = filteredRows.slice(page * rowsPerPage, (page + 1) * rowsPerPage);
+  const filtersActive = !!search.trim() || roleFilter !== "all" || groupFilter !== "all";
 
   return (
     <div className="flex flex-col gap-5">
@@ -1816,7 +1821,7 @@ function InactiveSeatsTab({
             <p className="text-xs text-slate-500 dark:text-zinc-400">
               {loading
                 ? "Scanning learner activity…"
-                : search.trim()
+                : filtersActive
                   ? `${filteredRows.length} of ${rows.length} idle learners match`
                   : `${rows.length} of ${total} learners idle ≥ ${days} days`}
             </p>
@@ -1919,11 +1924,48 @@ function InactiveSeatsTab({
       </div>
 
       {!loading && !error && rows.length > 0 && (
-        <TableSearch
-          value={search}
-          onChange={setSearch}
-          placeholder="Search by name, email, role, group…"
-        />
+        <div className="flex flex-col sm:flex-row gap-3">
+          <TableSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Search by name or email…"
+          />
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger className="sm:w-[160px] shrink-0">
+              <SelectValue placeholder="Role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All roles</SelectItem>
+              {uniqueRoles.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {ROLE_LABELS[r] || r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={groupFilter} onValueChange={setGroupFilter}>
+            <SelectTrigger className="sm:w-[180px] shrink-0">
+              <SelectValue placeholder="Group" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All groups</SelectItem>
+              {uniqueGroups.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filtersActive && (
+            <button
+              onClick={() => { setSearch(""); setRoleFilter("all"); setGroupFilter("all"); }}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-white px-3 py-2 rounded-xl transition-colors cursor-pointer shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+              Clear filters
+            </button>
+          )}
+        </div>
       )}
 
       {loading ? (
@@ -1945,7 +1987,7 @@ function InactiveSeatsTab({
           className="rounded-2xl border border-slate-200 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60"
           icon={<Search className="w-7 h-7" />}
         >
-          <span className="text-sm font-bold">No idle learners match "{search.trim()}".</span>
+          <span className="text-sm font-bold">No idle learners match the current filters.</span>
         </TableEmpty>
       ) : (
         <>
