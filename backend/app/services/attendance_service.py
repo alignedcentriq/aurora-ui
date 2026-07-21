@@ -12,8 +12,7 @@ Data sources (in priority order):
      demo/seeded data).
 
 Status derivation from eSSL:
-  TIMEINHOURS >= 4      → Present
-  TIMEINHOURS >= 1      → Half-day
+  any check-in recorded → Present, regardless of hours worked
   no record on weekday  → Absent
   Late                  → check-in after LATE_THRESHOLD, on Present days
                           (cutoff from settings.ATTENDANCE_LATE_CUTOFF, default 13:00)
@@ -25,7 +24,7 @@ from sqlalchemy import func
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models import Attendance, Employee
+from app.models import Attendance, Employee, Leave
 from app.services.attendance_db_service import AttendanceSourceError
 
 # Shown when eSSL is configured but unreachable — we degrade to this instead of
@@ -99,19 +98,18 @@ def _essl_team_records(emp_names: list[str], start: datetime.date, end: datetime
 
 
 def _summarise_essl(rows: list[dict], start: datetime.date, end: datetime.date) -> dict:
-    """Aggregate a list of eSSL records into present/absent/wfh/late/half_day counts."""
+    """Aggregate a list of eSSL records into present/absent/wfh/late counts.
+    Every eSSL row is Present by definition (see attendance_db_service._status_for_hours) —
+    half_day is always 0 here and kept only for shape-compatibility with the internal-table
+    summary, which can still report it."""
     punched_dates = {r["date"] for r in rows if r.get("date")}
     present = absent = wfh = late = half_day = 0
 
     for r in rows:
-        status = r.get("status", "Present")
-        if status == "Present":
-            present += 1
-            check_in = r.get("check_in")
-            if check_in and check_in.time() > LATE_THRESHOLD:
-                late += 1
-        elif status == "Half-day":
-            half_day += 1
+        present += 1
+        check_in = r.get("check_in")
+        if check_in and check_in.time() > LATE_THRESHOLD:
+            late += 1
 
     d = start
     while d <= end:
@@ -485,5 +483,125 @@ def team_report(manager_email: str, month: str = "", year: str = "") -> dict:
         }
     except AttendanceSourceError:
         return _source_unavailable(manager_email=manager_email)
+    finally:
+        db.close()
+
+
+def _parse_day(date_str: str = "") -> datetime.date:
+    """Parse 'YYYY-MM-DD'; falls back to today on blank/malformed input."""
+    if not date_str:
+        return datetime.date.today()
+    try:
+        return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return datetime.date.today()
+
+
+def company_snapshot(date_str: str = "") -> dict:
+    """
+    Whole-company attendance for a single day (HR-only view, unscoped by manager hierarchy).
+    For each employee: an approved leave covering the day wins as "On Leave"; otherwise the
+    day's punch/attendance status is used (or "Weekend" on Sat/Sun with no record, rather
+    than a misleading "Absent").
+
+    Returns:
+      {"success": True, "date": "YYYY-MM-DD", "is_weekend": bool, "headcount": N,
+       "members": [{"employee","email","department","designation","reports_to",
+                     "status","leave_type","check_in","check_out","late"}],
+       "totals": {"present","absent","wfh","half_day","on_leave","weekend","late"}}
+    or {"success": False, "error": "attendance_source_unavailable", ...}
+    """
+    db = SessionLocal()
+    try:
+        day = _parse_day(date_str)
+        is_weekend = day.weekday() >= 5
+
+        employees = db.query(Employee).order_by(Employee.department, Employee.name).all()
+        name_by_id = {e.id: e.name for e in employees}
+
+        leaves = (
+            db.query(Leave)
+            .filter(Leave.status == "Approved", Leave.start_date <= day, Leave.end_date >= day)
+            .all()
+        )
+        leave_by_emp_id = {l.employee_id: l for l in leaves}
+
+        essl_team = _essl_team_records([e.name for e in employees], day, day, _org_roster(db))
+        use_essl = bool(essl_team)
+
+        internal_by_emp_id: dict[int, Attendance] = {}
+        if not use_essl:
+            rows = db.query(Attendance).filter(Attendance.date == day).all()
+            internal_by_emp_id = {r.employee_id: r for r in rows}
+
+        members = []
+        totals = {"present": 0, "absent": 0, "wfh": 0, "half_day": 0, "on_leave": 0, "weekend": 0, "late": 0}
+
+        for emp in employees:
+            leave = leave_by_emp_id.get(emp.id)
+            check_in = check_out = None
+            leave_type = None
+            is_late = False
+
+            if leave:
+                status = "On Leave"
+                leave_type = leave.leave_type
+            elif use_essl:
+                rec = next(
+                    (r for r in essl_team.get(emp.name.strip().lower(), []) if r.get("date") == day),
+                    None,
+                )
+                if rec:
+                    status = rec.get("status", "Present")
+                    check_in = rec.get("check_in")
+                    check_out = rec.get("check_out")
+                    is_late = status == "Present" and check_in is not None and check_in.time() > LATE_THRESHOLD
+                    check_in = check_in.strftime("%H:%M") if check_in else None
+                    check_out = check_out.strftime("%H:%M") if check_out else None
+                elif is_weekend:
+                    status = "Weekend"
+                else:
+                    status = "Absent"
+            else:
+                rec = internal_by_emp_id.get(emp.id)
+                if rec:
+                    status = rec.status or "Present"
+                    is_late = status == "Present" and rec.check_in is not None and rec.check_in.time() > LATE_THRESHOLD
+                    check_in = rec.check_in.strftime("%H:%M") if rec.check_in else None
+                    check_out = rec.check_out.strftime("%H:%M") if rec.check_out else None
+                elif is_weekend:
+                    status = "Weekend"
+                else:
+                    status = "Absent"
+
+            members.append({
+                "employee": emp.name,
+                "email": emp.email,
+                "department": emp.department or "",
+                "designation": emp.designation or "",
+                "reports_to": name_by_id.get(emp.manager_id, ""),
+                "status": status,
+                "leave_type": leave_type,
+                "check_in": check_in,
+                "check_out": check_out,
+                "late": is_late,
+            })
+
+            key = status.lower().replace("-", "_").replace(" ", "_")
+            if key in totals:
+                totals[key] += 1
+            if is_late:
+                totals["late"] += 1
+
+        return {
+            "success": True,
+            "date": day.isoformat(),
+            "is_weekend": is_weekend,
+            "headcount": len(members),
+            "members": members,
+            "totals": totals,
+        }
+    except AttendanceSourceError:
+        return _source_unavailable(date=date_str)
     finally:
         db.close()

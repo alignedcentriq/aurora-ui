@@ -1,5 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   X,
   Loader2,
@@ -12,6 +12,9 @@ import {
   ChevronDown,
   CheckCircle2,
   Send,
+  CalendarDays,
+  Search,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -39,10 +42,21 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -94,14 +108,20 @@ const PRIORITY_BADGE: Record<string, string> = {
 // inside Onboarding Tracker (see OnboardingKickoffAdmin.tsx), alongside the
 // journey tracker and step/document/video content admin.
 
+type PortalTab = "requests" | "attendance";
+
 export function HRPortal() {
   const { user } = useAuth();
+  const [tab, setTab] = useState<PortalTab>("requests");
 
-  const authHeaders = {
-    "Content-Type": "application/json",
-    ...(user?.email ? { "x-user-email": user.email } : {}),
-    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
-  };
+  const authHeaders = useMemo(
+    () => ({
+      "Content-Type": "application/json",
+      ...(user?.email ? { "x-user-email": user.email } : {}),
+      ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+    }),
+    [user?.email, user?.role],
+  );
 
   if (user?.role !== "HR" && user?.role !== "Admin") {
     return (
@@ -111,19 +131,42 @@ export function HRPortal() {
     );
   }
 
+  const TABS: { key: PortalTab; label: string }[] = [
+    { key: "requests", label: "Requests" },
+    { key: "attendance", label: "Company Attendance" },
+  ];
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
-        <div>
+      <div className="flex flex-col gap-3 px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] text-muted-foreground mt-0.5">
-            Handle escalations, document requests, HR queries, and grievances.
+            {tab === "requests"
+              ? "Handle escalations, document requests, HR queries, and grievances."
+              : "See who's in, who's off, and who's on leave — company-wide, any date."}
           </p>
+        </div>
+        <div className="flex gap-1.5">
+          {TABS.map(({ key, label }) => (
+            <Button
+              key={key}
+              variant={tab === key ? "default" : "secondary"}
+              onClick={() => setTab(key)}
+              className="rounded-full h-7 px-3 text-[12px]"
+            >
+              {label}
+            </Button>
+          ))}
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <RequestsTab authHeaders={authHeaders} />
+        {tab === "requests" ? (
+          <RequestsTab authHeaders={authHeaders} />
+        ) : (
+          <AttendanceTab authHeaders={authHeaders} />
+        )}
       </div>
     </div>
   );
@@ -446,6 +489,342 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
               <TableBody>{tableRows}</TableBody>
             </Table>
             
+            {totalPages > 1 && (
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.max(1, p - 1));
+                      }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <span className="text-sm text-muted-foreground px-4">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage((p) => Math.min(totalPages, p + 1));
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Company Attendance Tab ──────────────────────────────────────────────────────
+
+interface AttendanceMember {
+  employee: string;
+  email: string;
+  department: string;
+  designation: string;
+  reports_to: string;
+  status: string;
+  leave_type: string | null;
+  check_in: string | null;
+  check_out: string | null;
+  late: boolean;
+}
+
+interface AttendanceSnapshot {
+  success: boolean;
+  date: string;
+  is_weekend: boolean;
+  headcount: number;
+  members: AttendanceMember[];
+  totals: Record<string, number>;
+  error?: string;
+  message?: string;
+}
+
+const ATTENDANCE_STATUS_BADGE: Record<
+  string,
+  "success" | "destructive" | "info" | "warning" | "violet" | "secondary"
+> = {
+  present: "success",
+  absent: "destructive",
+  wfh: "info",
+  "half-day": "warning",
+  "on leave": "violet",
+  weekend: "secondary",
+};
+
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const ATTENDANCE_STATUS_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "present", label: "Present" },
+  { key: "absent", label: "Absent" },
+  { key: "on leave", label: "On Leave" },
+  { key: "wfh", label: "WFH" },
+  { key: "half-day", label: "Half-day" },
+  { key: "weekend", label: "Weekend" },
+];
+
+function AttendanceTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [date, setDate] = useState(todayISO());
+  const [data, setData] = useState<AttendanceSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [deptFilter, setDeptFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [date, statusFilter, deptFilter, search]);
+
+  // Guards against out-of-order responses: if the user flips dates quickly, an older
+  // request can resolve after a newer one and must not clobber it.
+  const latestRequestedDate = useRef(date);
+
+  const fetchSnapshot = useCallback(async () => {
+    const requestedDate = date;
+    latestRequestedDate.current = requestedDate;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/portal/hr/attendance?date=${requestedDate}`, {
+        headers: authHeaders,
+      });
+      const json = await res.json();
+      if (latestRequestedDate.current !== requestedDate) return;
+      setData(json);
+    } catch {
+      if (latestRequestedDate.current !== requestedDate) return;
+      toast.error("Failed to load attendance");
+      setData(null);
+    } finally {
+      if (latestRequestedDate.current === requestedDate) setLoading(false);
+    }
+  }, [authHeaders, date]);
+
+  useEffect(() => {
+    fetchSnapshot();
+  }, [fetchSnapshot]);
+
+  const departments = useMemo(() => {
+    const set = new Set<string>();
+    (data?.members ?? []).forEach((m) => m.department && set.add(m.department));
+    return Array.from(set).sort();
+  }, [data]);
+
+  const filtered = useMemo(() => {
+    let rows = data?.members ?? [];
+    if (statusFilter !== "all") {
+      rows = rows.filter((m) => m.status.toLowerCase() === statusFilter);
+    }
+    if (deptFilter !== "all") {
+      rows = rows.filter((m) => m.department === deptFilter);
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter(
+        (m) => m.employee.toLowerCase().includes(q) || m.email.toLowerCase().includes(q),
+      );
+    }
+    return rows;
+  }, [data, statusFilter, deptFilter, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const paginatedRows = filtered.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage,
+  );
+
+  const shiftDate = (deltaDays: number) => {
+    const d = new Date(`${date}T00:00:00`);
+    d.setDate(d.getDate() + deltaDays);
+    setDate(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Date + quick nav */}
+      <div className="flex flex-wrap items-center gap-3 px-4 py-4 sm:px-8 shrink-0">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="size-4 text-muted-foreground" />
+          <Input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-[160px] h-8 text-[13px]"
+          />
+        </div>
+        <Button variant="secondary" size="sm" className="h-8" onClick={() => shiftDate(-1)}>
+          Prev day
+        </Button>
+        <Button variant="secondary" size="sm" className="h-8" onClick={() => setDate(todayISO())}>
+          Today
+        </Button>
+        <Button variant="secondary" size="sm" className="h-8" onClick={() => shiftDate(1)}>
+          Next day
+        </Button>
+        {data?.is_weekend && <Badge variant="secondary">Weekend</Badge>}
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={fetchSnapshot} className="text-muted-foreground">
+          <RefreshCw data-icon="inline-start" />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Status filter — single-select toggle group, counts inline */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-8 pb-3 shrink-0">
+        <ToggleGroup
+          type="single"
+          value={statusFilter}
+          onValueChange={(v) => v && setStatusFilter(v)}
+          className="flex-wrap justify-start"
+        >
+          {ATTENDANCE_STATUS_FILTERS.map(({ key, label }) => {
+            const count = data?.success
+              ? key === "all"
+                ? data.headcount
+                : data.totals[key.replace(/[- ]/g, "_")]
+              : undefined;
+            return (
+              <ToggleGroupItem key={key} value={key}>
+                {label}
+                {count !== undefined && <span className="tabular-nums opacity-70">{count}</span>}
+              </ToggleGroupItem>
+            );
+          })}
+        </ToggleGroup>
+        <div className="flex gap-2 items-center">
+          <Select value={deptFilter} onValueChange={setDeptFilter}>
+            <SelectTrigger className="h-8 w-[160px] text-[12px]">
+              <SelectValue placeholder="Department" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">All Departments</SelectItem>
+                {departments.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or email…"
+              className="h-8 w-[200px] pl-8 text-[12px]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="flex-1 overflow-auto px-4 sm:px-8 pb-4">
+        {loading ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {["Employee", "Department", "Designation", "Reports To", "Status"].map((h) => (
+                  <TableHead key={h}>{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <TableRow key={i}>
+                  {Array.from({ length: 5 }).map((__, j) => (
+                    <TableCell key={j} className="py-3 pr-4">
+                      <Skeleton className="h-4 w-full max-w-32" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : !data?.success ? (
+          <Empty className="h-full">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <AlertCircle />
+              </EmptyMedia>
+              <EmptyTitle>Couldn't load attendance</EmptyTitle>
+              <EmptyDescription>
+                {data?.message || "Something went wrong fetching today's attendance."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : filtered.length === 0 ? (
+          <Empty className="h-full">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Users />
+              </EmptyMedia>
+              <EmptyTitle>No employees match these filters</EmptyTitle>
+              <EmptyDescription>
+                Try a different date, status, or department.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {["Employee", "Department", "Designation", "Reports To", "Status"].map((h) => (
+                    <TableHead key={h}>{h}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedRows.map((m) => (
+                  <TableRow key={m.email}>
+                    <TableCell className="py-3 pr-4">
+                      <div className="text-[13px] font-medium text-foreground leading-tight">
+                        {m.employee}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">{m.email}</div>
+                    </TableCell>
+                    <TableCell className="py-3 pr-4 text-[13px] text-foreground/80">
+                      {m.department || "—"}
+                    </TableCell>
+                    <TableCell className="py-3 pr-4 text-[13px] text-foreground/80">
+                      {m.designation || "—"}
+                    </TableCell>
+                    <TableCell className="py-3 pr-4 text-[13px] text-foreground/80">
+                      {m.reports_to || "—"}
+                    </TableCell>
+                    <TableCell className="py-3 pr-4">
+                      <Badge variant={ATTENDANCE_STATUS_BADGE[m.status.toLowerCase()] ?? "outline"}>
+                        {m.status}
+                      </Badge>
+                      {m.status === "On Leave" && m.leave_type && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">{m.leave_type}</p>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+
             {totalPages > 1 && (
               <Pagination>
                 <PaginationContent>
