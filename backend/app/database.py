@@ -575,6 +575,16 @@ def init_db():
         except Exception as e:
             pass
 
+        # Background thread: preload the local embedding model (if configured) so the first
+        # real request doesn't pay the ~2-3 min cold ONNX-model-download/load cost.
+        # See docs/specs/2026-07-21-local-embedding-backend-design.md.
+        try:
+            if settings.EMBEDDING_BACKEND == "local":
+                from app.services import local_embedding_service
+                threading.Thread(target=local_embedding_service.preload, daemon=True).start()
+        except Exception as e:
+            pass
+
         # Background thread: idempotently seed/back-fill the semantic intent router examples.
         # Non-blocking and self-healing — rows that failed to embed (ml01 down) back-fill next boot.
         try:

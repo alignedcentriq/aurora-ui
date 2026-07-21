@@ -2024,6 +2024,15 @@ _KW_IT_LICENSE = re.compile(
     r'loveable|jetbrains|intellij|webstorm)\s*(license|access|seat)?\b', re.I
 )
 
+# IT how-to / setup questions ("how do I connect to VPN", "how to configure wifi",
+# "steps to set up printer") — used to pre-fetch search_it_docs synchronously so the
+# domain agent skips the tool-decision LLM call and answers in one pass (mirrors the
+# HR/Admin policy_query pre-fetch). Purely additive: a miss just falls back to today's
+# two-pass behaviour, never worse.
+_KW_IT_HOWTO = re.compile(
+    r'\bhow\s+(do|to|can)\b|\bsteps?\s+to\b|\bset\s*up\b|\bconfigur\w*\b|\bconnect\s+to\b', re.I
+)
+
 # IT hardware peripheral requests ("I need headphones", "want a mouse").
 # Excludes damage/issue reports and how-to questions.
 _KW_IT_ASSET_REQUEST = re.compile(
@@ -2048,6 +2057,18 @@ _KW_ADMIN_SUPPLY_REQUEST = re.compile(
 # Training-license request — any supported platform (Udemy, Coursera, …).
 _KW_PMO_TRAINING = re.compile(
     r'\budemy\b|\bcoursera\b|\b(training|course|online[\s-]?learning)\s+license\b', re.I
+)
+
+# PMO process / governance how-to questions ("how do I raise a change request", "what's
+# the process for project closure", "vendor onboarding process") — pre-fetches
+# search_pmo_docs synchronously so pmo_assistant answers in one LLM pass instead of a
+# tool-decide-then-summarize round trip (mirrors the HR/Admin policy_query pre-fetch).
+# Purely additive: a miss just falls back to today's two-pass behaviour, never worse.
+_KW_PMO_PROCESS = re.compile(
+    r'\bhow\s+(do|to|can)\s+i\b|\bwhat\s+is\s+the\s+process\b|\bprocess\s+for\b|'
+    r'\bgovernance\b|\bchange\s+request\b|\bonboarding\s+process\b|\bvendor\s+onboarding\b|'
+    r'\b(charter|sow|risk\s+management|test\s+plan|deployment\s+plan|communications?\s+plan)\s+template\b',
+    re.I,
 )
 
 _KW_PMO = re.compile(
@@ -4486,10 +4507,28 @@ def _abstention_handoff_card(state: AgentState, result_messages: list, current_d
 
 async def pmo_agent_node(state: AgentState):
     """PMO Agent - handles project and report requests."""
+    # Pre-fetch PMO process/governance docs — avoids a slow LLM tool-calling round-trip
+    # (mirrors the HR/Admin policy_query pre-fetch). Instruction is embedded in the
+    # injected block itself since pmo_assistant just appends feedback_context verbatim.
+    _pmo_doc_context = ""
+    _last_human_pmo = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+    if isinstance(_last_human_pmo, str) and _KW_PMO_PROCESS.search(_last_human_pmo):
+        try:
+            from app.services.policy_service import PolicyService
+            _pmo_result = await asyncio.to_thread(PolicyService.search_pmo_docs, _last_human_pmo, 3)
+            if _pmo_result and "No policies found" not in _pmo_result:
+                _pmo_doc_context = (
+                    f"\n[PRE-SEARCHED PMO DOC]\n{_pmo_result}\n[END DOC]\n\n"
+                    f"The document above already answers this question — do NOT call search_pmo_docs. "
+                    f"Answer directly from the excerpts, in your own words, as numbered steps if it's a procedure.\n"
+                )
+        except Exception:
+            pass
+
     result = await pmo_agent.ainvoke({
         "messages": state["messages"],
         "user_email": state.get("user_email") or settings.DEFAULT_USER_EMAIL,
-        "feedback_context": _location_prefix(state) + _get_mode_hint(state) + (state.get("feedback_context") or ""),
+        "feedback_context": _location_prefix(state) + _get_mode_hint(state) + (state.get("feedback_context") or "") + _pmo_doc_context,
         "sub_intent": state.get("sub_intent") or "",
         "entities": state.get("entities") or {},
         "user_role": state.get("user_role") or "employee",
@@ -4699,10 +4738,29 @@ async def it_agent_node(state: AgentState):
     entity_hint = ""
     if entities:
         entity_hint = f"\n[Router extracted: sub_intent={sub_intent}, entities={entities}]"
+
+    # Pre-fetch IT how-to/setup docs — avoids a slow LLM tool-calling round-trip
+    # (mirrors the HR/Admin policy_query pre-fetch). Instruction is embedded in the
+    # injected block itself since it_assistant just appends feedback_context verbatim.
+    _it_doc_context = ""
+    _last_human_it = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+    if isinstance(_last_human_it, str) and _KW_IT_HOWTO.search(_last_human_it):
+        try:
+            from app.services.policy_service import PolicyService
+            _it_result = await asyncio.to_thread(PolicyService.search_it_docs, _last_human_it, 3)
+            if _it_result and "No policies found" not in _it_result:
+                _it_doc_context = (
+                    f"\n[PRE-SEARCHED IT DOC]\n{_it_result}\n[END DOC]\n\n"
+                    f"The document above already answers this question — do NOT call search_it_docs. "
+                    f"Answer directly from the excerpts, in your own words, as numbered steps if it's a procedure.\n"
+                )
+        except Exception:
+            pass
+
     result = await it_agent.ainvoke({
         "messages": state["messages"],
         "user_email": user_email,
-        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or "") + entity_hint,
+        "feedback_context": _location_prefix(state) + (state.get("feedback_context") or "") + entity_hint + _it_doc_context,
         "user_role": state.get("user_role") or "employee",
     })
     last_ai = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None)
