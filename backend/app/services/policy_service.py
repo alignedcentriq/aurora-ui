@@ -667,7 +667,26 @@ class PolicyService:
         except Exception:
             pass
 
-        # L3: actual embedding call
+        # L3: actual embedding call — but only attempt it if the embedding model is
+        # already resident on ml01. Measured: a cold load on this shared, CPU-only box
+        # can run past 20s and still fail outright (the client's own 15s timeout doesn't
+        # save us — the request is already committed by then). Skipping straight to the
+        # caller's fail-soft fallback (BM25/keyword search) avoids that wasted wait; the
+        # existing background warmup (_try_warmup_embedding) keeps nudging the model
+        # toward resident so a later call can hit this fast path.
+        try:
+            from app.services.llm_controls_service import ollama_residency
+            _loaded = [m.get("name", "") for m in (ollama_residency().get("models") or [])]
+            _strip = lambda s: s[:-len(":latest")] if s.endswith(":latest") else s  # noqa: E731
+            _embed_resident = any(_strip(n) == _strip(settings.EMBEDDING_MODEL_NAME) for n in _loaded)
+        except Exception:
+            _embed_resident = True  # residency check itself failed — don't block on it
+
+        if not _embed_resident:
+            _embedding_failed_at = time.time()
+            cls._try_warmup_embedding()
+            return None
+
         try:
             resp = cls._get_embedding_client().embeddings.create(
                 input=key,
