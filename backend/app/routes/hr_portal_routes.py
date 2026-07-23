@@ -219,3 +219,39 @@ def close_query(
     query.status = "Closed"
     db.commit()
     return {"message": f"Query {query.reference_id} closed."}
+
+
+# ── Company-wide Attendance ──────────────────────────────────────────────────
+
+@router.get("/attendance")
+def company_attendance(
+    date: Optional[str] = None,
+    status: Optional[str] = None,
+    department: Optional[str] = None,
+    q: Optional[str] = None,
+    _: CurrentUser = Depends(require_hr),
+):
+    """Whole-company attendance snapshot for a given day (default today), with
+    optional status/department/name filters — e.g. status=On%20Leave to see who's
+    off today. Unscoped by manager hierarchy, unlike /api/attendance/team/report."""
+    from app.services import attendance_service
+
+    result = attendance_service.company_snapshot(date or "")
+    if not result.get("success"):
+        return result
+
+    members = result["members"]
+    if status:
+        members = [m for m in members if m["status"].lower() == status.lower()]
+    if department:
+        members = [m for m in members if (m.get("department") or "").lower() == department.lower()]
+    if q:
+        ql = q.lower()
+        members = [
+            m for m in members
+            if ql in m["employee"].lower() or ql in (m.get("email") or "").lower()
+        ]
+
+    result["members"] = members
+    result["filtered_count"] = len(members)
+    return result

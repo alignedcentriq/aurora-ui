@@ -15,10 +15,8 @@ View columns used:
   TIMEINHOURS   – duration in hours (int/float)
 
 Status derivation — eSSL records physical punches only (no WFH concept):
-  TIMEINHOURS >= 4  → Present
-  TIMEINHOURS >= 1  → Half-day
-  record exists but duration unclear → Present
-  no record for a weekday → Absent (caller's responsibility to compute)
+  any check-in recorded    → Present, regardless of hours worked
+  no record for a weekday  → Absent (caller's responsibility to compute)
 
 Connection: pyodbc via "ODBC Driver 17 for SQL Server". Connection string is built once
 and cached; the pyodbc connection itself is opened per-call (no connection pool needed for
@@ -183,12 +181,10 @@ def _cache_set(key: str, data):
 
 
 def _status_for_hours(hours: float) -> str:
-    if hours >= 4:
-        return "Present"
-    if hours >= 1:
-        return "Half-day"
-    # Record exists but duration is very short — treat as Present
-    # (could be a forgotten punch-out; check-in is the authoritative signal)
+    # A recorded check-in is the sole signal for Present, regardless of hours
+    # worked — no hours-based "Half-day" downgrade. `hours` is kept as a
+    # parameter (and still returned separately by callers) for any future use,
+    # but no longer drives status.
     return "Present"
 
 

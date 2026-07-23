@@ -127,6 +127,12 @@ class Config:
     EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
     EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
 
+    # "remote" (default): embed via the OpenAI-compatible client against EMBEDDING_BASE_URL
+    # (shared ml01 box). "local": embed in-process via fastembed (nomic-embed-text-v1.5),
+    # removing the network round-trip + ml01 contention that dominates cache-lookup latency.
+    # See docs/specs/2026-07-21-local-embedding-backend-design.md.
+    EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "remote").strip().lower()
+
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
 

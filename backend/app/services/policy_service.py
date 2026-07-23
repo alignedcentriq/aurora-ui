@@ -634,24 +634,32 @@ class PolicyService:
 
     @classmethod
     def _get_embedding(cls, text: str) -> list | None:
-        """Call the configured embedding model. Returns None on any failure.
+        """Call the configured embedding backend. Returns None on any failure.
 
-        Cache hierarchy: L1 in-process LRU (512 entries) → L2 Redis (14 days) → Ollama.
+        Cache hierarchy: L1 in-process LRU (512 entries) → L2 Redis (14 days) → backend call.
+        The backend is either "local" (in-process fastembed, no network hop — see
+        local_embedding_service.py) or "remote" (Ollama on the shared ml01 box), selected by
+        settings.EMBEDDING_BACKEND. See docs/specs/2026-07-21-local-embedding-backend-design.md.
         The same text is embedded for answer-cache lookup, semantic router, form match,
-        and policy search — so a Redis hit on repeated questions avoids multiple ml01 calls.
+        and policy search — so a cache hit here avoids duplicate backend calls.
+
+        Cache keys are namespaced by backend so a mid-rollout EMBEDDING_BACKEND flip never
+        serves a vector computed by the other backend.
         """
         global _embedding_failed_at
         import hashlib
         import struct
 
-        key = text[:2000]
+        backend = settings.EMBEDDING_BACKEND
+        raw_key = text[:2000]
+        key = f"{backend}:{raw_key}"
         # L1: in-process LRU
         if key in cls._embedding_cache:
             return cls._embedding_cache[key]
 
         # L2: Redis (packed float32 bytes for storage efficiency)
         _text_hash = hashlib.sha256(key.encode()).hexdigest()[:32]
-        _redis_key = f"emb:{settings.EMBEDDING_MODEL_NAME}:{_text_hash}"
+        _redis_key = f"emb:{backend}:{settings.EMBEDDING_MODEL_NAME}:{_text_hash}"
         try:
             from app.redis_config import get_redis_client
             rc = get_redis_client()
@@ -667,13 +675,54 @@ class PolicyService:
         except Exception:
             pass
 
-        # L3: actual embedding call — but only attempt it if the embedding model is
-        # already resident on ml01. Measured: a cold load on this shared, CPU-only box
-        # can run past 20s and still fail outright (the client's own 15s timeout doesn't
-        # save us — the request is already committed by then). Skipping straight to the
-        # caller's fail-soft fallback (BM25/keyword search) avoids that wasted wait; the
-        # existing background warmup (_try_warmup_embedding) keeps nudging the model
-        # toward resident so a later call can hit this fast path.
+        # L3: actual embedding call — dispatched to the configured backend.
+        if backend == "local":
+            result = cls._get_embedding_local(raw_key)
+        else:
+            result = cls._get_embedding_remote(raw_key)
+
+        if result is None:
+            return None
+
+        if len(cls._embedding_cache) >= cls._embedding_cache_max:
+            # evict oldest half when full
+            drop = list(cls._embedding_cache.keys())[:cls._embedding_cache_max // 2]
+            for k in drop:
+                del cls._embedding_cache[k]
+        cls._embedding_cache[key] = result
+        # Store in Redis L2 as packed float32 hex (fail-soft)
+        try:
+            from app.redis_config import get_redis_client
+            rc = get_redis_client()
+            if rc:
+                packed = struct.pack(f"{len(result)}f", *result)
+                rc.setex(_redis_key, 86400 * 14, packed.hex())
+        except Exception:
+            pass
+        return result
+
+    @classmethod
+    def _get_embedding_local(cls, raw_key: str) -> list | None:
+        """L3 (local backend): in-process fastembed call — no network hop, no ml01 contention."""
+        global _embedding_failed_at
+        from app.services import local_embedding_service
+        result = local_embedding_service.embed(raw_key)
+        if result is None:
+            _embedding_failed_at = time.time()
+            return None
+        _embedding_failed_at = None  # success — clear any stale failure flag
+        return result
+
+    @classmethod
+    def _get_embedding_remote(cls, raw_key: str) -> list | None:
+        """L3 (remote backend): call ml01 via the OpenAI-compatible client — but only attempt
+        it if the embedding model is already resident. Measured: a cold load on this shared,
+        CPU-only box can run past 20s and still fail outright (the client's own 15s timeout
+        doesn't save us — the request is already committed by then). Skipping straight to the
+        caller's fail-soft fallback (BM25/keyword search) avoids that wasted wait; the existing
+        background warmup (_try_warmup_embedding) keeps nudging the model toward resident so a
+        later call can hit this fast path."""
+        global _embedding_failed_at
         try:
             from app.services.llm_controls_service import ollama_residency
             _loaded = [m.get("name", "") for m in (ollama_residency().get("models") or [])]
@@ -689,25 +738,10 @@ class PolicyService:
 
         try:
             resp = cls._get_embedding_client().embeddings.create(
-                input=key,
+                input=raw_key,
                 model=settings.EMBEDDING_MODEL_NAME,
             )
             result = resp.data[0].embedding
-            if len(cls._embedding_cache) >= cls._embedding_cache_max:
-                # evict oldest half when full
-                drop = list(cls._embedding_cache.keys())[:cls._embedding_cache_max // 2]
-                for k in drop:
-                    del cls._embedding_cache[k]
-            cls._embedding_cache[key] = result
-            # Store in Redis L2 as packed float32 hex (fail-soft)
-            try:
-                from app.redis_config import get_redis_client
-                rc = get_redis_client()
-                if rc:
-                    packed = struct.pack(f"{len(result)}f", *result)
-                    rc.setex(_redis_key, 86400 * 14, packed.hex())
-            except Exception:
-                pass
             _embedding_failed_at = None  # success — clear any stale failure flag
             return result
         except Exception:
