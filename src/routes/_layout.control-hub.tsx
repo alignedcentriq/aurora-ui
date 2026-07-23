@@ -193,7 +193,7 @@ const TABS: TabItem[] = [
     category: "System & Ops",
     icon: Brain,
     color: "#00c4bb",
-    show: (role) => role === "Super Admin" || role === "IT" || role === "Admin",
+    show: (role) => role === "Super Admin",
     component: MemoryBrainTab,
   },
   {
@@ -458,7 +458,6 @@ function ControlHubPage() {
   const { open: openUdemyAutomations } = useUdemyAutomations();
 
   const role = user?.role ?? "";
-  const email = (user?.email ?? "").toLowerCase();
   const scopes = user?.scopes ?? [];
   const fullAccess = scopes.length === 0;
 
@@ -468,9 +467,6 @@ function ControlHubPage() {
   const allowedTabs = useMemo(() => {
     return TABS.filter((t) => {
       if (!t.show(role)) return false;
-      // Memory Brain exposes raw conversational memory across every user — restricted
-      // to the app owner regardless of role, on top of the normal role/scope gate above.
-      if (t.id === "memory-brain" && email !== "shivam.sharma@alignedautomation.com") return false;
       if (!fullAccess) {
         if (t.requireScope && !hasScopeAccess(t.requireScope)) return false;
         if (t.requireAnyScope && !t.requireAnyScope.some((s) => hasScopeAccess(s))) return false;
@@ -478,7 +474,7 @@ function ControlHubPage() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, email, fullAccess, scopes.join(",")]);
+  }, [role, fullAccess, scopes.join(",")]);
 
   const activeTabId = useMemo<TabId | "overview">(() => {
     const requested = (TAB_ALIASES[search.tab ?? ""] ?? search.tab) as TabId | "overview";

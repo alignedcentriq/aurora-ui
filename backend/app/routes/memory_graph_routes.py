@@ -42,7 +42,7 @@ router = APIRouter(prefix="/api/memory", tags=["Memory Graph"])
 # ponytail: fixed cap, make it a query param if someone wants to explore deeper.
 _LEAF_CAP = 30
 
-_ALLOWED_ROLES = {"super admin", "admin", "it"}
+_ALLOWED_ROLES = {"super admin"}
 
 
 def _require_memory_access(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
