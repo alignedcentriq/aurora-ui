@@ -39,7 +39,7 @@ interface PNode extends GNode {
 }
 
 const GROUP_COLOR: Record<string, string> = {
-  root: "#e2f6ff",
+  root: "#ffd76a",
   capability: "#00c4bb",
   knowledge: "#8b5cf6",
   curated: "#22c55e",
@@ -125,36 +125,83 @@ function Node({
   onHover: (n: PNode | null) => void;
   onSelect: (n: PNode) => void;
 }) {
-  const ref = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const wireRef = useRef<THREE.Mesh>(null);
+  const leafRef = useRef<THREE.Mesh>(null);
   const color = GROUP_COLOR[node.group] || "#8892b0";
-  const r = (node.val || 4) * (node.type === "leaf" ? 0.028 : node.type === "lobe" ? 0.05 : 0.09);
+  // root gets its own modest scale — it used to inherit a val=26 straight into a 0.09
+  // multiplier, which made its halo (radius*1.7) bigger than the whole lobe ring and
+  // engulfed the entire graph in one flat grey disc.
+  const r = (node.val || 4) * (node.type === "leaf" ? 0.028 : node.type === "lobe" ? 0.05 : 0.045);
+  const haloMult = node.type === "root" ? 1.25 : 1.7;
   const seed = useMemo(() => Math.random() * Math.PI * 2, []);
+  const isCluster = node.type !== "leaf";
 
-  useFrame(() => {
-    if (!ref.current) return;
+  useFrame((_, delta) => {
     const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 700 + seed);
-    ref.current.scale.setScalar(pulse * (emphasized ? 1 : 0.9));
+    if (isCluster) {
+      haloRef.current?.scale.setScalar(pulse * (emphasized ? 1.1 : 1));
+      if (wireRef.current) {
+        wireRef.current.rotation.y += delta * 0.15;
+        wireRef.current.rotation.x += delta * 0.06;
+      }
+    } else {
+      leafRef.current?.scale.setScalar(pulse * (emphasized ? 1 : 0.9));
+    }
   });
 
   const showLabel = node.type !== "leaf";
+  const hoverHandlers = {
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onHover(node); },
+    onPointerOut: () => onHover(null),
+    onClick: (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onSelect(node); },
+  };
 
   return (
     <group position={node.pos}>
-      <mesh
-        ref={ref}
-        onPointerOver={(e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onHover(node); }}
-        onPointerOut={() => onHover(null)}
-        onClick={(e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onSelect(node); }}
-      >
-        <sphereGeometry args={[r, 20, 20]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={dim ? 0.25 : emphasized ? 1.4 : 0.7}
-          transparent
-          opacity={dim ? 0.18 : 1}
-        />
-      </mesh>
+      {isCluster ? (
+        <>
+          {/* soft glow blob — the fuzzy halo behind the wireframe core */}
+          <mesh ref={haloRef} {...hoverHandlers}>
+            <sphereGeometry args={[r * haloMult, 16, 16]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={dim ? 0.04 : emphasized ? 0.22 : 0.14}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+            />
+          </mesh>
+          {/* faceted geodesic wireframe core, slowly tumbling */}
+          <mesh ref={wireRef}>
+            <icosahedronGeometry args={[r, 1]} />
+            <meshBasicMaterial
+              color={color}
+              wireframe
+              transparent
+              opacity={dim ? 0.15 : emphasized ? 1 : 0.55}
+            />
+          </mesh>
+          {/* bright nucleus — only the root "mind" node gets a solid glowing core */}
+          {node.type === "root" && (
+            <mesh>
+              <sphereGeometry args={[r * 0.45, 16, 16]} />
+              <meshBasicMaterial color={color} transparent opacity={dim ? 0.15 : 0.9} />
+            </mesh>
+          )}
+        </>
+      ) : (
+        <mesh ref={leafRef} {...hoverHandlers}>
+          <sphereGeometry args={[r, 20, 20]} />
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={dim ? 0.25 : emphasized ? 1.4 : 0.7}
+            transparent
+            opacity={dim ? 0.18 : 1}
+          />
+        </mesh>
+      )}
       {!dim && (showLabel || emphasized) && (
         <Html center distanceFactor={11} position={[0, r + 0.35, 0]} occlude={false}>
           <div
