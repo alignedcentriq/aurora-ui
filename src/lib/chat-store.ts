@@ -176,6 +176,7 @@ export interface Turn {
   downloadUrl?: string;
   downloadTitle?: string;
   domain?: string;
+  subIntent?: string;
   interactive?: InteractivePayload;
   images?: string[];
   /** Grounding sources for the answer (ARB #41) — rendered as a cited-answer trust card. */

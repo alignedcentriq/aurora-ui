@@ -101,11 +101,21 @@ budget. Cross-lobe links render as curved lines arcing through the center,
 visually distinct (dimmer, different color) from the existing parent→child
 lines, so they read as "related" rather than "same cluster."
 
+## Amendment (same day): closed the Lessons Learned domain-only gap
+
+Originally scoped out (see below), then reopened at the user's request. Added
+`ChatFeedback.sub_intent` and threaded the already-computed `routed_sub_intent`
+(it was already being logged to `AiRequestLog`, just never reaching the 'done'
+SSE event or the feedback write path) through: `main.py`'s four 'done' event
+sites → `FeedbackRequest`/`/api/feedback` → `FeedbackService.record()` →
+`ChatFeedback.sub_intent`. Frontend: `Turn.subIntent` carries it from the SSE
+event to the thumbs-up/down POST. New Lessons Learned rows now label at the
+same "Project IQ"-level granularity as Curated Answers; historical rows with
+`sub_intent=NULL` still fall back to domain-only.
+
 ## Out of scope / deferred
 
 - LLM-generated leaf titles (would add latency, cost, and a schema migration
   for marginal quality gain over the domain/sub_intent lookup above).
 - Force-directed / physics-based layout (deliberately skipped previously;
   revisit only if lobe count grows enough that the static ring gets crowded).
-- Fixing the Lessons Learned domain-only ceiling (would need a `sub_intent`
-  column on `ChatFeedback` — bigger change, not requested this round).

@@ -2427,6 +2427,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               updateLastAITurn(threadId, {
                 streaming: false,
                 domain: (evt.domain as string) ?? undefined,
+                subIntent: (evt.sub_intent as string) ?? undefined,
                 interactive:
                   evt.interactive &&
                     typeof (evt.interactive as { type?: unknown }).type === "string" &&
@@ -2695,6 +2696,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
         rating,
         threadId: activeId,
         domain: aiTurn?.role === "ai" ? aiTurn.domain : undefined,
+        sub_intent: aiTurn?.role === "ai" ? aiTurn.subIntent : undefined,
         user_message: prevUserTurn?.text || "",
         ai_response: aiTurn?.text || "",
         feedback_text: feedbackText || "",

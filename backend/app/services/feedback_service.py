@@ -42,6 +42,7 @@ class FeedbackService:
         ai_response: str,
         rating: int,
         feedback_text: str = "",
+        sub_intent: str | None = None,
     ) -> str:
         emb = _get_embedding(user_message) if user_message else None
         db = SessionLocal()
@@ -49,6 +50,7 @@ class FeedbackService:
             entry = ChatFeedback(
                 session_id=session_id,
                 domain=domain,
+                sub_intent=sub_intent,
                 user_message=user_message,
                 ai_response=ai_response,
                 rating=rating,

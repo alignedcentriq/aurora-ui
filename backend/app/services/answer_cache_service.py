@@ -84,20 +84,21 @@ class AnswerCacheService:
     @staticmethod
     def store(query: str, answer: str, domain: str | None = None,
               sub_intent: str | None = None, source_keys: list | None = None,
-              is_seed: bool = False) -> bool:
-        """Store an informational answer. Caller is responsible for the safety gate
-        (only call this for non-action, non-widget, informational responses)."""
+              is_seed: bool = False) -> int | None:
+        """Store an informational answer, returning its id (or None on failure). Caller is
+        responsible for the safety gate (only call this for non-action, non-widget,
+        informational responses)."""
         if not settings.ANSWER_CACHE_ENABLED:
-            return False
+            return None
 
         query = (query or "").strip()
         answer = (answer or "").strip()
         if not query or not answer:
-            return False
+            return None
 
         query_emb = PolicyService._get_embedding(query)
         if not query_emb:
-            return False
+            return None
 
         db = SessionLocal()
         try:
@@ -113,10 +114,10 @@ class AnswerCacheService:
             )
             db.add(row)
             db.commit()
-            return True
+            return row.id
         except Exception as e:
             db.rollback()
-            return False
+            return None
         finally:
             db.close()
 

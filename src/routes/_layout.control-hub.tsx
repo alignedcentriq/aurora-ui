@@ -96,6 +96,9 @@ const ProjectIQPortal = lazy(() =>
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
+  // Deep-link into a tab's own internal sub-tab (e.g. Observability's Feedback Triage /
+  // Feature Adoption panels) — read by that tab component itself, ignored otherwise.
+  sub: z.string().optional(),
 });
 
 export const Route = createFileRoute("/_layout/control-hub")({

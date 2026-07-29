@@ -850,6 +850,7 @@ class ChatFeedback(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, nullable=True, index=True)
     domain = Column(String, nullable=True)          # hr, admin, it_support, pmo, functional_manager, general
+    sub_intent = Column(String, nullable=True)       # router sub_intent at the time this turn was answered
     user_message = Column(Text, nullable=True)
     ai_response = Column(Text, nullable=True)
     rating = Column(Integer, nullable=True)          # 1 = thumbs up / helpful, -1 = thumbs down / unhelpful
@@ -861,6 +862,9 @@ class ChatFeedback(Base):
     triaged_at = Column(DateTime, nullable=True, index=True)
     triaged_action = Column(String, nullable=True)
     triaged_by = Column(String, nullable=True)
+    # Set when triaged_action="curated_answer" — the CachedAnswer this lesson became,
+    # so Memory Brain can draw a direct link from the lesson to its fix.
+    resulting_answer_id = Column(Integer, ForeignKey(f"{SCHEMA}.cached_answers.id"), nullable=True)
 
 
 class CachedAnswer(Base):
