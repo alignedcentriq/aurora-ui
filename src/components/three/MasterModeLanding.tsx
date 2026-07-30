@@ -2,7 +2,8 @@
 // orbited by the four inference tiers this app actually runs, all served locally
 // via Ollama (see backend/app/config.py). No ChatGPT / Claude / Gemini here.
 import { useDeviceTier } from "@/hooks/use-device-tier";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { useNavigate } from "@tanstack/react-router";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Sparkles } from "@react-three/drei";
 import { Brain, Network, Wrench, Zap, type LucideIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
@@ -27,27 +28,41 @@ const MODELS: ModelNode[] = [
 
 const NODE_RADIUS = 3.2;
 
-function Core() {
+// Clickable — this core is Memory Brain's entry point from the landing page.
+function Core({ onActivate }: { onActivate: () => void }) {
   const wire = useRef<THREE.Mesh>(null);
   const glow = useRef<THREE.Mesh>(null);
+  const { gl } = useThree();
+  const [hovered, setHovered] = useState(false);
   useFrame((state) => {
     const t = state.clock.elapsedTime;
     if (wire.current) {
       wire.current.rotation.y = t * 0.15;
       wire.current.rotation.x = t * 0.08;
     }
-    glow.current?.scale.setScalar(1 + Math.sin(t * 1.4) * 0.05);
+    glow.current?.scale.setScalar((1 + Math.sin(t * 1.4) * 0.05) * (hovered ? 1.15 : 1));
   });
   return (
-    <group>
+    <group
+      onPointerOver={(e) => { e.stopPropagation(); setHovered(true); gl.domElement.style.cursor = "pointer"; }}
+      onPointerOut={() => { setHovered(false); gl.domElement.style.cursor = "auto"; }}
+      onClick={(e) => { e.stopPropagation(); onActivate(); }}
+    >
       <mesh ref={wire}>
         <icosahedronGeometry args={[0.9, 2]} />
-        <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={0.55} />
+        <meshBasicMaterial color="#67e8f9" wireframe transparent opacity={hovered ? 0.85 : 0.55} />
       </mesh>
       <mesh ref={glow}>
         <icosahedronGeometry args={[0.72, 1]} />
-        <meshBasicMaterial color="#22d3ee" transparent opacity={0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color="#22d3ee" transparent opacity={hovered ? 0.3 : 0.18} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
+      {hovered && (
+        <Html center distanceFactor={9} position={[0, 1.25, 0]} occlude={false}>
+          <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-black/60 px-2.5 py-1 text-center text-[11px] text-cyan-200 backdrop-blur-sm">
+            Open Memory Brain
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -103,7 +118,15 @@ function ModelBadge({
   );
 }
 
-function Scene({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
+function Scene({
+  selectedId,
+  onSelect,
+  onOpenMemoryBrain,
+}: {
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onOpenMemoryBrain: () => void;
+}) {
   const grid = useMemo(() => {
     const g = new THREE.PolarGridHelper(5.2, 8, 8, 64, 0x2a3550, 0x1b2338);
     g.position.y = -1.3;
@@ -112,7 +135,7 @@ function Scene({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
 
   return (
     <>
-      <Core />
+      <Core onActivate={onOpenMemoryBrain} />
       <Sparkles count={140} scale={1.8} size={2.4} speed={0.3} color="#bef2ff" opacity={0.85} />
       <primitive object={grid} />
       {MODELS.map((node, i) => {
@@ -140,8 +163,10 @@ function Scene({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
 
 export function MasterModeLanding() {
   const { tier, canRender3D } = useDeviceTier();
+  const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = MODELS.find((m) => m.id === selectedId) ?? null;
+  const openMemoryBrain = () => navigate({ to: "/control-hub", search: { tab: "memory-brain" } });
 
   return (
     <div
@@ -154,7 +179,7 @@ export function MasterModeLanding() {
           dpr={tier === "high" ? [1, 2] : 1}
           gl={{ antialias: tier === "high", powerPreference: "low-power" }}
         >
-          <Scene selectedId={selectedId} onSelect={setSelectedId} />
+          <Scene selectedId={selectedId} onSelect={setSelectedId} onOpenMemoryBrain={openMemoryBrain} />
         </Canvas>
       ) : (
         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">

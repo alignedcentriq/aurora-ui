@@ -5,13 +5,15 @@
 // Adoption, Project IQ DNA), each with neuron leaves you can click to read the
 // actual remembered content — or jump straight to the real feature, where one exists.
 //
-// Layout is a deterministic radial placement (root -> lobes on a ring -> leaves
-// jittered around their lobe), not a physics simulation — this is a ~300-node
-// display graph, not a real force-directed layout problem, so a static layout is
-// plenty and skips a per-frame n-body sim entirely. Cross-lobe links (a lesson that
-// became a curated answer, a curated answer that feeds a capability, an insight
-// signal about a specific project) are rendered as curved arcs through the center
-// on top of the same static layout — no physics needed for those either.
+// Layout starts from a deterministic radial seed (root -> lobes on a ring -> leaves
+// jittered around their lobe) and then relaxes via a real d3-force-3d simulation
+// (link + charge + center) driven one tick per frame — the seed keeps the settle
+// from being a chaotic pop-in, the sim gives it organic drift. Cross-lobe links (a
+// lesson that became a curated answer, a curated answer that feeds a capability, an
+// insight signal about a specific project) are rendered as curved arcs that track
+// live node positions on top of the same simulation.
+// ponytail: no per-node collision force (forceCollide) — link distance + charge is
+// enough spacing for a ~300-node graph; add if leaves visibly overlap.
 // ponytail: no drag-to-reposition (OrbitControls covers exploring the graph);
 // add per-node dragging only if someone actually asks to rearrange it.
 
@@ -23,6 +25,8 @@ import { Loader2, RefreshCw, Search, X, Brain } from "lucide-react";
 import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
+import type { Line2 } from "three-stdlib";
+import { forceSimulation, forceLink, forceManyBody, forceCenter, type Simulation3D } from "d3-force-3d";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +56,9 @@ interface GraphData {
 }
 
 interface PNode extends GNode {
-  pos: [number, number, number];
+  x: number;
+  y: number;
+  z: number;
 }
 
 const GROUP_COLOR: Record<string, string> = {
@@ -97,12 +103,14 @@ function ageFactor(ts?: string | null): number {
   return Math.min(1, Math.max(0, ageDays / 30));
 }
 
-// Deterministic radial layout: root at center, lobes on a ring, leaves jittered
-// in a shell around their parent lobe. Built once per data load — no simulation.
+// Radial seed (root at center, lobes on a ring, leaves jittered in a shell around
+// their parent lobe) fed into a d3-force-3d simulation that relaxes it into organic
+// motion — the seed avoids a chaotic pop-in from d3's default spiral placement.
 function layout(data: GraphData): {
   nodes: PNode[];
   links: { s: PNode; t: PNode }[];
   crossLinks: { s: PNode; t: PNode; kind: string }[];
+  sim: Simulation3D<PNode>;
 } {
   const byId = new Map<string, PNode>();
   const lobes = data.nodes.filter((n) => n.type === "lobe");
@@ -143,7 +151,7 @@ function layout(data: GraphData): {
         base[2] + shellR * Math.sin(phi) * Math.sin(theta),
       ];
     }
-    const pn: PNode = { ...n, pos };
+    const pn: PNode = { ...n, x: pos[0], y: pos[1], z: pos[2] };
     byId.set(n.id, pn);
     return pn;
   });
@@ -156,22 +164,44 @@ function layout(data: GraphData): {
     .map((l) => ({ s: byId.get(l.source)!, t: byId.get(l.target)!, kind: l.kind }))
     .filter((l) => l.s && l.t);
 
-  return { nodes, links, crossLinks };
+  // Root<->lobe edges keep the 3.4 ring distance; anything touching a leaf relaxes
+  // to the mid-point of the old jitter shell (1.3-2.6). Link strength is forced to
+  // 1 — d3's default halves it for high-degree nodes (root/lobes have many
+  // neighbors), which was too weak to hold the tree shape against charge and let
+  // the whole graph balloon past the camera's view. distanceMax bounds how far
+  // the many-body repulsion reaches so ~300 nodes can't compound into runaway
+  // spread the way an uncapped charge does.
+  const sim = forceSimulation(nodes, 3)
+    .force(
+      "link",
+      forceLink<PNode, { source: string; target: string }>(data.links)
+        .id((d) => d.id)
+        .distance((l) => (l.source.type === "leaf" || l.target.type === "leaf" ? 1.9 : 3.4))
+        .strength(1),
+    )
+    .force("charge", forceManyBody().strength(-0.15).distanceMax(1.6))
+    .force("center", forceCenter())
+    .stop();
+
+  return { nodes, links, crossLinks, sim };
 }
 
 function Node({
   node,
   dim,
   emphasized,
+  isHovered,
   onHover,
   onSelect,
 }: {
   node: PNode;
   dim: boolean;
   emphasized: boolean;
+  isHovered: boolean;
   onHover: (n: PNode | null) => void;
   onSelect: (n: PNode) => void;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
   const haloRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const leafRef = useRef<THREE.Mesh>(null);
@@ -191,6 +221,7 @@ function Node({
   const recencyGlow = (0.5 - age) * 0.3;
 
   useFrame((_, delta) => {
+    groupRef.current?.position.set(node.x, node.y, node.z);
     const pulse = (1 - pulseAmp) + pulseAmp * Math.sin(performance.now() / pulseDivisor + seed);
     if (isCluster) {
       haloRef.current?.scale.setScalar(pulse * (emphasized ? 1.1 : 1));
@@ -203,7 +234,6 @@ function Node({
     }
   });
 
-  const showLabel = node.type !== "leaf";
   const hoverHandlers = {
     onPointerOver: (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onHover(node); },
     onPointerOut: () => onHover(null),
@@ -211,7 +241,7 @@ function Node({
   };
 
   return (
-    <group position={node.pos}>
+    <group ref={groupRef} position={[node.x, node.y, node.z]}>
       {isCluster ? (
         <>
           {/* soft glow blob — the fuzzy halo behind the wireframe core */}
@@ -255,7 +285,7 @@ function Node({
           />
         </mesh>
       )}
-      {!dim && (showLabel || emphasized) && (
+      {!dim && isHovered && (
         <Html center distanceFactor={11} position={[0, r + 0.35, 0]} occlude={false}>
           <div
             className="pointer-events-none whitespace-nowrap rounded-md bg-black/60 px-1.5 py-0.5 text-center backdrop-blur"
@@ -269,20 +299,29 @@ function Node({
   );
 }
 
+function arcPoints(s: PNode, t: PNode): THREE.Vector3[] {
+  const sv = new THREE.Vector3(s.x, s.y, s.z);
+  const tv = new THREE.Vector3(t.x, t.y, t.z);
+  // Pull the control point toward the origin so cross-lobe links arc through
+  // the center instead of cutting a straight line across the sphere.
+  const mid = sv.clone().add(tv).multiplyScalar(0.5).multiplyScalar(0.35);
+  return new THREE.QuadraticBezierCurve3(sv, mid, tv).getPoints(20);
+}
+
 function CrossLinkArc({ s, t, kind, dim }: { s: PNode; t: PNode; kind: string; dim: boolean }) {
-  const points = useMemo(() => {
-    const sv = new THREE.Vector3(...s.pos);
-    const tv = new THREE.Vector3(...t.pos);
-    // Pull the control point toward the origin so cross-lobe links arc through
-    // the center instead of cutting a straight line across the sphere.
-    const mid = sv.clone().add(tv).multiplyScalar(0.5).multiplyScalar(0.35);
-    const curve = new THREE.QuadraticBezierCurve3(sv, mid, tv);
-    return curve.getPoints(20);
-  }, [s.pos, t.pos]);
+  const lineRef = useRef<Line2>(null);
+  const initialPoints = useMemo(() => arcPoints(s, t), [s, t]);
+
+  useFrame(() => {
+    const pts = arcPoints(s, t);
+    lineRef.current?.geometry.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]));
+    lineRef.current?.computeLineDistances(); // dashed material needs fresh distances as the arc moves
+  });
 
   return (
     <Line
-      points={points}
+      ref={lineRef}
+      points={initialPoints}
       color={CROSS_LINK_COLOR[kind] || "#a78bfa"}
       transparent
       opacity={dim ? 0.04 : 0.35}
@@ -293,10 +332,27 @@ function CrossLinkArc({ s, t, kind, dim }: { s: PNode; t: PNode; kind: string; d
   );
 }
 
+function LinkLine({ s, t, color, opacity }: { s: PNode; t: PNode; color: string; opacity: number }) {
+  const lineRef = useRef<Line2>(null);
+  const initialPoints = useMemo(
+    () => [[s.x, s.y, s.z] as [number, number, number], [t.x, t.y, t.z] as [number, number, number]],
+    [s, t],
+  );
+
+  useFrame(() => {
+    lineRef.current?.geometry.setPositions([s.x, s.y, s.z, t.x, t.y, t.z]);
+  });
+
+  return (
+    <Line ref={lineRef} points={initialPoints} color={color} transparent opacity={opacity} lineWidth={1} />
+  );
+}
+
 function GraphScene({
   nodes,
   links,
   crossLinks,
+  sim,
   hiddenGroups,
   query,
   onSelect,
@@ -305,12 +361,16 @@ function GraphScene({
   nodes: PNode[];
   links: { s: PNode; t: PNode }[];
   crossLinks: { s: PNode; t: PNode; kind: string }[];
+  sim: Simulation3D<PNode>;
   hiddenGroups: Set<string>;
   query: string;
   onSelect: (n: PNode) => void;
   sparkleCount: number;
 }) {
   const [hover, setHover] = useState<PNode | null>(null);
+  useFrame(() => {
+    if (sim.alpha() > sim.alphaMin()) sim.tick();
+  });
   const q = query.trim().toLowerCase();
   const matches = (n: PNode) => !q || n.label.toLowerCase().includes(q) || n.detail.toLowerCase().includes(q);
 
@@ -350,13 +410,12 @@ function GraphScene({
         const lit = hover ? near.has(s.id) && near.has(t.id) : true;
         const dimmed = q && !(matches(s) || matches(t));
         return (
-          <Line
+          <LinkLine
             key={i}
-            points={[s.pos, t.pos]}
+            s={s}
+            t={t}
             color={lit && !dimmed ? "#78b4ff" : "#3a4a68"}
-            transparent
             opacity={lit && !dimmed ? 0.45 : 0.06}
-            lineWidth={1}
           />
         );
       })}
@@ -372,6 +431,7 @@ function GraphScene({
           node={n}
           dim={Boolean(q) && !matches(n)}
           emphasized={hover ? near.has(n.id) : true}
+          isHovered={hover?.id === n.id}
           onHover={setHover}
           onSelect={onSelect}
         />
@@ -416,8 +476,8 @@ export function MemoryBrainTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const { nodes, links, crossLinks } = useMemo(
-    () => (data ? layout(data) : { nodes: [], links: [], crossLinks: [] }),
+  const { nodes, links, crossLinks, sim } = useMemo(
+    () => (data ? layout(data) : { nodes: [], links: [], crossLinks: [], sim: forceSimulation<PNode>([], 3).stop() }),
     [data],
   );
 
@@ -546,6 +606,7 @@ export function MemoryBrainTab() {
               nodes={nodes}
               links={links}
               crossLinks={crossLinks}
+              sim={sim}
               hiddenGroups={hiddenGroups}
               query={query}
               onSelect={handleSelect}
