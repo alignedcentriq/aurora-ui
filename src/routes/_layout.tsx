@@ -757,22 +757,6 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
-
-              {canUseMasterMode && (
-                <button
-                  onClick={toggleMasterMode}
-                  className={cn(
-                    "flex h-7 w-7 items-center justify-center rounded-lg transition-all cursor-pointer",
-                    isMasterMode
-                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                      : "hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                  )}
-                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                >
-                  <BrainCircuit className="h-4 w-4" />
-                </button>
-              )}
             </div>
           )}
 
@@ -809,21 +793,6 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
-              {canUseMasterMode && (
-                <button
-                  onClick={toggleMasterMode}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer shadow-sm",
-                    isMasterMode
-                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                      : "bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                  )}
-                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                >
-                  <BrainCircuit className="h-4 w-4" />
-                </button>
-              )}
             </div>
           )}
 
@@ -1132,8 +1101,39 @@ function LayoutComponent() {
             </Link>
           </div>
 
-          {/* Right: Bell icons */}
+          {/* Right: Master Mode switch + bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {canUseMasterMode && location.pathname === "/" && (
+              <button
+                onClick={toggleMasterMode}
+                role="switch"
+                aria-checked={isMasterMode}
+                title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
+                className={cn(
+                  "flex items-center gap-2 rounded-full border px-2.5 py-1 transition-all cursor-pointer",
+                  isMasterMode
+                    ? "border-[#00c4bb]/40 bg-[#00c4bb]/10 text-[#00c4bb]"
+                    : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <BrainCircuit className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden text-[11px] font-semibold sm:inline">Master Mode</span>
+                {/* track + knob, so the on/off state reads at a glance */}
+                <span
+                  className={cn(
+                    "relative h-3.5 w-6 shrink-0 rounded-full transition-colors",
+                    isMasterMode ? "bg-[#00c4bb]" : "bg-zinc-600",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all",
+                      isMasterMode ? "left-3" : "left-0.5",
+                    )}
+                  />
+                </span>
+              </button>
+            )}
             <ProactiveNudgeFeed />
             <ActivityBell />
           </div>

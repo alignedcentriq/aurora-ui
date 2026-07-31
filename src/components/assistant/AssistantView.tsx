@@ -69,6 +69,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
 import { AmbientField } from "@/components/three/AmbientField";
+import { MasterModePanel } from "@/components/three/MasterModePanel";
 import { CitationsCard } from "@/components/assistant/CitationsCard";
 import { MorningBriefing } from "@/components/assistant/MorningBriefing";
 import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
@@ -785,7 +786,16 @@ const TOP_PROMPTS_POOL = [
   "Show me my payslip for last month",
 ];
 
-export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?: boolean; portalContext?: string }) {
+export function AssistantView({
+  isCopilot = false,
+  portalContext,
+  masterMode = false,
+}: {
+  isCopilot?: boolean;
+  portalContext?: string;
+  /** Owner-only inference cockpit: paints this surface dark and adds the Model Council panel. */
+  masterMode?: boolean;
+}) {
   const {
     threads,
     activeId,
@@ -2755,7 +2765,16 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
   };
 
   return (
-    <div className="relative flex h-full w-full overflow-hidden bg-background">
+    // `dark` on the wrapper rescopes the theme CSS variables for this subtree (see the
+    // .dark block in styles.css and the `&:is(.dark *)` variant), so Master Mode gets a
+    // dark cockpit surface — composer, cards and chips included — without touching the
+    // user's global theme preference.
+    <div
+      className={cn(
+        "relative flex h-full w-full overflow-hidden bg-background",
+        masterMode && "dark",
+      )}
+    >
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
         <AnimatePresence>
@@ -3069,6 +3088,19 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                       )}
                     </div>
                   </motion.div>
+
+                  {/* Master Mode cockpit — sits below the starter chips, above the composer.
+                      Only on the full chat home, never in the narrow copilot sidebar. */}
+                  {masterMode && !isCopilot && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.5, delay: 0.45 }}
+                      className="w-full max-w-5xl"
+                    >
+                      <MasterModePanel />
+                    </motion.div>
+                  )}
                 </motion.section>
               )
             ) : (

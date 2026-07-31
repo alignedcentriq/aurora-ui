@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AssistantView } from "@/components/assistant/AssistantView";
-import { MasterModeLanding } from "@/components/three/MasterModeLanding";
 import { useAuth } from "@/lib/auth-store";
 import { useMasterModeStore } from "@/lib/master-mode-store";
 
@@ -27,9 +26,11 @@ export const Route = createFileRoute("/_layout/")({
 function Index() {
   const { user } = useAuth();
   const isMasterMode = useMasterModeStore((s) => s.isMasterMode);
-  // Master Mode is owner-only (see the sidebar toggle in _layout.tsx). Re-checked here,
-  // not just at the toggle, since the flag persists in localStorage per-browser rather
+  // Master Mode is owner-only (see the header switch in _layout.tsx). Re-checked here,
+  // not just at the switch, since the flag persists in localStorage per-browser rather
   // than per-account — this keeps it from leaking to another user on the same machine.
   const canUseMasterMode = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
-  return isMasterMode && canUseMasterMode ? <MasterModeLanding /> : <AssistantView />;
+  // Master Mode no longer replaces the chat home — it layers the inference cockpit
+  // into it, so the composer and quick-glance cards stay available either way.
+  return <AssistantView masterMode={isMasterMode && canUseMasterMode} />;
 }
