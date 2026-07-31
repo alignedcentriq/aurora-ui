@@ -23,9 +23,9 @@ const VB = { w: 1000, h: 340 };
 const CORE = { x: 480, y: 150 };
 
 const RINGS = [
-  { rx: 200, ry: 60, color: "#fbbf24", opacity: 0.28 },
-  { rx: 300, ry: 92, color: "#22d3ee", opacity: 0.22 },
-  { rx: 400, ry: 125, color: "#818cf8", opacity: 0.16 },
+  { rx: 200, ry: 60, color: "#fbbf24", opacity: 0.5 },
+  { rx: 300, ry: 92, color: "#22d3ee", opacity: 0.42 },
+  { rx: 400, ry: 125, color: "#818cf8", opacity: 0.32 },
 ];
 
 interface TierNode {
@@ -40,11 +40,13 @@ interface TierNode {
   angle: number;
 }
 
+// Angles are picked so each label clears the core sphere in the middle — a tier parked
+// at, say, ring 0 / 65° lands its label right on top of the core.
 const TIERS: TierNode[] = [
-  { id: "reasoning", tier: "Reasoning", model: "gpt-oss:latest", role: "Deep answers · intent routing", color: "#22d3ee", icon: Brain, ring: 2, angle: -105 },
-  { id: "service", tier: "Tool-Calling", model: "llama3.1:8b", role: "Actions · summaries", color: "#818cf8", icon: Wrench, ring: 1, angle: -40 },
-  { id: "embeddings", tier: "Embeddings", model: "nomic-embed-text", role: "Semantic search · RAG", color: "#34d399", icon: Network, ring: 1, angle: 200 },
-  { id: "router", tier: "Routing", model: "llama3.2:3b", role: "Fast triage · general chat", color: "#fbbf24", icon: Zap, ring: 0, angle: 65 },
+  { id: "reasoning", tier: "Reasoning", model: "gpt-oss:latest", role: "Deep answers · intent routing", color: "#22d3ee", icon: Brain, ring: 2, angle: -115 },
+  { id: "service", tier: "Tool-Calling", model: "llama3.1:8b", role: "Actions · summaries", color: "#818cf8", icon: Wrench, ring: 1, angle: -35 },
+  { id: "embeddings", tier: "Embeddings", model: "nomic-embed-text", role: "Semantic search · RAG", color: "#34d399", icon: Network, ring: 1, angle: 205 },
+  { id: "router", tier: "Routing", model: "llama3.2:3b", role: "Fast triage · general chat", color: "#fbbf24", icon: Zap, ring: 1, angle: 90 },
 ];
 
 function pointOnRing(ringIndex: number, angleDeg: number) {
@@ -120,37 +122,53 @@ function useTelemetry(): { data: Telemetry | null; failed: boolean } {
       "x-user-email": user.email,
       "x-user-role": (user.role ?? "").toLowerCase(),
     };
+    // A hung backend must not leave a permanent spinner. Note fetch() resolves on
+    // HEADERS, so the timeout has to cover reading the body too — that is where a
+    // stalled response actually blocks.
+    const getJson = async (path: string) => {
+      // 12s, not a few: a cold dev server (or a busy backend) can take a while to send
+      // the body, and a false "unavailable" is worse than a slightly longer spinner.
+      const res = await fetch(path, { headers, signal: AbortSignal.timeout(12000) });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    };
+
     (async () => {
+      // Reset on every attempt: the effect re-runs when the backend resolves the user's
+      // real role, and an early 403 (role still defaulting to Employee) must not stick.
+      setFailed(false);
       try {
-        let picked: Telemetry | null = null;
-        let recentRequests = 0;
-        let recentErrorRatePct = 0;
-        for (const period of PERIODS) {
-          const [summaryRes, volumeRes] = await Promise.all([
-            fetch(`/api/observability/summary?period=${period}`, { headers }),
-            fetch(`/api/observability/charts/volume?period=${period}`, { headers }),
-          ]);
-          if (!summaryRes.ok) throw new Error(String(summaryRes.status));
-          const summary = await summaryRes.json();
-          const volume = volumeRes.ok ? await volumeRes.json() : [];
-          if (period === "24h") {
-            recentRequests = summary.total_requests ?? 0;
-            recentErrorRatePct = summary.error_rate_pct ?? 0;
-          }
-          picked = {
-            latencyMs: summary.avg_latency_ms ?? 0,
-            totalTokens: summary.total_tokens ?? 0,
-            feedbackPct: summary.feedback_score_pct ?? 0,
-            errorRatePct: summary.error_rate_pct ?? 0,
-            totalRequests: summary.total_requests ?? 0,
-            series: Array.isArray(volume) ? volume.map((v: any) => v.requests ?? 0) : [],
-            period,
-            recentRequests,
-            recentErrorRatePct,
-          };
-          if (picked.totalRequests > 0) break;
+        // All three windows at once — sequential probing meant three round trips just to
+        // discover the recent ones were empty.
+        const summaries = await Promise.all(
+          PERIODS.map((p) => getJson(`/api/observability/summary?period=${p}`)),
+        );
+        const recent = summaries[0];
+        const idx = summaries.findIndex((s) => (s.total_requests ?? 0) > 0);
+        const useIdx = idx === -1 ? 0 : idx;
+        const summary = summaries[useIdx];
+        const period = PERIODS[useIdx];
+
+        let series: number[] = [];
+        try {
+          const volume = await getJson(`/api/observability/charts/volume?period=${period}`);
+          series = Array.isArray(volume) ? volume.map((v: any) => v.requests ?? 0) : [];
+        } catch {
+          // Sparklines are decorative — losing them shouldn't blank the numbers.
         }
-        if (!cancelled) setData(picked);
+
+        if (cancelled) return;
+        setData({
+          latencyMs: summary.avg_latency_ms ?? 0,
+          totalTokens: summary.total_tokens ?? 0,
+          feedbackPct: summary.feedback_score_pct ?? 0,
+          errorRatePct: summary.error_rate_pct ?? 0,
+          totalRequests: summary.total_requests ?? 0,
+          series,
+          period,
+          recentRequests: recent.total_requests ?? 0,
+          recentErrorRatePct: recent.error_rate_pct ?? 0,
+        });
       } catch {
         if (!cancelled) setFailed(true);
       }
@@ -188,8 +206,8 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
   }, [values]);
   if (!path) return null;
   return (
-    <svg viewBox="0 0 100 20" preserveAspectRatio="none" className="h-5 w-full" aria-hidden="true">
-      <polyline points={path} fill="none" stroke={color} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+    <svg viewBox="0 0 100 20" preserveAspectRatio="none" className="h-4 w-full" aria-hidden="true">
+      <polyline points={path} fill="none" stroke={color} strokeWidth={1.1} vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
@@ -210,13 +228,13 @@ function StatCard({
   return (
     <div
       className={cn(
-        "rounded-lg border border-white/10 bg-[#080d18]/90 px-3 py-2 backdrop-blur-sm",
+        "rounded-lg border border-white/10 bg-[#080d18]/90 px-2.5 py-1.5 backdrop-blur-sm",
         className,
       )}
     >
       <div className="text-[9px] uppercase tracking-wider text-slate-500">{label}</div>
       <div className="mt-0.5 text-[13px] font-semibold text-slate-100">{value}</div>
-      <div className="mt-1 opacity-70">
+      <div className="mt-0.5 opacity-70">
         <Sparkline values={series} color={color} />
       </div>
     </div>
@@ -231,18 +249,19 @@ export function MasterModePanel() {
   const selected = TIERS.find((t) => t.id === selectedId) ?? null;
 
   const window_ = data?.period ?? "24h";
-  // Three distinct states — "idle" is not the same as "healthy", and neither is
-  // "we couldn't reach the telemetry endpoint".
-  const health: "unknown" | "idle" | "ok" | "degraded" = failed
+  // Distinct states — "still loading" is not "unavailable", "idle" is not "healthy",
+  // and neither is "we couldn't reach the telemetry endpoint".
+  const health: "loading" | "unknown" | "idle" | "ok" | "degraded" = failed
     ? "unknown"
     : !data
-      ? "unknown"
+      ? "loading"
       : data.recentRequests === 0
         ? "idle"
         : data.recentErrorRatePct < 5
           ? "ok"
           : "degraded";
   const HEALTH_LABEL = {
+    loading: "Reading telemetry…",
     unknown: "Telemetry unavailable",
     idle: "Idle · no traffic in 24h",
     ok: "All Systems Operational",
@@ -253,7 +272,7 @@ export function MasterModePanel() {
     <div
       // Height is deliberately tight: greeting + quick-glance + chips already eat most
       // of the viewport above the composer, and the cockpit shouldn't force a scroll.
-      className="relative h-[300px] w-full overflow-hidden rounded-2xl border border-white/10 sm:h-[330px]"
+      className="relative h-[205px] w-full overflow-hidden rounded-2xl border border-white/10 sm:h-[228px]"
       style={{ background: "radial-gradient(120% 120% at 50% 30%, #101a2e 0%, #060912 70%)" }}
     >
       {/* orbit rings — SVG, sharing VB with the badges so the two stay aligned */}
@@ -283,7 +302,9 @@ export function MasterModePanel() {
           exactly where the rings are centred rather than depending on camera framing */}
       {canRender3D && (
         <div
-          className="absolute h-[185px] w-[185px] -translate-x-1/2 -translate-y-1/2"
+          // Small enough that the orbit rings read as orbits rather than a halo, and the
+          // tier labels have somewhere to sit.
+          className="absolute h-[112px] w-[112px] -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${(CORE.x / VB.w) * 100}%`, top: `${(CORE.y / VB.h) * 100}%` }}
         >
           <Canvas
@@ -317,6 +338,7 @@ export function MasterModePanel() {
             health === "ok" && "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]",
             health === "degraded" && "bg-amber-400",
             health === "idle" && "bg-slate-500",
+            health === "loading" && "animate-pulse bg-cyan-400",
             health === "unknown" && "bg-slate-600",
           )}
         />

@@ -1137,9 +1137,15 @@ export function AssistantView({
 
   // Scroll handling
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!scrollRef.current) return;
+    // An empty thread has no latest message to pin to, and its greeting lives at the
+    // TOP — jumping to the bottom just hides it whenever the empty state is taller
+    // than the viewport (e.g. Master Mode's cockpit).
+    if (activeThread.turns.length === 0) {
+      scrollRef.current.scrollTop = 0;
+      return;
     }
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [activeThread.turns.length, thinking]);
 
   const handleScroll = useCallback(() => {
@@ -2843,7 +2849,13 @@ export function AssistantView({
               "mx-auto w-full flex flex-col",
               isCopilot ? "max-w-xl px-4" : "max-w-5xl px-4 sm:px-8",
               activeThread.turns.length === 0
-                ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12"
+                // Master Mode's cockpit makes the empty state taller than the viewport,
+                // and `justify-center` on an overflowing flex column clips the top out of
+                // reach (the greeting disappears and can't be scrolled to) — so centre
+                // only when the shorter, standard empty state is showing.
+                ? masterMode
+                  ? "min-h-full justify-start pt-1 md:pt-2 pb-2 md:pb-3"
+                  : "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12"
                 : "pt-4 md:pt-8 pb-6 md:pb-12",
             )}
           >
