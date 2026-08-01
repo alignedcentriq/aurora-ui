@@ -236,7 +236,9 @@ const ROLE_DEFAULTS: Record<Role, CardId[]> = {
   PMO: ["project_milestones", "pending_approvals", "leave_balance", "kudos_board"],
   Admin: ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
   "Functional Manager": ["pending_approvals", "team_leave", "project_milestones", "kudos_board"],
-  "Super Admin": ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
+  // Owner's home page: personal cards (leave, holiday, kudos, next meeting) rather
+  // than ops widgets — Master Mode + Control Hub already cover the admin surface.
+  "Super Admin": ["leave_balance", "holidays", "kudos_board", "up_next"],
 };
 
 const CARD_HOVER: Record<CardId, string> = {
@@ -593,9 +595,16 @@ interface SmartWidgetsProps {
   onAction?: (prompt: string) => void;
 }
 
+// App owner's personal default — independent of whatever role the backend resolves
+// (Employee in some environments, Super Admin in others). Their home page should look
+// the same regardless, so this is keyed off the account, not the role field.
+const OWNER_EMAIL = "shivam.sharma@alignedautomation.com";
+const OWNER_DEFAULT_CARDS: CardId[] = ["leave_balance", "holidays", "kudos_board", "up_next"];
+
 export function SmartWidgets({ onAction }: SmartWidgetsProps) {
   const { user } = useAuth();
   const role: Role = user?.role ?? "Employee";
+  const isOwner = (user?.email ?? "").toLowerCase() === OWNER_EMAIL;
 
   const [activeCards, setActiveCards] = useState<CardId[]>(() => {
     try {
@@ -611,6 +620,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
     } catch {
       // ignore malformed storage
     }
+    if (isOwner) return OWNER_DEFAULT_CARDS;
     return ROLE_DEFAULTS[role] ?? ROLE_DEFAULTS["Employee"];
   });
 

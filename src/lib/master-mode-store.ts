@@ -11,7 +11,10 @@ interface MasterModeState {
 export const useMasterModeStore = create<MasterModeState>()(
   persist(
     (set, get) => ({
-      isMasterMode: false,
+      // Defaults on: the cockpit is the intended home page for the owner account.
+      // Harmless for everyone else — Master Mode only ever renders when
+      // canUseMasterMode (owner-email check) also passes, in _layout.tsx / _layout.index.tsx.
+      isMasterMode: true,
       toggle: () => set({ isMasterMode: !get().isMasterMode }),
       set: (on: boolean) => set({ isMasterMode: on }),
     }),

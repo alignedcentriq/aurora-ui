@@ -8,6 +8,8 @@ import {
   Loader2,
   RefreshCw,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   SlidersHorizontal,
   Power,
   RotateCcw,
@@ -1367,29 +1369,18 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     <label className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold">
                       LLM Engine
                     </label>
-                    <div className="relative">
-                      <select
-                        value={t.model}
-                        onChange={(e) => {
-                          setTier(tier, { model: e.target.value });
-                          checkModelCaps(tier, e.target.value);
-                        }}
-                        className={cn(
-                          "w-full appearance-none rounded-xl border bg-card pl-3 pr-8 py-2 text-[13px] text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all",
-                          modelChanged ? "border-amber-500/50" : "border-[var(--border)]",
-                        )}
-                      >
-                        {!data.models.includes(t.model) && (
-                          <option value={t.model}>{t.model} (not on server)</option>
-                        )}
-                        {data.models.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-2.5 top-2.5 h-4 w-4 pointer-events-none text-muted-foreground/60" />
-                    </div>
+                    <ModelCoverflow
+                      // A model configured but absent from the server still has to be
+                      // selectable/centreable, so it leads the list rather than being dropped.
+                      models={modelMissing ? [t.model, ...data.models] : data.models}
+                      value={t.model}
+                      onChange={(m) => {
+                        setTier(tier, { model: m });
+                        checkModelCaps(tier, m);
+                      }}
+                      changed={modelChanged}
+                      missing={modelMissing}
+                    />
 
                     {modelMissing && (
                       <span className="flex items-center gap-1 text-[11px] text-rose-400 font-medium mt-1">
@@ -1869,6 +1860,146 @@ function Card({
       <p className="text-[12px] text-muted-foreground mb-5 leading-relaxed">{desc}</p>
       {children}
     </section>
+  );
+}
+
+/** Coverflow model picker — the selected model sits centred and full-size, its
+ *  neighbours fan out behind it, and you step through them one at a time. Only the
+ *  two cards either side of centre are mounted; a long Ollama model list would
+ *  otherwise render dozens of off-screen cards on every tier card. */
+function ModelCoverflow({
+  models,
+  value,
+  onChange,
+  changed,
+  missing,
+}: {
+  models: string[];
+  value: string;
+  onChange: (model: string) => void;
+  changed?: boolean;
+  missing?: boolean;
+}) {
+  const index = Math.max(0, models.indexOf(value));
+
+  const step = (delta: number) => {
+    const next = models[index + delta];
+    if (next) onChange(next);
+  };
+
+  return (
+    <div
+      className={cn(
+        "relative rounded-xl border bg-card/60 py-3 select-none",
+        changed ? "border-amber-500/50" : "border-[var(--border)]",
+      )}
+      role="listbox"
+      aria-label="LLM engine"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          step(-1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          step(1);
+        }
+      }}
+    >
+      <div
+        className="relative h-[74px] overflow-hidden"
+        // Perspective on the viewport, not the cards — a per-card perspective gives
+        // each one its own vanishing point, so the fan never converges.
+        style={{ perspective: "700px" }}
+      >
+        <motion.div
+          className="absolute inset-0"
+          drag="x"
+          dragConstraints={{ left: 0, right: 0 }}
+          dragElastic={0.12}
+          onDragEnd={(_, info) => {
+            if (Math.abs(info.offset.x) > 40) step(info.offset.x < 0 ? 1 : -1);
+          }}
+        >
+          {models.map((model, i) => {
+            const offset = i - index;
+            if (Math.abs(offset) > 2) return null;
+            const isCurrent = offset === 0;
+            return (
+              <motion.button
+                key={model}
+                type="button"
+                role="option"
+                aria-selected={isCurrent}
+                onClick={() => (isCurrent ? undefined : onChange(model))}
+                className={cn(
+                  // Opaque backgrounds are load-bearing, not cosmetic: a translucent centre
+                  // card lets the fanned-out neighbours behind it show straight through,
+                  // which destroys the depth the whole effect depends on.
+                  "absolute left-1/2 top-1/2 flex h-[64px] w-[172px] flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border bg-card px-3 text-center",
+                  isCurrent
+                    ? "border-primary/50 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.35)]"
+                    : "border-[var(--border)]/60 cursor-pointer",
+                )}
+                initial={false}
+                animate={{
+                  x: `calc(-50% + ${offset * 74}px)`,
+                  y: "-50%",
+                  scale: 1 - Math.abs(offset) * 0.16,
+                  rotateY: offset * -34,
+                  opacity: 1 - Math.abs(offset) * 0.38,
+                }}
+                transition={{ type: "spring", stiffness: 320, damping: 32 }}
+                style={{ zIndex: 10 - Math.abs(offset) }}
+              >
+                {isCurrent && <span className="absolute inset-0 bg-primary/[0.07]" />}
+                <span
+                  className={cn(
+                    "relative max-w-full truncate text-[13px] font-semibold",
+                    isCurrent ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {model}
+                </span>
+                {isCurrent && (
+                  <span className="relative text-[9px] font-bold uppercase tracking-wider text-primary">
+                    {missing ? "Not on server" : "Active"}
+                  </span>
+                )}
+              </motion.button>
+            );
+          })}
+        </motion.div>
+
+        {/* Edge fades so the fanned-out neighbours dissolve instead of being clipped */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-20 w-10 bg-gradient-to-r from-card to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-20 w-10 bg-gradient-to-l from-card to-transparent" />
+      </div>
+
+      <div className="mt-2 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => step(-1)}
+          disabled={index === 0}
+          aria-label="Previous model"
+          className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
+          {index + 1} / {models.length}
+        </span>
+        <button
+          type="button"
+          onClick={() => step(1)}
+          disabled={index === models.length - 1}
+          aria-label="Next model"
+          className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
 
