@@ -46,7 +46,7 @@ const TIERS: TierNode[] = [
   { id: "reasoning", tier: "Reasoning", model: "gpt-oss:latest", role: "Deep answers · intent routing", color: "#22d3ee", icon: Brain, ring: 2, angle: -115 },
   { id: "service", tier: "Tool-Calling", model: "llama3.1:8b", role: "Actions · summaries", color: "#818cf8", icon: Wrench, ring: 1, angle: -35 },
   { id: "embeddings", tier: "Embeddings", model: "nomic-embed-text", role: "Semantic search · RAG", color: "#34d399", icon: Network, ring: 1, angle: 205 },
-  { id: "router", tier: "Routing", model: "llama3.2:3b", role: "Fast triage · general chat", color: "#fbbf24", icon: Zap, ring: 1, angle: 90 },
+  { id: "router", tier: "Routing", model: "llama3.2:3b", role: "Fast triage · general chat", color: "#fbbf24", icon: Zap, ring: 0, angle: 90 },
 ];
 
 function pointOnRing(ringIndex: number, angleDeg: number) {
@@ -56,6 +56,15 @@ function pointOnRing(ringIndex: number, angleDeg: number) {
     xPct: ((CORE.x + ring.rx * Math.cos(rad)) / VB.w) * 100,
     yPct: ((CORE.y + ring.ry * Math.sin(rad)) / VB.h) * 100,
   };
+}
+
+/** Half of an orbit ellipse, split at its own left/right vertices (the horizontal
+ * mid-line through CORE). Two of these per ring — one drawn behind the 3D core, one
+ * in front — is what makes the ring look like it actually wraps around the sphere
+ * (Saturn's-rings style) instead of sitting entirely on one side of it. */
+function ringHalfPath(rx: number, ry: number, half: "top" | "bottom") {
+  const sweep = half === "bottom" ? 1 : 0;
+  return `M ${CORE.x - rx},${CORE.y} A ${rx},${ry} 0 0 ${sweep} ${CORE.x + rx},${CORE.y}`;
 }
 
 // ── 3D core ─────────────────────────────────────────────────────────────────
@@ -76,11 +85,15 @@ function CoreMesh() {
         <meshBasicMaterial color="#a5f3fc" wireframe transparent opacity={0.45} />
       </mesh>
       <mesh ref={glow} scale={0.9}>
-        <sphereGeometry args={[1.5, 32, 32]} />
+        {/* icosahedron, not a lat-long sphere — sphereGeometry's pole vertices pull many
+            thin triangles to one point, and additive blending piles their overlap into a
+            bright "closing spiral" at the seam. Icosahedron has no such singularity, so
+            the glow reads as one even, round core instead. */}
+        <icosahedronGeometry args={[1.5, 2]} />
         <meshBasicMaterial
           color="#0e7490"
           transparent
-          opacity={0.22}
+          opacity={0.18}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
         />
@@ -275,22 +288,40 @@ export function MasterModePanel() {
       className="relative h-[205px] w-full overflow-hidden rounded-2xl border border-white/10 sm:h-[228px]"
       style={{ background: "radial-gradient(120% 120% at 50% 30%, #101a2e 0%, #060912 70%)" }}
     >
-      {/* orbit rings — SVG, sharing VB with the badges so the two stay aligned */}
+      {/* orbit rings, back half — the top arc of each ellipse (the far side of the
+          orbit), drawn BEFORE the 3D core so the sphere occludes it. Paired with the
+          front half below the core, this is what makes the rings read as wrapping
+          around the sphere instead of sitting flatly on one side of it. */}
       <svg
         viewBox={`0 0 ${VB.w} ${VB.h}`}
         preserveAspectRatio="none"
         className="absolute inset-0 h-full w-full"
         aria-hidden="true"
       >
+        <defs>
+          {/* Fixed to the outermost ring's vertical span (userSpaceOnUse, not the
+              default objectBoundingBox) so the back and front halves of the SAME ring
+              sample a continuous gradient instead of each half re-normalizing 0–100%
+              across just its own half-height, which broke the color right at the seam. */}
+          <linearGradient
+            id="ring-gradient"
+            gradientUnits="userSpaceOnUse"
+            x1={CORE.x}
+            y1={CORE.y - RINGS[RINGS.length - 1].ry}
+            x2={CORE.x}
+            y2={CORE.y + RINGS[RINGS.length - 1].ry}
+          >
+            <stop offset="0%" stopColor="#818cf8" />
+            <stop offset="50%" stopColor="#22d3ee" />
+            <stop offset="100%" stopColor="#fbbf24" />
+          </linearGradient>
+        </defs>
         {RINGS.map((ring, i) => (
-          <ellipse
+          <path
             key={i}
-            cx={CORE.x}
-            cy={CORE.y}
-            rx={ring.rx}
-            ry={ring.ry}
+            d={ringHalfPath(ring.rx, ring.ry, "top")}
             fill="none"
-            stroke={ring.color}
+            stroke="url(#ring-gradient)"
             strokeOpacity={ring.opacity}
             strokeWidth={1}
             vectorEffect="non-scaling-stroke"
@@ -303,8 +334,10 @@ export function MasterModePanel() {
       {canRender3D && (
         <div
           // Small enough that the orbit rings read as orbits rather than a halo, and the
-          // tier labels have somewhere to sit.
-          className="absolute h-[112px] w-[112px] -translate-x-1/2 -translate-y-1/2"
+          // tier labels have somewhere to sit. Kept well clear of the Reasoning/Routing
+          // badge circles that sit just above/below the core on the inner ring — at
+          // 112px the sphere's edge touched them.
+          className="absolute h-[88px] w-[88px] -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${(CORE.x / VB.w) * 100}%`, top: `${(CORE.y / VB.h) * 100}%` }}
         >
           <Canvas
@@ -316,6 +349,41 @@ export function MasterModePanel() {
           </Canvas>
         </div>
       )}
+
+      {/* orbit rings, front half — the bottom arc of each ellipse (the near side of
+          the orbit), drawn AFTER the 3D core so it passes in front of the sphere. */}
+      <svg
+        viewBox={`0 0 ${VB.w} ${VB.h}`}
+        preserveAspectRatio="none"
+        className="absolute inset-0 h-full w-full"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient
+            id="ring-gradient-front"
+            gradientUnits="userSpaceOnUse"
+            x1={CORE.x}
+            y1={CORE.y - RINGS[RINGS.length - 1].ry}
+            x2={CORE.x}
+            y2={CORE.y + RINGS[RINGS.length - 1].ry}
+          >
+            <stop offset="0%" stopColor="#818cf8" />
+            <stop offset="50%" stopColor="#22d3ee" />
+            <stop offset="100%" stopColor="#fbbf24" />
+          </linearGradient>
+        </defs>
+        {RINGS.map((ring, i) => (
+          <path
+            key={i}
+            d={ringHalfPath(ring.rx, ring.ry, "bottom")}
+            fill="none"
+            stroke="url(#ring-gradient-front)"
+            strokeOpacity={ring.opacity}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
 
       {/* caption */}
       <div className="absolute left-5 top-4">

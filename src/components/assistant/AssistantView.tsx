@@ -5,6 +5,7 @@ import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import {
   Download,
   Sparkles,
+  Hash,
   X,
   ArrowDown,
   BookOpen,
@@ -3092,7 +3093,7 @@ export function AssistantView({
                               onClick={() => !busy && send(prompt)}
                               className="group flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-foreground shadow-sm transition-all hover:bg-primary/10 hover:scale-[1.02]"
                             >
-                              <Sparkles className="h-3 w-3 text-primary/70" />
+                              <Hash className="h-3 w-3 text-primary/70" />
                               {prompt}
                             </button>
                           ))}
