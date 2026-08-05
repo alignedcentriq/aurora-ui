@@ -13,6 +13,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useDeviceTier } from "@/hooks/use-device-tier";
 import { useAuth } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import { MasterModeScene } from "@/components/three/MasterModeScene";
 import { Brain, Network, Wrench, Zap, type LucideIcon } from "lucide-react";
 import * as THREE from "three";
 
@@ -45,7 +46,7 @@ interface TierNode {
 const TIERS: TierNode[] = [
   { id: "reasoning", tier: "Reasoning", model: "gpt-oss:latest", role: "Deep answers · intent routing", color: "#22d3ee", icon: Brain, ring: 2, angle: -115 },
   { id: "service", tier: "Tool-Calling", model: "llama3.1:8b", role: "Actions · summaries", color: "#818cf8", icon: Wrench, ring: 1, angle: -35 },
-  { id: "embeddings", tier: "Embeddings", model: "nomic-embed-text", role: "Semantic search · RAG", color: "#34d399", icon: Network, ring: 1, angle: 205 },
+  { id: "embeddings", tier: "Embeddings", model: "nomic-embed-text", role: "Semantic search · RAG", color: "#34d399", icon: Network, ring: 1, angle: 150 },
   { id: "router", tier: "Routing", model: "llama3.2:3b", role: "Fast triage · general chat", color: "#fbbf24", icon: Zap, ring: 0, angle: 90 },
 ];
 
@@ -255,7 +256,7 @@ function StatCard({
 }
 
 // ── panel ───────────────────────────────────────────────────────────────────
-export function MasterModePanel() {
+export function MasterModePanel({ fullscreen = false }: { fullscreen?: boolean }) {
   const { tier, canRender3D } = useDeviceTier();
   const { data, failed } = useTelemetry();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -283,115 +284,149 @@ export function MasterModePanel() {
 
   return (
     <div
-      // Height is deliberately tight: greeting + quick-glance + chips already eat most
-      // of the viewport above the composer, and the cockpit shouldn't force a scroll.
-      className="relative h-[205px] w-full overflow-hidden rounded-2xl border border-white/10 sm:h-[228px]"
+      className={cn(
+        "relative w-full overflow-hidden rounded-2xl border border-white/10",
+        // Fullscreen keeps the same ring aspect ratio the geometry above was designed
+        // around (VB.w / VB.h), just scaled way up — anything else stretches the
+        // orbit ellipses out of shape. Non-fullscreen keeps the old tight inline size.
+        fullscreen ? "mx-auto aspect-[1000/340] max-h-[64vh] max-w-6xl" : "h-[205px] sm:h-[228px]",
+      )}
       style={{ background: "radial-gradient(120% 120% at 50% 30%, #101a2e 0%, #060912 70%)" }}
     >
-      {/* orbit rings, back half — the top arc of each ellipse (the far side of the
-          orbit), drawn BEFORE the 3D core so the sphere occludes it. Paired with the
-          front half below the core, this is what makes the rings read as wrapping
-          around the sphere instead of sitting flatly on one side of it. */}
-      <svg
-        viewBox={`0 0 ${VB.w} ${VB.h}`}
-        preserveAspectRatio="none"
-        className="absolute inset-0 h-full w-full"
-        aria-hidden="true"
-      >
-        <defs>
-          {/* Fixed to the outermost ring's vertical span (userSpaceOnUse, not the
-              default objectBoundingBox) so the back and front halves of the SAME ring
-              sample a continuous gradient instead of each half re-normalizing 0–100%
-              across just its own half-height, which broke the color right at the seam. */}
-          <linearGradient
-            id="ring-gradient"
-            gradientUnits="userSpaceOnUse"
-            x1={CORE.x}
-            y1={CORE.y - RINGS[RINGS.length - 1].ry}
-            x2={CORE.x}
-            y2={CORE.y + RINGS[RINGS.length - 1].ry}
+      {/* The cockpit itself — a real 3D scene (rings, orbit particles, breathing core,
+          connector lines, floating tier nodes) on capable devices. Depth (rings passing
+          behind/in front of the core) comes from actual perspective now, not a manual
+          front/back half-arc split. Falls back to the old flat SVG rendering + tiny 3D
+          core canvas below on devices that can't render3D. */}
+      {canRender3D ? (
+        <MasterModeScene
+          tiers={TIERS}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          fullscreen={fullscreen}
+          tier={tier}
+          className="absolute inset-0"
+        />
+      ) : (
+        <>
+          <svg
+            viewBox={`0 0 ${VB.w} ${VB.h}`}
+            preserveAspectRatio="none"
+            className="absolute inset-0 h-full w-full"
+            aria-hidden="true"
           >
-            <stop offset="0%" stopColor="#818cf8" />
-            <stop offset="50%" stopColor="#22d3ee" />
-            <stop offset="100%" stopColor="#fbbf24" />
-          </linearGradient>
-        </defs>
-        {RINGS.map((ring, i) => (
-          <path
-            key={i}
-            d={ringHalfPath(ring.rx, ring.ry, "top")}
-            fill="none"
-            stroke="url(#ring-gradient)"
-            strokeOpacity={ring.opacity}
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </svg>
+            <defs>
+              <linearGradient
+                id="ring-gradient"
+                gradientUnits="userSpaceOnUse"
+                x1={CORE.x}
+                y1={CORE.y - RINGS[RINGS.length - 1].ry}
+                x2={CORE.x}
+                y2={CORE.y + RINGS[RINGS.length - 1].ry}
+              >
+                <stop offset="0%" stopColor="#818cf8" />
+                <stop offset="50%" stopColor="#22d3ee" />
+                <stop offset="100%" stopColor="#fbbf24" />
+              </linearGradient>
+            </defs>
+            {RINGS.map((ring, i) => (
+              <path
+                key={i}
+                d={ringHalfPath(ring.rx, ring.ry, "top")}
+                fill="none"
+                stroke="url(#ring-gradient)"
+                strokeOpacity={ring.opacity}
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </svg>
 
-      {/* 3D core — its own square canvas pinned to CORE, so the sphere always lands
-          exactly where the rings are centred rather than depending on camera framing */}
-      {canRender3D && (
-        <div
-          // Small enough that the orbit rings read as orbits rather than a halo, and the
-          // tier labels have somewhere to sit. Kept well clear of the Reasoning/Routing
-          // badge circles that sit just above/below the core on the inner ring — at
-          // 112px the sphere's edge touched them.
-          className="absolute h-[88px] w-[88px] -translate-x-1/2 -translate-y-1/2"
-          style={{ left: `${(CORE.x / VB.w) * 100}%`, top: `${(CORE.y / VB.h) * 100}%` }}
-        >
-          <Canvas
-            camera={{ position: [0, 0, 4.2], fov: 45 }}
-            dpr={tier === "high" ? [1, 2] : 1}
-            gl={{ antialias: tier === "high", powerPreference: "low-power" }}
+          {TIERS.map((node) => {
+            const { xPct, yPct } = pointOnRing(node.ring, node.angle);
+            const isSelected = selectedId === node.id;
+            const isDimmed = selectedId !== null && !isSelected;
+            return (
+              <button
+                key={node.id}
+                onClick={() => setSelectedId(isSelected ? null : node.id)}
+                className="absolute flex flex-col items-center transition-opacity duration-300"
+                style={{
+                  left: `${xPct}%`,
+                  top: `${yPct}%`,
+                  transform: "translate(-50%, -20px)",
+                  opacity: isDimmed ? 0.4 : 1,
+                }}
+                aria-pressed={isSelected}
+              >
+                <span
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition-all duration-300"
+                  style={{
+                    border: `2px solid ${node.color}`,
+                    background: isSelected ? node.color : "#080d18",
+                    color: isSelected ? "#080d18" : node.color,
+                    boxShadow: `0 0 ${isSelected ? 22 : 10}px ${node.color}80`,
+                  }}
+                >
+                  <node.icon className="h-4 w-4" strokeWidth={2.25} />
+                </span>
+                <span className="mt-1.5 whitespace-nowrap rounded-md border border-white/10 bg-[#080d18]/95 px-2 py-0.5 text-center">
+                  <span className="block text-[11px] font-semibold text-slate-100">{node.tier}</span>
+                  <span className="block text-[8px] uppercase tracking-wider text-slate-500">
+                    {node.model}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+
+          <svg
+            viewBox={`0 0 ${VB.w} ${VB.h}`}
+            preserveAspectRatio="none"
+            className="absolute inset-0 h-full w-full"
+            aria-hidden="true"
           >
-            <CoreMesh />
-          </Canvas>
-        </div>
+            <defs>
+              <linearGradient
+                id="ring-gradient-front"
+                gradientUnits="userSpaceOnUse"
+                x1={CORE.x}
+                y1={CORE.y - RINGS[RINGS.length - 1].ry}
+                x2={CORE.x}
+                y2={CORE.y + RINGS[RINGS.length - 1].ry}
+              >
+                <stop offset="0%" stopColor="#818cf8" />
+                <stop offset="50%" stopColor="#22d3ee" />
+                <stop offset="100%" stopColor="#fbbf24" />
+              </linearGradient>
+            </defs>
+            {RINGS.map((ring, i) => (
+              <path
+                key={i}
+                d={ringHalfPath(ring.rx, ring.ry, "bottom")}
+                fill="none"
+                stroke="url(#ring-gradient-front)"
+                strokeOpacity={ring.opacity}
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </svg>
+        </>
       )}
 
-      {/* orbit rings, front half — the bottom arc of each ellipse (the near side of
-          the orbit), drawn AFTER the 3D core so it passes in front of the sphere. */}
-      <svg
-        viewBox={`0 0 ${VB.w} ${VB.h}`}
-        preserveAspectRatio="none"
-        className="absolute inset-0 h-full w-full"
-        aria-hidden="true"
-      >
-        <defs>
-          <linearGradient
-            id="ring-gradient-front"
-            gradientUnits="userSpaceOnUse"
-            x1={CORE.x}
-            y1={CORE.y - RINGS[RINGS.length - 1].ry}
-            x2={CORE.x}
-            y2={CORE.y + RINGS[RINGS.length - 1].ry}
-          >
-            <stop offset="0%" stopColor="#818cf8" />
-            <stop offset="50%" stopColor="#22d3ee" />
-            <stop offset="100%" stopColor="#fbbf24" />
-          </linearGradient>
-        </defs>
-        {RINGS.map((ring, i) => (
-          <path
-            key={i}
-            d={ringHalfPath(ring.rx, ring.ry, "bottom")}
-            fill="none"
-            stroke="url(#ring-gradient-front)"
-            strokeOpacity={ring.opacity}
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-      </svg>
-
       {/* caption */}
-      <div className="absolute left-5 top-4">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300">
-          <Zap className="h-3.5 w-3.5" />
+      <div className={cn("absolute", fullscreen ? "left-6 top-5 sm:left-8 sm:top-6" : "left-5 top-4")}>
+        <div
+          className={cn(
+            "flex items-center gap-1.5 font-semibold uppercase tracking-[0.18em] text-cyan-300",
+            fullscreen ? "text-xs sm:text-sm" : "text-[11px]",
+          )}
+        >
+          <Zap className={fullscreen ? "h-4 w-4" : "h-3.5 w-3.5"} />
           Master Mode
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+        <p className={cn("mt-1 leading-relaxed text-slate-400", fullscreen ? "text-xs sm:text-sm" : "text-[11px]")}>
           Unified intelligence. All systems active.
           <br />
           You&apos;re in control.
@@ -399,7 +434,12 @@ export function MasterModePanel() {
       </div>
 
       {/* system status — derived from the real error rate, not decoration */}
-      <div className="absolute right-5 top-4 flex items-center gap-1.5 rounded-full border border-white/10 bg-[#080d18]/90 px-2.5 py-1">
+      <div
+        className={cn(
+          "absolute flex items-center gap-1.5 rounded-full border border-white/10 bg-[#080d18]/90 px-2.5 py-1",
+          fullscreen ? "right-6 top-5 sm:right-8 sm:top-6" : "right-5 top-4",
+        )}
+      >
         <span
           className={cn(
             "h-1.5 w-1.5 rounded-full",
@@ -410,52 +450,18 @@ export function MasterModePanel() {
             health === "unknown" && "bg-slate-600",
           )}
         />
-        <span className="text-[10px] font-medium text-slate-300">{HEALTH_LABEL[health]}</span>
+        <span className={cn("font-medium text-slate-300", fullscreen ? "text-xs" : "text-[10px]")}>
+          {HEALTH_LABEL[health]}
+        </span>
       </div>
 
-      {/* tier badges — DOM at fixed points on the rings above */}
-      {TIERS.map((node) => {
-        const { xPct, yPct } = pointOnRing(node.ring, node.angle);
-        const isSelected = selectedId === node.id;
-        const isDimmed = selectedId !== null && !isSelected;
-        return (
-          <button
-            key={node.id}
-            onClick={() => setSelectedId(isSelected ? null : node.id)}
-            className="absolute flex flex-col items-center transition-opacity duration-300"
-            // Centre the ICON on the ring point, not the whole badge — the label hangs
-            // below it, so centring the badge pushed the topmost tier off the panel.
-            style={{
-              left: `${xPct}%`,
-              top: `${yPct}%`,
-              transform: "translate(-50%, -20px)",
-              opacity: isDimmed ? 0.4 : 1,
-            }}
-            aria-pressed={isSelected}
-          >
-            <span
-              className="flex h-10 w-10 items-center justify-center rounded-full transition-all duration-300"
-              style={{
-                border: `2px solid ${node.color}`,
-                background: isSelected ? node.color : "#080d18",
-                color: isSelected ? "#080d18" : node.color,
-                boxShadow: `0 0 ${isSelected ? 22 : 10}px ${node.color}80`,
-              }}
-            >
-              <node.icon className="h-4 w-4" strokeWidth={2.25} />
-            </span>
-            <span className="mt-1.5 whitespace-nowrap rounded-md border border-white/10 bg-[#080d18]/95 px-2 py-0.5 text-center">
-              <span className="block text-[11px] font-semibold text-slate-100">{node.tier}</span>
-              <span className="block text-[8px] uppercase tracking-wider text-slate-500">
-                {node.model}
-              </span>
-            </span>
-          </button>
-        );
-      })}
-
       {/* live telemetry — hidden on narrow panels where it would cover the rings */}
-      <div className="absolute bottom-4 right-5 hidden w-[150px] flex-col gap-1.5 lg:flex">
+      <div
+        className={cn(
+          "absolute bottom-4 right-5 flex-col gap-1.5",
+          fullscreen ? "flex w-[140px] sm:w-[180px]" : "hidden w-[150px] lg:flex",
+        )}
+      >
         <StatCard
           label={`Avg latency · ${window_}`}
           value={data ? formatLatency(data.latencyMs) : failed ? "—" : "…"}

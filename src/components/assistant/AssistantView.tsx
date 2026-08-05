@@ -70,7 +70,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
 import { AmbientField } from "@/components/three/AmbientField";
-import { MasterModePanel } from "@/components/three/MasterModePanel";
 import { CitationsCard } from "@/components/assistant/CitationsCard";
 import { MorningBriefing } from "@/components/assistant/MorningBriefing";
 import { CHAT_MODES, parseModeCommand, type ModeKey } from "@/lib/chat-modes";
@@ -790,12 +789,9 @@ const TOP_PROMPTS_POOL = [
 export function AssistantView({
   isCopilot = false,
   portalContext,
-  masterMode = false,
 }: {
   isCopilot?: boolean;
   portalContext?: string;
-  /** Owner-only inference cockpit: paints this surface dark and adds the Model Council panel. */
-  masterMode?: boolean;
 }) {
   const {
     threads,
@@ -2772,16 +2768,7 @@ export function AssistantView({
   };
 
   return (
-    // `dark` on the wrapper rescopes the theme CSS variables for this subtree (see the
-    // .dark block in styles.css and the `&:is(.dark *)` variant), so Master Mode gets a
-    // dark cockpit surface — composer, cards and chips included — without touching the
-    // user's global theme preference.
-    <div
-      className={cn(
-        "relative flex h-full w-full overflow-hidden bg-background",
-        masterMode && "dark",
-      )}
-    >
+    <div className="relative flex h-full w-full overflow-hidden bg-background">
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
         <AnimatePresence>
@@ -2850,13 +2837,7 @@ export function AssistantView({
               "mx-auto w-full flex flex-col",
               isCopilot ? "max-w-xl px-4" : "max-w-5xl px-4 sm:px-8",
               activeThread.turns.length === 0
-                // Master Mode's cockpit makes the empty state taller than the viewport,
-                // and `justify-center` on an overflowing flex column clips the top out of
-                // reach (the greeting disappears and can't be scrolled to) — so centre
-                // only when the shorter, standard empty state is showing.
-                ? masterMode
-                  ? "min-h-full justify-start pt-1 md:pt-2 pb-2 md:pb-3"
-                  : "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12"
+                ? "min-h-full justify-center pt-2 md:pt-8 pb-2 md:pb-12"
                 : "pt-4 md:pt-8 pb-6 md:pb-12",
             )}
           >
@@ -3102,18 +3083,6 @@ export function AssistantView({
                     </div>
                   </motion.div>
 
-                  {/* Master Mode cockpit — sits below the starter chips, above the composer.
-                      Only on the full chat home, never in the narrow copilot sidebar. */}
-                  {masterMode && !isCopilot && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 14 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: 0.45 }}
-                      className="w-full max-w-5xl"
-                    >
-                      <MasterModePanel />
-                    </motion.div>
-                  )}
                 </motion.section>
               )
             ) : (
