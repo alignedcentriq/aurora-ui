@@ -76,3 +76,8 @@ backend/mcp_server/sessions/
 
 # Backend dev-runtime artifact (written by the auto-restarter)
 .backend.pid
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/

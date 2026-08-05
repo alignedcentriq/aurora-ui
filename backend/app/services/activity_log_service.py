@@ -165,13 +165,14 @@ def _notify_other_super_admins(db, actor_email: str, entry: ActivityLogEntry) ->
 # ── Queries ──────────────────────────────────────────────────────────────────
 
 def list_feed(limit: int = 100) -> list[dict]:
-    """Org-wide, last 30 days, newest first, short form (no old/new value)."""
+    """Org-wide, last 30 days, newest first, short form (no old/new value).
+    Excludes "login" — that's Super-Admin-only via list_audit(), never the bell."""
     db = SessionLocal()
     try:
         cutoff = _now() - datetime.timedelta(days=30)
         rows = (
             db.query(ActivityLogEntry)
-            .filter(ActivityLogEntry.created_at >= cutoff)
+            .filter(ActivityLogEntry.created_at >= cutoff, ActivityLogEntry.category != "login")
             .order_by(ActivityLogEntry.created_at.desc())
             .limit(limit)
             .all()
@@ -179,6 +180,38 @@ def list_feed(limit: int = 100) -> list[dict]:
         return [_to_dict(r, full=False) for r in rows]
     finally:
         db.close()
+
+
+_LOGIN_DEDUPE_MINUTES = 30
+
+
+def emit_login(actor_email: str) -> None:
+    """Record a login. Super-Admin-only visibility (list_audit), never the bell feed,
+    never a notification — severity stays "low" so _notify_other_super_admins never fires.
+    Deduped: skips if this email already logged in within the last 30 minutes, so a
+    silent MSAL token refresh doesn't spam the trail with one row per page load."""
+    actor_email = (actor_email or "").strip().lower()
+    if not actor_email:
+        return
+    db = SessionLocal()
+    try:
+        cutoff = _now() - datetime.timedelta(minutes=_LOGIN_DEDUPE_MINUTES)
+        recent = (
+            db.query(ActivityLogEntry)
+            .filter(
+                ActivityLogEntry.actor_email == actor_email,
+                ActivityLogEntry.category == "login",
+                ActivityLogEntry.created_at >= cutoff,
+            )
+            .first()
+        )
+        if recent:
+            return
+    except Exception as exc:
+        log.warning("[activity] login dedupe check failed for %s: %s", actor_email, exc)
+    finally:
+        db.close()
+    emit(actor_email, "login", "user_login", "{actor} logged in", severity="low")
 
 
 def list_audit(
