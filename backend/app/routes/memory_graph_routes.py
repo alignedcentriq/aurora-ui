@@ -30,7 +30,10 @@ from app.models import (
     InsightSignalLog,
     Policy,
     PolicyChunk,
+    ProjectExpertise,
+    ProjectLesson,
     ProjectProfile,
+    ProjectReusableAsset,
     RouterExample,
     UserMemory,
 )
@@ -46,6 +49,11 @@ router = APIRouter(prefix="/api/memory", tags=["Memory Graph"])
 # layout stays smooth; hub labels still carry the true total (e.g. "142").
 # ponytail: fixed cap, make it a query param if someone wants to explore deeper.
 _LEAF_CAP = 30
+# Project IQ facts (lessons/assets/experts) fan out one level deeper than other
+# lobes since they're already relational. Cap per-category-per-profile and only
+# expand the most-recent profiles so the brain doesn't get a 300-node tumor.
+_TWIG_CAP = 3
+_TWIG_PROFILE_CAP = 10
 
 _ALLOWED_ROLES = {"super admin"}
 
@@ -255,6 +263,68 @@ def memory_graph(
         target_leaf = profile_name_to_leaf.get(project_name)
         if target_leaf:
             cross_links.append({"source": signal_id, "target": target_leaf, "kind": "project"})
+
+    # ── 10b. Project IQ facts — lessons / assets / experts, one level deeper ───
+    # Each fact carries source_chunk_id (the PolicyChunk it was extracted from);
+    # resolve chunk_id -> policy_id in one batch query and cross-link the fact
+    # back to its source policy leaf (already built in lobe:kb above), so you can
+    # see which SharePoint doc a "lesson learned" actually came from.
+    twig_profiles = profiles[:_TWIG_PROFILE_CAP]
+    twig_profile_ids = [p.id for p in twig_profiles]
+
+    def _fact_rows(model):
+        return (
+            db.query(model)
+            .filter(model.profile_id.in_(twig_profile_ids))
+            .all()
+            if twig_profile_ids else []
+        )
+
+    lessons = _fact_rows(ProjectLesson)
+    assets = _fact_rows(ProjectReusableAsset)
+    experts = _fact_rows(ProjectExpertise)
+
+    chunk_ids = {f.source_chunk_id for f in (*lessons, *assets, *experts) if f.source_chunk_id}
+    chunk_to_policy: dict[int, int] = {}
+    if chunk_ids:
+        rows = (
+            db.query(PolicyChunk.id, PolicyChunk.policy_id)
+            .filter(PolicyChunk.id.in_(chunk_ids))
+            .all()
+        )
+        chunk_to_policy = {cid: pid for cid, pid in rows}
+
+    def _fact_twigs(rows, prefix: str, label_fn, detail_fn):
+        seen_per_profile: Counter = Counter()
+        for f in rows:
+            if seen_per_profile[f.profile_id] >= _TWIG_CAP:
+                continue
+            seen_per_profile[f.profile_id] += 1
+            parent = f"proj:{f.profile_id}"
+            twig_id = f"{prefix}:{f.id}"
+            leaf(twig_id, parent, label_fn(f), "projectiq", detail_fn(f))
+            pol_id = chunk_to_policy.get(f.source_chunk_id)
+            if pol_id:
+                cross_links.append({"source": twig_id, "target": f"pol:{pol_id}", "kind": "provenance"})
+
+    _fact_twigs(
+        lessons, "lesson-iq",
+        lambda f: _snip(f.lesson, 40),
+        lambda f: f"{f.lesson}\n\nCategory: {f.category or '—'} · Impact: {f.impact_level or '—'}\n"
+                  f"Recommendation: {_snip(f.recommendation, 200)}\n[confidence: {f.confidence}]",
+    )
+    _fact_twigs(
+        assets, "asset-iq",
+        lambda f: f.asset_name,
+        lambda f: f"{f.asset_name} ({f.asset_type or '—'})\n\nOwner: {f.owner or '—'} · "
+                  f"Reuse: {f.reuse_readiness or '—'}\n[confidence: {f.confidence}]",
+    )
+    _fact_twigs(
+        experts, "expert-iq",
+        lambda f: f.person_name,
+        lambda f: f"{f.person_name} — {f.role_on_project or 'contributor'}\n\n"
+                  f"Capability: {f.capability or '—'}\n[evidence: {f.evidence_level}]",
+    )
 
     return {
         "nodes": nodes,

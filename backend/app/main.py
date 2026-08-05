@@ -541,6 +541,8 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         pass
     finally:
         db.close()
+    from app.services.activity_log_service import emit_login
+    emit_login(user.email)
     return {"email": user.email, "role": role}
 
 
