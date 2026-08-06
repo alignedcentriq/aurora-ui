@@ -33,6 +33,7 @@ import {
   Globe,
   Brain,
   ScrollText,
+  LogIn,
 } from "lucide-react";
 
 // Page components are lazy-loaded so the Control Hub route ships only the shell;
@@ -81,6 +82,9 @@ const AccessManagement = lazy(() =>
 const AuditTrail = lazy(() =>
   import("@/pages/AuditTrail").then((m) => ({ default: m.AuditTrail })),
 );
+const LoginHistory = lazy(() =>
+  import("@/pages/LoginHistory").then((m) => ({ default: m.LoginHistory })),
+);
 const CabinDirectory = lazy(() =>
   import("@/pages/CabinDirectory").then((m) => ({ default: m.CabinDirectory })),
 );
@@ -96,6 +100,9 @@ const ProjectIQPortal = lazy(() =>
 
 const controlHubSearchSchema = z.object({
   tab: z.string().optional(),
+  // Deep-link into a tab's own internal sub-tab (e.g. Observability's Feedback Triage /
+  // Feature Adoption panels) — read by that tab component itself, ignored otherwise.
+  sub: z.string().optional(),
 });
 
 export const Route = createFileRoute("/_layout/control-hub")({
@@ -111,6 +118,7 @@ type TabId =
   | "llm-controls"
   | "role-control"
   | "audit-trail"
+  | "login-history"
   | "admin-portal"
   | "hr-portal"
   | "it-portal"
@@ -176,6 +184,15 @@ const TABS: TabItem[] = [
     color: "#F59E0B",
     show: (role) => role === "Super Admin",
     component: AuditTrail,
+  },
+  {
+    id: "login-history",
+    label: "Login History",
+    category: "System & Ops",
+    icon: LogIn,
+    color: "#F59E0B",
+    show: (role) => role === "Super Admin",
+    component: LoginHistory,
   },
   {
     id: "observability",
@@ -356,6 +373,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "role-control": "Configure user role scopes, AD groups, and view permission trees.",
   "audit-trail":
     "Complete history of role, access, automation, and settings changes — who, what, when, before and after.",
+  "login-history": "Every user login, who and when — Super Admin only, never notified.",
   observability: "Track AI token usage, request latency, and debug LLM tool calls.",
   "memory-brain":
     "Explore everything the assistant knows and has learned from chat as a living neuron graph.",

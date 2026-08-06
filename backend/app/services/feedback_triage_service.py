@@ -161,13 +161,16 @@ def stats() -> dict:
         db.close()
 
 
-def _mark_feedback(db, feedback_ids: Optional[list[int]], action: str, by: str) -> int:
+def _mark_feedback(db, feedback_ids: Optional[list[int]], action: str, by: str,
+                    resulting_answer_id: Optional[int] = None) -> int:
     if not feedback_ids:
         return 0
+    values = {"triaged_at": _now(), "triaged_action": action, "triaged_by": by or ""}
+    if resulting_answer_id is not None:
+        values["resulting_answer_id"] = resulting_answer_id
     return (db.query(ChatFeedback)
             .filter(ChatFeedback.id.in_(feedback_ids))
-            .update({"triaged_at": _now(), "triaged_action": action, "triaged_by": by or ""},
-                    synchronize_session=False))
+            .update(values, synchronize_session=False))
 
 
 def _resolve_escalations(db, escalation_ids: Optional[list[int]], by: str) -> int:
@@ -204,15 +207,15 @@ def promote_curated_answer(query: str, answer: str, domain: Optional[str] = None
                 "message": "Both a question and a curated answer are required."}
 
     from app.services.answer_cache_service import AnswerCacheService
-    stored = AnswerCacheService.store(query, answer, domain=domain, sub_intent=None, is_seed=True)
-    if not stored:
+    answer_id = AnswerCacheService.store(query, answer, domain=domain, sub_intent=None, is_seed=True)
+    if not answer_id:
         return {"success": False, "error": "store_failed",
                 "message": "Couldn't store the curated answer (the embedding model may be down). "
                            "The failures were left in the queue."}
 
     db = SessionLocal()
     try:
-        n_fb = _mark_feedback(db, feedback_ids, "curated_answer", by)
+        n_fb = _mark_feedback(db, feedback_ids, "curated_answer", by, resulting_answer_id=answer_id)
         n_es = _resolve_escalations(db, escalation_ids, by)
         db.commit()
     finally:

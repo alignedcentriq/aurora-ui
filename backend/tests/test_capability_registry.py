@@ -53,6 +53,18 @@ def main():
     ok(all(c.visible_to("employee") for c in near_emp),
        "rescue never suggests a capability the role can't use")
 
+    print("short_label:")
+    ok(caps.short_label("pmo", "project_iq") == "Project IQ",
+       "(pmo, project_iq) -> the SkillSpec display_name")
+    ok(caps.short_label("pmo", "training") == "Learning Advisor",
+       "(pmo, training) -> a different SkillSpec on the same domain (not ambiguous)")
+    ok(caps.short_label("hr") == "HR", "domain-only 'hr' (no sub_intent) skips SkillSpec, humanizes")
+    ok(caps.short_label(None) == "General", "empty domain falls back to 'General'")
+    ok(caps.short_label("it_support") == "IT Support",
+       "unmapped domain humanizes with acronym casing, not a raw underscore string")
+    ok(caps.short_label("document", "document_request") == "HR & policy",
+       "(document, document_request) falls through to the matching Capability's category")
+
     print()
     if fails:
         print(f"FAILED: {len(fails)} check(s)")

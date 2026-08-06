@@ -441,6 +441,10 @@ def _tokens(text: str) -> set[str]:
     return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if t not in _STOPWORDS}
 
 
+def _norm(s: Optional[str]) -> str:
+    return (s or "").strip().lower()
+
+
 def get(key: str) -> Optional[Capability]:
     return _BY_KEY.get(key)
 
@@ -448,6 +452,56 @@ def get(key: str) -> Optional[Capability]:
 def all_capabilities() -> tuple[Capability, ...]:
     """Every capability — the adoption-analytics denominator."""
     return CAPABILITIES
+
+
+def _usage_match(cap: Capability, d: str, si: str) -> bool:
+    """True if this capability's `usage` (domain,sub_intent) pairs claim (d, si) —
+    the same exact/wildcard rule adoption_service.py uses to compute adoption %."""
+    exact = {(_norm(cd), _norm(csi)) for cd, csi in cap.usage if csi != "*"}
+    wildcard_domains = {_norm(cd) for cd, csi in cap.usage if csi == "*"}
+    return (d, si) in exact or d in wildcard_domains
+
+
+def capability_for_usage(domain: Optional[str], sub_intent: Optional[str] = None) -> Optional[str]:
+    """The capability key whose `usage` claims this (domain, sub_intent), or None.
+    Used by Memory Brain to cross-link a leaf to the Feature Adoption capability it feeds."""
+    d, si = _norm(domain), _norm(sub_intent)
+    for cap in all_capabilities():
+        if _usage_match(cap, d, si):
+            return cap.key
+    return None
+
+
+def short_label(domain: Optional[str], sub_intent: Optional[str] = None) -> str:
+    """A 1-3 word human label for a (domain, sub_intent) pair — for places (Memory Brain
+    leaves) that need a scannable tag instead of raw routing internals.
+
+    1. exact (domain, sub_intent) match against SKILL_REGISTRY -> its display_name
+       ("pmo","project_iq") -> "Project IQ". Only applied when sub_intent is given —
+       matching on domain alone would be ambiguous (several skills share a domain).
+    2. domain[,sub_intent] match against Capability.usage (same exact/wildcard logic
+       adoption_service.py uses) -> its short category ("Time off", "IT Support").
+    3. humanized raw domain string as a last resort ("it_support" -> "IT Support").
+    """
+    d, si = _norm(domain), _norm(sub_intent)
+
+    if si:
+        for skill in SKILL_REGISTRY:
+            if _norm(skill.domain) == d and _norm(skill.sub_intent) == si:
+                return skill.display_name
+
+    for cap in all_capabilities():
+        if _usage_match(cap, d, si):
+            return cap.category
+
+    if not d:
+        return "General"
+    known = {"hr": "HR", "it_support": "IT Support", "it": "IT", "pmo": "PMO",
+             "ms365": "MS365", "admin": "Admin", "general": "General",
+             "functional_manager": "Functional Manager",
+             "project_iq": "Project IQ", "skill_supply": "Skill Supply",
+             "workforce": "Workforce"}
+    return known.get(d, d.replace("_", " ").replace(":", " ").title())
 
 
 # ── Published connectors as capabilities (discovery only — NOT the adoption denominator) ──

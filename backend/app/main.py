@@ -262,6 +262,7 @@ class FeedbackRequest(BaseModel):
     index: Optional[int] = None          # message index in conversation
     threadId: Optional[str] = None       # session / thread id
     domain: Optional[str] = None
+    sub_intent: Optional[str] = None
     user_message: Optional[str] = None
     ai_response: Optional[str] = None
     feedback_text: Optional[str] = None
@@ -540,6 +541,8 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         pass
     finally:
         db.close()
+    from app.services.activity_log_service import emit_login
+    emit_login(user.email)
     return {"email": user.email, "role": role}
 
 
@@ -690,6 +693,7 @@ async def feedback(req: FeedbackRequest):
     FeedbackService.record(
         session_id=req.threadId or "unknown",
         domain=req.domain or "unknown",
+        sub_intent=req.sub_intent,
         user_message=req.user_message or "",
         ai_response=req.ai_response or "",
         rating=rating_int,
@@ -1730,7 +1734,7 @@ async def chat(
                         _db.close()
                     except Exception:
                         pass
-                yield f"data: {json.dumps({'type': 'done', 'domain': cached_domain})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': cached_domain, 'sub_intent': hit.get('sub_intent')})}\n\n"
                 return
 
         accumulated_text = ""
@@ -1952,7 +1956,7 @@ async def chat(
             # same UX as the concurrency gate's "busy" signal.
             if isinstance(exc, ServerBusyError):
                 yield f"data: {json.dumps({'type': 'busy', 'message': 'The AI server is handling too many requests right now. Please try again in a moment.'})}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain or 'general'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain or 'general', 'sub_intent': routed_sub_intent})}\n\n"
             # Degraded mode: a connectivity-class failure means even the fallback model
             # was unreachable (the resilience layer already retried). Tell the user what
             # happened in plain language as a normal assistant message instead of
@@ -2106,7 +2110,7 @@ async def chat(
             if is_embedding_unavailable():
                 yield f"data: {json.dumps({'type': 'warning', 'message': 'Semantic routing is warming up — answer accuracy should improve on your next message.'})}\n\n"
 
-        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'domain': routed_domain, 'sub_intent': routed_sub_intent, 'download_url': post['download_url'], 'interactive': post['interactive'], 'images': post['images'], 'citations': post.get('citations'), 'processing_time': post['processing_time']})}\n\n"
 
         # ── Background delivery: the user left while this request was still in
         # the queue (or thinking). Positive responses only — errors, refusals,

@@ -27,7 +27,6 @@ import {
   Rocket,
   UsersRound,
   RotateCcw,
-  BrainCircuit,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -45,6 +44,8 @@ import {
 } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
 import { useMasterModeStore } from "@/lib/master-mode-store";
+import { MasterModeTrigger } from "@/components/three/MasterModeTrigger";
+import { MasterModeOverlay } from "@/components/three/MasterModeOverlay";
 import { setChatSyncUser, hydrateChatFromServer } from "@/lib/chat-sync";
 import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
@@ -757,22 +758,6 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
-
-              {canUseMasterMode && (
-                <button
-                  onClick={toggleMasterMode}
-                  className={cn(
-                    "flex h-7 w-7 items-center justify-center rounded-lg transition-all cursor-pointer",
-                    isMasterMode
-                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                      : "hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                  )}
-                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                >
-                  <BrainCircuit className="h-4 w-4" />
-                </button>
-              )}
             </div>
           )}
 
@@ -809,21 +794,6 @@ function LayoutComponent() {
                   <Moon className="h-4 w-4 text-indigo-400" />
                 )}
               </button>
-              {canUseMasterMode && (
-                <button
-                  onClick={toggleMasterMode}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-xl transition-all cursor-pointer shadow-sm",
-                    isMasterMode
-                      ? "bg-[#00c4bb]/20 text-[#00c4bb]"
-                      : "bg-[#0c1630]/40 hover:bg-[#0c1630]/60 text-zinc-400 hover:text-white",
-                  )}
-                  title={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                  aria-label={isMasterMode ? "Exit Master Mode" : "Enter Master Mode"}
-                >
-                  <BrainCircuit className="h-4 w-4" />
-                </button>
-              )}
             </div>
           )}
 
@@ -1132,12 +1102,17 @@ function LayoutComponent() {
             </Link>
           </div>
 
-          {/* Right: Bell icons */}
+          {/* Right: Master Mode trigger + bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {canUseMasterMode && (
+              <MasterModeTrigger active={isMasterMode} onClick={toggleMasterMode} />
+            )}
             <ProactiveNudgeFeed />
             <ActivityBell />
           </div>
         </header>
+
+        {canUseMasterMode && <MasterModeOverlay />}
 
         {/* --- MAIN WORKSPACE --- */}
         <main

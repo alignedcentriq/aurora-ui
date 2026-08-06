@@ -451,6 +451,10 @@ def init_db():
                 # Onboarding Phase 4: doc-to-HR email delivery tracking (submitted/emailed/failed)
                 f'ALTER TABLE "{SCHEMA}".onboarding_doc_submissions ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0',
                 f'ALTER TABLE "{SCHEMA}".onboarding_doc_submissions ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMP',
+                # Memory Brain v2: sub_intent alongside domain (short labels), and the FK
+                # linking a promoted lesson to the curated answer it became.
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS sub_intent VARCHAR',
+                f'ALTER TABLE "{SCHEMA}".chat_feedback ADD COLUMN IF NOT EXISTS resulting_answer_id INTEGER',
             ]:
                 try:
                     conn.execute(text(stmt))

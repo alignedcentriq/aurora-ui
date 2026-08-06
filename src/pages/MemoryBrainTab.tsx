@@ -1,26 +1,39 @@
 // Memory Brain — the app's whole "mind" as a 3D neuron graph (R3F/drei).
 // Read-only view over the learning flywheel (GET /api/memory/graph): a root "mind"
 // node fans out to lobes (Capabilities, Knowledge Base, Curated Answers, Router
-// Intelligence, Apps & Forms, User Memory, Lessons Learned), each with neuron leaves
-// you can click to read the actual remembered content.
+// Intelligence, Apps & Forms, User Memory, Lessons Learned, Insight Bus, Feature
+// Adoption, Project IQ DNA), each with neuron leaves you can click to read the
+// actual remembered content — or jump straight to the real feature, where one exists.
 //
-// Layout is a deterministic radial placement (root -> lobes on a ring -> leaves
-// jittered around their lobe), not a physics simulation — this is a 200-node
-// display graph, not a real force-directed layout problem, so a static layout is
-// plenty and skips a per-frame n-body sim entirely.
+// Layout starts from a deterministic radial seed (root -> lobes on a ring -> leaves
+// jittered around their lobe) and then relaxes via a real d3-force-3d simulation
+// (link + charge + center) driven one tick per frame — the seed keeps the settle
+// from being a chaotic pop-in, the sim gives it organic drift. Cross-lobe links (a
+// lesson that became a curated answer, a curated answer that feeds a capability, an
+// insight signal about a specific project) are rendered as curved arcs that track
+// live node positions on top of the same simulation.
+// ponytail: no per-node collision force (forceCollide) — link distance + charge is
+// enough spacing for a ~300-node graph; add if leaves visibly overlap.
 // ponytail: no drag-to-reposition (OrbitControls covers exploring the graph);
 // add per-node dragging only if someone actually asks to rearrange it.
 
 import { useAuth } from "@/lib/auth-store";
 import { useDeviceTier } from "@/hooks/use-device-tier";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Search, X, Brain } from "lucide-react";
 import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
+import type { Line2 } from "three-stdlib";
+import { forceSimulation, forceLink, forceManyBody, forceCenter, type Simulation3D } from "d3-force-3d";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+
+type DeepLink =
+  | { kind: "tab"; tab: string; sub?: string }
+  | { kind: "external"; url: string };
 
 interface GNode {
   id: string;
@@ -30,12 +43,22 @@ interface GNode {
   val: number;
   count?: number;
   detail: string;
+  ts?: string | null;
+  deep_link?: DeepLink | null;
 }
 interface GLink { source: string; target: string; }
-interface GraphData { nodes: GNode[]; links: GLink[]; stats: Record<string, number>; }
+interface GCrossLink { source: string; target: string; kind: string; }
+interface GraphData {
+  nodes: GNode[];
+  links: GLink[];
+  cross_links: GCrossLink[];
+  stats: Record<string, number>;
+}
 
 interface PNode extends GNode {
-  pos: [number, number, number];
+  x: number;
+  y: number;
+  z: number;
 }
 
 const GROUP_COLOR: Record<string, string> = {
@@ -47,6 +70,9 @@ const GROUP_COLOR: Record<string, string> = {
   tools: "#f59e0b",
   usermem: "#ec4899",
   lessons: "#f43f5e",
+  insight: "#a78bfa",
+  fadopt: "#38bdf8",
+  projectiq: "#34d399",
 };
 const GROUP_LABEL: Record<string, string> = {
   capability: "Capabilities",
@@ -56,11 +82,36 @@ const GROUP_LABEL: Record<string, string> = {
   tools: "Apps & Forms",
   usermem: "User Memory",
   lessons: "Lessons Learned",
+  insight: "Insight Bus",
+  fadopt: "Feature Adoption",
+  projectiq: "Project IQ DNA",
+};
+// Cross-lobe link colors, one per relationship kind — dimmer than the parent-child
+// lines so they read as "related" rather than "same cluster."
+const CROSS_LINK_COLOR: Record<string, string> = {
+  flywheel: "#fbbf24",   // a lesson that became a curated answer
+  capability: "#a78bfa", // a leaf that feeds a Feature Adoption capability
+  project: "#34d399",    // an insight signal about a specific Project IQ profile
 };
 
-// Deterministic radial layout: root at center, lobes on a ring, leaves jittered
-// in a shell around their parent lobe. Built once per data load — no simulation.
-function layout(data: GraphData): { nodes: PNode[]; links: { s: PNode; t: PNode }[] } {
+function ageFactor(ts?: string | null): number {
+  // 0 = brand new, 1 = 30+ days old. No ts (lobes/root) -> 0.5 (neutral, matches
+  // the original fixed pulse look so those nodes don't change appearance).
+  if (!ts) return 0.5;
+  const ageDays = (Date.now() - new Date(ts).getTime()) / 86_400_000;
+  if (Number.isNaN(ageDays)) return 0.5;
+  return Math.min(1, Math.max(0, ageDays / 30));
+}
+
+// Radial seed (root at center, lobes on a ring, leaves jittered in a shell around
+// their parent lobe) fed into a d3-force-3d simulation that relaxes it into organic
+// motion — the seed avoids a chaotic pop-in from d3's default spiral placement.
+function layout(data: GraphData): {
+  nodes: PNode[];
+  links: { s: PNode; t: PNode }[];
+  crossLinks: { s: PNode; t: PNode; kind: string }[];
+  sim: Simulation3D<PNode>;
+} {
   const byId = new Map<string, PNode>();
   const lobes = data.nodes.filter((n) => n.type === "lobe");
   const parentOfLeaf = new Map<string, string>();
@@ -100,7 +151,7 @@ function layout(data: GraphData): { nodes: PNode[]; links: { s: PNode; t: PNode 
         base[2] + shellR * Math.sin(phi) * Math.sin(theta),
       ];
     }
-    const pn: PNode = { ...n, pos };
+    const pn: PNode = { ...n, x: pos[0], y: pos[1], z: pos[2] };
     byId.set(n.id, pn);
     return pn;
   });
@@ -109,22 +160,48 @@ function layout(data: GraphData): { nodes: PNode[]; links: { s: PNode; t: PNode 
     .map((l) => ({ s: byId.get(l.source)!, t: byId.get(l.target)! }))
     .filter((l) => l.s && l.t);
 
-  return { nodes, links };
+  const crossLinks = (data.cross_links || [])
+    .map((l) => ({ s: byId.get(l.source)!, t: byId.get(l.target)!, kind: l.kind }))
+    .filter((l) => l.s && l.t);
+
+  // Root<->lobe edges keep the 3.4 ring distance; anything touching a leaf relaxes
+  // to the mid-point of the old jitter shell (1.3-2.6). Link strength is forced to
+  // 1 — d3's default halves it for high-degree nodes (root/lobes have many
+  // neighbors), which was too weak to hold the tree shape against charge and let
+  // the whole graph balloon past the camera's view. distanceMax bounds how far
+  // the many-body repulsion reaches so ~300 nodes can't compound into runaway
+  // spread the way an uncapped charge does.
+  const sim = forceSimulation(nodes, 3)
+    .force(
+      "link",
+      forceLink<PNode, { source: string; target: string }>(data.links)
+        .id((d) => d.id)
+        .distance((l) => (l.source.type === "leaf" || l.target.type === "leaf" ? 1.9 : 3.4))
+        .strength(1),
+    )
+    .force("charge", forceManyBody().strength(-0.15).distanceMax(1.6))
+    .force("center", forceCenter())
+    .stop();
+
+  return { nodes, links, crossLinks, sim };
 }
 
 function Node({
   node,
   dim,
   emphasized,
+  isHovered,
   onHover,
   onSelect,
 }: {
   node: PNode;
   dim: boolean;
   emphasized: boolean;
+  isHovered: boolean;
   onHover: (n: PNode | null) => void;
   onSelect: (n: PNode) => void;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
   const haloRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const leafRef = useRef<THREE.Mesh>(null);
@@ -136,9 +213,16 @@ function Node({
   const haloMult = node.type === "root" ? 1.25 : 1.7;
   const seed = useMemo(() => Math.random() * Math.PI * 2, []);
   const isCluster = node.type !== "leaf";
+  // Recency: newer leaves pulse faster and brighter; older ones settle. 0.5 (no ts)
+  // reproduces the original fixed cadence exactly.
+  const age = useMemo(() => ageFactor(node.ts), [node.ts]);
+  const pulseDivisor = 400 + age * 600;
+  const pulseAmp = 0.2 - age * 0.1;
+  const recencyGlow = (0.5 - age) * 0.3;
 
   useFrame((_, delta) => {
-    const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 700 + seed);
+    groupRef.current?.position.set(node.x, node.y, node.z);
+    const pulse = (1 - pulseAmp) + pulseAmp * Math.sin(performance.now() / pulseDivisor + seed);
     if (isCluster) {
       haloRef.current?.scale.setScalar(pulse * (emphasized ? 1.1 : 1));
       if (wireRef.current) {
@@ -150,7 +234,6 @@ function Node({
     }
   });
 
-  const showLabel = node.type !== "leaf";
   const hoverHandlers = {
     onPointerOver: (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onHover(node); },
     onPointerOut: () => onHover(null),
@@ -158,7 +241,7 @@ function Node({
   };
 
   return (
-    <group position={node.pos}>
+    <group ref={groupRef} position={[node.x, node.y, node.z]}>
       {isCluster ? (
         <>
           {/* soft glow blob — the fuzzy halo behind the wireframe core */}
@@ -196,13 +279,13 @@ function Node({
           <meshStandardMaterial
             color={color}
             emissive={color}
-            emissiveIntensity={dim ? 0.25 : emphasized ? 1.4 : 0.7}
+            emissiveIntensity={dim ? 0.25 : Math.max(0.3, (emphasized ? 1.4 : 0.7) + recencyGlow)}
             transparent
             opacity={dim ? 0.18 : 1}
           />
         </mesh>
       )}
-      {!dim && (showLabel || emphasized) && (
+      {!dim && isHovered && (
         <Html center distanceFactor={11} position={[0, r + 0.35, 0]} occlude={false}>
           <div
             className="pointer-events-none whitespace-nowrap rounded-md bg-black/60 px-1.5 py-0.5 text-center backdrop-blur"
@@ -216,34 +299,106 @@ function Node({
   );
 }
 
+function arcPoints(s: PNode, t: PNode): THREE.Vector3[] {
+  const sv = new THREE.Vector3(s.x, s.y, s.z);
+  const tv = new THREE.Vector3(t.x, t.y, t.z);
+  // Pull the control point toward the origin so cross-lobe links arc through
+  // the center instead of cutting a straight line across the sphere.
+  const mid = sv.clone().add(tv).multiplyScalar(0.5).multiplyScalar(0.35);
+  return new THREE.QuadraticBezierCurve3(sv, mid, tv).getPoints(20);
+}
+
+function CrossLinkArc({ s, t, kind, dim }: { s: PNode; t: PNode; kind: string; dim: boolean }) {
+  const lineRef = useRef<Line2>(null);
+  const initialPoints = useMemo(() => arcPoints(s, t), [s, t]);
+
+  useFrame(() => {
+    const pts = arcPoints(s, t);
+    lineRef.current?.geometry.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]));
+    lineRef.current?.computeLineDistances(); // dashed material needs fresh distances as the arc moves
+  });
+
+  return (
+    <Line
+      ref={lineRef}
+      points={initialPoints}
+      color={CROSS_LINK_COLOR[kind] || "#a78bfa"}
+      transparent
+      opacity={dim ? 0.04 : 0.35}
+      lineWidth={1.5}
+      dashed
+      dashScale={4}
+    />
+  );
+}
+
+function LinkLine({ s, t, color, opacity }: { s: PNode; t: PNode; color: string; opacity: number }) {
+  const lineRef = useRef<Line2>(null);
+  const initialPoints = useMemo(
+    () => [[s.x, s.y, s.z] as [number, number, number], [t.x, t.y, t.z] as [number, number, number]],
+    [s, t],
+  );
+
+  useFrame(() => {
+    lineRef.current?.geometry.setPositions([s.x, s.y, s.z, t.x, t.y, t.z]);
+  });
+
+  return (
+    <Line ref={lineRef} points={initialPoints} color={color} transparent opacity={opacity} lineWidth={1} />
+  );
+}
+
 function GraphScene({
   nodes,
   links,
+  crossLinks,
+  sim,
+  hiddenGroups,
   query,
   onSelect,
   sparkleCount,
 }: {
   nodes: PNode[];
   links: { s: PNode; t: PNode }[];
+  crossLinks: { s: PNode; t: PNode; kind: string }[];
+  sim: Simulation3D<PNode>;
+  hiddenGroups: Set<string>;
   query: string;
   onSelect: (n: PNode) => void;
   sparkleCount: number;
 }) {
   const [hover, setHover] = useState<PNode | null>(null);
+  useFrame(() => {
+    if (sim.alpha() > sim.alphaMin()) sim.tick();
+  });
   const q = query.trim().toLowerCase();
   const matches = (n: PNode) => !q || n.label.toLowerCase().includes(q) || n.detail.toLowerCase().includes(q);
+
+  const visibleNodes = useMemo(
+    () => nodes.filter((n) => n.type === "root" || !hiddenGroups.has(n.group)),
+    [nodes, hiddenGroups],
+  );
+  const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
+  const visibleLinks = useMemo(
+    () => links.filter((l) => visibleIds.has(l.s.id) && visibleIds.has(l.t.id)),
+    [links, visibleIds],
+  );
+  const visibleCrossLinks = useMemo(
+    () => crossLinks.filter((l) => visibleIds.has(l.s.id) && visibleIds.has(l.t.id)),
+    [crossLinks, visibleIds],
+  );
 
   const near = useMemo(() => {
     const s = new Set<string>();
     if (hover) {
       s.add(hover.id);
-      for (const { s: a, t: b } of links) {
+      for (const { s: a, t: b } of visibleLinks) {
         if (a.id === hover.id) s.add(b.id);
         if (b.id === hover.id) s.add(a.id);
       }
     }
     return s;
-  }, [hover, links]);
+  }, [hover, visibleLinks]);
 
   return (
     <>
@@ -251,27 +406,32 @@ function GraphScene({
       <pointLight position={[0, 4, 4]} intensity={40} color="#7dd8ff" />
       <Sparkles count={sparkleCount} scale={9} size={1.6} speed={0.3} color="#4fa9ff" opacity={0.5} />
 
-      {links.map(({ s, t }, i) => {
+      {visibleLinks.map(({ s, t }, i) => {
         const lit = hover ? near.has(s.id) && near.has(t.id) : true;
         const dimmed = q && !(matches(s) || matches(t));
         return (
-          <Line
+          <LinkLine
             key={i}
-            points={[s.pos, t.pos]}
+            s={s}
+            t={t}
             color={lit && !dimmed ? "#78b4ff" : "#3a4a68"}
-            transparent
             opacity={lit && !dimmed ? 0.45 : 0.06}
-            lineWidth={1}
           />
         );
       })}
 
-      {nodes.map((n) => (
+      {visibleCrossLinks.map((cl, i) => {
+        const dimmed = Boolean(q) && !(matches(cl.s) || matches(cl.t));
+        return <CrossLinkArc key={`x${i}`} s={cl.s} t={cl.t} kind={cl.kind} dim={dimmed} />;
+      })}
+
+      {visibleNodes.map((n) => (
         <Node
           key={n.id}
           node={n}
           dim={Boolean(q) && !matches(n)}
           emphasized={hover ? near.has(n.id) : true}
+          isHovered={hover?.id === n.id}
           onHover={setHover}
           onSelect={onSelect}
         />
@@ -285,6 +445,7 @@ function GraphScene({
 export function MemoryBrainTab() {
   const { user } = useAuth();
   const { tier, canRender3D } = useDeviceTier();
+  const navigate = useNavigate();
   const authHeaders = useMemo(
     () => ({
       "Content-Type": "application/json",
@@ -298,6 +459,7 @@ export function MemoryBrainTab() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<PNode | null>(null);
   const [query, setQuery] = useState("");
+  const [hiddenGroups, setHiddenGroups] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -314,7 +476,35 @@ export function MemoryBrainTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const { nodes, links } = useMemo(() => (data ? layout(data) : { nodes: [], links: [] }), [data]);
+  const { nodes, links, crossLinks, sim } = useMemo(
+    () => (data ? layout(data) : { nodes: [], links: [], crossLinks: [], sim: forceSimulation<PNode>([], 3).stop() }),
+    [data],
+  );
+
+  const toggleGroup = useCallback((group: string) => {
+    setHiddenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }, []);
+
+  // Deep-link on click where a real destination exists (Feature Adoption / Project IQ /
+  // Feedback Triage tabs, or an Apps & Forms external URL); otherwise fall back to the
+  // read-only inspect panel, same as before this leaf had a destination.
+  const handleSelect = useCallback((n: PNode) => {
+    const dl = n.deep_link;
+    if (dl?.kind === "external") {
+      window.open(dl.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (dl?.kind === "tab") {
+      navigate({ to: "/control-hub", search: { tab: dl.tab, sub: dl.sub } });
+      return;
+    }
+    setSelected(n);
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -337,7 +527,8 @@ export function MemoryBrainTab() {
           <div>
             <h2 className="text-[15px] font-bold tracking-tight text-white">Memory Brain</h2>
             <p className="text-[11px] text-slate-400">
-              Everything Centriq knows and has learned from chat — click a neuron to read it.
+              Everything Centriq knows and has learned from chat — click a neuron to read it
+              or jump to it, click a stat chip to show/hide that lobe.
             </p>
           </div>
         </div>
@@ -363,7 +554,7 @@ export function MemoryBrainTab() {
         </div>
       </div>
 
-      {/* stat chips */}
+      {/* stat chips — click to show/hide that lobe */}
       <div className="flex flex-wrap gap-2 border-b border-white/5 bg-[#060d1c] px-5 py-2">
         {[
           ["Capabilities", stats.capabilities, "capability"],
@@ -373,17 +564,34 @@ export function MemoryBrainTab() {
           ["Apps/Forms", stats.tools, "tools"],
           ["User facts", stats.user_memories, "usermem"],
           ["Lessons", stats.lessons_learned, "lessons"],
-        ].map(([label, val, group]) => (
-          <Badge
-            key={label as string}
-            variant="secondary"
-            className="group gap-1.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-slate-300 transition-transform duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--tone)_45%,transparent)] hover:shadow-[0_6px_16px_-8px_color-mix(in_oklab,var(--tone)_50%,transparent)]"
-            style={{ "--tone": GROUP_COLOR[group as string] } as React.CSSProperties}
-          >
-            <span className="h-2 w-2 rounded-full" style={{ background: GROUP_COLOR[group as string], boxShadow: `0 0 6px ${GROUP_COLOR[group as string]}` }} />
-            {label} <span className="font-semibold text-white">{(val as number) ?? 0}</span>
-          </Badge>
-        ))}
+          ["Insights", stats.insight_signals, "insight"],
+          ["Adoption", stats.feature_adoption, "fadopt"],
+          ["Project IQ", stats.project_profiles, "projectiq"],
+        ].map(([label, val, group]) => {
+          const hidden = hiddenGroups.has(group as string);
+          return (
+            <Badge
+              key={label as string}
+              variant="secondary"
+              role="button"
+              tabIndex={0}
+              aria-pressed={!hidden}
+              onClick={() => toggleGroup(group as string)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleGroup(group as string);
+                }
+              }}
+              className="group cursor-pointer gap-1.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-slate-300 transition-all duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--tone)_45%,transparent)] hover:shadow-[0_6px_16px_-8px_color-mix(in_oklab,var(--tone)_50%,transparent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00c4bb]"
+              style={{ "--tone": GROUP_COLOR[group as string], opacity: hidden ? 0.35 : 1 } as React.CSSProperties}
+              title={hidden ? "Hidden — click to show" : "Click to hide this lobe"}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: GROUP_COLOR[group as string], boxShadow: hidden ? "none" : `0 0 6px ${GROUP_COLOR[group as string]}` }} />
+              {label} <span className="font-semibold text-white">{(val as number) ?? 0}</span>
+            </Badge>
+          );
+        })}
       </div>
 
       {/* 3D graph + detail panel */}
@@ -397,8 +605,11 @@ export function MemoryBrainTab() {
             <GraphScene
               nodes={nodes}
               links={links}
+              crossLinks={crossLinks}
+              sim={sim}
+              hiddenGroups={hiddenGroups}
               query={query}
-              onSelect={setSelected}
+              onSelect={handleSelect}
               sparkleCount={tier === "high" ? 120 : 45}
             />
           </Canvas>
@@ -436,7 +647,7 @@ export function MemoryBrainTab() {
         )}
 
         <p className="pointer-events-none absolute bottom-3 left-4 text-[10px] text-slate-500">
-          Drag to orbit · scroll to zoom · click a neuron to inspect
+          Drag to orbit · scroll to zoom · click a neuron to inspect or jump to it
         </p>
       </div>
     </div>

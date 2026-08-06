@@ -5,6 +5,7 @@ import { UserMessage, AIMessage, AnswerCard } from "./Message";
 import {
   Download,
   Sparkles,
+  Hash,
   X,
   ArrowDown,
   BookOpen,
@@ -785,7 +786,13 @@ const TOP_PROMPTS_POOL = [
   "Show me my payslip for last month",
 ];
 
-export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?: boolean; portalContext?: string }) {
+export function AssistantView({
+  isCopilot = false,
+  portalContext,
+}: {
+  isCopilot?: boolean;
+  portalContext?: string;
+}) {
   const {
     threads,
     activeId,
@@ -1127,9 +1134,15 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
 
   // Scroll handling
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!scrollRef.current) return;
+    // An empty thread has no latest message to pin to, and its greeting lives at the
+    // TOP — jumping to the bottom just hides it whenever the empty state is taller
+    // than the viewport (e.g. Master Mode's cockpit).
+    if (activeThread.turns.length === 0) {
+      scrollRef.current.scrollTop = 0;
+      return;
     }
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [activeThread.turns.length, thinking]);
 
   const handleScroll = useCallback(() => {
@@ -2427,6 +2440,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
               updateLastAITurn(threadId, {
                 streaming: false,
                 domain: (evt.domain as string) ?? undefined,
+                subIntent: (evt.sub_intent as string) ?? undefined,
                 interactive:
                   evt.interactive &&
                     typeof (evt.interactive as { type?: unknown }).type === "string" &&
@@ -2695,6 +2709,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
         rating,
         threadId: activeId,
         domain: aiTurn?.role === "ai" ? aiTurn.domain : undefined,
+        sub_intent: aiTurn?.role === "ai" ? aiTurn.subIntent : undefined,
         user_message: prevUserTurn?.text || "",
         ai_response: aiTurn?.text || "",
         feedback_text: feedbackText || "",
@@ -3059,7 +3074,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                               onClick={() => !busy && send(prompt)}
                               className="group flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-foreground shadow-sm transition-all hover:bg-primary/10 hover:scale-[1.02]"
                             >
-                              <Sparkles className="h-3 w-3 text-primary/70" />
+                              <Hash className="h-3 w-3 text-primary/70" />
                               {prompt}
                             </button>
                           ))}
@@ -3067,6 +3082,7 @@ export function AssistantView({ isCopilot = false, portalContext }: { isCopilot?
                       )}
                     </div>
                   </motion.div>
+
                 </motion.section>
               )
             ) : (

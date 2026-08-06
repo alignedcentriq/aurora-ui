@@ -1,4 +1,5 @@
 import { useAuth } from "@/lib/auth-store";
+import { useSearch } from "@tanstack/react-router";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   XAxis,
@@ -231,9 +232,18 @@ function DomainBadge({ domain }: { domain: string }) {
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
+const _SUB_TABS = ["logs", "charts", "triage", "adoption"] as const;
+
 export function ObservabilityDashboard() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"logs" | "charts" | "triage" | "adoption">("logs");
+  // Deep-link support (e.g. Memory Brain -> ?tab=observability&sub=triage): only used
+  // to pick the initial tab, same one-way pattern as the outer Control Hub's ?tab=.
+  const search = useSearch({ strict: false }) as { sub?: string };
+  const [activeTab, setActiveTab] = useState<(typeof _SUB_TABS)[number]>(
+    () => (_SUB_TABS as readonly string[]).includes(search.sub ?? "")
+      ? (search.sub as (typeof _SUB_TABS)[number])
+      : "logs",
+  );
 
   if (user?.role !== "Super Admin") {
     return (
@@ -264,7 +274,7 @@ export function ObservabilityDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex rounded-lg border border-border bg-muted/30 p-1">
-              {(["logs", "charts", "triage", "adoption"] as const).map((tab) => (
+              {_SUB_TABS.map((tab) => (
                 <Button
                   key={tab}
                   variant={activeTab === tab ? "secondary" : "ghost"}
