@@ -338,6 +338,46 @@ async def zoho_refresh(account: ConnectedAccount) -> str | None:
         db.close()
 
 
+# -- Zoho Self Client (shared org-level token, no per-user OAuth popup) ------
+# Self Client apps don't support a browser redirect flow -- you generate a
+# refresh_token once via Zoho's API console UI (or zoho_get_refresh_token.py)
+# and it's shared across all users. Used as a fallback when a user has no
+# personal ConnectedAccount row.
+
+_zoho_service_cache: dict = {}
+
+
+async def _zoho_service_token() -> str | None:
+    if not (settings.ZOHO_REFRESH_TOKEN and settings.ZOHO_CLIENT_ID and settings.ZOHO_CLIENT_SECRET):
+        return None
+
+    cached = _zoho_service_cache.get("access_token")
+    if cached and _zoho_service_cache.get("expires_at", 0) > time.time() + 120:
+        return cached
+
+    token_url = f"{ZOHO_ACCOUNTS_URL}/oauth/v2/token"
+    payload = {
+        "client_id": settings.ZOHO_CLIENT_ID,
+        "client_secret": settings.ZOHO_CLIENT_SECRET,
+        "refresh_token": settings.ZOHO_REFRESH_TOKEN,
+        "grant_type": "refresh_token",
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(token_url, data=payload)
+        if resp.status_code != 200:
+            log.warning("[oauth] Zoho service-token refresh failed: %s", resp.text)
+            return None
+        data = resp.json()
+
+    if "error" in data:
+        log.warning("[oauth] Zoho service-token error: %s", data)
+        return None
+
+    _zoho_service_cache["access_token"] = data["access_token"]
+    _zoho_service_cache["expires_at"] = time.time() + data.get("expires_in", 3600)
+    return data["access_token"]
+
+
 # -- Shared helpers -----------------------------------------------------------
 
 def _save_tokens(
@@ -407,6 +447,8 @@ async def get_valid_token(user_email: str, provider: str) -> str | None:
             .first()
         )
         if not acc:
+            if provider == "zoho":
+                return await _zoho_service_token()
             return None
 
         # Check if token is still valid (with 2-minute buffer)

@@ -94,6 +94,20 @@ const CROSS_LINK_COLOR: Record<string, string> = {
   project: "#34d399",    // an insight signal about a specific Project IQ profile
 };
 
+function relTime(ts?: string | null): string {
+  if (!ts) return "";
+  const ms = Date.now() - new Date(ts).getTime();
+  if (Number.isNaN(ms)) return "";
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return `${Math.floor(d / 30)}mo ago`;
+}
+
 function ageFactor(ts?: string | null): number {
   // 0 = brand new, 1 = 30+ days old. No ts (lobes/root) -> 0.5 (neutral, matches
   // the original fixed pulse look so those nodes don't change appearance).
@@ -355,6 +369,7 @@ function GraphScene({
   sim,
   hiddenGroups,
   query,
+  selectedId,
   onSelect,
   sparkleCount,
 }: {
@@ -364,6 +379,7 @@ function GraphScene({
   sim: Simulation3D<PNode>;
   hiddenGroups: Set<string>;
   query: string;
+  selectedId: string | null;
   onSelect: (n: PNode) => void;
   sparkleCount: number;
 }) {
@@ -388,17 +404,25 @@ function GraphScene({
     [crossLinks, visibleIds],
   );
 
+  // A click sticks the focus (Obsidian-style click-to-focus); hover only takes
+  // over when nothing is selected, so the highlighted neighborhood survives the
+  // mouse leaving the node while the detail panel is open.
+  const focusId = selectedId ?? hover?.id ?? null;
   const near = useMemo(() => {
     const s = new Set<string>();
-    if (hover) {
-      s.add(hover.id);
+    if (focusId) {
+      s.add(focusId);
       for (const { s: a, t: b } of visibleLinks) {
-        if (a.id === hover.id) s.add(b.id);
-        if (b.id === hover.id) s.add(a.id);
+        if (a.id === focusId) s.add(b.id);
+        if (b.id === focusId) s.add(a.id);
+      }
+      for (const { s: a, t: b } of visibleCrossLinks) {
+        if (a.id === focusId) s.add(b.id);
+        if (b.id === focusId) s.add(a.id);
       }
     }
     return s;
-  }, [hover, visibleLinks]);
+  }, [focusId, visibleLinks, visibleCrossLinks]);
 
   return (
     <>
@@ -407,7 +431,7 @@ function GraphScene({
       <Sparkles count={sparkleCount} scale={9} size={1.6} speed={0.3} color="#4fa9ff" opacity={0.5} />
 
       {visibleLinks.map(({ s, t }, i) => {
-        const lit = hover ? near.has(s.id) && near.has(t.id) : true;
+        const lit = focusId ? near.has(s.id) && near.has(t.id) : true;
         const dimmed = q && !(matches(s) || matches(t));
         return (
           <LinkLine
@@ -421,7 +445,8 @@ function GraphScene({
       })}
 
       {visibleCrossLinks.map((cl, i) => {
-        const dimmed = Boolean(q) && !(matches(cl.s) || matches(cl.t));
+        const lit = focusId ? near.has(cl.s.id) && near.has(cl.t.id) : true;
+        const dimmed = (Boolean(q) && !(matches(cl.s) || matches(cl.t))) || !lit;
         return <CrossLinkArc key={`x${i}`} s={cl.s} t={cl.t} kind={cl.kind} dim={dimmed} />;
       })}
 
@@ -429,8 +454,8 @@ function GraphScene({
         <Node
           key={n.id}
           node={n}
-          dim={Boolean(q) && !matches(n)}
-          emphasized={hover ? near.has(n.id) : true}
+          dim={(Boolean(q) && !matches(n)) || (Boolean(focusId) && !near.has(n.id))}
+          emphasized={focusId ? near.has(n.id) : true}
           isHovered={hover?.id === n.id}
           onHover={setHover}
           onSelect={onSelect}
@@ -481,6 +506,8 @@ export function MemoryBrainTab() {
     [data],
   );
 
+  const [feedOpen, setFeedOpen] = useState(true);
+
   const toggleGroup = useCallback((group: string) => {
     setHiddenGroups((prev) => {
       const next = new Set(prev);
@@ -489,6 +516,34 @@ export function MemoryBrainTab() {
       return next;
     });
   }, []);
+
+  // "Live activity" — the most recently touched leaves across the whole graph,
+  // newest first. Real timestamps already carried on each leaf (created_at /
+  // emitted_at / updated_at from the source table); no simulated events.
+  const recentEvents = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.type === "leaf" && n.ts)
+        .sort((a, b) => new Date(b.ts!).getTime() - new Date(a.ts!).getTime())
+        .slice(0, 8),
+    [nodes],
+  );
+
+  // Nodes linked (parent/child or cross-lobe) to whatever's selected, for the
+  // inspector's "Related" list — click one to jump the focus there.
+  const related = useMemo(() => {
+    if (!selected) return [];
+    const out: PNode[] = [];
+    const seen = new Set<string>([selected.id]);
+    for (const { s, t } of [...links, ...crossLinks]) {
+      const other = s.id === selected.id ? t : t.id === selected.id ? s : null;
+      if (other && !seen.has(other.id)) {
+        seen.add(other.id);
+        out.push(other);
+      }
+    }
+    return out.slice(0, 6);
+  }, [selected, links, crossLinks]);
 
   // Deep-link on click where a real destination exists (Feature Adoption / Project IQ /
   // Feedback Triage tabs, or an Apps & Forms external URL); otherwise fall back to the
@@ -609,6 +664,7 @@ export function MemoryBrainTab() {
               sim={sim}
               hiddenGroups={hiddenGroups}
               query={query}
+              selectedId={selected?.id ?? null}
               onSelect={handleSelect}
               sparkleCount={tier === "high" ? 120 : 45}
             />
@@ -617,6 +673,42 @@ export function MemoryBrainTab() {
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
             The 3D memory graph is disabled on this device (low power or reduced-motion) to save
             battery — search above still works.
+          </div>
+        )}
+
+        {canRender3D && (
+          <button
+            onClick={() => setFeedOpen((v) => !v)}
+            className="absolute left-3 top-3 rounded-lg border border-white/10 bg-[#0a1428]/90 px-2.5 py-1.5 text-[11px] font-medium text-slate-300 backdrop-blur hover:text-white"
+          >
+            {feedOpen ? "Hide activity ›" : "‹ Live activity"}
+          </button>
+        )}
+        {canRender3D && feedOpen && (
+          <div className="absolute left-3 top-11 max-h-[60%] w-[250px] overflow-y-auto rounded-xl border border-white/10 bg-[#0a1428]/90 p-3 backdrop-blur">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Live activity
+            </div>
+            {recentEvents.length === 0 ? (
+              <p className="py-1 text-[11px] text-slate-500">No recent activity yet.</p>
+            ) : (
+              recentEvents.map((n) => (
+                <button
+                  key={n.id}
+                  onClick={() => handleSelect(n)}
+                  className="flex w-full items-start gap-2 border-b border-white/5 py-1.5 text-left last:border-0"
+                >
+                  <span
+                    className="mt-1 h-1.5 w-1.5 flex-none rounded-full"
+                    style={{ background: GROUP_COLOR[n.group], boxShadow: `0 0 5px ${GROUP_COLOR[n.group]}` }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11.5px] leading-tight text-slate-200">{n.label}</span>
+                    <span className="text-[10px] text-slate-500">{relTime(n.ts)}</span>
+                  </span>
+                </button>
+              ))
+            )}
           </div>
         )}
 
@@ -641,8 +733,37 @@ export function MemoryBrainTab() {
                 {GROUP_LABEL[selected.group] || selected.type}
               </span>
             </div>
-            <h3 className="mb-3 pr-6 text-[15px] font-bold leading-snug text-white">{selected.label}</h3>
-            <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-slate-300">{selected.detail}</p>
+            <h3 className="mb-1 pr-6 text-[15px] font-bold leading-snug text-white">{selected.label}</h3>
+            {(selected.count != null || selected.ts) && (
+              <div className="mb-2 flex gap-3 text-[11px] text-slate-400">
+                {selected.count != null && <span>{selected.count} items</span>}
+                {selected.ts && <span>{relTime(selected.ts)}</span>}
+              </div>
+            )}
+            <p className="mb-3 whitespace-pre-wrap text-[12.5px] leading-relaxed text-slate-300">{selected.detail}</p>
+
+            {related.length > 0 && (
+              <>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  Related
+                </div>
+                <div className="mb-1 flex flex-col gap-1">
+                  {related.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setSelected(r)}
+                      className="flex items-center gap-2 rounded-md py-1 text-left hover:bg-white/5"
+                    >
+                      <span
+                        className="h-2 w-2 flex-none rounded-full"
+                        style={{ background: GROUP_COLOR[r.group], boxShadow: `0 0 6px ${GROUP_COLOR[r.group]}` }}
+                      />
+                      <span className="truncate text-[12px] text-slate-200">{r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
