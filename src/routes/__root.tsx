@@ -18,7 +18,6 @@ import { LoadingCharacterDisplay, LoadingDots } from "../components/LoadingChara
 import { useSettings, useBuddyColors } from "../lib/settings-store";
 import GreetingBot from "../components/assistant/GreetingBot";
 import { useBuddyStore } from "../lib/buddy-store";
-import { SplashOverlay } from "../components/assistant/SplashOverlay";
 import { IntroTour } from "../components/intro/IntroTour";
 import { useIntroStore } from "../lib/intro-store";
 import { AuroraBackground } from "../components/ui/aurora-background";
@@ -56,6 +55,16 @@ export const Route = createRootRoute({
       { rel: "stylesheet", href: appCss },
       { rel: "icon", type: "image/png", href: `${import.meta.env.BASE_URL}logo.png` },
       { rel: "apple-touch-icon", href: `${import.meta.env.BASE_URL}pwa-192.png` },
+      // Warm the cache for the splash logo and home video as early as possible,
+      // rather than waiting for their components to mount after the JS bundle loads.
+      { rel: "preload", href: `${import.meta.env.BASE_URL}logo.png`, as: "image", fetchpriority: "high" },
+      {
+        rel: "preload",
+        href: `${import.meta.env.BASE_URL}videos/home-hero-poster.jpg`,
+        as: "image",
+        fetchpriority: "high",
+      },
+      { rel: "preload", href: `${import.meta.env.BASE_URL}videos/home-hero.mp4`, as: "video", type: "video/mp4" },
     ],
   }),
   errorComponent: (props) => (
@@ -1297,7 +1306,6 @@ function AuthenticatedApp() {
     maybeAutoPlay: maybeAutoPlayIntro,
     close: closeIntro,
   } = useIntroStore();
-  const [showSplash, setShowSplash] = React.useState(true);
   const [ssoCompleted, setSsoCompleted] = React.useState(false);
   const { serverBusy, waiting, serverSlow } = useServerLoad();
   const appVisible = !isLoading && !!user && !accessDenied && ssoCompleted;
@@ -1346,12 +1354,12 @@ function AuthenticatedApp() {
     wasServerSlowRef.current = serverSlow && !serverBusy;
   }, [appVisible, serverSlow, serverBusy]);
 
-  // Auto-play the guided intro once, after the splash overlay finishes.
+  // Auto-play the guided intro once the user is authenticated.
   React.useEffect(() => {
-    if (!showSplash && user && !accessDenied) {
+    if (user && !accessDenied) {
       maybeAutoPlayIntro();
     }
-  }, [showSplash, user, accessDenied, maybeAutoPlayIntro]);
+  }, [user, accessDenied, maybeAutoPlayIntro]);
 
   React.useEffect(() => {
     if (!isLoading && user && !accessDenied) {
@@ -1413,8 +1421,7 @@ function AuthenticatedApp() {
       <Outlet />
       <Toaster position="top-right" expand={false} richColors />
       <FlyingBanner />
-      {!showSplash && <GreetingBot />}
-      {showSplash && <SplashOverlay onComplete={() => setShowSplash(false)} />}
+      <GreetingBot />
       <AnimatePresence>{introOpen && <IntroTour onComplete={closeIntro} />}</AnimatePresence>
     </>
   );
