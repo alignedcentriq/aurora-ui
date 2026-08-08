@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   CalendarDays,
   Palmtree,
@@ -47,49 +48,6 @@ const item = {
     transition: { type: "spring" as const, stiffness: 300, damping: 30 },
   },
 };
-
-function CircularProgress({
-  value,
-  size = 48,
-  strokeWidth = 4,
-  color = "var(--primary)",
-}: {
-  value: number;
-  size?: number;
-  strokeWidth?: number;
-  color?: string;
-}) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (value / 100) * circumference;
-
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        className="text-muted/50"
-      />
-      <motion.circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        initial={{ strokeDashoffset: circumference }}
-        animate={{ strokeDashoffset: offset }}
-        transition={{ duration: 1, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
-      />
-    </svg>
-  );
-}
 
 // ── Card catalog ──────────────────────────────────────────────────────────────
 
@@ -287,56 +245,140 @@ function isCardAllowed(card: CardDef, role: Role): boolean {
 
 // ── Card content ──────────────────────────────────────────────────────────────
 
+/** Days-until label matching the style of the static COUNTRIES holiday fixture ("in 12d", "Today"). */
+function relativeDays(dateStr: string): string {
+  const target = new Date(dateStr + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days > 0) return `in ${days}d`;
+  return target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// The two types people actually track day-to-day. Leave Without Pay is unlimited
+// (not a real quota) and Compensatory Off is rare, so both are left off the card.
+const LEAVE_CARD_TYPES = ["Privileged Leave (New)", "Casual Leave (New)"];
+
 function CardContent({ id }: { id: CardId }) {
   const { country } = useSettings();
+  const { user } = useAuth();
   const cData = COUNTRIES.find((c) => c.code === country) ?? COUNTRIES[0];
 
+  const [leaveBalances, setLeaveBalances] = useState<{ type: string; balance: number; total: number }[] | null>(null);
+  const [holiday, setHoliday] = useState<{ name: string; date: string } | null>(null);
+
+  useEffect(() => {
+    if (id !== "leave_balance" || !user?.email) return;
+    const controller = new AbortController();
+    fetch("/api/leave/balance", {
+      signal: controller.signal,
+      headers: {
+        ...(user?.email ? { "x-user-email": user.email } : {}),
+        ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+      },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { success?: boolean; balances?: { type: string; total: number; balance: number }[] } | null) => {
+        if (!data?.success || !data.balances?.length) return;
+        // Every leave type has its own separate quota (Casual, Privileged, Sabbatical,
+        // unlimited LWP, ...) — summing them into one number is meaningless, so show
+        // each type's own balance instead of a blended total, limited to the handful
+        // of types people actually check day-to-day (see LEAVE_CARD_TYPES).
+        const wanted = data.balances
+          .filter((b) => LEAVE_CARD_TYPES.some((t) => t.toLowerCase() === b.type.toLowerCase()))
+          .sort(
+            (a, b) =>
+              LEAVE_CARD_TYPES.findIndex((t) => t.toLowerCase() === a.type.toLowerCase()) -
+              LEAVE_CARD_TYPES.findIndex((t) => t.toLowerCase() === b.type.toLowerCase()),
+          )
+          .map((b) => ({ type: b.type, balance: Math.round(b.balance * 10) / 10, total: Math.round(b.total * 10) / 10 }));
+        setLeaveBalances(wanted);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, user?.email, user?.role]);
+
+  useEffect(() => {
+    if (id !== "holidays" || !user?.email) return;
+    const controller = new AbortController();
+    fetch("/api/leave/holidays", {
+      signal: controller.signal,
+      headers: {
+        ...(user?.email ? { "x-user-email": user.email } : {}),
+        ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+      },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { holidays?: { name: string; date: string }[] } | null) => {
+        const list = data?.holidays;
+        if (!list?.length) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        setHoliday(list.find((h) => h.date >= todayStr) ?? list[list.length - 1]);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, user?.email, user?.role]);
+
   switch (id) {
-    case "leave_balance":
+    case "leave_balance": {
       return (
         <>
           <div className="flex items-center justify-between">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10">
               <CalendarDays className="h-4 w-4 text-emerald-500" />
             </div>
-            <CircularProgress
-              value={Math.round((12 / cData.leave.amount) * 100)}
-              size={36}
-              strokeWidth={3}
-              color="#10b981"
-            />
           </div>
-          <div>
-            <p className="text-2xl font-bold tracking-tight text-foreground">
-              12 / {cData.leave.amount}
-            </p>
-            <p className="text-[11px] text-muted-foreground font-medium">
-              {cData.leave.label} Left
-            </p>
-          </div>
+          {leaveBalances ? (
+            <div className="flex flex-col gap-1">
+              {leaveBalances.map((b) => (
+                <div key={b.type} className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-muted-foreground font-medium truncate">{b.type}</span>
+                  <span className="text-[13px] font-bold text-foreground shrink-0">
+                    {b.balance} <span className="text-[10px] font-medium text-muted-foreground">/ {b.total}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div>
+              <p className="text-2xl font-bold tracking-tight text-foreground">
+                12 / {cData.leave.amount}
+              </p>
+              <p className="text-[11px] text-muted-foreground font-medium">
+                {cData.leave.label} Left
+              </p>
+            </div>
+          )}
         </>
       );
+    }
 
-    case "holidays":
+    case "holidays": {
+      const name = holiday?.name ?? cData.holiday.name;
+      const dateLabel = holiday ? new Date(holiday.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : cData.holiday.date;
+      const relative = holiday ? relativeDays(holiday.date) : cData.holiday.relative;
       return (
         <>
           <div className="flex items-center justify-between">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-500/10">
               <Palmtree className="h-4 w-4 text-cyan-500" />
             </div>
-            <span className="text-[11px] font-semibold text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-cyan-200 bg-cyan-500/25 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span>{cData.flag}</span>
-              <span>Soon</span>
+              <span>{relative === "Today" || relative === "Tomorrow" ? relative : "Soon"}</span>
             </span>
           </div>
           <div>
-            <p className="text-sm font-semibold text-foreground truncate">{cData.holiday.name}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{name}</p>
             <p className="text-[11px] text-muted-foreground font-medium">
-              {cData.holiday.date} · {cData.holiday.relative}
+              {dateLabel} · {relative}
             </p>
           </div>
         </>
       );
+    }
 
     case "pending_approvals":
       return (
@@ -368,16 +410,14 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/10">
               <Ticket className="h-4 w-4 text-violet-500" />
             </div>
-            <span className="text-[9px] text-muted-foreground font-semibold bg-secondary px-2 py-0.5 rounded">
+            <span className="text-[9px] text-white/70 font-semibold bg-white/10 px-2 py-0.5 rounded">
               {cData.helpdesk}
             </span>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                All resolved
-              </span>
+              <span className="text-[11px] font-medium text-emerald-400">All resolved</span>
             </div>
             <p className="text-[11px] text-muted-foreground font-medium">0 open tickets</p>
           </div>
@@ -435,9 +475,7 @@ function CardContent({ id }: { id: CardId }) {
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <span className="flex h-2 w-2 rounded-full bg-amber-500" />
-              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                2 pending
-              </span>
+              <span className="text-[11px] font-medium text-amber-400">2 pending</span>
             </div>
             <p className="text-[11px] text-muted-foreground font-medium">Expense claims</p>
           </div>
@@ -451,7 +489,9 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-500/10">
               <Brain className="h-4 w-4 text-purple-500" />
             </div>
-            <CircularProgress value={62} size={36} strokeWidth={3} color="#8b5cf6" />
+            <span className="text-[11px] font-semibold text-purple-300 bg-purple-500/25 px-2 py-0.5 rounded-full">
+              62%
+            </span>
           </div>
           <div>
             <p className="text-2xl font-bold tracking-tight text-foreground">2.5h</p>
@@ -467,7 +507,7 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-500/10">
               <Clock className="h-4 w-4 text-sky-500" />
             </div>
-            <span className="text-[10px] font-semibold text-sky-500 bg-sky-500/10 px-2 py-0.5 rounded-full flex items-center">
+            <span className="text-[10px] font-semibold text-sky-300 bg-sky-500/25 px-2 py-0.5 rounded-full flex items-center">
               In 15m
             </span>
           </div>
@@ -485,7 +525,7 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-pink-500/10">
               <Heart className="h-4 w-4 text-pink-500" />
             </div>
-            <span className="text-[10px] font-semibold text-pink-500 bg-pink-500/10 px-2 py-0.5 rounded-full">
+            <span className="text-[10px] font-semibold text-pink-300 bg-pink-500/25 px-2 py-0.5 rounded-full">
               ▲ +0.2
             </span>
           </div>
@@ -503,12 +543,14 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-teal-500/10">
               <GraduationCap className="h-4 w-4 text-teal-500" />
             </div>
-            <span className="text-[11px] font-bold text-teal-500">78%</span>
+            <span className="text-[11px] font-semibold text-teal-300 bg-teal-500/25 px-2 py-0.5 rounded-full">
+              78%
+            </span>
           </div>
           <div className="space-y-1.5">
             <p className="text-sm font-semibold text-foreground truncate">Security Compliance</p>
-            <div className="w-full bg-muted/60 h-1 rounded-full overflow-hidden">
-              <div className="bg-teal-500 h-full rounded-full" style={{ width: "78%" }} />
+            <div className="w-full bg-white/15 h-1 rounded-full overflow-hidden">
+              <div className="bg-teal-400 h-full rounded-full" style={{ width: "78%" }} />
             </div>
           </div>
         </>
@@ -540,7 +582,9 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10">
               <Target className="h-4 w-4 text-amber-500" />
             </div>
-            <span className="text-[10px] font-bold text-amber-500">Sprint 4</span>
+            <span className="text-[10px] font-semibold text-amber-300 bg-amber-500/25 px-2 py-0.5 rounded-full">
+              Sprint 4
+            </span>
           </div>
           <div>
             <p className="text-2xl font-bold tracking-tight text-foreground">2 / 3</p>
@@ -556,7 +600,7 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-yellow-500/10">
               <Trophy className="h-4 w-4 text-yellow-500" />
             </div>
-            <span className="text-[10px] font-bold text-yellow-500 flex items-center gap-0.5">
+            <span className="text-[10px] font-semibold text-yellow-300 bg-yellow-500/25 px-2 py-0.5 rounded-full flex items-center gap-0.5">
               +3 new
             </span>
           </div>
@@ -576,7 +620,7 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-500/10">
               <UserPlus className="h-4 w-4 text-indigo-500" />
             </div>
-            <span className="text-[10px] font-bold text-indigo-500 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+            <span className="text-[10px] font-semibold text-indigo-300 bg-indigo-500/25 px-2 py-0.5 rounded-full">
               3 / 4 completed
             </span>
           </div>
@@ -626,12 +670,22 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
 
   const [editMode, setEditMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  // The widget row lives inside an `overflow-hidden` scroll container, so a plain
+  // absolutely-positioned dropdown gets clipped whenever it would extend past that
+  // container's edge (e.g. down towards the chat composer). Rendering it through a
+  // portal with fixed coordinates escapes that clipping ancestor entirely.
+  const [addMenuPos, setAddMenuPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!addOpen) return;
     const handler = (e: MouseEvent) => {
-      if (addRef.current && !addRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        addRef.current && !addRef.current.contains(target) &&
+        addMenuRef.current && !addMenuRef.current.contains(target)
+      ) {
         setAddOpen(false);
       }
     };
@@ -671,7 +725,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
     <div className="w-full space-y-3">
       {/* Section header */}
       <div className="flex items-center justify-between">
-        <div className="section-label flex-1">
+        <div className="section-label on-video flex-1">
           <span>Quick Glance</span>
         </div>
         <button
@@ -680,7 +734,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
             "flex items-center gap-1.5 text-[11px] font-medium transition-all rounded-full px-3 py-1 ml-3",
             editMode
               ? "text-primary bg-primary/10 border border-primary/20"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-transparent",
+              : "text-white/70 hover:text-white hover:bg-white/10 border border-transparent",
           )}
         >
           {editMode ? (
@@ -743,7 +797,7 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                   whileTap={editMode ? {} : { scale: 0.97 }}
                   onClick={() => !editMode && onAction?.(getPrompt(def, role))}
                   className={cn(
-                    "card-live-dot group flex flex-col justify-between gap-3 rounded-2xl glass-widget border-l-[3px] p-5 text-left w-full h-full min-h-[110px]",
+                    "card-live-dot group flex flex-col justify-between gap-3 rounded-2xl glass-widget on-video border-l-[3px] p-5 text-left w-full h-full min-h-[110px]",
                     CARD_LEFT_ACCENT[id],
                     editMode ? "cursor-default" : CARD_HOVER[id],
                   )}
@@ -765,22 +819,46 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
             >
               <div ref={addRef} className="h-full">
                 <button
-                  onClick={() => setAddOpen((o) => !o)}
+                  onClick={() => {
+                    if (!addOpen && addRef.current) {
+                      const rect = addRef.current.getBoundingClientRect();
+                      const spaceAbove = rect.top;
+                      const spaceBelow = window.innerHeight - rect.bottom;
+                      const dropUp = spaceAbove > spaceBelow;
+                      setAddMenuPos({
+                        left: rect.left,
+                        width: rect.width,
+                        ...(dropUp
+                          ? { bottom: window.innerHeight - rect.top + 6 }
+                          : { top: rect.bottom + 6 }),
+                      });
+                    }
+                    setAddOpen((o) => !o);
+                  }}
                   className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border/60 bg-card/30 p-4 w-full h-full min-h-[110px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
                 >
                   <Plus className="h-5 w-5" />
                   <span className="text-[11px] font-medium">Add card</span>
                 </button>
 
-                {/* Add dropdown */}
-                <AnimatePresence>
-                  {addOpen && (
+                {/* Add dropdown — portalled to <body> so the surrounding overflow-hidden
+                    scroll container can't clip it (e.g. against the chat composer). */}
+                {addOpen && addMenuPos && createPortal(
+                  <AnimatePresence>
                     <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                      ref={addMenuRef}
+                      initial={{ opacity: 0, y: addMenuPos.bottom !== undefined ? 6 : -6, scale: 0.97 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                      exit={{ opacity: 0, y: addMenuPos.bottom !== undefined ? 6 : -6, scale: 0.97 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute bottom-full mb-1.5 left-0 z-40 w-52 max-w-[80vw] rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
+                      style={{
+                        position: "fixed",
+                        left: addMenuPos.left,
+                        top: addMenuPos.top,
+                        bottom: addMenuPos.bottom,
+                        width: Math.max(addMenuPos.width, 208),
+                      }}
+                      className="z-50 max-w-[80vw] max-h-[min(60vh,20rem)] overflow-y-auto rounded-xl border border-border bg-popover shadow-xl shadow-black/10"
                     >
                       {availableToAdd.length === 0 ? (
                         <p className="px-3 py-2.5 text-[12px] text-muted-foreground">
@@ -803,8 +881,9 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                         ))
                       )}
                     </motion.div>
-                  )}
-                </AnimatePresence>
+                  </AnimatePresence>,
+                  document.body,
+                )}
               </div>
             </motion.div>
           )}

@@ -1085,12 +1085,12 @@ function LayoutComponent() {
       {/* --- RIGHT SIDE CONTENT AREA --- */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
         {/* --- WORKSPACE TOP BAR (all screen sizes) --- */}
-        <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border/40 bg-background/60 backdrop-blur-xl z-20 shrink-0 select-none">
+        <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-blue-950/60 bg-[#090f21]/90 backdrop-blur-xl z-20 shrink-0 select-none">
           {/* Left: Hamburger (mobile) + Logo/Brand (mobile only) */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-border/50 bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+              className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-blue-950/60 bg-white/5 hover:bg-white/10 text-white transition-all cursor-pointer shadow-sm"
               title="Open Navigation"
               aria-label="Open Navigation"
             >
@@ -1098,21 +1098,21 @@ function LayoutComponent() {
             </button>
             <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
               <Logo size="sm" />
-              <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
+              <BrandName className="text-sm font-bold tracking-tight text-white" withAI={true} />
             </Link>
           </div>
 
           {/* Right: Master Mode trigger + bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {canUseMasterMode && (
+            {canUseMasterMode && location.pathname !== "/" && (
               <MasterModeTrigger active={isMasterMode} onClick={toggleMasterMode} />
             )}
-            <ProactiveNudgeFeed />
-            <ActivityBell />
+            <ProactiveNudgeFeed triggerClassName="rounded-full border-blue-950/60 bg-white/5 hover:bg-white/10 text-white" />
+            <ActivityBell triggerClassName="rounded-full border-blue-950/60 bg-white/5 hover:bg-white/10 text-white" />
           </div>
         </header>
 
-        {canUseMasterMode && <MasterModeOverlay />}
+        {canUseMasterMode && location.pathname !== "/" && <MasterModeOverlay />}
 
         {/* --- MAIN WORKSPACE --- */}
         <main

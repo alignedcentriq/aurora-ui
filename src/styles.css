@@ -669,6 +669,14 @@
     border: 1px solid rgba(59, 143, 232, 0.08);
   }
 
+  /* Dark frosted-glass variant for the home tab's video background */
+  .chat-bubble-assistant.on-video {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(16px);
+    color: #fff;
+  }
+
   /* No scrollbar utility */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
@@ -921,6 +929,12 @@
     opacity: 0.2;
   }
 
+  /* Legible variant for section labels sitting over the home tab's video background */
+  .section-label.on-video {
+    color: #ffffff;
+    opacity: 0.75;
+  }
+
   /* ── Enhancement: Glassmorphism widget card ── */
   .glass-widget {
     background: rgba(255, 255, 255, 0.75);
@@ -959,6 +973,32 @@
     transform: translateY(-2px);
   }
 
+  /* Dark frosted-glass variant for widgets sitting over the home tab's video background */
+  .glass-widget.on-video {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 4px 24px -4px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .glass-widget.on-video:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+    box-shadow:
+      0 12px 40px -8px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+  }
+
+  /* Re-tint the shared foreground/muted-foreground tokens so every card's
+     existing text-foreground / text-muted-foreground utilities stay legible
+     on the video without touching each card's markup individually. */
+  .glass-widget.on-video {
+    --foreground: #ffffff;
+    --muted-foreground: rgba(255, 255, 255, 0.65);
+  }
+
   /* ── Enhancement: Try asking glass container ── */
   .try-asking-container {
     background: color-mix(in oklab, var(--card) 50%, transparent);
@@ -971,5 +1011,11 @@
   .dark .try-asking-container {
     background: color-mix(in oklab, var(--card) 30%, transparent);
     border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  }
+
+  /* Dark frosted-glass variant for surfaces sitting over the home tab's video background */
+  .try-asking-container.on-video {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
   }
 }

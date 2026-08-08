@@ -40,6 +40,7 @@ from app.routes.announcement_routes import router as announcement_router
 from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
+from app.routes.leave_routes import router as leave_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
 from app.routes.capability_command_routes import router as capability_command_router
@@ -170,6 +171,7 @@ app.include_router(announcement_router)
 app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
+app.include_router(leave_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
 app.include_router(capability_command_router)

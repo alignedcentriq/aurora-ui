@@ -426,6 +426,15 @@ class Config:
     ZOHO_PASSWORD  = os.getenv("ZOHO_PASSWORD", "")
     ZOHO_VIEW      = os.getenv("ZOHO_VIEW", "vb_employees")
 
+    # ── Zoho leave DB (read-only leave source, same server as ZOHO_DBURL) ─────
+    # Same reporting Postgres server also exposes leave-tracker views in the
+    # "people" schema. Used by services/zoho_leave_service.py instead of the
+    # synthetic LeaveType/LeaveBalance tables or the CSV/REST fallback.
+    ZOHO_LEAVE_TYPES_VIEW    = os.getenv("ZOHO_LEAVE_TYPES_VIEW", "people.vt_leave_types")
+    ZOHO_LEAVE_BALANCES_VIEW = os.getenv("ZOHO_LEAVE_BALANCES_VIEW", "people.vt_leave_balances")
+    ZOHO_LEAVE_DETAILS_VIEW  = os.getenv("ZOHO_LEAVE_DETAILS_VIEW", "people.vt_leave_details")
+    ZOHO_HOLIDAY_LIST_VIEW   = os.getenv("ZOHO_HOLIDAY_LIST_VIEW", "people.vt_holiday_list")
+
     # ── eSSL Attendance DB (read-only SQL Server source) ──────────────────────
     # A separate SQL Server database exposes a view of eSSL biometric attendance
     # punches (dbo.vbUserTimeEntryLog). When configured, attendance queries use

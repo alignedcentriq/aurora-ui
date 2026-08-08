@@ -86,13 +86,19 @@ def get_or_refresh(email: str) -> dict:
     """
     Return leave balance for *email*.
 
-    1. Check DB cache — if fresh (< CACHE_TTL seconds), return immediately.
-    2. Otherwise call Zoho People API, persist result, return.
+    1. Prefer the live Zoho leave-tracker DB views (people.vt_leave_balances) — real,
+       no per-user OAuth needed. See services/zoho_leave_service.py.
+    2. Otherwise check DB cache — if fresh (< CACHE_TTL seconds), return immediately.
+    3. Otherwise call Zoho People API, persist result, return.
 
     Return shapes:
-        {"success": True,  "balances": [...], "source": "cache"|"live", "cached_at": "..."}
+        {"success": True,  "balances": [...], "source": "db"|"cache"|"live"|"demo", "cached_at": "..."}
         {"success": False, "error": "..."}
     """
+    db_result = _db_view_result(email)
+    if db_result is not None:
+        return db_result
+
     from app.config import settings
     if settings.ZOHO_DEMO_MODE:
         return _demo_result(email)
@@ -106,6 +112,32 @@ def get_or_refresh(email: str) -> dict:
             "cached_at": cached["last_synced_at"].isoformat() if cached["last_synced_at"] else None,
         }
     return _fetch_and_cache(email)
+
+
+# ── Live DB source (Zoho leave-tracker views, per-user) ────────────────────────────
+
+def _db_view_result(email: str) -> dict | None:
+    """
+    Balances straight off the live Zoho `people.vt_leave_balances` view, if configured
+    and the employee resolves to a Zoho code. Returns None (not a failure) when the
+    view isn't reachable/configured or the employee has no rows there, so the caller
+    falls through to the cache/API/CSV chain instead of surfacing an error.
+    """
+    from app.services import zoho_leave_service
+    if not zoho_leave_service.is_configured():
+        return None
+    code, _name = _resolve_employee(email)
+    if not code:
+        return None
+    balances = zoho_leave_service.fetch_leave_balances(code)
+    if not balances:
+        return None
+    return {
+        "success":   True,
+        "balances":  balances,
+        "source":    "db",
+        "cached_at": datetime.datetime.utcnow().isoformat(),
+    }
 
 
 # ── Demo source (real CSV, per-user) ──────────────────────────────────────────────
