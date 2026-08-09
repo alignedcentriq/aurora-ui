@@ -592,6 +592,31 @@ class EmployeeAllocation(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+
+# ── Manual Employee Allocation Overrides ──────────────────────────────────────
+class ManualEmployeeAllocation(Base):
+    __tablename__ = "manual_employee_allocations"
+    __table_args__ = {"schema": SCHEMA}
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(String, index=True)            # e.g. "AA-001"
+    employee_name = Column(String, index=True)
+    project_name = Column(String, index=True)
+    project_lead = Column(String, nullable=True)
+    delivery_manager = Column(String, nullable=True)
+    efforts_percent = Column(Float, nullable=True)
+    billability_percent = Column(Float, nullable=True)
+    allocation_date = Column(Date, nullable=True)
+    project_status = Column(String, nullable=True)       # Ongoing / Completed
+    client_master = Column(String, nullable=True)
+    billing = Column(String, nullable=True)             # Billable / Bench
+    status = Column(String, nullable=True)              # Active / Inactive
+    is_deleted = Column(Boolean, default=False)         # If True, masks any Zoho records
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 # ── Prompt Drafts (pending approval workflow) ─────────────────────────────────
 class PromptDraft(Base):
     __tablename__ = "prompt_drafts"

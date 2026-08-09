@@ -224,6 +224,36 @@ def rolloff_map(db: Session, names: Iterable[str],
     return out
 
 
+# ── leadership involvement (Project Lead / Delivery Manager) ──────────────────
+
+def leading_projects_map(db: Session, as_of: Optional[datetime.date] = None) -> dict[str, list[str]]:
+    """name(lower) → sorted distinct project names where they're listed as Project Lead
+    or Delivery Manager in the LATEST snapshot (scanning every row, not just their own).
+
+    Directors/Leads/Delivery Managers are typically never staffed as a team member —
+    they only ever show up in these two columns on their team's rows — so `current_load_map`
+    (keyed off each person's OWN rows) can't see they're actively managing anything. A
+    name with rows here but none in `current_load_map` must NOT be treated as fully free;
+    callers should flag them as involved rather than reporting a free-capacity number, since
+    there's no real effort-% for a managerial role to compute one from."""
+    latest = latest_snapshot_date(db, as_of)
+    if not latest:
+        return {}
+    rows = (db.query(EmployeeAllocation.project_lead, EmployeeAllocation.delivery_manager,
+                     EmployeeAllocation.project_name)
+            .filter(EmployeeAllocation.allocation_date == latest)
+            .all())
+    out: dict[str, set] = {}
+    for lead, dm, proj in rows:
+        if not proj:
+            continue
+        for person in (lead, dm):
+            key = _norm(person)
+            if key:
+                out.setdefault(key, set()).add(proj)
+    return {k: sorted(v) for k, v in out.items()}
+
+
 # ── pipeline demand (forward-planned months) ──────────────────────────────────
 
 def pipeline_demand(db: Session, group_by: str = "project_name",

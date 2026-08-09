@@ -7,7 +7,7 @@ from app.services.employee_service import EmployeeService
 from app.database import SessionLocal
 from app.models import Employee, EmployeeSkill, EmployeeZohoProfile
 from pydantic import BaseModel
-from app.auth import CurrentUser, get_current_user, require_non_employee
+from app.auth import CurrentUser, get_current_user, require_non_employee, require_strict_pmo
 from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
@@ -561,7 +561,7 @@ async def my_requests(
     user: CurrentUser = Depends(get_current_user),
 ):
     from app.models import (
-        Leave, ParkingSticker, FacilityComplaint, Reimbursement,
+        ParkingSticker, FacilityComplaint, Reimbursement,
         TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
         HRQuery, Grievance, Escalation, FormSubmission, FormTemplate, ITTicket
     )
@@ -585,8 +585,14 @@ async def my_requests(
                 "it_tickets": []
             }
 
-        # 1. Leaves
-        leaves = db.query(Leave).filter(Leave.employee_id == emp.id).order_by(Leave.created_at.desc()).all()
+        # 1. Leaves — always read live from the Zoho vt_leave_details view
+        #    (system-of-record); nothing kept locally.
+        zoho_leaves = []
+        try:
+            from app.services import zoho_leave_service
+            zoho_leaves = zoho_leave_service.fetch_leave_history(emp.employee_id)
+        except Exception:
+            pass  # Zoho view unavailable must never break the requests page
 
         # 2. Parking Stickers
         parking = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).order_by(ParkingSticker.valid_from.desc()).all()
@@ -637,16 +643,16 @@ async def my_requests(
         return {
             "leaves": [
                 {
-                    "id": l.id,
-                    "leave_type": l.leave_type,
-                    "status": l.status,
-                    "start_date": str(l.start_date) if l.start_date else None,
-                    "end_date": str(l.end_date) if l.end_date else None,
-                    "reason": l.reason or "",
-                    "days": ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else 1,
-                    "created_at": l.created_at.isoformat() if hasattr(l, "created_at") and l.created_at else None,
+                    "id": f"zoho-{idx}",
+                    "leave_type": z.get("type"),
+                    "status": z.get("status"),
+                    "start_date": z.get("from"),
+                    "end_date": z.get("to"),
+                    "reason": z.get("reason") or "",
+                    "days": z.get("days"),
+                    "created_at": z.get("from"),
                 }
-                for l in leaves
+                for idx, z in enumerate(zoho_leaves)
             ],
             "parking": [
                 {
@@ -842,11 +848,83 @@ def _attach_enrichment(employees: list[dict]) -> None:
         pass
 
 
+def _shape_allocation_projects(rows: list, latest: "datetime.date | None") -> list[dict]:
+    """Group one person's raw allocation rows into DirProject-shaped entries.
+
+    Each `row` needs project_name/client_master/delivery_manager/project_status/
+    allocation_date. Rows spanning several months collapse to one entry per project:
+    start_date is the first month they appear on it; end_date is the last month IF
+    they've since rolled off it (absent from the latest available snapshot) — left
+    blank while still current, matching how an open-ended Alchemy project reads.
+
+    `status` follows the same latest-month rule as the project-detail popup's team
+    list: a genuinely completed project reads "Completed" for everyone; otherwise a
+    person absent from the latest month reads "Inactive" for THEM specifically, even
+    if the project itself is still "Ongoing" for the rest of the team."""
+    from app.services.allocation_snapshot_service import _project_completed
+
+    by_project: dict[str, dict] = {}
+    for r in rows:
+        name = (r["project_name"] or "").strip()
+        if not name or name.lower() == "no allocation":
+            continue
+        key = name.lower()
+        entry = by_project.setdefault(key, {"name": name, "first": r["allocation_date"]})
+        entry["last"] = r["allocation_date"]
+        # Later rows win for the descriptive fields — the most recent month's client/
+        # manager/status is the most accurate if any of these drifted over time.
+        entry["client"] = r["client_master"] or entry.get("client", "")
+        entry["manager"] = r["delivery_manager"] or entry.get("manager", "")
+        entry["status"] = r["project_status"] or entry.get("status", "")
+
+    out = []
+    for entry in by_project.values():
+        current = bool(latest) and entry.get("last") == latest
+        raw_status = entry.get("status", "") or ""
+        if _project_completed(raw_status):
+            status = "Completed"
+        elif current:
+            status = raw_status
+        else:
+            status = "Inactive"
+        out.append({
+            "name": entry["name"],
+            "role": "",
+            "client": entry.get("client", "") or "",
+            "manager": entry.get("manager", "") or "",
+            "status": status,
+            "start_date": entry["first"].isoformat() if entry.get("first") else "",
+            "end_date": "" if current else (entry["last"].isoformat() if entry.get("last") else ""),
+            "skills_used": "",
+        })
+    return out
+
+
+def _merge_projects(existing: list[dict], additions: list[dict]) -> list[dict]:
+    """Append `additions` whose (normalized) name isn't already in `existing`, then
+    resort by recency — the shared no-duplicates rule for the profile's Projects list."""
+    if not additions:
+        return existing
+    seen = {(p.get("name") or "").strip().lower() for p in existing}
+    merged = list(existing)
+    for p in additions:
+        key = (p.get("name") or "").strip().lower()
+        if key and key not in seen:
+            merged.append(p)
+            seen.add(key)
+    merged.sort(key=lambda p: (p.get("end_date") or p.get("start_date") or ""), reverse=True)
+    return merged
+
+
 def _attach_allocations(employees: list[dict]) -> None:
     """Bundle each employee's distinct project allocations (from employee_allocations,
     keyed by employee_id == directory employee_code) so the grid can filter/search by
     project the person was actually staffed on — far broader coverage (~1.3k people)
     than the Alchemy profile `projects`, which only ~200 have.
+
+    Also merges allocation-derived entries into `projects` itself (the DirProject list
+    the profile popup renders) — same shape as the Alchemy ones, deduped by project
+    name — so a profile's Projects section shows both sources instead of only Alchemy's.
 
     Also bundles current availability from the LATEST allocation snapshot: allocated %
     (sum of efforts across real projects), free capacity, and an `available` flag
@@ -854,9 +932,9 @@ def _attach_allocations(employees: list[dict]) -> None:
     try:
         from app.models import SCHEMA
         from sqlalchemy import text
-        codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
-        codes = [c for c in {(c or "").strip() for c in codes} if c]
-        if not codes:
+        codes = [c for c in {(e.get("employee_code") or "").strip() for e in employees} if c]
+        names = [n for n in {(e.get("name") or "").strip().lower() for e in employees} if n]
+        if not codes and not names:
             return
         db = SessionLocal()
         try:
@@ -886,6 +964,21 @@ def _attach_allocations(employees: list[dict]) -> None:
                 ),
                 {"codes": codes},
             ).all()
+            latest = db.execute(
+                text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+            ).scalar()
+            # Raw per-row detail (id OR name match) to shape into DirProject entries below.
+            detail_rows = db.execute(
+                text(
+                    f'SELECT employee_id, lower(employee_name) AS lname, project_name, '
+                    f'client_master, delivery_manager, project_status, allocation_date '
+                    f'FROM "{SCHEMA}".employee_allocations '
+                    f"WHERE employee_id = ANY(:codes) OR lower(employee_name) = ANY(:names)"
+                ),
+                {"codes": codes, "names": names},
+            ).mappings().all()
+            from app.services import allocation_snapshot_service as snap
+            leading_map = snap.leading_projects_map(db)
         finally:
             db.close()
         by_code = {r[0]: {"projects": r[1] or [], "clients": r[2] or []} for r in rows}
@@ -898,20 +991,61 @@ def _attach_allocations(employees: list[dict]) -> None:
                 "availability_percent": round(free, 1),
                 "available": bool(r[2]) or free > 0,
             }
+        detail_by_id: dict[str, list] = {}
+        detail_by_name: dict[str, list] = {}
+        for r in detail_rows:
+            if r["employee_id"]:
+                detail_by_id.setdefault(r["employee_id"], []).append(r)
+            if r["lname"]:
+                detail_by_name.setdefault(r["lname"], []).append(r)
+
         for e in employees:
-            hit = by_code.get(e.get("employee_code"))
+            code = e.get("employee_code")
+            dept = (e.get("department") or "").strip().upper()
+            is_management = any(
+                dept.startswith(p) for p in (
+                    "HR", "HUMAN RESOURCES", "HUMAN",
+                    "IT", "INFORMATION TECHNOLOGY",
+                    "PMO", "PROJECT MANAGEMENT", "PROGRAM MANAGEMENT", "PORTFOLIO MANAGEMENT",
+                    "ADMIN", "ADMINISTRATION"
+                )
+            )
+
+            hit = by_code.get(code)
             if hit is not None:
                 e["allocation_projects"] = hit["projects"]
                 e["allocation_clients"] = hit["clients"]
-            av = avail_by_code.get(e.get("employee_code"))
-            if av is not None:
-                e["allocated_percent"] = av["allocated_percent"]
-                e["availability_percent"] = av["availability_percent"]
-                e["available"] = av["available"]
-            else:
+
+            if is_management:
                 e["allocated_percent"] = 0.0
-                e["availability_percent"] = 100.0
-                e["available"] = True
+                e["availability_percent"] = 0.0
+                e["available"] = False
+            else:
+                av = avail_by_code.get(code)
+                if av is not None:
+                    e["allocated_percent"] = av["allocated_percent"]
+                    e["availability_percent"] = av["availability_percent"]
+                    e["available"] = av["available"]
+                else:
+                    # No row staffed under their own name this month — but Project Lead /
+                    # Delivery Manager is a role recorded on OTHER people's rows, so a
+                    # Director/Lead with no staffed row can still be actively managing
+                    # several projects. Don't report them as fully free without evidence
+                    # either way; flag the involvement instead of guessing a load number.
+                    led = leading_map.get((e.get("name") or "").strip().lower())
+                    if led:
+                        e["leading_projects"] = led
+                        e["allocated_percent"] = 0.0
+                        e["availability_percent"] = None
+                        e["available"] = False
+                    else:
+                        e["allocated_percent"] = 0.0
+                        e["availability_percent"] = 100.0
+                        e["available"] = True
+
+            person_rows = detail_by_id.get(code) or detail_by_name.get((e.get("name") or "").strip().lower())
+            if person_rows and e.get("projects") is not None:
+                e["projects"] = _merge_projects(e["projects"], _shape_allocation_projects(person_rows, latest))
     except Exception:
         pass
 
@@ -992,6 +1126,17 @@ def _compose_directory() -> tuple[list[dict], str]:
         db.close()
 
 
+@router.get("/celebrations")
+def employee_celebrations(days: int = 14, user: CurrentUser = Depends(get_current_user)):
+    """Upcoming birthdays and work anniversaries for the home page sidebar widget.
+
+    Live off the same Zoho view the Employee Directory uses. Birthdays are day+month
+    only (never year, so age is never exposed) — see zoho_directory_service._fmt_birthday.
+    """
+    from app.services import zoho_directory_service
+    return zoho_directory_service.fetch_upcoming_celebrations(days=days)
+
+
 @router.get("/directory")
 def employee_directory(user: CurrentUser = Depends(get_current_user)):
     """Flat all-staff directory that mirrors the company PowerApps Employee Directory.
@@ -1046,14 +1191,44 @@ def employee_directory_query(req: DirectoryQueryRequest, user: CurrentUser = Dep
 
 
 @router.get("/directory/{employee_code}/enrichment")
-def directory_enrichment(employee_code: str, user: CurrentUser = Depends(get_current_user)):
-    """Skills + projects for a directory person, pulled live from Alchemy by AASPL code.
-
-    Returns {available, skills, projects}. Fail-soft: available=false when Alchemy
-    has no service token configured / is unreachable, so the profile still renders.
-    """
+def directory_enrichment(employee_code: str, name: str = "", user: CurrentUser = Depends(get_current_user)):
+    """Skills + projects for a directory person: Alchemy profile projects merged with
+    this person's allocation-derived project history (see _shape_allocation_projects),
+    deduped by project name. Returns {available, skills, projects}. `available` is true
+    if EITHER source has data, so a person with no Alchemy profile still gets a Projects
+    section from allocations alone. Fail-soft."""
+    from app.models import SCHEMA
     from app.services import alchemy_service
-    return alchemy_service.get_profile_enrichment(employee_code)
+    from sqlalchemy import text
+
+    result = alchemy_service.get_profile_enrichment(employee_code)
+
+    name = (name or "").strip()
+    code = (employee_code or "").strip()
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                f'SELECT employee_id, project_name, client_master, delivery_manager, '
+                f'project_status, allocation_date '
+                f'FROM "{SCHEMA}".employee_allocations '
+                f"WHERE employee_id = :code OR (:name <> '' AND lower(employee_name) = lower(:name))"
+            ),
+            {"code": code, "name": name},
+        ).mappings().all()
+        latest = db.execute(
+            text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+        ).scalar()
+    except Exception:
+        rows, latest = [], None
+    finally:
+        db.close()
+
+    alloc_projects = _shape_allocation_projects(rows, latest) if rows else []
+    if alloc_projects:
+        merged = _merge_projects(result.get("projects") or [], alloc_projects)
+        result = {**result, "available": True, "projects": merged}
+    return result
 
 
 @router.get("/skill-detail")
@@ -1113,25 +1288,32 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
     """Project overview + the team that worked on it. Members come from BOTH the
     allocation records (employee_allocations) AND the Alchemy project history
     (alchemy_profile_cache.projects), merged by employee code — the two sources cover
-    different people, so neither alone is complete. Powers the click-through popup on a
+    different people, so neither alone is complete. Each member's status follows the
+    latest allocation month: absent from it → "Inactive" for them specifically (even
+    if the project is still "Ongoing" for the rest of the team), a genuinely completed
+    project reads "Completed" for everyone. Powers the click-through popup on a
     profile's project row. Fail-soft → {available: false} when nothing matches."""
     from app.models import SCHEMA
+    from app.services.allocation_snapshot_service import _project_completed
     from sqlalchemy import text
     pn = (name or "").strip()
     if not pn:
         return {"available": False, "project_name": name}
     db = SessionLocal()
     try:
+        latest = db.execute(
+            text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+        ).scalar()
         alloc = db.execute(
             text(
                 f"SELECT employee_id, max(employee_name) AS name, "
                 f"max(efforts_percent) AS efforts, max(billability_percent) AS billability, "
-                f"bool_or(completion_status ILIKE 'Done') AS done "
+                f"bool_or(allocation_date = :latest) AS active "
                 f'FROM "{SCHEMA}".employee_allocations '
                 f"WHERE project_name = :pn AND employee_id IS NOT NULL "
                 f"GROUP BY employee_id"
             ),
-            {"pn": pn},
+            {"pn": pn, "latest": latest},
         ).mappings().all()
         meta = db.execute(
             text(
@@ -1170,6 +1352,7 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
 
     # Merge by employee code; allocation data wins for billability/status, Alchemy
     # contributes role and any people allocations missed.
+    project_completed = _project_completed((meta or {}).get("project_status"))
     merged: dict[str, dict] = {}
     for m in alloc:
         merged[m["employee_id"]] = {
@@ -1177,7 +1360,9 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
             "name": m["name"] or names.get(m["employee_id"]) or "",
             "efforts": m["efforts"],
             "billability": m["billability"],
-            "done": bool(m["done"]),
+            # Absent from the latest allocation month → inactive for THEM, even if the
+            # project itself is still ongoing for the rest of the team.
+            "status": "Completed" if project_completed else ("Active" if m["active"] else "Inactive"),
             "role": "",
         }
     for r in alch:
@@ -1185,12 +1370,14 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
         if code in merged:
             merged[code]["role"] = r["role"] or merged[code]["role"]
         else:
+            # Alchemy-only member: no allocation row to check against the latest month,
+            # so default to Active unless the project itself is known to be completed.
             merged[code] = {
                 "employee_id": code,
                 "name": names.get(code) or "",
                 "efforts": None,
                 "billability": None,
-                "done": False,
+                "status": "Completed" if project_completed else "Active",
                 "role": r["role"] or "",
             }
     members = sorted(merged.values(), key=lambda x: (x["name"] or "").lower())
@@ -1210,7 +1397,454 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
     }
 
 
+
+# ── Alchemy self-service routes (authenticated user manages their OWN profile) ──
+# Thin shims that acquire the user's personal Alchemy token (from their stored
+# Microsoft refresh token) and forward to the alchemy_service helpers.
+# Returns {"error": "not_connected"} when the user hasn't linked Microsoft yet.
+
+def _get_user_alchemy_token(user_email: str) -> str | None:
+    """Synchronously get the calling user's personal Alchemy token."""
+    try:
+        from app.services.email_service import _run_coro
+        from app.services.oauth_service import get_alchemy_token
+        return _run_coro(get_alchemy_token(user_email))
+    except Exception:
+        return None
+
+
+def _alchemy_employee_id_or_error(token: str, user_email: str):
+    """Resolve the user's Alchemy employee ID, raising 400 if it can't be found."""
+    from app.services import alchemy_service
+    eid = alchemy_service.resolve_employee_id(token, user_email)
+    if not eid:
+        raise HTTPException(status_code=400, detail="Could not resolve your Alchemy employee ID. Make sure your profile is set up in Alchemy.")
+    return eid
+
+
+@router.get("/alchemy/catalog")
+def alchemy_skills_catalog(user: CurrentUser = Depends(get_current_user)):
+    """Return the full Alchemy skills catalog (used for the skill picker when adding a skill).
+    Uses the service token so even users without Microsoft connected can see the catalog."""
+    from app.services import alchemy_service
+    tok = alchemy_service.get_service_token()
+    if not tok:
+        raise HTTPException(status_code=503, detail="Alchemy catalog unavailable — no service account connected.")
+    try:
+        skills = alchemy_service.list_skills(tok)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alchemy catalog fetch failed: {exc}")
+    # Normalize to {id, name, category, description, image_url}
+    out = []
+    for s in skills:
+        sid = s.get("skillId") or s.get("id")
+        if sid is None:
+            continue
+        out.append({
+            "id": int(sid),
+            "name": s.get("skillName") or s.get("name") or "",
+            "category": s.get("skillCategoryName") or s.get("category") or "",
+            "description": s.get("skillDescription") or "",
+            "image_url": s.get("skillImageUrl") or "",
+        })
+    out.sort(key=lambda x: x["name"].lower())
+    return {"skills": out}
+
+
+@router.get("/alchemy/me/skills")
+def alchemy_my_skills(user: CurrentUser = Depends(get_current_user)):
+    """Fetch the current user's live Alchemy skills list."""
+    tok = _get_user_alchemy_token(user.email)
+    if not tok:
+        return {"error": "not_connected", "skills": []}
+    from app.services import alchemy_service
+    try:
+        eid = _alchemy_employee_id_or_error(tok, user.email)
+        raw = alchemy_service.get_my_skills(tok, eid)
+        skills = raw if isinstance(raw, list) else []
+        normalized = []
+        for s in skills:
+            sid = s.get("skillId") or s.get("skill_id")
+            normalized.append({
+                "skill_id": int(sid) if sid is not None else None,
+                "name": s.get("skill_name") or s.get("skillName") or "",
+                "category": s.get("skill_category_name") or s.get("skillCategoryName") or "",
+                "competency": s.get("competency") or "",
+                "certified": str(s.get("certified") or "").strip().lower() == "yes",
+                "certificate_url": s.get("certificate_url") or s.get("certificate_link") or "",
+                "primary_skill": bool(s.get("primary_skill")),
+                "secondary_skill": bool(s.get("secondary_skill")),
+                "primary_interest": bool(s.get("primary_interest")),
+                "instructor": bool(s.get("instructor_flag")),
+                "years_experience": str(s.get("yoe") or "").strip(),
+                "last_used": s.get("last_used") or "",
+                "approval_status": s.get("approval_status") or "",
+            })
+        return {"skills": normalized}
+    except HTTPException:
+        raise
+    except PermissionError:
+        return {"error": "not_connected", "skills": []}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alchemy fetch failed: {exc}")
+
+
+class AlchemyAddSkillRequest(BaseModel):
+    skill_id: int
+    competency: str = "Beginner"
+    certified: str = "No"
+    last_used: Optional[str] = None      # YYYY-MM-DD or None
+    yoe: str = "0.00"
+    primary_skill: bool = False
+    secondary_skill: bool = False
+    primary_interest: bool = False
+    instructor_flag: bool = False
+
+
+@router.post("/alchemy/me/skills")
+def alchemy_add_my_skill(body: AlchemyAddSkillRequest, user: CurrentUser = Depends(get_current_user)):
+    """Add a new skill to the current user's Alchemy profile."""
+    tok = _get_user_alchemy_token(user.email)
+    if not tok:
+        return {"error": "not_connected"}
+    from app.services import alchemy_service
+    try:
+        eid = _alchemy_employee_id_or_error(tok, user.email)
+        result = alchemy_service.add_user_skill(
+            tok, eid, body.skill_id,
+            competency=body.competency,
+            certified=body.certified,
+            last_used=body.last_used or None,
+            yoe=body.yoe,
+            primary_skill=body.primary_skill,
+            secondary_skill=body.secondary_skill,
+            primary_interest=body.primary_interest,
+            instructor_flag=body.instructor_flag,
+        )
+        # Bust the enrichment cache for this user so the directory picks up the change.
+        try:
+            alchemy_service._cache_upsert(eid, [], [])  # mark stale by clearing
+        except Exception:
+            pass
+        return {"ok": True, "result": result}
+    except HTTPException:
+        raise
+    except PermissionError:
+        return {"error": "not_connected"}
+    except Exception as exc:
+        msg = str(exc)
+        if "already declared" in msg.lower():
+            raise HTTPException(status_code=409, detail="You already have this skill. Use the edit action to update it.")
+        raise HTTPException(status_code=502, detail=f"Alchemy error: {msg}")
+
+
+@router.put("/alchemy/me/skills/{skill_id}")
+def alchemy_update_my_skill(
+    skill_id: int,
+    body: AlchemyAddSkillRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Update an existing skill on the current user's Alchemy profile."""
+    tok = _get_user_alchemy_token(user.email)
+    if not tok:
+        return {"error": "not_connected"}
+    from app.services import alchemy_service
+    try:
+        eid = _alchemy_employee_id_or_error(tok, user.email)
+        result = alchemy_service.update_user_skill(
+            tok, eid, skill_id,
+            competency=body.competency,
+            certified=body.certified,
+            last_used=body.last_used or None,
+            yoe=body.yoe,
+            primary_skill=body.primary_skill,
+            secondary_skill=body.secondary_skill,
+            primary_interest=body.primary_interest,
+            instructor_flag=body.instructor_flag,
+        )
+        return {"ok": True, "result": result}
+    except HTTPException:
+        raise
+    except PermissionError:
+        return {"error": "not_connected"}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alchemy error: {exc}")
+
+
+@router.delete("/alchemy/me/skills/{skill_id}")
+def alchemy_delete_my_skill(skill_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Remove a skill from the current user's Alchemy profile."""
+    tok = _get_user_alchemy_token(user.email)
+    if not tok:
+        return {"error": "not_connected"}
+    from app.services import alchemy_service
+    try:
+        eid = _alchemy_employee_id_or_error(tok, user.email)
+        alchemy_service.delete_user_skill(tok, eid, skill_id)
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except PermissionError:
+        return {"error": "not_connected"}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Alchemy error: {exc}")
+
+
+
+# ── PMO Allocation Management endpoints (Strict PMO role access only) ─────────
+
+class SaveManualAllocationRequest(BaseModel):
+    employee_id: Optional[str] = None
+    employee_name: str
+    project_name: str
+    project_lead: Optional[str] = None
+    delivery_manager: Optional[str] = None
+    efforts_percent: float = 0.0
+    billability_percent: float = 0.0
+    allocation_date: Optional[str] = None  # YYYY-MM-DD
+    project_status: str = "Ongoing"
+    client_master: Optional[str] = None
+    billing: str = "Billable"
+    status: str = "Active"
+
+
+@router.get("/{email_or_code}/allocations")
+def get_employee_allocations(email_or_code: str, user: CurrentUser = Depends(require_strict_pmo)):
+    """Fetch all allocations for a specific employee, including manual overrides."""
+    db = SessionLocal()
+    try:
+        from app.models import EmployeeAllocation, ManualEmployeeAllocation
+        # Resolve employee
+        emp = db.query(Employee).filter(
+            or_(Employee.employee_id == email_or_code, Employee.email.ilike(email_or_code))
+        ).first()
+        
+        # Query employee_allocations
+        query = db.query(EmployeeAllocation)
+        if emp:
+            query = query.filter(
+                or_(
+                    EmployeeAllocation.employee_id == emp.employee_id,
+                    EmployeeAllocation.employee_name.ilike(emp.name)
+                )
+            )
+        else:
+            query = query.filter(
+                or_(
+                    EmployeeAllocation.employee_id == email_or_code,
+                    EmployeeAllocation.employee_name.ilike(email_or_code)
+                )
+            )
+        allocs = query.all()
+
+        # Query manual overrides
+        m_query = db.query(ManualEmployeeAllocation)
+        if emp:
+            m_query = m_query.filter(
+                or_(
+                    ManualEmployeeAllocation.employee_id == emp.employee_id,
+                    ManualEmployeeAllocation.employee_name.ilike(emp.name)
+                )
+            )
+        else:
+            m_query = m_query.filter(
+                or_(
+                    ManualEmployeeAllocation.employee_id == email_or_code,
+                    ManualEmployeeAllocation.employee_name.ilike(email_or_code)
+                )
+            )
+        manuals = m_query.all()
+
+        return {
+            "allocations": [
+                {
+                    "id": a.id,
+                    "employee_id": a.employee_id,
+                    "employee_name": a.employee_name,
+                    "project_name": a.project_name,
+                    "project_lead": a.project_lead or "",
+                    "delivery_manager": a.delivery_manager or "",
+                    "efforts_percent": a.efforts_percent or 0.0,
+                    "billability_percent": a.billability_percent or 0.0,
+                    "allocation_date": a.allocation_date.isoformat() if a.allocation_date else None,
+                    "project_status": a.project_status or "Ongoing",
+                    "client_master": a.client_master or "",
+                    "billing": a.billing or "Billable",
+                    "status": a.status or "Active",
+                    "is_manual": False,
+                }
+                for a in allocs
+            ],
+            "manuals": [
+                {
+                    "id": m.id,
+                    "employee_id": m.employee_id,
+                    "employee_name": m.employee_name,
+                    "project_name": m.project_name,
+                    "project_lead": m.project_lead or "",
+                    "delivery_manager": m.delivery_manager or "",
+                    "efforts_percent": m.efforts_percent or 0.0,
+                    "billability_percent": m.billability_percent or 0.0,
+                    "allocation_date": m.allocation_date.isoformat() if m.allocation_date else None,
+                    "project_status": m.project_status or "Ongoing",
+                    "client_master": m.client_master or "",
+                    "billing": m.billing or "Billable",
+                    "status": m.status or "Active",
+                    "is_deleted": m.is_deleted,
+                    "is_manual": True,
+                }
+                for m in manuals
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/allocations/manual")
+def add_manual_allocation(body: SaveManualAllocationRequest, user: CurrentUser = Depends(require_strict_pmo)):
+    """Create a manual override for employee allocation."""
+    db = SessionLocal()
+    try:
+        from app.models import ManualEmployeeAllocation
+        from app.services.zoho_allocation_sync_service import reapply_manual_allocations
+        
+        adate = None
+        if body.allocation_date:
+            try:
+                adate = datetime.date.fromisoformat(body.allocation_date[:10])
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid allocation_date format. Must be YYYY-MM-DD.")
+        else:
+            adate = datetime.date.today().replace(day=1)
+
+        m = ManualEmployeeAllocation(
+            employee_id=body.employee_id,
+            employee_name=body.employee_name,
+            project_name=body.project_name,
+            project_lead=body.project_lead,
+            delivery_manager=body.delivery_manager,
+            efforts_percent=body.efforts_percent,
+            billability_percent=body.billability_percent,
+            allocation_date=adate,
+            project_status=body.project_status,
+            client_master=body.client_master,
+            billing=body.billing,
+            status=body.status,
+            is_deleted=False,
+            created_by=user.email,
+        )
+        db.add(m)
+        db.commit()
+        db.refresh(m)
+
+        reapply_manual_allocations(db)
+        return {"status": "ok", "id": m.id}
+    finally:
+        db.close()
+
+
+@router.put("/allocations/manual/{manual_id}")
+def update_manual_allocation(manual_id: int, body: SaveManualAllocationRequest, user: CurrentUser = Depends(require_strict_pmo)):
+    """Update an existing manual override."""
+    db = SessionLocal()
+    try:
+        from app.models import ManualEmployeeAllocation
+        from app.services.zoho_allocation_sync_service import reapply_manual_allocations
+
+        m = db.query(ManualEmployeeAllocation).filter(ManualEmployeeAllocation.id == manual_id).first()
+        if not m:
+            raise HTTPException(status_code=404, detail="Manual allocation not found.")
+
+        m.project_lead = body.project_lead
+        m.delivery_manager = body.delivery_manager
+        m.efforts_percent = body.efforts_percent
+        m.billability_percent = body.billability_percent
+        m.project_status = body.project_status
+        m.client_master = body.client_master
+        m.billing = body.billing
+        m.status = body.status
+        m.is_deleted = False
+        db.commit()
+
+        reapply_manual_allocations(db)
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
+@router.delete("/allocations/manual/{manual_id}")
+def delete_manual_allocation(manual_id: int, user: CurrentUser = Depends(require_strict_pmo)):
+    """Soft-delete/mask a manual allocation override."""
+    db = SessionLocal()
+    try:
+        from app.models import ManualEmployeeAllocation, EmployeeAllocation
+        from app.services.zoho_allocation_sync_service import reapply_manual_allocations
+
+        m = db.query(ManualEmployeeAllocation).filter(ManualEmployeeAllocation.id == manual_id).first()
+        if not m:
+            raise HTTPException(status_code=404, detail="Manual allocation override not found.")
+
+        has_zoho = db.query(EmployeeAllocation).filter(
+            EmployeeAllocation.project_name == m.project_name,
+            EmployeeAllocation.allocation_date == m.allocation_date,
+            or_(
+                EmployeeAllocation.employee_id == m.employee_id,
+                EmployeeAllocation.employee_name == m.employee_name
+            )
+        ).first()
+
+        if has_zoho:
+            m.is_deleted = True
+            db.commit()
+        else:
+            db.delete(m)
+            db.commit()
+
+        reapply_manual_allocations(db)
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
+@router.delete("/allocations/zoho/{allocation_id}")
+def delete_zoho_allocation(allocation_id: int, user: CurrentUser = Depends(require_strict_pmo)):
+    """Mask/delete a Zoho allocation by creating a manual override with is_deleted=True."""
+    db = SessionLocal()
+    try:
+        from app.models import EmployeeAllocation, ManualEmployeeAllocation
+        from app.services.zoho_allocation_sync_service import reapply_manual_allocations
+
+        a = db.query(EmployeeAllocation).filter(EmployeeAllocation.id == allocation_id).first()
+        if not a:
+            raise HTTPException(status_code=404, detail="Allocation not found.")
+
+        m = ManualEmployeeAllocation(
+            employee_id=a.employee_id,
+            employee_name=a.employee_name,
+            project_name=a.project_name,
+            project_lead=a.project_lead,
+            delivery_manager=a.delivery_manager,
+            efforts_percent=0.0,
+            billability_percent=0.0,
+            allocation_date=a.allocation_date,
+            project_status=a.project_status,
+            client_master=a.client_master,
+            billing=a.billing,
+            status=a.status,
+            is_deleted=True,
+            created_by=user.email,
+        )
+        db.add(m)
+        db.commit()
+
+        reapply_manual_allocations(db)
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
 @router.post("/admin/rewire-manager-hierarchy")
+
 def rewire_manager_hierarchy_endpoint(user: CurrentUser = Depends(require_non_employee)):
     """Re-wire Employee.manager_id from Zoho reporting_manager_email.
     Useful after a Zoho CSV import or when team hierarchy shows empty in the portal."""

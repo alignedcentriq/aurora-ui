@@ -47,59 +47,79 @@ export function SplashOverlay({ onComplete }: SplashOverlayProps) {
           />
 
           <div className="relative flex flex-col items-center justify-center">
-            {/* Soft ambient glow beneath the ring — sells it as an object floating in space, not a flat sticker */}
+            {/* Breathing ambient glow — pulses gently instead of a hard spin, reads as "alive" not "loading" */}
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.55 }}
-              transition={{ delay: 0.15, duration: 0.8 }}
-              className="absolute w-56 h-56 rounded-full blur-3xl pointer-events-none"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: [0.35, 0.6, 0.35], scale: [0.95, 1.08, 0.95] }}
+              transition={{
+                opacity: { delay: 0.15, duration: 3.2, repeat: Infinity, ease: "easeInOut" },
+                scale: { delay: 0.15, duration: 3.2, repeat: Infinity, ease: "easeInOut" },
+              }}
+              className="absolute w-64 h-64 rounded-full blur-3xl pointer-events-none"
               style={{
                 background:
                   "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
               }}
             />
 
-            {/* Rotating Logo Ring */}
+            {/* Orbiting satellite dots — a slim rotating ring carrying two glints around the bezel */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.7, rotate: -45 }}
-              animate={{ opacity: 1, scale: 1, rotate: 360 }}
+              initial={{ opacity: 0, rotate: 0 }}
+              animate={{ opacity: 1, rotate: 360 }}
               transition={{
-                opacity: { duration: 0.5 },
-                scale: { type: "spring", stiffness: 150, damping: 15 },
-                rotate: { duration: 6, repeat: Infinity, ease: "linear" },
+                opacity: { duration: 0.6 },
+                rotate: { duration: 10, repeat: Infinity, ease: "linear" },
               }}
-              className="relative w-48 h-48 rounded-full flex items-center justify-center"
+              className="absolute w-56 h-56 pointer-events-none"
+            >
+              <span
+                className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full"
+                style={{ background: "var(--connectivity)", boxShadow: "0 0 10px 2px var(--connectivity)" }}
+              />
+              <span
+                className="absolute bottom-2 right-3 w-1.5 h-1.5 rounded-full"
+                style={{ background: "var(--capacity)", boxShadow: "0 0 8px 2px var(--capacity)" }}
+              />
+            </motion.div>
+
+            {/* Static gradient bezel — a fixed glowing ring frame, not a spinner */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ scale: { type: "spring", stiffness: 150, damping: 15 }, opacity: { duration: 0.5 } }}
+              className="relative w-48 h-48 rounded-full flex items-center justify-center overflow-hidden"
               style={{
                 background:
                   "conic-gradient(from 0deg, var(--clarity), var(--connectivity), var(--collaboration), var(--capacity), var(--clarity))",
-                padding: "3px",
+                padding: "4px",
                 boxShadow:
                   "0 25px 50px -12px rgba(0,0,0,0.6), 0 0 60px -10px color-mix(in oklab, var(--connectivity) 50%, transparent)",
               }}
             >
-              <div className="w-full h-full bg-[#020617] rounded-full" />
+              <div className="relative w-full h-full bg-black rounded-full overflow-hidden flex items-center justify-center">
+                {/* Slowly-spinning mandala mark — the logo's own geometry becomes the motion, not a generic ring */}
+                <motion.img
+                  initial={{ opacity: 0, scale: 0.4, rotate: 0 }}
+                  animate={{ opacity: 1, scale: 1, rotate: 360 }}
+                  transition={{
+                    opacity: { delay: 0.25, duration: 0.5 },
+                    scale: { delay: 0.25, duration: 0.6, ease: "easeOut" },
+                    rotate: { duration: 24, repeat: Infinity, ease: "linear" },
+                  }}
+                  src={`${import.meta.env.BASE_URL}logo.png`}
+                  alt="Centriq AI"
+                  className="w-[92%] h-[92%] object-contain pointer-events-none"
+                />
+              </div>
               {/* Fixed specular highlight painted on the ring surface, like light catching a curved rim */}
               <div
                 className="absolute inset-0 rounded-full pointer-events-none"
                 style={{
-                  background: "radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35), transparent 45%)",
+                  background: "radial-gradient(circle at 30% 25%, rgba(255,255,255,0.28), transparent 45%)",
                   mixBlendMode: "screen",
                 }}
               />
             </motion.div>
-
-            {/* Centriq Inner Logo Image inside the Ring — masked circular so no square backdrop peeks through */}
-            <motion.img
-              initial={{ opacity: 0, scale: 0.3 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3, duration: 0.5, ease: "easeOut" }}
-              src={`${import.meta.env.BASE_URL}logo.png`}
-              alt="Centriq AI"
-              className="absolute w-24 h-24 object-contain rounded-full pointer-events-none bg-[#020617] p-1.5"
-              style={{
-                boxShadow: "inset 0 0 20px rgba(0,0,0,0.5)",
-              }}
-            />
           </div>
 
           {/* Centriq AI text label below the logo */}
@@ -107,12 +127,33 @@ export function SplashOverlay({ onComplete }: SplashOverlayProps) {
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
-            className="absolute bottom-12 flex flex-col items-center gap-1.5"
+            className="absolute bottom-12 flex flex-col items-center gap-2.5"
           >
-            <h1 className="text-white text-2xl font-black tracking-wider uppercase">Centriq AI</h1>
+            <h1
+              className="text-2xl font-black tracking-wider uppercase bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  "linear-gradient(90deg, #fff, var(--connectivity), #fff)",
+              }}
+            >
+              Centriq AI
+            </h1>
             <p className="text-white/40 text-[11px] font-bold uppercase tracking-[0.25em]">
               Workspace Concierge
             </p>
+            {/* Slim progress shimmer — signals activity without another spinning element */}
+            <div className="relative w-32 h-[3px] rounded-full bg-white/10 overflow-hidden mt-1">
+              <motion.div
+                className="absolute inset-y-0 w-1/3 rounded-full"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent, var(--connectivity), transparent)",
+                }}
+                initial={{ x: "-100%" }}
+                animate={{ x: "300%" }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+              />
+            </div>
           </motion.div>
         </motion.div>
       )}

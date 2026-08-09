@@ -26,6 +26,7 @@ from app.models import (
     FoodVendorFeedback,
     EmployeeZohoProfile,
     EmployeeAllocation,
+    ManualEmployeeAllocation,
     Announcement,
     FoodComplaint,
     ChatFeedback,

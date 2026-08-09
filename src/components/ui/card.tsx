@@ -2,7 +2,11 @@ import * as React from "react";
 import { motion, useMotionValue, useMotionTemplate } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+type CardProps = Omit<React.ComponentProps<typeof motion.div>, "children"> & {
+  children?: React.ReactNode;
+};
+
+const Card = React.forwardRef<HTMLDivElement, CardProps>(
   ({ className, ...props }, ref) => {
     let mouseX = useMotionValue(0);
     let mouseY = useMotionValue(0);
@@ -14,9 +18,11 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     }
 
     return (
-      <div
+      <motion.div
         ref={ref}
         onMouseMove={handleMouseMove}
+        whileHover={{ y: -3 }}
+        transition={{ type: "spring", stiffness: 400, damping: 30 }}
         className={cn(
           "relative rounded-2xl border bg-card text-card-foreground shadow-sm transition-all duration-300 overflow-hidden group/card hover:shadow-md hover:border-border-strong/60",
           className,
@@ -36,7 +42,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
           }}
         />
         <div className="relative z-10 h-full w-full">{props.children}</div>
-      </div>
+      </motion.div>
     );
   },
 );

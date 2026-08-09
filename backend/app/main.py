@@ -40,6 +40,7 @@ from app.routes.announcement_routes import router as announcement_router
 from app.routes.employee_routes import router as employee_router
 from app.routes.people_routes import router as people_router
 from app.routes.hr_portal_routes import router as hr_portal_router
+from app.routes.leave_routes import router as leave_router
 from app.routes.admin_portal_routes import router as admin_portal_router
 from app.routes.pmo_portal_routes import router as pmo_portal_router
 from app.routes.capability_command_routes import router as capability_command_router
@@ -170,6 +171,7 @@ app.include_router(announcement_router)
 app.include_router(employee_router)
 app.include_router(people_router)
 app.include_router(hr_portal_router)
+app.include_router(leave_router)
 app.include_router(admin_portal_router)
 app.include_router(pmo_portal_router)
 app.include_router(capability_command_router)
@@ -379,6 +381,13 @@ async def startup_event():
     except Exception as e:
         logging.warning("Access role seed failed (non-fatal): %s", e)
 
+    try:
+        from app.services import zoho_allocation_sync_service
+        synced = await asyncio.to_thread(zoho_allocation_sync_service.sync_now)
+        logging.info("[allocation sync] startup sync: %d rows", synced)
+    except Exception as e:
+        logging.warning("Allocation sync (startup) failed (non-fatal): %s", e)
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -417,6 +426,21 @@ async def startup_event():
                 pass
 
     _app_background_tasks.append(asyncio.create_task(attendance_scheduler()))
+
+    # Re-sync employee_allocations from the live Zoho vb_allocation_details view so
+    # "current" allocation data stays current without a manual Excel re-import.
+    async def allocation_sync_scheduler():
+        from app.config import settings as _settings
+        from app.services import zoho_allocation_sync_service
+        interval = max(5, _settings.ZOHO_ALLOCATION_SYNC_INTERVAL_MIN) * 60
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(zoho_allocation_sync_service.sync_now)
+            except Exception:
+                pass
+
+    _app_background_tasks.append(asyncio.create_task(allocation_sync_scheduler()))
 
     # ── Model keep-alive heartbeat ─────────────────────────────────────────
     # Fires a 0-token ping at every heavy model tier every 10 minutes.
@@ -1360,6 +1384,24 @@ def _extract_citations(all_messages: list) -> list[dict]:
     return citations
 
 
+def _retrieval_veto_hit(all_messages: list) -> bool:
+    """True if any tool call in this turn hit the policy-search semantic veto
+    (RETRIEVAL_VETO_SENTINEL) — i.e. the retrieval layer itself found nothing relevant.
+
+    This is a structural signal (a fixed Python string the search functions emit),
+    unlike scanning the LLM's final prose for refusal phrasing: the answering model
+    can paraphrase "I couldn't find this" in ways a regex won't catch, and caching
+    that miss would poison the semantic answer cache for every later near-identical
+    query (including correctly-spelled ones) within the similarity threshold.
+    """
+    from langchain_core.messages import ToolMessage as _TMsg
+    from app.services.policy_service import RETRIEVAL_VETO_SENTINEL
+    for msg in all_messages:
+        if isinstance(msg, _TMsg) and isinstance(msg.content, str) and RETRIEVAL_VETO_SENTINEL in msg.content:
+            return True
+    return False
+
+
 def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: float) -> dict:
     """Apply the same cleanup/extraction logic as the old blocking endpoint."""
     final_message = raw_text
@@ -1555,6 +1597,7 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         "interactive": interactive,
         "images": policy_images if policy_images else None,
         "citations": citations if citations else None,
+        "retrieval_veto": _retrieval_veto_hit(all_messages),
         "processing_time": f"{time.time() - start_time:.2f}s",
     }
 
@@ -2089,6 +2132,7 @@ async def chat(
                 and final_message
                 and len(final_message.strip()) >= 40
                 and not _REFUSAL_RE.search(final_message)
+                and not post.get("retrieval_veto")
             ):
                 from app.services.answer_cache_service import AnswerCacheService
                 await asyncio.to_thread(

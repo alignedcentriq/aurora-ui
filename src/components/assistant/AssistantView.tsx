@@ -1137,7 +1137,7 @@ export function AssistantView({
     if (!scrollRef.current) return;
     // An empty thread has no latest message to pin to, and its greeting lives at the
     // TOP — jumping to the bottom just hides it whenever the empty state is taller
-    // than the viewport (e.g. Master Mode's cockpit).
+    // than the viewport.
     if (activeThread.turns.length === 0) {
       scrollRef.current.scrollTop = 0;
       return;
@@ -2968,9 +2968,6 @@ export function AssistantView({
                       particleColor="#3B8FE8"
                     />
                   </div>
-                  {/* Subtle three.js accent layered above the 2D sparkles — auto-skips on
-                      low-power/reduced-motion devices via useDeviceTier, so the 2D layer
-                      above always carries the effect on its own. */}
                   <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-70">
                     <AmbientField />
                   </div>
@@ -3093,8 +3090,8 @@ export function AssistantView({
                     t.role === "user" ? (
                       <motion.div
                         key={`msg-${i}`}
-                        initial={{ opacity: 0, y: 16, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        initial={{ opacity: 0, y: 16, scale: 0.97, filter: "blur(4px)" }}
+                        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                         transition={{ type: "spring", stiffness: 400, damping: 30 }}
                         layout
                       >
@@ -3114,8 +3111,8 @@ export function AssistantView({
                     ) : (
                       <motion.div
                         key={`msg-${i}`}
-                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        initial={{ opacity: 0, y: 20, scale: 0.95, filter: "blur(4px)" }}
+                        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                         transition={{
                           type: "spring",
                           stiffness: 300,
@@ -3565,7 +3562,7 @@ export function AssistantView({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="relative border-t border-border bg-background/60 backdrop-blur-xl px-3 pb-3 pt-3 sm:px-8 md:pb-8 md:pt-4 shrink-0"
+          className="relative border-t border-border bg-background/60 backdrop-blur-xl px-3 pb-2 pt-2 sm:px-8 md:pb-4 md:pt-3 shrink-0"
         >
           <div className="mx-auto w-full max-w-4xl space-y-3">
             <AnimatePresence>
@@ -3594,7 +3591,7 @@ export function AssistantView({
               suggestions={suggestions}
               onSuggestionSelect={(t) => !busy && send(t)}
               placeholders={portalContext ? getPortalCopilot(portalContext).placeholders : undefined}
-              hideAttach={isCopilot}
+              hideAttach
               hideSlash={isCopilot}
             />
           </div>

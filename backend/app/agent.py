@@ -1341,15 +1341,38 @@ def get_employee_availability(name_or_email: str) -> str:
                 func.lower(EmployeeAllocation.employee_id) == term.lower(),
             )
         ).order_by(EmployeeAllocation.allocation_date.desc()).first()
+        display_name = (any_row.employee_name if any_row else "") or term
+
+        # Project Lead / Delivery Manager is recorded on OTHER people's rows, never a
+        # row of their own — a Director/Lead with no staffed allocation this month can
+        # still be actively managing several projects. Check before calling anyone
+        # "available": no real effort-% exists for a managerial role, so this reports
+        # the involvement instead of a guessed free-capacity number.
+        term_lower = term.lower()
+        matched_name = (any_row.employee_name or "").lower() if any_row else ""
+        led_projects = next(
+            (projs for key, projs in snap.leading_projects_map(db).items()
+             if key == matched_name or term_lower in key),
+            [],
+        )
 
         if not any_row:
+            if led_projects:
+                lines = [f"**{display_name}** — 🔶 Not staffed on a project directly, but currently "
+                         f"leading/managing {len(led_projects)} project(s) — availability not confirmed:"]
+                lines += [f"- {p}" for p in led_projects[:5]]
+                return "\n".join(lines)
             return (f"**{term}** — ✅ Available for work (no project allocation on record).")
 
-        display_name = any_row.employee_name or term
         a = snap.availability_for(db, name=any_row.employee_name,
                                   employee_id=any_row.employee_id)
         current = a["rows"]
         if not current or a["load"] <= 0:
+            if led_projects:
+                lines = [f"**{display_name}** — 🔶 No active staffed allocation, but currently "
+                         f"leading/managing {len(led_projects)} project(s) — availability not confirmed:"]
+                lines += [f"- {p}" for p in led_projects[:5]]
+                return "\n".join(lines)
             return f"**{display_name}** — ✅ Available for work (no active allocation; {a['free']:g}% free)."
 
         head = (f"**{display_name}** — ❌ Not available "

@@ -255,3 +255,40 @@ def company_attendance(
     result["members"] = members
     result["filtered_count"] = len(members)
     return result
+
+
+# ── Leave Records (every employee's history + reason + upcoming leave) ──────
+
+@router.get("/leave-records")
+def leave_records(
+    q: Optional[str] = None,
+    _: CurrentUser = Depends(require_hr),
+    db: Session = Depends(get_db),
+):
+    """Every employee's leave history (with reason) and upcoming leave, from the
+    Zoho leave tracker — HR-only. Optional `q` filters by employee name/email."""
+    from app.services import zoho_leave_service
+
+    employees = db.query(Employee).filter(Employee.employee_id.isnot(None)).all()
+    if q:
+        ql = q.lower()
+        employees = [e for e in employees if ql in e.name.lower() or ql in (e.email or "").lower()]
+
+    history_by_code = zoho_leave_service.fetch_all_leave_history()
+    today = datetime.date.today().isoformat()
+
+    records = []
+    for emp in employees:
+        history = history_by_code.get(emp.employee_id, [])
+        if not history:
+            continue
+        records.append({
+            "employee_id": emp.employee_id,
+            "name": emp.name,
+            "email": emp.email,
+            "department": emp.department,
+            "history": history,
+            "upcoming": [h for h in history if h["from"] >= today],
+        })
+    records.sort(key=lambda r: r["name"])
+    return {"employees": records}

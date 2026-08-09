@@ -106,21 +106,6 @@ async def import_employees(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/import/allocations")
-async def import_allocations(
-    file: UploadFile = File(...),
-    user: CurrentUser = Depends(require_domain_manager),
-):
-    if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Only .xlsx / .xls files are accepted.")
-    content = await file.read()
-    try:
-        result = PeopleService.import_allocations(content)
-        return result
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/import/projects")
 async def import_projects(
     file: UploadFile = File(...),

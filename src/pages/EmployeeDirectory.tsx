@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   Search,
   Users,
@@ -16,10 +16,26 @@ import {
   X,
   History,
   Building2,
+  UserCheck,
+  UserX,
+  BarChart3,
+  TrendingUp,
+  Edit3,
+  Plus,
+  Trash2,
+  Save,
+  ChevronDown,
+  ExternalLink,
+  AlertCircle,
+  CheckCircle2,
+  Filter,
+  Zap,
+  Link as LinkIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import { AnimatedLink } from "@/components/ui/skiper-ui/skiper40";
 import { apiUrl } from "@/lib/api-base";
 import {
   Dialog,
@@ -39,6 +55,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+
 
 // Shape returned by GET /api/employees/directory (Zoho HR profile ⋈ Employee).
 interface DirEmployee {
@@ -68,6 +86,11 @@ interface DirEmployee {
   allocated_percent?: number;
   availability_percent?: number;
   available?: boolean;
+  // Present only when this person has no staffed row of their own this month but IS
+  // listed as Project Lead / Delivery Manager on others' rows — a Director/Lead is
+  // still actively managing these, so `available` is deliberately false with no
+  // free-capacity number rather than a guessed one.
+  leading_projects?: string[];
 }
 
 // Alchemy-sourced profile enrichment (skills + projects).
@@ -233,6 +256,15 @@ function EmployeeCard({
                 {emp.availability_percent != null && emp.availability_percent > 0
                   ? `${emp.availability_percent}% free`
                   : "Available"}
+              </span>
+            )}
+            {!emp.available && !!emp.leading_projects?.length && (
+              <span
+                title={`Leading/managing: ${emp.leading_projects.join(", ")}`}
+                className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                Managing {emp.leading_projects.length > 1 ? `${emp.leading_projects.length} projects` : "project"}
               </span>
             )}
           </div>
@@ -555,7 +587,7 @@ interface ProjectDetailResp {
     name: string;
     efforts: number | null;
     billability: number | null;
-    done: boolean;
+    status: string;
     role?: string;
   }[];
 }
@@ -657,7 +689,7 @@ function ProjectDetailDialog({
                     meta={[
                       m.role,
                       m.billability != null ? `${m.billability}% billable` : null,
-                      m.billability != null ? (m.done ? "Completed" : "Active") : null,
+                      m.status,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
@@ -680,19 +712,574 @@ function ProjectDetailDialog({
   );
 }
 
+// ── Types for Alchemy self-service ───────────────────────────────────────────
+interface AlchemySkill {
+  skill_id: number | null;
+  name: string;
+  category: string;
+  competency: string;
+  certified: boolean;
+  certificate_url: string;
+  primary_skill: boolean;
+  secondary_skill: boolean;
+  primary_interest: boolean;
+  instructor: boolean;
+  years_experience: string;
+  last_used: string;
+  approval_status: string;
+}
+
+interface CatalogSkill {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  image_url: string;
+}
+
+const COMPETENCY_LEVELS = ["Beginner", "Intermediate", "Advanced", "Expert"] as const;
+
+// Alchemy Edit Panel — only shown when the logged-in user views their own profile.
+function AlchemyEditPanel({
+  employeeCode,
+  profileProjects,
+  onClose,
+}: {
+  employeeCode: string;
+  profileProjects: DirProject[];
+  onClose: () => void;
+}) {
+  const { user } = useAuth();
+  const [tab, setTab] = useState<"skills" | "projects">("skills");
+  const [skills, setSkills] = useState<AlchemySkill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notConnected, setNotConnected] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogSkill[]>([]);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<AlchemySkill | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Form state for add/edit
+  const [form, setForm] = useState({
+    skill_id: 0,
+    competency: "Beginner",
+    certified: "No",
+    last_used: "",
+    yoe: "0.00",
+    primary_skill: false,
+    secondary_skill: false,
+    primary_interest: false,
+    instructor_flag: false,
+  });
+
+  const authHeaders = {
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  };
+
+  const loadSkills = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/employees/alchemy/me/skills", { headers: authHeaders });
+      const data = await res.json();
+      if (data.error === "not_connected") {
+        setNotConnected(true);
+        setSkills([]);
+      } else {
+        setNotConnected(false);
+        setSkills(data.skills ?? []);
+      }
+    } catch {
+      toast.error("Failed to load Alchemy skills");
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.email]);
+
+  const loadCatalog = useCallback(async () => {
+    if (catalog.length > 0) return;
+    try {
+      const res = await fetch("/api/employees/alchemy/catalog", { headers: authHeaders });
+      const data = await res.json();
+      setCatalog(data.skills ?? []);
+    } catch {
+      /* catalog is optional for display */
+    }
+  }, [catalog.length, user?.email]);
+
+  useEffect(() => {
+    loadSkills();
+    loadCatalog();
+  }, [loadSkills, loadCatalog]);
+
+  const filteredCatalog = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!q) return catalog.slice(0, 60);
+    return catalog.filter((s) => s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q)).slice(0, 60);
+  }, [catalog, catalogSearch]);
+
+  const openAddForm = () => {
+    setForm({ skill_id: 0, competency: "Beginner", certified: "No", last_used: "", yoe: "0.00", primary_skill: false, secondary_skill: false, primary_interest: false, instructor_flag: false });
+    setCatalogSearch("");
+    setEditingSkill(null);
+    setShowAddForm(true);
+  };
+
+  const openEditForm = (s: AlchemySkill) => {
+    setForm({
+      skill_id: s.skill_id ?? 0,
+      competency: s.competency || "Beginner",
+      certified: s.certified ? "Yes" : "No",
+      last_used: s.last_used || "",
+      yoe: s.years_experience || "0.00",
+      primary_skill: s.primary_skill,
+      secondary_skill: s.secondary_skill,
+      primary_interest: s.primary_interest,
+      instructor_flag: s.instructor,
+    });
+    setEditingSkill(s);
+    setShowAddForm(true);
+  };
+
+  const handleSaveSkill = async () => {
+    if (!editingSkill && form.skill_id === 0) {
+      toast.error("Please select a skill from the catalog");
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = { ...form, yoe: form.yoe || "0.00" };
+      const isEdit = !!editingSkill;
+      const url = isEdit
+        ? `/api/employees/alchemy/me/skills/${editingSkill!.skill_id}`
+        : "/api/employees/alchemy/me/skills";
+      const method = isEdit ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error === "not_connected") {
+        setNotConnected(true);
+        toast.error("Connect your Microsoft account first");
+        return;
+      }
+      if (!res.ok) {
+        toast.error(data.detail || "Failed to save skill");
+        return;
+      }
+      toast.success(isEdit ? "Skill updated in Alchemy" : "Skill added to Alchemy");
+      setShowAddForm(false);
+      setEditingSkill(null);
+      await loadSkills();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSkill = async (skillId: number) => {
+    setDeletingId(skillId);
+    try {
+      const res = await fetch(`/api/employees/alchemy/me/skills/${skillId}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      const data = await res.json();
+      if (data.error === "not_connected") {
+        setNotConnected(true);
+        toast.error("Connect your Microsoft account first");
+        return;
+      }
+      if (!res.ok) {
+        toast.error(data.detail || "Failed to delete skill");
+        return;
+      }
+      toast.success("Skill removed from Alchemy");
+      await loadSkills();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const competencyColor = (c: string) => {
+    switch (c) {
+      case "Expert": return "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30";
+      case "Advanced": return "bg-[#1f86e0]/15 text-[#1f86e0] dark:text-sky-300 border-[#1f86e0]/30";
+      case "Intermediate": return "bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30";
+      default: return "bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-white/10";
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="w-full max-w-2xl p-0 overflow-hidden gap-0 max-h-[95vh] flex flex-col">
+        {/* Header */}
+        <DialogHeader className="shrink-0 border-b border-slate-100 dark:border-white/[0.07] px-5 py-4 space-y-0 bg-gradient-to-br from-[#0e2a47] via-[#12395f] to-[#164775]">
+          <DialogTitle className="flex items-center gap-2.5 text-white text-[17px] font-black">
+            <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-[#1f86e0]/30">
+              <Zap className="h-4 w-4 text-[#4cc6d6]" />
+            </div>
+            Alchemy Profile Manager
+          </DialogTitle>
+          <p className="text-[12px] text-white/60 mt-1">Manage your skills directly in Alchemy</p>
+        </DialogHeader>
+
+        {/* Tabs */}
+        <div className="shrink-0 flex border-b border-slate-100 dark:border-white/[0.07] bg-white dark:bg-card">
+          {(["skills", "projects"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "flex-1 py-3 text-[13px] font-bold capitalize transition-all",
+                tab === t
+                  ? "border-b-2 border-[#1f86e0] text-[#1f86e0] dark:text-primary"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white"
+              )}
+            >
+              {t === "skills" ? `Skills (${skills.length})` : `Projects (${profileProjects.length})`}
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-y-auto bg-[#f3f6fa] dark:bg-background">
+          {/* Not connected warning */}
+          {notConnected && (
+            <div className="m-4 flex items-start gap-3 rounded-2xl border border-amber-300/50 bg-amber-50 dark:bg-amber-950/20 p-4">
+              <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[13px] font-bold text-amber-800 dark:text-amber-300">Microsoft account not connected</p>
+                <p className="text-[12px] text-amber-700/80 dark:text-amber-400/80 mt-0.5">
+                  Go to <strong>Settings → Connected Accounts</strong> and connect Microsoft to manage your Alchemy profile.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Skills Tab */}
+          {tab === "skills" && (
+            <div className="p-4 space-y-3">
+              {/* Add skill button */}
+              {!showAddForm && !notConnected && (
+                <button
+                  onClick={openAddForm}
+                  className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#1f86e0]/30 dark:border-primary/20 bg-[#1f86e0]/5 dark:bg-primary/5 py-3 text-[13px] font-bold text-[#1f86e0] dark:text-primary hover:border-[#1f86e0]/60 hover:bg-[#1f86e0]/10 transition-all"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add New Skill
+                </button>
+              )}
+
+              {/* Add / Edit Form */}
+              {showAddForm && (
+                <div className="rounded-2xl border border-[#1f86e0]/30 dark:border-primary/20 bg-white dark:bg-card p-4 space-y-4 shadow-sm">
+                  <h3 className="text-[14px] font-black text-slate-800 dark:text-white">
+                    {editingSkill ? `Edit: ${editingSkill.name}` : "Add New Skill"}
+                  </h3>
+
+                  {/* Skill picker (only when adding) */}
+                  {!editingSkill && (
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">Search Skill Catalog</label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                        <Input
+                          value={catalogSearch}
+                          onChange={(e) => setCatalogSearch(e.target.value)}
+                          placeholder="Search skills…"
+                          className="pl-9 text-[13px]"
+                        />
+                      </div>
+                      {form.skill_id > 0 && (
+                        <div className="flex items-center gap-2 rounded-xl border border-[#1f86e0]/30 bg-[#1f86e0]/5 px-3 py-2">
+                          <CheckCircle2 className="h-4 w-4 text-[#1f86e0]" />
+                          <span className="text-[13px] font-bold text-[#1f86e0]">
+                            {catalog.find((c) => c.id === form.skill_id)?.name ?? "Selected"}
+                          </span>
+                          <button onClick={() => setForm((f) => ({ ...f, skill_id: 0 }))} className="ml-auto text-slate-400 hover:text-slate-600">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200/70 dark:border-white/[0.07] divide-y divide-slate-100 dark:divide-white/[0.04] bg-white dark:bg-card">
+                        {filteredCatalog.map((s) => (
+                          <button
+                            key={s.id}
+                            onClick={() => { setForm((f) => ({ ...f, skill_id: s.id })); setCatalogSearch(""); }}
+                            className={cn(
+                              "w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-[#1f86e0]/5 transition-colors",
+                              form.skill_id === s.id && "bg-[#1f86e0]/10"
+                            )}
+                          >
+                            <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 flex-1 truncate">{s.name}</span>
+                            {s.category && <span className="text-[10px] text-slate-400 shrink-0">{s.category}</span>}
+                          </button>
+                        ))}
+                        {filteredCatalog.length === 0 && (
+                          <p className="text-center py-4 text-[12px] text-slate-400">No skills found</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Competency */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">Competency</label>
+                      <Select value={form.competency} onValueChange={(v) => setForm((f) => ({ ...f, competency: v }))}>
+                        <SelectTrigger className="text-[13px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {COMPETENCY_LEVELS.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">Years of Experience</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={form.yoe}
+                        onChange={(e) => setForm((f) => ({ ...f, yoe: e.target.value }))}
+                        className="text-[13px]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">Certified</label>
+                      <Select value={form.certified} onValueChange={(v) => setForm((f) => ({ ...f, certified: v }))}>
+                        <SelectTrigger className="text-[13px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="No">No</SelectItem>
+                          <SelectItem value="Yes">Yes</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-black uppercase tracking-wider text-slate-500">Last Used</label>
+                      <Input
+                        type="date"
+                        value={form.last_used}
+                        onChange={(e) => setForm((f) => ({ ...f, last_used: e.target.value }))}
+                        className="text-[13px]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Flags */}
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      { key: "primary_skill", label: "Primary Skill" },
+                      { key: "secondary_skill", label: "Secondary Skill" },
+                      { key: "primary_interest", label: "Primary Interest" },
+                      { key: "instructor_flag", label: "Instructor" },
+                    ] as const).map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, [key]: !f[key as keyof typeof f] }))}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold border transition-all",
+                          form[key as keyof typeof form]
+                            ? "border-[#1f86e0] bg-[#1f86e0]/10 text-[#1f86e0] dark:text-primary"
+                            : "border-slate-200/70 dark:border-white/[0.08] text-slate-500 dark:text-slate-400"
+                        )}
+                      >
+                        {form[key as keyof typeof form] ? <CheckCircle2 className="h-3 w-3" /> : <div className="h-3 w-3 rounded-full border border-current" />}
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveSkill}
+                      disabled={saving || (!editingSkill && form.skill_id === 0)}
+                      className="bg-[#1f86e0] hover:bg-[#1a75c4] text-white gap-1.5"
+                    >
+                      {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      {editingSkill ? "Update Skill" : "Add Skill"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { setShowAddForm(false); setEditingSkill(null); }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Skills list */}
+              {loading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white dark:bg-card p-3.5">
+                      <Skeleton className="h-4 w-1/3 mb-2" />
+                      <Skeleton className="h-3 w-1/2" />
+                    </div>
+                  ))}
+                </div>
+              ) : skills.length === 0 && !notConnected ? (
+                <div className="text-center py-8">
+                  <Sparkles className="h-10 w-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                  <p className="text-[14px] font-bold text-slate-600 dark:text-slate-300">No skills in Alchemy yet</p>
+                  <p className="text-[12px] text-slate-400 mt-1">Click "Add New Skill" to get started</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {skills.map((s, i) => (
+                    <div
+                      key={`${s.skill_id}-${i}`}
+                      className="rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white dark:bg-card p-3.5 group hover:shadow-sm transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            {s.primary_skill && <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-400 shrink-0" />}
+                            <span className="text-[14px] font-black text-slate-800 dark:text-white truncate">{s.name}</span>
+                            {s.competency && (
+                              <span className={cn("text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-md border", competencyColor(s.competency))}>
+                                {s.competency}
+                              </span>
+                            )}
+                            {s.certified && <span title="Certified"><BadgeCheck className="h-3.5 w-3.5 text-sky-500 shrink-0" /></span>}
+                            {s.instructor && <span title="Instructor"><GraduationCap className="h-3.5 w-3.5 text-emerald-500 shrink-0" /></span>}
+                            {s.primary_interest && <span title="Primary Interest"><Sparkles className="h-3.5 w-3.5 text-violet-500 shrink-0" /></span>}
+                            {s.approval_status && s.approval_status !== "Approved" && (
+                              <span className="text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
+                                {s.approval_status}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-[11px] text-slate-400 dark:text-slate-500">
+                            {s.category && <span>{s.category}</span>}
+                            {s.years_experience && s.years_experience !== "0.00" && (
+                              <span><strong className="text-slate-600 dark:text-slate-300">{parseFloat(s.years_experience)}</strong> yrs</span>
+                            )}
+                            {s.last_used && <span>Last used: {s.last_used}</span>}
+                            {s.certificate_url && (
+                              <a href={s.certificate_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[#1f86e0] hover:underline">
+                                <LinkIcon className="h-3 w-3" />Certificate
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openEditForm(s)}
+                            title="Edit skill"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-[#1f86e0] hover:bg-[#1f86e0]/10 transition-all"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => s.skill_id !== null && handleDeleteSkill(s.skill_id)}
+                            title="Remove skill"
+                            disabled={deletingId === s.skill_id}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all disabled:opacity-50"
+                          >
+                            {deletingId === s.skill_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Projects Tab (read-only) */}
+          {tab === "projects" && (
+            <div className="p-4 space-y-3">
+              <div className="flex items-center gap-2 rounded-2xl border border-amber-300/40 bg-amber-50/60 dark:bg-amber-950/15 px-3.5 py-2.5">
+                <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                <p className="text-[12px] text-amber-700 dark:text-amber-400">
+                  Projects are managed by your project lead in Alchemy. Contact your PM to add or update project assignments.
+                </p>
+              </div>
+
+              {profileProjects.length === 0 ? (
+                <div className="text-center py-8">
+                  <FolderKanban className="h-10 w-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                  <p className="text-[14px] font-bold text-slate-600 dark:text-slate-300">No projects on record</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {profileProjects.map((p, i) => {
+                    const done = (p.status || "").toLowerCase() === "completed";
+                    return (
+                      <div key={i} className="rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white dark:bg-card p-3.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[14px] font-black text-slate-800 dark:text-white">{p.name || "—"}</p>
+                          {p.status && (
+                            <span className={cn(
+                              "shrink-0 text-[9px] font-extrabold uppercase tracking-wide px-1.5 py-0.5 rounded-md",
+                              done ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                   : "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-400"
+                            )}>
+                              {p.status}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {[p.role, p.client].filter(Boolean).join(" · ")}
+                        </p>
+                        {(p.start_date || p.manager) && (
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            {[
+                              p.start_date && p.end_date ? `${p.start_date.slice(0,4)} – ${p.end_date.slice(0,4)}` : p.start_date?.slice(0,4),
+                              p.manager && `PM: ${p.manager}`,
+                            ].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <DialogFooter className="shrink-0 border-t border-slate-100 dark:border-white/[0.07] px-4 py-3 bg-white dark:bg-card">
+          <Button variant="outline" size="sm" onClick={onClose}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProfileModal({
   emp,
   onClose,
   onOpenPerson,
+  onReload,
 }: {
   emp: DirEmployee;
   onClose: () => void;
   onOpenPerson?: (code: string) => void;
+  onReload?: () => void;
 }) {
+
   const { user } = useAuth();
+  const isSelf = !!(user?.email && emp.email && user.email.toLowerCase() === emp.email.toLowerCase());
   // Skill / project click-through popups (rendered above this modal).
   const [skillDetail, setSkillDetail] = useState<DirSkill | null>(null);
   const [projectDetail, setProjectDetail] = useState<DirProject | null>(null);
+  const [showAlchemyPanel, setShowAlchemyPanel] = useState(false);
+  const [showAllocationPanel, setShowAllocationPanel] = useState(false);
   // Bundled with the directory payload → render instantly, no fetch.
   const bundled = emp.skills !== undefined || emp.projects !== undefined;
   const [enrich, setEnrich] = useState<{
@@ -727,7 +1314,10 @@ function ProfileModal({
     const headers: Record<string, string> = {};
     if (user?.email) headers["x-user-email"] = user.email;
     if (user?.role) headers["x-user-role"] = user.role.toLowerCase();
-    fetch(`/api/employees/directory/${encodeURIComponent(code)}/enrichment`, { headers })
+    fetch(
+      `/api/employees/directory/${encodeURIComponent(code)}/enrichment?name=${encodeURIComponent(emp.name || "")}`,
+      { headers },
+    )
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d) => {
         if (!cancelled)
@@ -746,6 +1336,7 @@ function ProfileModal({
     };
   }, [emp.employee_code, user?.email, user?.role]);
 
+  const isPmo = user?.role?.toLowerCase() === 'pmo';
   const rows: [string, string][] = [
     ["Employee ID", emp.employee_code],
     ["Email ID", emp.email],
@@ -794,12 +1385,12 @@ function ProfileModal({
                   </dt>
                   <dd className="min-w-0 flex-1 font-semibold text-slate-800 dark:text-slate-200 break-words">
                     {label === "Email ID" && value ? (
-                      <a
+                      <AnimatedLink
                         href={`mailto:${value}`}
-                        className="text-[#1f86e0] dark:text-primary hover:underline"
+                        className="text-[#1f86e0] dark:text-primary"
                       >
                         {value}
-                      </a>
+                      </AnimatedLink>
                     ) : (
                       value || "—"
                     )}
@@ -868,15 +1459,40 @@ function ProfileModal({
 
         {/* Footer actions */}
         <DialogFooter className="border-t border-slate-100 dark:border-white/[0.08] px-4 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50/50 dark:bg-zinc-950/20 shrink-0">
-          <a
-            href={teamsChatUrl(emp.email)}
-            target="_blank"
-            rel="noreferrer"
-            title={`Chat with ${emp.name.split(" ")[0]} on Teams`}
-            className="shrink-0 hover:scale-110 active:scale-95 transition-all p-1.5 hover:bg-slate-200/40 dark:hover:bg-white/5 rounded-lg"
-          >
-            <TeamsIcon className="h-6 w-6" />
-          </a>
+          <div className="flex items-center justify-between w-full gap-2">
+            <a
+              href={teamsChatUrl(emp.email)}
+              target="_blank"
+              rel="noreferrer"
+              title={`Chat with ${emp.name.split(" ")[0]} on Teams`}
+              className="shrink-0 hover:scale-110 active:scale-95 transition-all p-1.5 hover:bg-slate-200/40 dark:hover:bg-white/5 rounded-lg"
+            >
+              <TeamsIcon className="h-6 w-6" />
+            </a>
+            <div className="flex items-center gap-2 shrink-0">
+              {isPmo && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowAllocationPanel(true)}
+                  className="border-[#1f86e0] text-[#1f86e0] hover:bg-[#1f86e0]/5 gap-1.5"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Manage Allocation
+                </Button>
+              )}
+              {isSelf && (
+                <Button
+                  size="sm"
+                  onClick={() => setShowAlchemyPanel(true)}
+                  className="bg-gradient-to-r from-[#0e2a47] to-[#1f86e0] text-white hover:opacity-90 gap-1.5"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  Edit My Skills
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -896,6 +1512,22 @@ function ProfileModal({
         currentCode={emp.employee_code}
         onClose={() => setProjectDetail(null)}
         onOpenPerson={onOpenPerson}
+      />
+    )}
+    {showAlchemyPanel && isSelf && (
+      <AlchemyEditPanel
+        employeeCode={emp.employee_code}
+        profileProjects={enrich.projects}
+        onClose={() => setShowAlchemyPanel(false)}
+      />
+    )}
+    {showAllocationPanel && isPmo && (
+      <AllocationEditorDialog
+        emp={emp}
+        onClose={() => {
+          setShowAllocationPanel(false);
+          if (onReload) onReload();
+        }}
       />
     )}
     </>
@@ -1265,6 +1897,31 @@ export function EmployeeDirectory() {
     [all],
   );
 
+  // Analytics derived from the full unfiltered roster — not the filtered view, so they
+  // always reflect the whole org headcount rather than the current search result.
+  const analytics = useMemo(() => {
+    const list = all ?? [];
+    const totalEmployees = list.length;
+    const projectPeople = list.filter((e) => {
+      const d = (e.department || "").trim().toUpperCase();
+      const isMgmt = [
+        "HR", "HUMAN RESOURCES", "HUMAN",
+        "IT", "INFORMATION TECHNOLOGY",
+        "PMO", "PROJECT MANAGEMENT", "PROGRAM MANAGEMENT", "PORTFOLIO MANAGEMENT",
+        "ADMIN", "ADMINISTRATION"
+      ].some((prefix) => d.startsWith(prefix));
+      return !isMgmt;
+    });
+    const totalProjectPeople = projectPeople.length;
+    const availableNow = projectPeople.filter((e) => e.available).length;
+    const fullyFree = projectPeople.filter((e) => (e.availability_percent ?? 0) >= 100).length;
+    const allocated = projectPeople.filter((e) => !e.available && !e.leading_projects?.length).length;
+    const managing = projectPeople.filter((e) => !e.available && !!e.leading_projects?.length).length;
+    const totalDepts = Array.from(new Set(list.map((e) => e.department).filter(Boolean))).length;
+    const availablePct = totalProjectPeople > 0 ? Math.round((availableNow / totalProjectPeople) * 100) : 0;
+    return { totalEmployees, availableNow, fullyFree, allocated, managing, totalDepts, availablePct };
+  }, [all]);
+
   const filtered = useMemo(() => {
     if (!all) return [];
     const q = query.trim().toLowerCase();
@@ -1561,20 +2218,25 @@ export function EmployeeDirectory() {
               )}
             </div>
 
-            {/* Desktop-only dropdowns & refresh */}
+            {/* Desktop Filters button + Refresh */}
             <div className="hidden sm:flex items-center gap-2">
-              <FilterSelect
-                value={dept}
-                onChange={setDept}
-                options={departments}
-                placeholder="All Departments"
-              />
-              <FilterSelect
-                value={desig}
-                onChange={setDesig}
-                options={designations}
-                placeholder="All Designations"
-              />
+              <button
+                onClick={() => setShowMobileFilters(!showMobileFilters)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-xl border px-3 h-[38px] text-[13px] font-bold transition-all shadow-sm cursor-pointer shrink-0",
+                  showMobileFilters || activeFilterCount > 0
+                    ? "border-[#1f86e0]/40 bg-[#1f86e0]/10 text-[#1f86e0]"
+                    : "border-slate-200/80 dark:border-white/[0.08] bg-white/70 dark:bg-zinc-900/50 text-slate-700 dark:text-white/80"
+                )}
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#1f86e0] text-[10px] font-black text-white">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
               <button
                 onClick={load}
                 disabled={loading}
@@ -1825,30 +2487,141 @@ export function EmployeeDirectory() {
             </div>
           )}
 
-          {/* Collapsible Mobile Filters Drawer */}
+          {/* Rich Filter Panel — slides open below the controls row */}
           {showMobileFilters && (
-            <div className="flex sm:hidden flex-col gap-2.5 rounded-2xl border border-slate-200/60 dark:border-white/[0.06] bg-slate-50/50 dark:bg-zinc-950/20 p-3.5 mt-0.5 animate-in fade-in slide-in-from-top-2 duration-200">
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 pl-1">
-                  Department
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl border border-slate-200/60 dark:border-white/[0.07] bg-white/95 dark:bg-card shadow-lg overflow-hidden mt-0.5">
+              {/* Panel header */}
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 dark:border-white/[0.06]">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                  <Filter className="h-3.5 w-3.5" />
+                  Filters
+                  {activeFilterCount > 0 && (
+                    <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[#1f86e0] text-[9px] font-black text-white px-1.5">
+                      {activeFilterCount}
+                    </span>
+                  )}
                 </span>
-                <FilterSelect
-                  value={dept}
-                  onChange={setDept}
-                  options={departments}
-                  placeholder="All Departments"
-                />
+                {activeFilterCount > 0 && (
+                  <button
+                    onClick={() => { setDept(""); setDesig(""); setAvailableOnly(false); setCertifiedOnly(false); clearAssistantFilters(); }}
+                    className="text-[11px] font-bold text-rose-500 hover:text-rose-600"
+                  >
+                    Clear all
+                  </button>
+                )}
               </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/80 pl-1">
-                  Designation
-                </span>
-                <FilterSelect
-                  value={desig}
-                  onChange={setDesig}
-                  options={designations}
-                  placeholder="All Designations"
-                />
+
+              <div className="p-4 space-y-4">
+                {/* Quick toggles */}
+                <div className="flex flex-wrap gap-2">
+                  {/* Available now */}
+                  <button
+                    onClick={() => setAvailableOnly(!availableOnly)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold border transition-all",
+                      availableOnly
+                        ? "border-teal-500 bg-teal-500/10 text-teal-700 dark:text-teal-300"
+                        : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-teal-400"
+                    )}
+                  >
+                    <UserCheck className="h-3.5 w-3.5" />
+                    Available Now
+                  </button>
+                  {/* Certified only */}
+                  <button
+                    onClick={() => setCertifiedOnly(!certifiedOnly)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold border transition-all",
+                      certifiedOnly
+                        ? "border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                        : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-sky-400"
+                    )}
+                  >
+                    <BadgeCheck className="h-3.5 w-3.5" />
+                    Certified Only
+                  </button>
+                </div>
+
+                {/* Department chips */}
+                {departments.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Department</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {departments.slice(0, 24).map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setDept(dept === d ? "" : d)}
+                          className={cn(
+                            "rounded-xl px-2.5 py-1 text-[11px] font-bold border transition-all",
+                            dept === d
+                              ? "border-[#1f86e0] bg-[#1f86e0]/10 text-[#1f86e0] dark:text-primary"
+                              : "border-slate-200/60 dark:border-white/[0.06] text-slate-600 dark:text-slate-300 hover:border-[#1f86e0]/40 hover:bg-[#1f86e0]/5"
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Designation chips */}
+                {designations.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Designation</span>
+                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                      {designations.slice(0, 30).map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setDesig(desig === d ? "" : d)}
+                          className={cn(
+                            "rounded-xl px-2.5 py-1 text-[11px] font-bold border transition-all",
+                            desig === d
+                              ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                              : "border-slate-200/60 dark:border-white/[0.06] text-slate-600 dark:text-slate-300 hover:border-violet-400/40 hover:bg-violet-500/5"
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Min availability % */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Min. Free Capacity</span>
+                    <span className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
+                      {minAvailabilityPercent !== null ? `≥ ${minAvailabilityPercent}%` : "Any"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={10}
+                      value={minAvailabilityPercent ?? 0}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        setMinAvailabilityPercent(v > 0 ? v : null);
+                      }}
+                      className="flex-1 h-1.5 rounded-full accent-[#1f86e0] cursor-pointer"
+                    />
+                    {minAvailabilityPercent !== null && (
+                      <button
+                        onClick={() => setMinAvailabilityPercent(null)}
+                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[9px] text-slate-400 font-bold px-0.5">
+                    {[0, 25, 50, 75, 100].map((v) => <span key={v}>{v}%</span>)}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1857,6 +2630,90 @@ export function EmployeeDirectory() {
 
       {/* Body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
+        {/* ── Analytics Banner ── */}
+        {!loading && (all?.length ?? 0) > 0 && (
+          <div className="mb-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {/* Total */}
+            <div className="relative overflow-hidden rounded-2xl border border-slate-200/70 dark:border-white/[0.07] bg-white/70 dark:bg-white/[0.03] backdrop-blur-md p-3.5 shadow-sm group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+              <div className="absolute inset-0 bg-gradient-to-br from-[#1f86e0]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-[#1f86e0]/10 dark:bg-[#1f86e0]/15">
+                  <Users className="h-4 w-4 text-[#1f86e0]" />
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 mt-1">Total</span>
+              </div>
+              <p className="text-[28px] font-black leading-none text-slate-800 dark:text-white tabular-nums">
+                {analytics.totalEmployees}
+              </p>
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1">Employees</p>
+            </div>
+
+            {/* 100% Free */}
+            <div className="relative overflow-hidden rounded-2xl border border-emerald-200/70 dark:border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/20 backdrop-blur-md p-3.5 shadow-sm group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+              <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/8 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-emerald-500/15">
+                  <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <span className="flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">100% Free</span>
+                </span>
+              </div>
+              <p className="text-[28px] font-black leading-none text-emerald-700 dark:text-emerald-300 tabular-nums">
+                {analytics.fullyFree}
+              </p>
+              <p className="text-[11px] font-semibold text-emerald-600/80 dark:text-emerald-400/80 mt-1">Fully available</p>
+            </div>
+
+            {/* Available (partial) */}
+            <div className="relative overflow-hidden rounded-2xl border border-teal-200/70 dark:border-teal-500/20 bg-teal-50/60 dark:bg-teal-950/20 backdrop-blur-md p-3.5 shadow-sm group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+              <div className="absolute inset-0 bg-gradient-to-br from-teal-500/8 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-teal-500/15">
+                  <UserCheck className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider text-teal-600 dark:text-teal-400 mt-1">
+                  {analytics.totalEmployees > 0 ? `${analytics.availablePct}% of org` : ""}
+                </span>
+              </div>
+              <p className="text-[28px] font-black leading-none text-teal-700 dark:text-teal-300 tabular-nums">
+                {analytics.availableNow}
+              </p>
+              <p className="text-[11px] font-semibold text-teal-600/80 dark:text-teal-400/80 mt-1">Have capacity</p>
+            </div>
+
+            {/* Allocated / on-project */}
+            <div className="relative overflow-hidden rounded-2xl border border-rose-200/70 dark:border-rose-500/20 bg-rose-50/60 dark:bg-rose-950/20 backdrop-blur-md p-3.5 shadow-sm group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+              <div className="absolute inset-0 bg-gradient-to-br from-rose-500/8 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-rose-500/15">
+                  <UserX className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 mt-1">Allocated</span>
+              </div>
+              <p className="text-[28px] font-black leading-none text-rose-700 dark:text-rose-300 tabular-nums">
+                {analytics.allocated}
+              </p>
+              <p className="text-[11px] font-semibold text-rose-600/80 dark:text-rose-400/80 mt-1">On projects</p>
+            </div>
+
+            {/* Departments */}
+            <div className="relative overflow-hidden rounded-2xl border border-violet-200/70 dark:border-violet-500/20 bg-violet-50/60 dark:bg-violet-950/20 backdrop-blur-md p-3.5 shadow-sm group hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 col-span-2 sm:col-span-1">
+              <div className="absolute inset-0 bg-gradient-to-br from-violet-500/8 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex items-center justify-center h-8 w-8 rounded-xl bg-violet-500/15">
+                  <BarChart3 className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 mt-1">Depts</span>
+              </div>
+              <p className="text-[28px] font-black leading-none text-violet-700 dark:text-violet-300 tabular-nums">
+                {analytics.totalDepts}
+              </p>
+              <p className="text-[11px] font-semibold text-violet-600/80 dark:text-violet-400/80 mt-1">Departments</p>
+            </div>
+          </div>
+        )}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {Array.from({ length: 12 }).map((_, i) => (
@@ -1927,6 +2784,7 @@ export function EmployeeDirectory() {
         <ProfileModal
           emp={selected}
           onClose={() => setSelected(null)}
+          onReload={load}
           onOpenPerson={(code) => {
             const next = (all ?? []).find((e) => e.employee_code === code);
             if (next) setSelected(next);
@@ -1934,5 +2792,475 @@ export function EmployeeDirectory() {
         />
       )}
     </div>
+  );
+}
+
+// ── PMO STRICT Allocation Manager Dialog ──────────────────────────────────────
+
+interface Allocation {
+  id: number;
+  employee_id: string;
+  employee_name: string;
+  project_name: string;
+  project_lead: string;
+  delivery_manager: string;
+  efforts_percent: number;
+  billability_percent: number;
+  allocation_date: string | null;
+  project_status: string;
+  client_master: string;
+  billing: string;
+  status: string;
+  is_deleted?: boolean;
+  is_manual: boolean;
+}
+
+function AllocationEditorDialog({
+  emp,
+  onClose,
+}: {
+  emp: DirEmployee;
+  onClose: () => void;
+}) {
+  const { user } = useAuth();
+  const [allocs, setAllocs] = useState<Allocation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  // Form state
+  const [form, setForm] = useState({
+    project_name: "",
+    project_lead: "",
+    delivery_manager: "",
+    efforts_percent: 100,
+    billability_percent: 100,
+    client_master: "",
+    billing: "Billable",
+    project_status: "Ongoing",
+    status: "Active",
+  });
+
+  const authHeaders = useMemo(() => ({
+    ...(user?.email ? { "x-user-email": user.email } : {}),
+    ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+  }), [user]);
+
+  const loadAllocs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/employees/${encodeURIComponent(emp.employee_code || emp.email)}/allocations`, {
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error("Failed to load allocations");
+      const data = await res.json();
+      
+      const rawAllocs: Allocation[] = data.allocations ?? [];
+      const rawManuals: Allocation[] = data.manuals ?? [];
+      
+      const combined: Allocation[] = [];
+      const deletedManualMap = new Set<string>();
+      const activeManualMap = new Map<string, Allocation>();
+      
+      rawManuals.forEach((m) => {
+        const key = `${m.project_name}-${m.allocation_date}`;
+        if (m.is_deleted) {
+          deletedManualMap.add(key);
+        } else {
+          activeManualMap.set(key, m);
+        }
+      });
+
+      rawAllocs.forEach((a) => {
+        const key = `${a.project_name}-${a.allocation_date}`;
+        if (deletedManualMap.has(key)) {
+          // Row was deleted manually
+        } else if (activeManualMap.has(key)) {
+          combined.push(activeManualMap.get(key)!);
+          activeManualMap.delete(key);
+        } else {
+          combined.push(a);
+        }
+      });
+
+      activeManualMap.forEach((m) => {
+        combined.push(m);
+      });
+
+      setAllocs(combined);
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not fetch allocation history.");
+    } finally {
+      setLoading(false);
+    }
+  }, [emp.employee_code, emp.email, authHeaders]);
+
+  useEffect(() => {
+    loadAllocs();
+  }, [loadAllocs]);
+
+  const handleSaveAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.project_name.trim()) {
+      toast.error("Project name is required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/employees/allocations/manual", {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          employee_id: emp.employee_code,
+          employee_name: emp.name,
+          ...form,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to add allocation");
+      toast.success("Project allocation added successfully.");
+      setShowAddForm(false);
+      setForm({
+        project_name: "",
+        project_lead: "",
+        delivery_manager: "",
+        efforts_percent: 100,
+        billability_percent: 100,
+        client_master: "",
+        billing: "Billable",
+        project_status: "Ongoing",
+        status: "Active",
+      });
+      loadAllocs();
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not add project allocation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveEdit = async (alloc: Allocation) => {
+    setSaving(true);
+    try {
+      const url = alloc.is_manual
+        ? `/api/employees/allocations/manual/${alloc.id}`
+        : "/api/employees/allocations/manual";
+      const method = alloc.is_manual ? "PUT" : "POST";
+      
+      const payload = {
+        employee_id: emp.employee_code,
+        employee_name: emp.name,
+        project_name: alloc.project_name,
+        project_lead: alloc.project_lead,
+        delivery_manager: alloc.delivery_manager,
+        efforts_percent: alloc.efforts_percent,
+        billability_percent: alloc.billability_percent,
+        client_master: alloc.client_master,
+        billing: alloc.billing,
+        project_status: alloc.project_status,
+        status: alloc.status,
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error("Failed to save changes");
+      toast.success("Changes saved successfully.");
+      setEditingId(null);
+      loadAllocs();
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (alloc: Allocation) => {
+    if (!confirm(`Are you sure you want to remove ${emp.name} from "${alloc.project_name}"?`)) return;
+    setSaving(true);
+    try {
+      const url = alloc.is_manual
+        ? `/api/employees/allocations/manual/${alloc.id}`
+        : `/api/employees/allocations/zoho/${alloc.id}`;
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error("Failed to remove allocation");
+      toast.success("Allocation removed successfully.");
+      loadAllocs();
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not remove allocation.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-full max-w-2xl p-0 overflow-hidden gap-0 max-h-[95vh] sm:max-h-[90vh] flex flex-col bg-[#f8fafc] dark:bg-zinc-900/95">
+        <DialogHeader className="flex-row items-center justify-between gap-3 border-b border-slate-200/60 dark:border-white/[0.06] bg-white dark:bg-card px-4 py-3 sm:px-5 sm:py-3.5 shrink-0 space-y-0">
+          <DialogTitle className="text-[15px] font-black text-[#0f2a4a] dark:text-white truncate">
+            Manage Allocations — {emp.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+          {loading ? (
+            <div className="space-y-2 py-4">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : allocs.length === 0 && !showAddForm ? (
+            <div className="text-center py-8">
+              <Users className="h-12 w-12 text-slate-300 dark:text-zinc-700 mx-auto mb-2" />
+              <p className="text-slate-500 font-bold text-[13px]">No active project allocations found.</p>
+              <Button
+                size="sm"
+                onClick={() => setShowAddForm(true)}
+                className="mt-3 bg-[#1f86e0] hover:bg-[#1873c4] text-white"
+              >
+                <Plus className="h-4 w-4 mr-1.5" /> Add Project Allocation
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Current Allocations</span>
+                {!showAddForm && (
+                  <Button
+                    size="sm"
+                    onClick={() => setShowAddForm(true)}
+                    className="bg-[#1f86e0] hover:bg-[#1873c4] text-white text-[12px] h-8 px-3"
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Project
+                  </Button>
+                )}
+              </div>
+
+              {/* Add form */}
+              {showAddForm && (
+                <form onSubmit={handleSaveAdd} className="bg-white dark:bg-zinc-950/40 border border-slate-200/80 dark:border-white/[0.06] rounded-2xl p-4 space-y-3 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-white/[0.04] pb-2">
+                    <span className="text-[11px] font-black uppercase text-[#1f86e0]">New Project Assignment</span>
+                    <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Project Name</label>
+                      <input
+                        type="text"
+                        value={form.project_name}
+                        onChange={(e) => setForm({ ...form, project_name: e.target.value })}
+                        placeholder="e.g. Aligned Analytics Portal"
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Client Master</label>
+                      <input
+                        type="text"
+                        value={form.client_master}
+                        onChange={(e) => setForm({ ...form, client_master: e.target.value })}
+                        placeholder="e.g. Aligned Automation"
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Delivery Manager</label>
+                      <input
+                        type="text"
+                        value={form.delivery_manager}
+                        onChange={(e) => setForm({ ...form, delivery_manager: e.target.value })}
+                        placeholder="Manager Name"
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Project Lead</label>
+                      <input
+                        type="text"
+                        value={form.project_lead}
+                        onChange={(e) => setForm({ ...form, project_lead: e.target.value })}
+                        placeholder="Lead Name"
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Efforts %</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={form.efforts_percent}
+                        onChange={(e) => setForm({ ...form, efforts_percent: parseFloat(e.target.value) || 0 })}
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase">Billing Status</label>
+                      <select
+                        value={form.billing}
+                        onChange={(e) => setForm({ ...form, billing: e.target.value })}
+                        className="w-full text-[13px] rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 outline-none h-[34px]"
+                      >
+                        <option value="Billable">Billable</option>
+                        <option value="Pipeline">Pipeline</option>
+                        <option value="For Allocation">For Allocation</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button type="button" size="sm" variant="outline" onClick={() => setShowAddForm(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" size="sm" disabled={saving} className="bg-[#1f86e0] text-white">
+                      {saving ? "Saving..." : "Add Assignment"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Allocation List */}
+              <div className="space-y-3">
+                {allocs.map((a) => {
+                  const isEditing = editingId === a.id;
+                  return (
+                    <div key={`${a.project_name}-${a.id}`} className="bg-white dark:bg-zinc-950/20 border border-slate-200/70 dark:border-white/[0.06] rounded-2xl p-4 space-y-3 shadow-sm hover:shadow-md transition-shadow relative">
+                      {a.is_manual && (
+                        <span className="absolute top-3 right-3 text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-2 py-0.5 rounded-full border border-amber-500/20">
+                          PMO Override
+                        </span>
+                      )}
+                      
+                      <div className="flex justify-between items-start">
+                        <div className="min-w-0 flex-1 pr-16">
+                          <p className="text-[14px] font-black text-slate-800 dark:text-white">{a.project_name}</p>
+                          <p className="text-[11px] font-semibold text-slate-500 mt-0.5">{a.client_master || "Internal Client"}</p>
+                        </div>
+                      </div>
+
+                      {isEditing ? (
+                        <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-100 dark:border-white/[0.04]">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase">Efforts %</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={a.efforts_percent}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setAllocs(allocs.map((item) => item.id === a.id ? { ...item, efforts_percent: val } : item));
+                              }}
+                              className="w-full text-[12px] rounded-lg border border-slate-200 dark:border-white/[0.08] px-2 py-1 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase">Billing</label>
+                            <select
+                              value={a.billing}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setAllocs(allocs.map((item) => item.id === a.id ? { ...item, billing: val } : item));
+                              }}
+                              className="w-full text-[12px] rounded-lg border border-slate-200 dark:border-white/[0.08] px-2 py-1 outline-none h-[28px]"
+                            >
+                              <option value="Billable">Billable</option>
+                              <option value="Pipeline">Pipeline</option>
+                              <option value="For Allocation">For Allocation</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase">Delivery Manager</label>
+                            <input
+                              type="text"
+                              value={a.delivery_manager}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setAllocs(allocs.map((item) => item.id === a.id ? { ...item, delivery_manager: val } : item));
+                              }}
+                              className="w-full text-[12px] rounded-lg border border-slate-200 dark:border-white/[0.08] px-2 py-1 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-400 uppercase">Project Lead</label>
+                            <input
+                              type="text"
+                              value={a.project_lead}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setAllocs(allocs.map((item) => item.id === a.id ? { ...item, project_lead: val } : item));
+                              }}
+                              className="w-full text-[12px] rounded-lg border border-slate-200 dark:border-white/[0.08] px-2 py-1 outline-none"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-[12px] pt-1">
+                          <div>
+                            <span className="block text-slate-400 font-extrabold text-[9px] uppercase">Effort</span>
+                            <span className="font-bold text-slate-700 dark:text-slate-300">{a.efforts_percent}%</span>
+                          </div>
+                          <div>
+                            <span className="block text-slate-400 font-extrabold text-[9px] uppercase">Billing</span>
+                            <span className="font-bold text-slate-700 dark:text-slate-300">{a.billing}</span>
+                          </div>
+                          <div>
+                            <span className="block text-slate-400 font-extrabold text-[9px] uppercase">Manager</span>
+                            <span className="font-bold text-slate-700 dark:text-slate-300 truncate block">{a.delivery_manager || "—"}</span>
+                          </div>
+                          <div>
+                            <span className="block text-slate-400 font-extrabold text-[9px] uppercase">Lead</span>
+                            <span className="font-bold text-slate-700 dark:text-slate-300 truncate block">{a.project_lead || "—"}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-end gap-2 border-t border-slate-100 dark:border-white/[0.04] pt-2">
+                        {isEditing ? (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
+                              Cancel
+                            </Button>
+                            <Button size="sm" disabled={saving} onClick={() => handleSaveEdit(a)} className="bg-[#1f86e0] text-white">
+                              <Save className="h-3 w-3 mr-1" /> Save
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => setEditingId(a.id)} className="h-8 text-[11px] px-2.5">
+                              <Edit3 className="h-3 w-3 mr-1" /> Edit
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => handleDelete(a)} className="h-8 text-[11px] px-2.5">
+                              <Trash2 className="h-3 w-3 mr-1" /> Delete
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

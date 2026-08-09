@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   CalendarDays,
   Palmtree,
@@ -237,7 +238,7 @@ const ROLE_DEFAULTS: Record<Role, CardId[]> = {
   Admin: ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
   "Functional Manager": ["pending_approvals", "team_leave", "project_milestones", "kudos_board"],
   // Owner's home page: personal cards (leave, holiday, kudos, next meeting) rather
-  // than ops widgets — Master Mode + Control Hub already cover the admin surface.
+  // than ops widgets — Control Hub already covers the admin surface.
   "Super Admin": ["leave_balance", "holidays", "kudos_board", "up_next"],
 };
 
@@ -287,37 +288,120 @@ function isCardAllowed(card: CardDef, role: Role): boolean {
 
 // ── Card content ──────────────────────────────────────────────────────────────
 
+/** Days-until label matching the style of the static COUNTRIES holiday fixture ("in 12d", "Today"). */
+function relativeDays(dateStr: string): string {
+  const target = new Date(dateStr + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days > 0) return `in ${days}d`;
+  return target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// The two types people actually track day-to-day. Leave Without Pay is unlimited
+// (not a real quota) and Compensatory Off is rare, so both are left off the card.
+const LEAVE_CARD_TYPES = ["Privileged Leave (New)", "Casual Leave (New)"];
+
 function CardContent({ id }: { id: CardId }) {
   const { country } = useSettings();
+  const { user } = useAuth();
   const cData = COUNTRIES.find((c) => c.code === country) ?? COUNTRIES[0];
 
+  const [leaveBalances, setLeaveBalances] = useState<{ type: string; balance: number; total: number }[] | null>(null);
+  const [holiday, setHoliday] = useState<{ name: string; date: string } | null>(null);
+
+  useEffect(() => {
+    if (id !== "leave_balance" || !user?.email) return;
+    const controller = new AbortController();
+    fetch("/api/leave/balance", {
+      signal: controller.signal,
+      headers: {
+        ...(user?.email ? { "x-user-email": user.email } : {}),
+        ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+      },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { success?: boolean; balances?: { type: string; total: number; balance: number }[] } | null) => {
+        if (!data?.success || !data.balances?.length) return;
+        // Every leave type has its own separate quota (Casual, Privileged, Sabbatical,
+        // unlimited LWP, ...) — summing them into one number is meaningless, so show
+        // each type's own balance instead of a blended total, limited to the handful
+        // of types people actually check day-to-day (see LEAVE_CARD_TYPES).
+        const wanted = data.balances
+          .filter((b) => LEAVE_CARD_TYPES.some((t) => t.toLowerCase() === b.type.toLowerCase()))
+          .sort(
+            (a, b) =>
+              LEAVE_CARD_TYPES.findIndex((t) => t.toLowerCase() === a.type.toLowerCase()) -
+              LEAVE_CARD_TYPES.findIndex((t) => t.toLowerCase() === b.type.toLowerCase()),
+          )
+          .map((b) => ({ type: b.type, balance: Math.round(b.balance * 10) / 10, total: Math.round(b.total * 10) / 10 }));
+        setLeaveBalances(wanted);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, user?.email, user?.role]);
+
+  useEffect(() => {
+    if (id !== "holidays" || !user?.email) return;
+    const controller = new AbortController();
+    fetch("/api/leave/holidays", {
+      signal: controller.signal,
+      headers: {
+        ...(user?.email ? { "x-user-email": user.email } : {}),
+        ...(user?.role ? { "x-user-role": user.role.toLowerCase() } : {}),
+      },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { holidays?: { name: string; date: string }[] } | null) => {
+        const list = data?.holidays;
+        if (!list?.length) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        setHoliday(list.find((h) => h.date >= todayStr) ?? list[list.length - 1]);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id, user?.email, user?.role]);
+
   switch (id) {
-    case "leave_balance":
+    case "leave_balance": {
       return (
         <>
           <div className="flex items-center justify-between">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/10">
               <CalendarDays className="h-4 w-4 text-emerald-500" />
             </div>
-            <CircularProgress
-              value={Math.round((12 / cData.leave.amount) * 100)}
-              size={36}
-              strokeWidth={3}
-              color="#10b981"
-            />
           </div>
-          <div>
-            <p className="text-2xl font-bold tracking-tight text-foreground">
-              12 / {cData.leave.amount}
-            </p>
-            <p className="text-[11px] text-muted-foreground font-medium">
-              {cData.leave.label} Left
-            </p>
-          </div>
+          {leaveBalances ? (
+            <div className="flex flex-col gap-1">
+              {leaveBalances.map((b) => (
+                <div key={b.type} className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-muted-foreground font-medium truncate">{b.type}</span>
+                  <span className="text-[13px] font-bold text-foreground shrink-0">
+                    {b.balance} <span className="text-[10px] font-medium text-muted-foreground">/ {b.total}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div>
+              <p className="text-2xl font-bold tracking-tight text-foreground">
+                12 / {cData.leave.amount}
+              </p>
+              <p className="text-[11px] text-muted-foreground font-medium">
+                {cData.leave.label} Left
+              </p>
+            </div>
+          )}
         </>
       );
+    }
 
-    case "holidays":
+    case "holidays": {
+      const name = holiday?.name ?? cData.holiday.name;
+      const dateLabel = holiday ? new Date(holiday.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : cData.holiday.date;
+      const relative = holiday ? relativeDays(holiday.date) : cData.holiday.relative;
       return (
         <>
           <div className="flex items-center justify-between">
@@ -326,17 +410,18 @@ function CardContent({ id }: { id: CardId }) {
             </div>
             <span className="text-[11px] font-semibold text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span>{cData.flag}</span>
-              <span>Soon</span>
+              <span>{relative === "Today" || relative === "Tomorrow" ? relative : "Soon"}</span>
             </span>
           </div>
           <div>
-            <p className="text-sm font-semibold text-foreground truncate">{cData.holiday.name}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{name}</p>
             <p className="text-[11px] text-muted-foreground font-medium">
-              {cData.holiday.date} · {cData.holiday.relative}
+              {dateLabel} · {relative}
             </p>
           </div>
         </>
       );
+    }
 
     case "pending_approvals":
       return (
@@ -540,7 +625,9 @@ function CardContent({ id }: { id: CardId }) {
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10">
               <Target className="h-4 w-4 text-amber-500" />
             </div>
-            <span className="text-[10px] font-bold text-amber-500">Sprint 4</span>
+            <span className="text-[10px] font-bold text-amber-500">
+              Sprint 4
+            </span>
           </div>
           <div>
             <p className="text-2xl font-bold tracking-tight text-foreground">2 / 3</p>
@@ -626,12 +713,22 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
 
   const [editMode, setEditMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  // The widget row lives inside an `overflow-hidden` scroll container, so a plain
+  // absolutely-positioned dropdown gets clipped whenever it would extend past that
+  // container's edge (e.g. down towards the chat composer). Rendering it through a
+  // portal with fixed coordinates escapes that clipping ancestor entirely.
+  const [addMenuPos, setAddMenuPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!addOpen) return;
     const handler = (e: MouseEvent) => {
-      if (addRef.current && !addRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        addRef.current && !addRef.current.contains(target) &&
+        addMenuRef.current && !addMenuRef.current.contains(target)
+      ) {
         setAddOpen(false);
       }
     };
@@ -765,22 +862,46 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
             >
               <div ref={addRef} className="h-full">
                 <button
-                  onClick={() => setAddOpen((o) => !o)}
+                  onClick={() => {
+                    if (!addOpen && addRef.current) {
+                      const rect = addRef.current.getBoundingClientRect();
+                      const spaceAbove = rect.top;
+                      const spaceBelow = window.innerHeight - rect.bottom;
+                      const dropUp = spaceAbove > spaceBelow;
+                      setAddMenuPos({
+                        left: rect.left,
+                        width: rect.width,
+                        ...(dropUp
+                          ? { bottom: window.innerHeight - rect.top + 6 }
+                          : { top: rect.bottom + 6 }),
+                      });
+                    }
+                    setAddOpen((o) => !o);
+                  }}
                   className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border/60 bg-card/30 p-4 w-full h-full min-h-[110px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
                 >
                   <Plus className="h-5 w-5" />
                   <span className="text-[11px] font-medium">Add card</span>
                 </button>
 
-                {/* Add dropdown */}
-                <AnimatePresence>
-                  {addOpen && (
+                {/* Add dropdown — portalled to <body> so the surrounding overflow-hidden
+                    scroll container can't clip it (e.g. against the chat composer). */}
+                {addOpen && addMenuPos && createPortal(
+                  <AnimatePresence>
                     <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                      ref={addMenuRef}
+                      initial={{ opacity: 0, y: addMenuPos.bottom !== undefined ? 6 : -6, scale: 0.97 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                      exit={{ opacity: 0, y: addMenuPos.bottom !== undefined ? 6 : -6, scale: 0.97 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute bottom-full mb-1.5 left-0 z-40 w-52 max-w-[80vw] rounded-xl border border-border bg-popover shadow-xl shadow-black/10 overflow-hidden"
+                      style={{
+                        position: "fixed",
+                        left: addMenuPos.left,
+                        top: addMenuPos.top,
+                        bottom: addMenuPos.bottom,
+                        width: Math.max(addMenuPos.width, 208),
+                      }}
+                      className="z-50 max-w-[80vw] max-h-[min(60vh,20rem)] overflow-y-auto rounded-xl border border-border bg-popover shadow-xl shadow-black/10"
                     >
                       {availableToAdd.length === 0 ? (
                         <p className="px-3 py-2.5 text-[12px] text-muted-foreground">
@@ -803,8 +924,9 @@ export function SmartWidgets({ onAction }: SmartWidgetsProps) {
                         ))
                       )}
                     </motion.div>
-                  )}
-                </AnimatePresence>
+                  </AnimatePresence>,
+                  document.body,
+                )}
               </div>
             </motion.div>
           )}

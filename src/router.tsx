@@ -81,6 +81,9 @@ export const getRouter = () => {
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
     defaultErrorComponent: DefaultErrorComponent,
+    // Circle-blur wipe on route change, styled via ::view-transition-* in styles.css
+    // (technique adapted from Skiper UI's skiper26 "circle-blur" variant).
+    defaultViewTransition: true,
   });
 
   return router;

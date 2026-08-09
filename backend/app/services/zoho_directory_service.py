@@ -241,6 +241,64 @@ def aggregate_field_counts(*field_candidates: str, active_only: bool = True) -> 
     return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
 
 
+def _next_occurrence(today: datetime.date, month: int, day: int) -> datetime.date:
+    """Next calendar date this month/day falls on, today or later."""
+    for year in (today.year, today.year + 1):
+        try:
+            candidate = datetime.date(year, month, day)
+        except ValueError:
+            candidate = datetime.date(year, month, 28)  # Feb 29 in a non-leap year
+        if candidate >= today:
+            return candidate
+    return datetime.date(today.year + 1, month, day)
+
+
+def fetch_upcoming_celebrations(days: int = 14) -> dict:
+    """Upcoming birthdays and work anniversaries within the next `days` days.
+
+    Sourced live from the Zoho view, same as the Directory page. Birthdays surface
+    day+month only (never year — see _fmt_birthday) so age is never exposed; a join
+    date isn't sensitive so anniversaries show the actual milestone year count.
+    Fail-soft: {"birthdays": [], "anniversaries": []} when the view is unreachable.
+    """
+    today = datetime.date.today()
+    birthdays: list[dict] = []
+    anniversaries: list[dict] = []
+
+    for row in fetch_raw_rows():
+        if not _is_active(row):
+            continue
+        first = _g(row, "firstname")
+        last = _g(row, "lastname")
+        name = (f"{first} {last}").strip() or _g(row, "name")
+        if not name:
+            continue
+        email = _g(row, "emailid", "official_email", "email")
+
+        dob = _parse_any_date(row.get("dateofbirth"))
+        if dob:
+            occurs = _next_occurrence(today, dob.month, dob.day)
+            days_away = (occurs - today).days
+            if days_away <= days:
+                birthdays.append({
+                    "name": name, "email": email, "date": occurs.isoformat(), "days_away": days_away,
+                })
+
+        doj = _parse_any_date(row.get("dateofjoining"))
+        if doj:
+            occurs = _next_occurrence(today, doj.month, doj.day)
+            days_away = (occurs - today).days
+            years = occurs.year - doj.year
+            if days_away <= days and years > 0:
+                anniversaries.append({
+                    "name": name, "date": occurs.isoformat(), "days_away": days_away, "years": years,
+                })
+
+    birthdays.sort(key=lambda b: b["days_away"])
+    anniversaries.sort(key=lambda a: a["days_away"])
+    return {"birthdays": birthdays, "anniversaries": anniversaries}
+
+
 def aggregate_joining_trend(cutoff: datetime.date) -> list[tuple[datetime.date, int]]:
     """Live new-joiner count per month since `cutoff`, off the Zoho view's dateofjoining.
 

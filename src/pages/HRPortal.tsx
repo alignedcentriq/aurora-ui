@@ -50,6 +50,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Empty,
   EmptyHeader,
@@ -108,7 +110,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 // inside Onboarding Tracker (see OnboardingKickoffAdmin.tsx), alongside the
 // journey tracker and step/document/video content admin.
 
-type PortalTab = "requests" | "attendance";
+type PortalTab = "requests" | "attendance" | "leaves";
 
 export function HRPortal() {
   const { user } = useAuth();
@@ -131,43 +133,67 @@ export function HRPortal() {
     );
   }
 
-  const TABS: { key: PortalTab; label: string }[] = [
-    { key: "requests", label: "Requests" },
-    { key: "attendance", label: "Company Attendance" },
+  const TABS: { key: PortalTab; label: string; icon: React.ElementType; desc: string }[] = [
+    {
+      key: "requests",
+      label: "Requests",
+      icon: Inbox,
+      desc: "Handle escalations, document requests, HR queries, and grievances.",
+    },
+    {
+      key: "attendance",
+      label: "Company Attendance",
+      icon: Users,
+      desc: "See who's in, who's off, and who's on leave — company-wide, any date.",
+    },
+    {
+      key: "leaves",
+      label: "Leave Records",
+      icon: CalendarDays,
+      desc: "Every employee's leave history, reason, and upcoming leave.",
+    },
   ];
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col gap-3 px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] text-muted-foreground mt-0.5">
-            {tab === "requests"
-              ? "Handle escalations, document requests, HR queries, and grievances."
-              : "See who's in, who's off, and who's on leave — company-wide, any date."}
-          </p>
-        </div>
-        <div className="flex gap-1.5">
-          {TABS.map(({ key, label }) => (
-            <Button
-              key={key}
-              variant={tab === key ? "default" : "secondary"}
-              onClick={() => setTab(key)}
-              className="rounded-full h-7 px-3 text-[12px]"
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
+      <div className="flex flex-col gap-0.5 px-4 py-4 sm:px-8 sm:py-6 border-b border-[var(--border)] shrink-0">
+        <h1 className="text-[17px] font-bold text-foreground">HR Portal</h1>
+        <p className="text-[13px] text-muted-foreground">
+          {TABS.find((t) => t.key === tab)?.desc}
+        </p>
       </div>
 
-      <div className="flex-1 overflow-hidden">
-        {tab === "requests" ? (
-          <RequestsTab authHeaders={authHeaders} />
-        ) : (
-          <AttendanceTab authHeaders={authHeaders} />
-        )}
-      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as PortalTab)}
+        className="flex flex-col flex-1 h-full overflow-hidden"
+      >
+        <TabsList className="w-full justify-start px-4 sm:px-8 py-3 h-auto rounded-none border-b border-[var(--border)] bg-transparent gap-1">
+          {TABS.map(({ key, label, icon: Icon }) => (
+            <TabsTrigger
+              key={key}
+              value={key}
+              className="flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-secondary transition-colors"
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <div className="flex-1 overflow-hidden">
+          <TabsContent value="requests" className="m-0 h-full data-[state=inactive]:hidden">
+            <RequestsTab authHeaders={authHeaders} />
+          </TabsContent>
+          <TabsContent value="attendance" className="m-0 h-full data-[state=inactive]:hidden">
+            <AttendanceTab authHeaders={authHeaders} />
+          </TabsContent>
+          <TabsContent value="leaves" className="m-0 h-full data-[state=inactive]:hidden">
+            <LeaveRecordsTab authHeaders={authHeaders} />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
@@ -855,6 +881,223 @@ function AttendanceTab({ authHeaders }: { authHeaders: Record<string, string> })
               </Pagination>
             )}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Leave Records Tab ────────────────────────────────────────────────────────
+
+interface LeaveHistoryEntry {
+  type: string;
+  from: string;
+  to: string;
+  days: number;
+  status: string;
+  reason: string;
+}
+
+interface LeaveRecordEmployee {
+  employee_id: string;
+  name: string;
+  email: string;
+  department: string | null;
+  history: LeaveHistoryEntry[];
+  upcoming: LeaveHistoryEntry[];
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts[parts.length - 1]?.[0] ?? "")).toUpperCase() || "—";
+}
+
+function LeaveRecordsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [records, setRecords] = useState<LeaveRecordEmployee[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const fetchRecords = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/portal/hr/leave-records", { headers: authHeaders });
+      const json = await res.json();
+      setRecords(json.employees ?? []);
+    } catch {
+      toast.error("Failed to load leave records");
+    } finally {
+      setLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => {
+    fetchRecords();
+  }, [fetchRecords]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return records;
+    const q = search.trim().toLowerCase();
+    return records.filter((r) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q));
+  }, [records, search]);
+
+  const stats = useMemo(() => {
+    const weekOut = new Date();
+    weekOut.setDate(weekOut.getDate() + 7);
+    const weekOutISO = weekOut.toISOString().slice(0, 10);
+    return {
+      employees: records.length,
+      onLeaveThisWeek: records.filter((r) => r.upcoming.some((u) => u.from <= weekOutISO)).length,
+      totalRequests: records.reduce((sum, r) => sum + r.history.length, 0),
+    };
+  }, [records]);
+
+  const STATS: { label: string; value: number; icon: React.ElementType; color: string; bg: string }[] = [
+    { label: "Employees on Record", value: stats.employees, icon: Users, color: "text-sky-400", bg: "bg-sky-500/10" },
+    { label: "On Leave Within 7 Days", value: stats.onLeaveThisWeek, icon: CalendarDays, color: "text-amber-400", bg: "bg-amber-500/10" },
+    { label: "Total Leave Requests", value: stats.totalRequests, icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+  ];
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 px-4 py-4 sm:px-8 shrink-0">
+        {STATS.map(({ label, value, icon: Icon, color, bg }) => (
+          <div
+            key={label}
+            className="rounded-xl border border-[var(--border)] bg-card/40 px-5 py-4 flex items-center gap-4"
+          >
+            <div className={cn("rounded-lg p-2.5 shrink-0", bg, color)}>
+              <Icon className="h-4 w-4" />
+            </div>
+            <div>
+              <p className={cn("text-[22px] font-bold", color)}>{value}</p>
+              <p className="text-[12px] text-muted-foreground">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 px-4 pb-3 sm:px-8 shrink-0">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email…"
+            className="h-8 w-[220px] pl-8 text-[12px]"
+          />
+        </div>
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={fetchRecords} className="text-muted-foreground">
+          <RefreshCw data-icon="inline-start" />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-auto px-4 sm:px-8 pb-4">
+        {loading ? (
+          <TableLoader />
+        ) : filtered.length === 0 ? (
+          <TableEmpty label="leave records" icon={<CalendarDays className="h-4 w-4" />} />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {["Employee", "Department", "Upcoming Leave", "Leave Taken", "Last Request"].map((h) => (
+                  <TableHead key={h}>{h}</TableHead>
+                ))}
+                <TableHead className="w-8" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((r) => {
+                const isExpanded = expanded === r.email;
+                const last = r.history[0];
+                return (
+                  <React.Fragment key={r.email}>
+                    <TableRow
+                      className="cursor-pointer"
+                      onClick={() => setExpanded(isExpanded ? null : r.email)}
+                    >
+                      <TableCell className="py-3 pr-4">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback className="text-[11px]">{initials(r.name)}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <div className="text-[13px] font-medium text-foreground leading-tight">
+                              {r.name}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">{r.email}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-3 pr-4 text-[13px] text-foreground/80">
+                        {r.department || "—"}
+                      </TableCell>
+                      <TableCell className="py-3 pr-4">
+                        {r.upcoming.length === 0 ? (
+                          <span className="text-[13px] text-muted-foreground/60">None</span>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {r.upcoming.slice(0, 2).map((u, i) => (
+                              <span key={i} className="text-[12px] text-foreground/80">
+                                {u.type} · {u.from}
+                                {u.to !== u.from ? ` → ${u.to}` : ""}
+                              </span>
+                            ))}
+                            {r.upcoming.length > 2 && (
+                              <span className="text-[11px] text-muted-foreground">
+                                +{r.upcoming.length - 2} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-3 pr-4">
+                        <Badge variant="secondary" className="text-[12px] font-semibold">
+                          {r.history.length}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-3 pr-4 text-[12px] text-muted-foreground/70 whitespace-nowrap">
+                        {last ? `${last.from} · ${last.status}` : "—"}
+                      </TableCell>
+                      <TableCell className="py-3 pr-2 text-muted-foreground/50">
+                        <ChevronDown
+                          className={cn("h-4 w-4 transition-transform", isExpanded && "rotate-180")}
+                        />
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="bg-muted/20 py-3 px-4">
+                          <div className="space-y-2">
+                            {r.history.map((h, i) => (
+                              <div
+                                key={i}
+                                className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] border-b border-border/30 last:border-0 pb-2 last:pb-0"
+                              >
+                                <span className="font-medium text-foreground">{h.type}</span>
+                                <span className="text-muted-foreground">
+                                  {h.from}
+                                  {h.to !== h.from ? ` → ${h.to}` : ""} ({h.days}d)
+                                </span>
+                                <StatusBadge status={h.status} className="px-2 py-0 text-[10px]" />
+                                {h.reason && (
+                                  <span className="text-muted-foreground/80 italic">"{h.reason}"</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
         )}
       </div>
     </div>

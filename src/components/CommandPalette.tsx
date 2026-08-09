@@ -8,6 +8,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Search, Trash2 } from "lucide-react";
+import { motion } from "framer-motion";
 import { useNavigate } from "@tanstack/react-router";
 import { useChatStore } from "@/lib/chat-store";
 import { QUERY_CATEGORY_LABELS, ICON_MAP } from "@/lib/quickQueries";
@@ -40,10 +41,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       <CommandInput placeholder="What do you need help with?" />
       <CommandList>
         <CommandEmpty>
-          <div className="flex flex-col items-center gap-2 py-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex flex-col items-center gap-2 py-4"
+          >
             <Search className="h-8 w-8 text-muted-foreground/30" />
             <p className="text-sm text-muted-foreground">No results found</p>
-          </div>
+          </motion.div>
         </CommandEmpty>
 
         {(["it", "admin", "hr"] as const).map((cat, i) => {
@@ -53,7 +58,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             <span key={cat}>
               {i > 0 && <CommandSeparator />}
               <CommandGroup heading={QUERY_CATEGORY_LABELS[cat]}>
-                {items.map(({ label, prompt, icon, iconColor }) => {
+                {items.map(({ label, prompt, icon, iconColor }, itemIndex) => {
                   const Icon = ICON_MAP[icon] || Search;
                   return (
                     <CommandItem
@@ -61,10 +66,17 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                       onSelect={() => runQuickAction(prompt)}
                       className="group flex items-center justify-between"
                     >
-                      <div className="flex items-center gap-2">
-                        <Icon className={`h-4 w-4 ${iconColor}`} />
+                      <motion.div
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: itemIndex * 0.03, duration: 0.2 }}
+                        className="flex items-center gap-2"
+                      >
+                        <motion.div whileHover={{ scale: 1.2, rotate: -8 }} transition={{ type: "spring", stiffness: 400, damping: 10 }}>
+                          <Icon className={`h-4 w-4 ${iconColor}`} />
+                        </motion.div>
                         <span>{label}</span>
-                      </div>
+                      </motion.div>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

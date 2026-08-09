@@ -11,10 +11,6 @@ Explicitly out of scope: chat/prompt interactions (AI Observability owns those).
 
 emit() mirrors receipt_service.emit()'s contract: opens its own SessionLocal(), commits,
 and NEVER RAISES — a logging failure can never break the real action it's recording.
-
-"High" severity (currently: role assign/change/revoke) triggers a best-effort
-notification to every OTHER Super Admin (never the actor themselves) via email +
-Teams Activity-feed ping, reusing email_service's existing notification plumbing.
 """
 
 from __future__ import annotations
@@ -25,7 +21,7 @@ import math
 from typing import Optional
 
 from app.database import SessionLocal
-from app.models import ActivityLogEntry, UserRoleOverride, MS365User, Employee
+from app.models import ActivityLogEntry, MS365User, Employee
 
 log = logging.getLogger("aurora-logger")
 
@@ -123,11 +119,6 @@ def emit(
         db.commit()
         db.refresh(row)
         result = _to_dict(row, full=True)
-        if severity == "high":
-            try:
-                _notify_other_super_admins(db, actor_email, row)
-            except Exception as exc:
-                log.warning("[activity] high-severity notify failed for entry %s: %s", row.id, exc)
         return result
     except Exception as exc:
         db.rollback()
@@ -135,31 +126,6 @@ def emit(
         return None
     finally:
         db.close()
-
-
-def _notify_other_super_admins(db, actor_email: str, entry: ActivityLogEntry) -> None:
-    """Best-effort email + Teams Activity-feed ping to every Super Admin EXCEPT the actor.
-    Super Admin is DB-override-only (auth.py never grants it via header), so this query is
-    the authoritative "all current Super Admins" list."""
-    from app.services.email_service import notify_admin_activity_alert
-
-    recipients = [
-        o.email for o in db.query(UserRoleOverride)
-        .filter(UserRoleOverride.role == "super admin")
-        .all()
-        if (o.email or "").strip().lower() != actor_email
-    ]
-    if not recipients:
-        return
-
-    subject = f"Centriq AI — {entry.summary}"
-    body_html = (
-        f"<p><b>{entry.actor_name or entry.actor_email}</b> just made a high-severity "
-        f"change in Access Management:</p>"
-        f"<p style='font-size:15px;'>{entry.summary}</p>"
-        f"<p style='color:#6b7280;font-size:12px;'>Review it in Control Hub &rarr; Audit Trail.</p>"
-    )
-    notify_admin_activity_alert(actor_email, recipients, subject, body_html)
 
 
 # ── Queries ──────────────────────────────────────────────────────────────────

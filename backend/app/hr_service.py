@@ -27,10 +27,30 @@ class HRService:
 
     @staticmethod
     def get_leave_balance(email: str):
+        from app.services import leave_balance_sync
+        year = datetime.date.today().year
+
+        # Prefer real Zoho-sourced balances (DB view / cache / API / CSV — see
+        # leave_balance_sync.get_or_refresh) over the synthetic entitlement-only tables.
+        result = leave_balance_sync.get_or_refresh(email)
+        if result.get("success") and result.get("balances"):
+            lines = [f"**Leave Balance ({year}):**\n"]
+            for b in result["balances"]:
+                if str(b.get("type", "")).strip().upper() in ("LEAVE WITHOUT PAY", "LWP"):
+                    lines.append(f"- **{b['type']}**: No limit (deducted from salary)")
+                else:
+                    lines.append(f"- **{b['type']}**: {b['balance']} available ({b['used']} used of {b['total']})")
+            return "\n".join(lines)
+
+        return HRService._synthetic_leave_balance(email, year)
+
+    @staticmethod
+    def _synthetic_leave_balance(email: str, year: int):
+        """Fallback when no real Zoho leave source is reachable/configured: locally
+        seeded entitlement-only balances (used=0 unless tracked via apply_leave)."""
         db = SessionLocal()
         try:
             emp = HRService.get_employee_by_email(db, email)
-            year = datetime.date.today().year
 
             balances = (
                 db.query(LeaveBalance, LeaveType)
